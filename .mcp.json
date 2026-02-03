@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agentobox-computer-use": {
+      "type": "http",
+      "url": "http://localhost:8808/mcp"
+    },
+    "agentobox-agent-manager": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["mcps/agent-manager/dist/main.js"]
+    }
+  }
+}

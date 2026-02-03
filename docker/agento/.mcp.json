@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agent-manager": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/opt/agentobox/mcps/agent-manager/dist/main.js"]
+    }
+  }
+}

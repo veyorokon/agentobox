@@ -1,0 +1,36 @@
+FROM node:20-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tmux curl ca-certificates gnupg && \
+    # Docker CLI
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+      > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @anthropic-ai/claude-code
+
+# ── Agent-manager MCP ─────────────────────────────────────────────────────────
+COPY mcps/agent-manager /opt/agentobox/mcps/agent-manager
+RUN cd /opt/agentobox/mcps/agent-manager && npm install && npm run build
+
+# ── Agento config templates ──────────────────────────────────────────────────
+COPY docker/agento /opt/agentobox/agento
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+COPY docker/agento-entrypoint.sh /opt/agentobox/entrypoint.sh
+RUN chmod +x /opt/agentobox/entrypoint.sh
+
+# ── User + workspace ─────────────────────────────────────────────────────────
+RUN useradd -m -s /bin/bash abox && \
+    groupadd -f docker && usermod -aG docker abox && \
+    mkdir -p /home/abox/.claude /home/abox/workspace && \
+    chown -R abox:abox /home/abox
+
+ENV ABOX_WORKSPACE="/home/abox/workspace"
+
+ENTRYPOINT ["/opt/agentobox/entrypoint.sh"]
