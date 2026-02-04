@@ -155,7 +155,7 @@ function CommandPanel({
               <span className="text-accent font-bold text-lg">A</span>
             </div>
             <h1 className="text-lg font-bold text-foreground tracking-tight">
-              AgentBox
+              agentobox
             </h1>
           </div>
           <button

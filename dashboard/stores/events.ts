@@ -1,5 +1,21 @@
 import { create } from 'zustand';
 import type { AgentEvent, AgentStatus } from '@/types';
+import { useAgentStore } from './agents';
+
+/** Derive latest status per agent from events and sync to agent store */
+function syncAgentStatus(bentoId: string, events: AgentEvent[]) {
+  const latest = new Map<string, AgentEvent>();
+  for (const event of events) {
+    const existing = latest.get(event.agent);
+    if (!existing || new Date(event.ts) > new Date(existing.ts)) {
+      latest.set(event.agent, event);
+    }
+  }
+  const { updateAgent } = useAgentStore.getState();
+  for (const [name, event] of latest) {
+    updateAgent(bentoId, name, { status: event.state, message: event.msg });
+  }
+}
 
 interface EventFilters {
   agents: string[];
@@ -27,18 +43,25 @@ export const useEventStore = create<EventStore>()((set, get) => ({
   events: {},
   filters: defaultFilters,
 
-  setEvents: (bentoId, events) =>
+  setEvents: (bentoId, events) => {
     set((state) => ({
       events: { ...state.events, [bentoId]: events },
-    })),
+    }));
+    syncAgentStatus(bentoId, events);
+  },
 
-  addEvent: (bentoId, event) =>
+  addEvent: (bentoId, event) => {
     set((state) => ({
       events: {
         ...state.events,
-        [bentoId]: [event, ...(state.events[bentoId] || [])].slice(0, 100), // Cap at 100
+        [bentoId]: [event, ...(state.events[bentoId] || [])].slice(0, 100),
       },
-    })),
+    }));
+    useAgentStore.getState().updateAgent(bentoId, event.agent, {
+      status: event.state,
+      message: event.msg,
+    });
+  },
 
   getEventsForBento: (bentoId) => get().events[bentoId] || [],
 
