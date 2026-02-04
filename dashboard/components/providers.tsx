@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBentoStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
 import { mockBentos, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
 import { useAgentPoller } from '@/hooks/use-agent-poller';
+import { useEventPoller } from '@/hooks/use-event-poller';
 import { ThemeProvider } from './theme-provider';
 
 function StoreInitializer() {
@@ -28,8 +29,9 @@ function StoreInitializer() {
     }
   }, [setBentos, setAgents, setEvents, setMessages]);
 
-  // Poll live agent state — overwrites mock agents for bento-1
+  // Poll live state — overwrites mock data for bento-1
   useAgentPoller('bento-1');
+  useEventPoller('bento-1');
 
   return null;
 }

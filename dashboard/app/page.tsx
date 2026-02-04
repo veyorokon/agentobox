@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Send, Pause, Square } from 'lucide-react';
-import { useAgentStore, useChatStore } from '@/stores';
-import type { Agent, AgentStatus, ChatMessage } from '@/types';
+import { Monitor, Send, Pause, Square, Search } from 'lucide-react';
+import { useAgentStore, useChatStore, useEventStore } from '@/stores';
+import type { Agent, AgentStatus, AgentEvent, ChatMessage } from '@/types';
 
 const BENTO_ID = 'bento-1';
 const THEMES = ['cyberpunk', 'retro', 'rose-pine'] as const;
@@ -101,6 +101,8 @@ export default function DashboardPage() {
    Command Panel (left sidebar)
    ================================================================ */
 
+type PanelTab = 'agento' | 'feed' | (string & {});
+
 function CommandPanel({
   agents,
   theme,
@@ -112,26 +114,51 @@ function CommandPanel({
 }) {
   const messages = useChatStore((s) => s.messages[BENTO_ID]) ?? [];
   const addMessage = useChatStore((s) => s.addMessage);
+  const [activeTab, setActiveTab] = useState<PanelTab>('agento');
   const [input, setInput] = useState('');
+  const [feedFilter, setFeedFilter] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Clear input when switching tabs
+  const switchTab = useCallback((tab: PanelTab) => {
+    setActiveTab(tab);
+    setInput('');
+    setFeedFilter('');
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    if (activeTab === 'agento') {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, activeTab]);
+
+  const isAgentTab = activeTab !== 'agento' && activeTab !== 'feed';
+  const selectedAgent = isAgentTab ? agents.find(a => a.name === activeTab) : null;
 
   const handleSend = () => {
     const text = input.trim();
     if (!text) return;
-    addMessage(BENTO_ID, { role: 'user', content: text });
+    if (activeTab === 'agento') {
+      addMessage(BENTO_ID, { role: 'user', content: text });
+    }
+    // Agent tab send_keys will be wired later
     setInput('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      if (activeTab === 'feed') return; // feed uses filter, no send
       handleSend();
     }
   };
+
+  const inputPrefix = activeTab === 'feed' ? '/' : '>';
+  const inputPlaceholder = activeTab === 'feed'
+    ? 'Filter events...'
+    : activeTab === 'agento'
+      ? 'Message agento...'
+      : `Message ${activeTab}...`;
 
   return (
     <aside
@@ -181,7 +208,12 @@ function CommandPanel({
         </p>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {agents.map((agent) => (
-            <RosterBadge key={agent.name} agent={agent} />
+            <RosterBadge
+              key={agent.name}
+              agent={agent}
+              isSelected={activeTab === agent.name}
+              onClick={() => switchTab(agent.name)}
+            />
           ))}
           {agents.length === 0 && (
             <p className="text-muted-foreground text-xs">No agents deployed</p>
@@ -189,25 +221,46 @@ function CommandPanel({
         </div>
       </div>
 
-      {/* Divider */}
-      <div className="mx-5 border-t" style={{ borderColor: 'var(--border)' }} />
+      {/* Tab Bar */}
+      <PanelTabs
+        active={activeTab}
+        selectedAgent={selectedAgent}
+        onSelect={switchTab}
+      />
 
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin px-5 py-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="flex-1 flex items-center justify-center h-full">
-            <p className="text-muted-foreground text-xs text-center leading-relaxed">
-              Send a message to start<br />orchestrating your agents
-            </p>
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {activeTab === 'agento' && (
+          <div className="px-5 py-4 space-y-4">
+            {messages.length === 0 && (
+              <div className="flex-1 flex items-center justify-center h-32">
+                <p className="text-muted-foreground text-xs text-center leading-relaxed">
+                  Send a message to start<br />orchestrating your agents
+                </p>
+              </div>
+            )}
+            {messages.map((msg) => (
+              <ChatBubble key={msg.id} message={msg} />
+            ))}
+            <div ref={messagesEndRef} />
           </div>
         )}
-        {messages.map((msg) => (
-          <ChatBubble key={msg.id} message={msg} />
-        ))}
-        <div ref={messagesEndRef} />
+        {activeTab === 'feed' && (
+          <EventFeed filter={feedFilter} onSelectAgent={switchTab} />
+        )}
+        {isAgentTab && (
+          <div className="px-5 py-4">
+            <div className="flex-1 flex items-center justify-center h-32">
+              <p className="text-muted-foreground text-xs text-center leading-relaxed">
+                Direct messaging coming soon.<br />
+                <span className="text-[10px]">Agent: {activeTab}</span>
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Chat Input */}
+      {/* Input Bar */}
       <div className="px-5 pb-5 pt-2">
         <div className="flex items-center gap-2">
           <div
@@ -221,31 +274,46 @@ function CommandPanel({
             } as React.CSSProperties}
           >
             <div className="flex items-center">
-              <span className="text-accent font-mono text-sm pl-3 select-none">&gt;</span>
+              <span className="text-accent font-mono text-sm pl-3 select-none">{inputPrefix}</span>
               <input
                 type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
+                value={activeTab === 'feed' ? feedFilter : input}
+                onChange={(e) => activeTab === 'feed' ? setFeedFilter(e.target.value) : setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Message agento..."
+                placeholder={inputPlaceholder}
                 className="w-full bg-transparent text-foreground font-mono text-sm px-2 py-2.5 placeholder:text-muted-foreground focus:outline-none"
               />
             </div>
           </div>
-          <button
-            onClick={handleSend}
-            data-augmented-ui="tl-clip br-clip border"
-            className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-accent transition-colors"
-            style={{
-              '--aug-tl': '6px',
-              '--aug-br': '6px',
-              '--aug-border-all': '1px',
-              '--aug-border-bg': 'var(--border)',
-            } as React.CSSProperties}
-            title="Send"
-          >
-            <Send className="w-4 h-4" />
-          </button>
+          {activeTab !== 'feed' ? (
+            <button
+              onClick={handleSend}
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-accent transition-colors"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+              title="Send"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          ) : (
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-9 h-9 flex items-center justify-center text-muted-foreground"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <Search className="w-4 h-4" />
+            </div>
+          )}
         </div>
       </div>
     </aside>
@@ -253,14 +321,167 @@ function CommandPanel({
 }
 
 /* ================================================================
+   Panel Tabs
+   ================================================================ */
+
+function PanelTabs({
+  active,
+  selectedAgent,
+  onSelect,
+}: {
+  active: PanelTab;
+  selectedAgent: Agent | null | undefined;
+  onSelect: (tab: PanelTab) => void;
+}) {
+  const tabClass = (tab: PanelTab) =>
+    `px-3 py-2 text-[10px] font-bold font-mono uppercase tracking-wider transition-colors ${
+      active === tab
+        ? 'text-accent'
+        : 'text-muted-foreground hover:text-foreground'
+    }`;
+
+  return (
+    <div
+      className="flex items-center gap-0 mx-5"
+      style={{ borderBottom: '1px solid var(--border)' }}
+    >
+      <button className={tabClass('agento')} onClick={() => onSelect('agento')}>
+        <span style={active === 'agento' ? { borderBottom: '2px solid var(--accent)', paddingBottom: '6px' } : undefined}>
+          Agento
+        </span>
+      </button>
+      <button className={tabClass('feed')} onClick={() => onSelect('feed')}>
+        <span style={active === 'feed' ? { borderBottom: '2px solid var(--accent)', paddingBottom: '6px' } : undefined}>
+          Feed
+        </span>
+      </button>
+      {selectedAgent && (
+        <button
+          className={tabClass(selectedAgent.name)}
+          onClick={() => onSelect(selectedAgent.name)}
+        >
+          <span
+            style={{
+              color: active === selectedAgent.name ? STATUS_COLOR_VAR[selectedAgent.status] : undefined,
+              borderBottom: active === selectedAgent.name ? `2px solid ${STATUS_COLOR_VAR[selectedAgent.status]}` : undefined,
+              paddingBottom: active === selectedAgent.name ? '6px' : undefined,
+            }}
+          >
+            {selectedAgent.name}
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================
+   Event Feed (live log stream)
+   ================================================================ */
+
+function formatEventTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+const STATE_SYMBOLS: Record<AgentStatus, string> = {
+  idle: '\u25CB',      // ○
+  working: '\u25CF',   // ●
+  completed: '\u2713', // ✓
+  blocked: '\u26A0',   // ⚠
+  dead: '\u2717',      // ✗
+};
+
+function EventFeed({ filter, onSelectAgent }: { filter: string; onSelectAgent: (name: string) => void }) {
+  const events = useEventStore((s) => s.events[BENTO_ID]) ?? [];
+  const feedRef = useRef<HTMLDivElement>(null);
+  const [userScrolled, setUserScrolled] = useState(false);
+
+  // Auto-scroll unless user scrolled up
+  useEffect(() => {
+    if (!userScrolled && feedRef.current) {
+      feedRef.current.scrollTop = feedRef.current.scrollHeight;
+    }
+  }, [events.length, userScrolled]);
+
+  const handleScroll = () => {
+    if (!feedRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = feedRef.current;
+    const atBottom = scrollHeight - scrollTop - clientHeight < 40;
+    setUserScrolled(!atBottom);
+  };
+
+  const filtered = filter
+    ? events.filter(e =>
+        e.agent.toLowerCase().includes(filter.toLowerCase()) ||
+        e.msg.toLowerCase().includes(filter.toLowerCase()) ||
+        e.state.toLowerCase().includes(filter.toLowerCase())
+      )
+    : events;
+
+  // Show newest last (chronological)
+  const sorted = [...filtered].sort((a, b) => a.ts.localeCompare(b.ts));
+
+  if (sorted.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-32">
+        <p className="text-muted-foreground text-xs text-center">
+          {filter ? 'No matching events' : 'No events yet'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={feedRef}
+      onScroll={handleScroll}
+      className="h-full overflow-y-auto scrollbar-thin"
+    >
+      {sorted.map((event, i) => (
+        <div
+          key={`${event.ts}-${event.agent}-${i}`}
+          className="flex items-start gap-2 px-5 py-1.5 hover:bg-surface-inset/50 transition-colors group"
+        >
+          <span className="text-muted-foreground text-[10px] font-mono w-14 flex-shrink-0 pt-px">
+            {formatEventTime(event.ts)}
+          </span>
+          <button
+            onClick={() => onSelectAgent(event.agent)}
+            className="text-[11px] font-mono font-bold w-16 flex-shrink-0 truncate text-left hover:underline pt-px"
+            style={{ color: STATUS_COLOR_VAR[event.state] }}
+          >
+            {event.agent}
+          </button>
+          <span
+            className="text-[11px] flex-shrink-0 pt-px"
+            style={{ color: STATUS_COLOR_VAR[event.state] }}
+            title={event.state}
+          >
+            {STATE_SYMBOLS[event.state]}
+          </span>
+          <span className="text-foreground text-xs font-mono truncate pt-px">
+            {event.msg || event.state}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ================================================================
    Roster badge (compact agent status in command panel)
    ================================================================ */
 
-function RosterBadge({ agent }: { agent: Agent }) {
+function RosterBadge({ agent, isSelected, onClick }: { agent: Agent; isSelected: boolean; onClick: () => void }) {
   const color = STATUS_COLOR_VAR[agent.status];
 
   return (
-    <div className="flex items-center gap-1.5 py-0.5">
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 py-0.5 hover:opacity-80 transition-opacity"
+      style={isSelected ? { textDecoration: 'underline', textUnderlineOffset: '2px' } : undefined}
+    >
       <span
         className="w-1.5 h-1.5 rounded-full flex-shrink-0"
         style={{ background: color }}
@@ -271,7 +492,7 @@ function RosterBadge({ agent }: { agent: Agent }) {
       >
         {agent.name}
       </span>
-    </div>
+    </button>
   );
 }
 
