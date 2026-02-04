@@ -39,6 +39,7 @@ export const mockAgents: Record<string, Agent[]> = {
       message: 'browsing competitor websites',
       createdAt: minutesAgo(45),
       lastActivity: minutesAgo(2),
+      vncUrl: 'https://localhost:6902',
     },
     {
       name: 'researcher',

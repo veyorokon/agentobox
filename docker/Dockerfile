@@ -23,7 +23,7 @@ RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_a
     && find /opt/google/chrome/locales -type f ! -name 'en-US.pak' -delete 2>/dev/null || true \
     # Wrap Chrome binary to always pass --no-sandbox (required in Docker)
     && mv /opt/google/chrome/google-chrome /opt/google/chrome/google-chrome-real \
-    && printf '#!/bin/bash\nexec /opt/google/chrome/google-chrome-real --no-sandbox --no-first-run --no-default-browser-check "$@"\n' \
+    && printf '#!/bin/bash\nexec /opt/google/chrome/google-chrome-real --no-sandbox --no-first-run --no-default-browser-check --start-fullscreen "$@"\n' \
        > /opt/google/chrome/google-chrome \
     && chmod +x /opt/google/chrome/google-chrome
 

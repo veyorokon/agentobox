@@ -31,6 +31,7 @@ export function dockerRun(name: string, vncPort: number, authEnvs: string[][] = 
       '-p', `${vncPort}:6901`,
       '-e', 'KASM_IP_BLACKLIST=off',
       '-e', 'VNC_PW=password',
+      '-e', 'VNC_RESOLUTION=1024x768',
       ...authEnvs.flat(),
       DOCKER_IMAGE,
     ], {encoding: 'utf-8'});

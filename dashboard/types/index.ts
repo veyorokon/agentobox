@@ -6,6 +6,7 @@ export interface Agent {
   message: string;
   createdAt: string;
   lastActivity: string;
+  vncUrl?: string;
 }
 
 export interface Bento {

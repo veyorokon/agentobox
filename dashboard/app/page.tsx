@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Monitor, Send, Pause, Square } from 'lucide-react';
 import { useAgentStore } from '@/stores';
 import type { Agent, AgentStatus } from '@/types';
@@ -118,24 +118,28 @@ function AgentCard({ agent }: { agent: Agent }) {
 
   return (
     <div
-      data-augmented-ui="tl-clip br-clip border"
-      className="bg-card backdrop-blur"
+      data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
+      className="bg-card backdrop-blur overflow-hidden"
       style={{
         '--aug-tl': '20px',
+        '--aug-tr': '20px',
         '--aug-br': '20px',
+        '--aug-bl': '20px',
         '--aug-border-all': '1px',
         '--aug-border-bg': isWorking ? 'var(--agent-border-active)' : 'var(--agent-border)',
       } as React.CSSProperties}
     >
       <div className="p-5">
         {/* Header: avatar + name/status + controls */}
-        <div className="flex items-center gap-3 mb-2">
+        <div className="flex items-center gap-3 mb-3">
           <div
-            data-augmented-ui="tl-clip br-clip border"
+            data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
             className="w-10 h-10 flex items-center justify-center flex-shrink-0"
             style={{
               '--aug-tl': '7px',
+              '--aug-tr': '7px',
               '--aug-br': '7px',
+              '--aug-bl': '7px',
               '--aug-border-all': '2px',
               '--aug-border-bg': statusColor,
               background: isWorking ? 'var(--agent-glow)' : 'transparent',
@@ -145,11 +149,14 @@ function AgentCard({ agent }: { agent: Agent }) {
               {agent.name.slice(0, 2)}
             </span>
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0">
             <h3 className="font-bold text-card-foreground text-sm capitalize leading-tight">{agent.name}</h3>
             <StatusBadge status={agent.status} />
           </div>
-          <div className="flex items-center gap-1.5">
+          <p className="flex-1 text-muted-foreground text-xs text-center truncate">
+            {agent.message || 'Waiting for instructions...'}
+          </p>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               title="Pause"
@@ -165,35 +172,49 @@ function AgentCard({ agent }: { agent: Agent }) {
           </div>
         </div>
 
-        {/* Current activity */}
-        <p className="text-muted-foreground text-xs text-center mb-3 truncate">
-          {agent.message || 'Waiting for instructions...'}
-        </p>
-
         {/* VNC Stream */}
         <div
-          data-augmented-ui="tl-clip br-clip"
-          className="aspect-video bg-surface-inset flex items-center justify-center"
-          style={{
-            '--aug-tl': '12px',
-            '--aug-br': '12px',
-          } as React.CSSProperties}
+          className="aspect-[4/3] bg-surface-inset overflow-hidden"
         >
-          <div className="text-center">
-            <Monitor className="w-6 h-6 text-muted-foreground mx-auto mb-1.5" />
-            <span className="text-muted-foreground text-[10px] uppercase tracking-wider">VNC Stream</span>
-          </div>
+          {agent.vncUrl ? (
+            <VncFrame url={agent.vncUrl} />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="text-center">
+                <Monitor className="w-6 h-6 text-muted-foreground mx-auto mb-1.5" />
+                <span className="text-muted-foreground text-[10px] uppercase tracking-wider">VNC Stream</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Chat input */}
         <div className="mt-3 flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Send a message..."
-            className="flex-1 bg-surface-inset text-foreground text-sm px-3 py-2 rounded-lg border border-border placeholder:text-muted-foreground focus:outline-none focus:border-accent"
-          />
+          <div
+            data-augmented-ui="tl-clip br-clip border"
+            className="flex-1"
+            style={{
+              '--aug-tl': '8px',
+              '--aug-br': '8px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': 'var(--border)',
+            } as React.CSSProperties}
+          >
+            <input
+              type="text"
+              placeholder="Send a message..."
+              className="w-full bg-transparent text-foreground text-sm px-3 py-2 placeholder:text-muted-foreground focus:outline-none"
+            />
+          </div>
           <button
+            data-augmented-ui="tl-clip br-clip border"
             className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-accent transition-colors"
+            style={{
+              '--aug-tl': '6px',
+              '--aug-br': '6px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': 'var(--border)',
+            } as React.CSSProperties}
             title="Send"
           >
             <Send className="w-4 h-4" />
@@ -201,6 +222,25 @@ function AgentCard({ agent }: { agent: Agent }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function VncFrame({ url }: { url: string }) {
+  const [retryKey, setRetryKey] = useState(0);
+
+  const handleError = useCallback(() => {
+    // Retry after 3 seconds
+    setTimeout(() => setRetryKey((k) => k + 1), 3000);
+  }, []);
+
+  return (
+    <iframe
+      key={retryKey}
+      src={`${url}/?autoconnect=1&resize=scale&password=password`}
+      className="w-full h-full border-0"
+      allow="clipboard-read; clipboard-write"
+      onError={handleError}
+    />
   );
 }
 
