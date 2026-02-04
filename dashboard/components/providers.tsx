@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useBentoStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
 import { mockBentos, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
+import { useAgentPoller } from '@/hooks/use-agent-poller';
 import { ThemeProvider } from './theme-provider';
 
 function StoreInitializer() {
@@ -12,7 +13,6 @@ function StoreInitializer() {
   const setMessages = useChatStore((s) => s.setMessages);
 
   useEffect(() => {
-    // Initialize with mock data
     setBentos(mockBentos);
 
     for (const [bentoId, agents] of Object.entries(mockAgents)) {
@@ -27,6 +27,9 @@ function StoreInitializer() {
       setMessages(bentoId, messages);
     }
   }, [setBentos, setAgents, setEvents, setMessages]);
+
+  // Poll live agent state — overwrites mock agents for bento-1
+  useAgentPoller('bento-1');
 
   return null;
 }

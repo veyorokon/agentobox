@@ -6,7 +6,7 @@ import { useAgentStore, useChatStore } from '@/stores';
 import type { Agent, AgentStatus, ChatMessage } from '@/types';
 
 const BENTO_ID = 'bento-1';
-const THEMES = ['cyberpunk', 'retro'] as const;
+const THEMES = ['cyberpunk', 'retro', 'rose-pine'] as const;
 type Theme = typeof THEMES[number];
 
 const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
@@ -400,7 +400,7 @@ function AgentCard({ agent }: { agent: Agent }) {
 
         {/* VNC Stream */}
         <div className="aspect-[4/3] bg-surface-inset overflow-hidden">
-          {agent.vncUrl ? (
+          {agent.vncUrl && agent.status !== 'dead' ? (
             <VncFrame url={agent.vncUrl} />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
@@ -421,31 +421,39 @@ function AgentCard({ agent }: { agent: Agent }) {
    ================================================================ */
 
 function VncFrame({ url }: { url: string }) {
+  const [connected, setConnected] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const [loaded, setLoaded] = useState(false);
 
-  // Retry every 5s until loaded, then stop
+  // Poll VNC server until reachable, then render iframe
   useEffect(() => {
-    if (loaded) return;
-    const interval = setInterval(() => {
-      setRetryKey((k) => k + 1);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [loaded]);
+    setConnected(false);
+    let cancelled = false;
+    const check = async () => {
+      try {
+        await fetch(url, { mode: 'no-cors' });
+        if (!cancelled) setConnected(true);
+      } catch {
+        if (!cancelled) setTimeout(check, 3000);
+      }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [url, retryKey]);
 
-  // Reset on URL change
-  useEffect(() => {
-    setLoaded(false);
-    setRetryKey((k) => k + 1);
-  }, [url]);
+  if (!connected) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
+        Connecting to VNC...
+      </div>
+    );
+  }
 
   return (
     <iframe
-      key={retryKey}
       src={`${url}/?autoconnect=1&resize=scale&password=password`}
       className="w-full h-full border-0"
       allow="clipboard-read; clipboard-write"
-      onLoad={() => setLoaded(true)}
+      onError={() => { setConnected(false); }}
     />
   );
 }

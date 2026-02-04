@@ -25,3 +25,11 @@ user_pref("browser.newtabpage.enabled", false);
 user_pref("browser.tabs.warnOnClose", false);
 user_pref("browser.aboutwelcome.enabled", false);
 user_pref("privacy.firstparty.isolate", false);
+
+// Force dark mode (system + content + Firefox chrome)
+user_pref("ui.systemUsesDarkTheme", 1);
+user_pref("layout.css.prefers-color-scheme.content-override", 0);
+user_pref("extensions.activeThemeID", "firefox-compact-dark@mozilla.org");
+user_pref("browser.theme.content-theme", 0);
+user_pref("browser.theme.toolbar-theme", 0);
+user_pref("widget.content.allow-gtk-dark-theme", true);

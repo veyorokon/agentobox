@@ -18,6 +18,9 @@ chmod +x /usr/bin/startxfce4
 sed -i 's/-sslOnly//g' /dockerstartup/vnc_startup.sh
 sed -i 's/require_ssl: true/require_ssl: false/g' /usr/share/kasmvnc/kasmvnc_defaults.yaml
 
+# ── Hide KasmVNC error dialog (shows on disconnect — we handle it in the dashboard) ─
+sed -i 's|id=noVNC_fallback_error class=noVNC_center|id=noVNC_fallback_error class=noVNC_center style="display:none!important"|g' /usr/share/kasmvnc/www/index.html
+
 # ── Start Kasm desktop (VNC + desktop environment) ──────────────────────────
 /dockerstartup/kasm_default_profile.sh
 /dockerstartup/vnc_startup.sh &

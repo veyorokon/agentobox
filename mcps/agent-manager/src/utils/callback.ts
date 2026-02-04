@@ -144,7 +144,39 @@ function notifyWaiters(name: string, result?: string): void {
 
 // ── Request handler ─────────────────────────────────────────────────────────
 
+function setCors(res: ServerResponse): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  setCors(res);
+
+  // OPTIONS preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // GET /agents — live agent state for dashboard polling
+  if (req.method === 'GET' && req.url === '/agents') {
+    const list = Array.from(agents.values()).map(a => ({
+      name: a.name,
+      status: a.status,
+      task: a.task,
+      currentTask: a.currentTask ?? '',
+      lastEvent: a.lastEvent?.msg ?? '',
+      vncPort: a.vncPort,
+      vncUrl: `http://localhost:${a.vncPort}`,
+      uptime: Math.round((Date.now() - a.createdAt) / 1000),
+    }));
+    res.writeHead(200, {'Content-Type': 'application/json'});
+    res.end(JSON.stringify({agents: list, count: list.length}));
+    return;
+  }
+
   // POST /event — unified event ingestion
   if (req.method === 'POST' && req.url === '/event') {
     try {

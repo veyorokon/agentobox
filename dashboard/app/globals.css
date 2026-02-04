@@ -143,6 +143,50 @@
 }
 
 /* ============================================
+   Rose Pine Moon theme
+   Palette: base, surface, overlay, text, subtle, muted,
+            love, gold, foam, iris
+   ============================================ */
+[data-theme="rose-pine"] {
+  --background: #232136;
+  --foreground: #e0def4;
+  --card: rgba(42, 39, 63, 0.8);
+  --card-foreground: #e0def4;
+  --popover: #393552;
+  --popover-foreground: #e0def4;
+  --surface: #2a273f;
+  --surface-inset: #1e1b30;
+
+  --primary: #e0def4;
+  --primary-foreground: #232136;
+  --secondary: #393552;
+  --secondary-foreground: #e0def4;
+  --accent: #c4a7e7;
+  --accent-foreground: #232136;
+
+  --muted: #393552;
+  --muted-foreground: #6e6a86;
+
+  --destructive: #eb6f92;
+  --destructive-foreground: #e0def4;
+
+  --border: rgba(224, 222, 244, 0.12);
+  --border-subtle: rgba(224, 222, 244, 0.06);
+  --input: rgba(224, 222, 244, 0.12);
+  --ring: rgba(196, 167, 231, 0.3);
+
+  --agent-active: #9ccfd8;
+  --agent-idle: #6e6a86;
+  --agent-completed: #9ccfd8;
+  --agent-blocked: #f6c177;
+  --agent-dead: #eb6f92;
+
+  --agent-border: rgba(224, 222, 244, 0.2);
+  --agent-border-active: #c4a7e7;
+  --agent-glow: rgba(196, 167, 231, 0.12);
+}
+
+/* ============================================
    Tailwind theme mapping
    ============================================ */
 @theme inline {

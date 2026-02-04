@@ -14,6 +14,8 @@
   --toolbar-bgcolor: #232136 !important;
   --toolbar-color: #e0def4 !important;
   --toolbarbutton-icon-fill: #c4a7e7 !important;
+  --arrowpanel-background: #2a273f !important;
+  --arrowpanel-color: #e0def4 !important;
   --arrowpanel-border-color: #393552 !important;
   --tab-selected-bgcolor: #2a273f !important;
   --tab-selected-textcolor: #e0def4 !important;
@@ -49,4 +51,51 @@
 /* Placeholder text */
 #urlbar .urlbar-input::placeholder {
   color: #6e6a86 !important;
+}
+
+/* Force dark scheme on all popups/panels so GTK doesn't override */
+panel,
+menupopup,
+#appMenu-popup,
+#appMenu-popup panelview,
+#appMenu-popup .panel-subview-body,
+#appMenu-popup toolbarbutton,
+#appMenu-popup .subviewbutton,
+.panel-subview,
+.panel-subview toolbarbutton,
+panelview {
+  appearance: none !important;
+  -moz-appearance: none !important;
+  background-color: #2a273f !important;
+  color: #e0def4 !important;
+  color-scheme: dark !important;
+}
+/* All text and labels inside panels */
+panel *,
+menupopup *,
+#appMenu-popup *,
+.panel-subview * {
+  color: #e0def4 !important;
+  fill: #e0def4 !important;
+  -moz-context-properties: fill, fill-opacity !important;
+}
+/* Separators */
+#appMenu-popup toolbarseparator,
+.panel-subview toolbarseparator,
+menuseparator {
+  border-color: #393552 !important;
+  background-color: transparent !important;
+}
+/* Hover state */
+#appMenu-popup toolbarbutton:hover,
+#appMenu-popup .subviewbutton:hover,
+.panel-subview toolbarbutton:hover,
+menuitem:hover,
+menu:hover {
+  background-color: #393552 !important;
+}
+/* Icon fills on hover — iris accent */
+#appMenu-popup toolbarbutton:hover *,
+#appMenu-popup .subviewbutton:hover * {
+  fill: #c4a7e7 !important;
 }
