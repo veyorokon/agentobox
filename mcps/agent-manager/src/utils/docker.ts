@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {DOCKER_IMAGE, TMUX_PREFIX, ABOX_NETWORK} from '../types.js';
+import {DOCKER_IMAGE, TMUX_PREFIX, ABOX_NETWORK, AGENTO_HOSTNAME, CALLBACK_PORT} from '../types.js';
 
 function containerName(name: string): string {
   return `${TMUX_PREFIX}-${name}`;
@@ -31,7 +31,9 @@ export function dockerRun(name: string, vncPort: number, authEnvs: string[][] = 
       '-p', `${vncPort}:6901`,
       '-e', 'KASM_IP_BLACKLIST=off',
       '-e', 'VNC_PW=password',
-      '-e', 'VNC_RESOLUTION=1024x768',
+      '-e', 'VNC_RESOLUTION=1920x1080',
+      '-e', `ABOX_AGENT_NAME=${name}`,
+      '-e', `ABOX_CALLBACK_URL=http://${AGENTO_HOSTNAME}:${CALLBACK_PORT}/event`,
       ...authEnvs.flat(),
       DOCKER_IMAGE,
     ], {encoding: 'utf-8'});

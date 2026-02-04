@@ -36,14 +36,16 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'scout',
       status: 'working',
-      message: 'browsing competitor websites',
+      task: 'Browsing competitor websites',
+      message: 'Opening Netflix pricing page',
       createdAt: minutesAgo(45),
       lastActivity: minutesAgo(2),
-      vncUrl: 'https://localhost:6902',
+      vncUrl: 'http://localhost:6902',
     },
     {
       name: 'researcher',
       status: 'completed',
+      task: 'Compiling research notes',
       message: '',
       createdAt: minutesAgo(60),
       lastActivity: minutesAgo(15),
@@ -51,6 +53,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'writer',
       status: 'idle',
+      task: '',
       message: 'waiting for content brief',
       createdAt: minutesAgo(30),
       lastActivity: minutesAgo(20),
@@ -58,6 +61,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'deployer',
       status: 'blocked',
+      task: 'Setting up staging environment',
       message: 'waiting for AWS credentials',
       createdAt: minutesAgo(35),
       lastActivity: minutesAgo(10),
@@ -65,6 +69,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'auditor',
       status: 'dead',
+      task: 'Running accessibility audit',
       message: 'process killed — out of memory',
       createdAt: minutesAgo(50),
       lastActivity: minutesAgo(25),
@@ -74,6 +79,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'analyst',
       status: 'blocked',
+      task: 'Gathering competitor profiles',
       message: 'need login credentials for LinkedIn',
       createdAt: minutesAgo(25),
       lastActivity: minutesAgo(8),
@@ -81,7 +87,8 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'scraper',
       status: 'working',
-      message: 'extracting pricing data from ProductHunt',
+      task: 'Extracting pricing data',
+      message: 'Scrolling ProductHunt pricing table',
       createdAt: minutesAgo(20),
       lastActivity: minutesAgo(1),
     },
@@ -90,6 +97,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'extractor',
       status: 'completed',
+      task: 'Exporting final CSV',
       message: '',
       createdAt: minutesAgo(180),
       lastActivity: minutesAgo(90),
@@ -97,6 +105,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'validator',
       status: 'completed',
+      task: 'Validating data integrity',
       message: '',
       createdAt: minutesAgo(150),
       lastActivity: minutesAgo(85),
@@ -104,6 +113,7 @@ export const mockAgents: Record<string, Agent[]> = {
     {
       name: 'loader',
       status: 'completed',
+      task: 'Inserting batch 5/5',
       message: '',
       createdAt: minutesAgo(120),
       lastActivity: minutesAgo(80),

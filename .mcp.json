@@ -7,7 +7,17 @@
     "agentobox-agent-manager": {
       "type": "stdio",
       "command": "node",
-      "args": ["mcps/agent-manager/dist/main.js"]
+      "args": [
+        "mcps/agent-manager/dist/main.js"
+      ]
+    },
+    "demodash-computer-use": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/Users/veyorokon/Projects/ai/mine/demodash/mcp-servers/computer-use/dist/main.js"
+      ],
+      "env": {}
     }
   }
 }

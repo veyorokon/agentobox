@@ -149,7 +149,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (req.method === 'POST' && req.url === '/event') {
     try {
       const body = await readBody(req);
-      const data = JSON.parse(body) as {agent?: string; state?: string; msg?: string};
+      const data = JSON.parse(body) as {agent?: string; state?: string; msg?: string; task?: string};
       const name = data.agent;
 
       if (!name) {
@@ -179,10 +179,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (agent) {
         agent.status = state;
         agent.lastEvent = event;
+        if (data.task) {
+          agent.currentTask = data.task.slice(0, 100);
+        }
         if (state === 'completed') {
           agent.completedAt = Date.now();
         }
-        console.error(`[event] ${name}: ${state}${event.msg ? ` — ${event.msg}` : ''}`);
+        console.error(`[event] ${name}: ${state}${data.task ? ` [${data.task}]` : ''}${event.msg ? ` — ${event.msg}` : ''}`);
       }
 
       // Fire waiters on completion

@@ -2,26 +2,17 @@
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {createServer} from './index.js';
 import {agents, recoverAgents} from './tools/agents.js';
-import {tmuxKill} from './utils/tmux.js';
-import {dockerStop, dockerRm} from './utils/docker.js';
 import {startCallbackServer} from './utils/callback.js';
 
-function cleanupAll(): void {
-  for (const [name, agent] of agents) {
-    try { tmuxKill(name); } catch { /* ignore */ }
-    try { dockerStop(name); } catch { /* ignore */ }
-    try { dockerRm(name); } catch { /* ignore */ }
-    agents.delete(name);
-  }
-}
-
 function setupSignalHandlers(): void {
+  // Agents persist across MCP restarts — recoverAgents() re-discovers them.
+  // Only clean up the in-memory map, not the containers.
   process.on('SIGINT', () => {
-    cleanupAll();
+    agents.clear();
     process.exit(0);
   });
   process.on('SIGTERM', () => {
-    cleanupAll();
+    agents.clear();
     process.exit(0);
   });
 }

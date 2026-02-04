@@ -374,9 +374,14 @@ function AgentCard({ agent }: { agent: Agent }) {
             <h3 className="font-bold text-card-foreground text-sm capitalize leading-tight">{agent.name}</h3>
             <StatusBadge status={agent.status} />
           </div>
-          <p className="flex-1 text-muted-foreground text-xs text-center truncate">
-            {agent.message || 'Waiting for instructions...'}
-          </p>
+          <div className="flex-1 min-w-0 text-center">
+            {agent.task && (
+              <p className="text-card-foreground text-xs truncate">{agent.task}</p>
+            )}
+            <p className="text-muted-foreground text-[10px] truncate">
+              {agent.message || (agent.task ? '' : 'Waiting for instructions...')}
+            </p>
+          </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
@@ -417,10 +422,22 @@ function AgentCard({ agent }: { agent: Agent }) {
 
 function VncFrame({ url }: { url: string }) {
   const [retryKey, setRetryKey] = useState(0);
+  const [loaded, setLoaded] = useState(false);
 
-  const handleError = useCallback(() => {
-    setTimeout(() => setRetryKey((k) => k + 1), 3000);
-  }, []);
+  // Retry every 5s until loaded, then stop
+  useEffect(() => {
+    if (loaded) return;
+    const interval = setInterval(() => {
+      setRetryKey((k) => k + 1);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [loaded]);
+
+  // Reset on URL change
+  useEffect(() => {
+    setLoaded(false);
+    setRetryKey((k) => k + 1);
+  }, [url]);
 
   return (
     <iframe
@@ -428,7 +445,7 @@ function VncFrame({ url }: { url: string }) {
       src={`${url}/?autoconnect=1&resize=scale&password=password`}
       className="w-full h-full border-0"
       allow="clipboard-read; clipboard-write"
-      onError={handleError}
+      onLoad={() => setLoaded(true)}
     />
   );
 }

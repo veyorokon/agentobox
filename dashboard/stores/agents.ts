@@ -43,6 +43,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
           {
             name,
             status: 'idle' as AgentStatus,
+            task: '',
             message: 'Ready for tasks',
             createdAt: new Date().toISOString(),
             lastActivity: new Date().toISOString(),

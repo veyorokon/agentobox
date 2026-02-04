@@ -43,7 +43,7 @@ async function waitForPort(name: string, port = 8808, timeoutMs = 60000): Promis
       dockerExec(name, ['bash', '-c', `timeout 1 bash -c '</dev/tcp/localhost/${port}'`], 'kasm-user');
       return true;
     } catch {
-      await sleep(2000);
+      await sleep(1000);
     }
   }
   return false;
@@ -164,7 +164,7 @@ export function registerAgents(server: McpServer): void {
           ready: true,
           status: 'idle',
           vncPort,
-          vncUrl: `https://localhost:${vncPort}`,
+          vncUrl: `http://localhost:${vncPort}`,
           containerId: containerId.slice(0, 12),
         });
       } catch (err) {
@@ -310,9 +310,10 @@ export function registerAgents(server: McpServer): void {
           name: a.name,
           status: a.status,
           task: a.task,
+          currentTask: a.currentTask ?? '',
           lastEvent: a.lastEvent?.msg ?? '',
           vncPort: a.vncPort,
-          vncUrl: `https://localhost:${a.vncPort}`,
+          vncUrl: `http://localhost:${a.vncPort}`,
           uptime: Math.round((Date.now() - a.createdAt) / 1000),
         };
       });

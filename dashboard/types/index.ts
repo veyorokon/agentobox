@@ -3,7 +3,8 @@ export type AgentStatus = 'idle' | 'working' | 'completed' | 'blocked' | 'dead';
 export interface Agent {
   name: string;
   status: AgentStatus;
-  message: string;
+  task: string;       // Overarching goal (from TodoWrite activeForm)
+  message: string;    // Immediate action (from computer-use intent)
   createdAt: string;
   lastActivity: string;
   vncUrl?: string;

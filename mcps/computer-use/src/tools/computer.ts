@@ -238,6 +238,7 @@ export function registerComputer(server: McpServer): void {
 				coordinate: z.array(z.number()).max(2).optional().describe('[x, y]: The x (pixels from the left edge) and y (pixels from the top edge) coordinates. Must be exactly 2 numbers.'),
 				coordinates: z.array(z.array(z.number()).length(2)).optional().describe('Array of [x, y] coordinate pairs for multi_click action. Each pair is clicked sequentially with human-like movement.'),
 				text: z.string().optional().describe('Text to type or key command to execute'),
+				intent: z.string().describe('Brief description of what you are trying to achieve with this action (e.g. "Opening Netflix pricing page"). Shown in the dashboard.'),
 			}).strict(),
 			// Note: No outputSchema because this tool returns varying content types including images
 			annotations: {
