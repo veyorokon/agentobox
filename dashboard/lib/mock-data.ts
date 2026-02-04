@@ -41,13 +41,6 @@ export const mockAgents: Record<string, Agent[]> = {
       lastActivity: minutesAgo(2),
     },
     {
-      name: 'designer',
-      status: 'working',
-      message: 'creating wireframes in Figma',
-      createdAt: minutesAgo(40),
-      lastActivity: minutesAgo(5),
-    },
-    {
       name: 'researcher',
       status: 'completed',
       message: '',
@@ -60,6 +53,20 @@ export const mockAgents: Record<string, Agent[]> = {
       message: 'waiting for content brief',
       createdAt: minutesAgo(30),
       lastActivity: minutesAgo(20),
+    },
+    {
+      name: 'deployer',
+      status: 'blocked',
+      message: 'waiting for AWS credentials',
+      createdAt: minutesAgo(35),
+      lastActivity: minutesAgo(10),
+    },
+    {
+      name: 'auditor',
+      status: 'dead',
+      message: 'process killed — out of memory',
+      createdAt: minutesAgo(50),
+      lastActivity: minutesAgo(25),
     },
   ],
   'bento-2': [

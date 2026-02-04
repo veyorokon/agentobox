@@ -1,15 +1,50 @@
 'use client';
 
-import { Activity, Monitor, MessageSquare, Cpu, HardDrive, Zap, Square } from 'lucide-react';
-import { mockAgents } from '@/lib/mock-data';
+import { useState, useEffect } from 'react';
+import { Monitor, MessageSquare, Cpu, HardDrive, Zap, Square } from 'lucide-react';
+import { useAgentStore } from '@/stores';
 import type { Agent, AgentStatus } from '@/types';
 
-// Get all agents from first bento for demo
-const agents = mockAgents['bento-1'];
+const BENTO_ID = 'bento-1';
+const THEMES = ['cyberpunk', 'retro'] as const;
+type Theme = typeof THEMES[number];
+
+const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
+  idle: 'var(--agent-idle)',
+  working: 'var(--agent-active)',
+  completed: 'var(--agent-completed)',
+  blocked: 'var(--agent-blocked)',
+  dead: 'var(--agent-dead)',
+};
+
+function useTheme() {
+  const [theme, setThemeState] = useState<Theme>('cyberpunk');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('agentbox-theme') as Theme | null;
+    if (saved && THEMES.includes(saved)) {
+      setThemeState(saved);
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+  }, []);
+
+  const setTheme = (t: Theme) => {
+    setThemeState(t);
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem('agentbox-theme', t);
+  };
+
+  return { theme, setTheme };
+}
 
 export default function DashboardPage() {
+  const agents = useAgentStore((s) => s.getAgentsForBento(BENTO_ID));
+  const { theme, setTheme } = useTheme();
+
+  const nextTheme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+
   return (
-    <div className="min-h-screen bg-black p-8">
+    <div className="min-h-screen bg-background p-8">
       {/* Header */}
       <header className="max-w-7xl mx-auto mb-8">
         <div className="flex items-center justify-between">
@@ -21,33 +56,47 @@ export default function DashboardPage() {
                 '--aug-tl': '8px',
                 '--aug-br': '8px',
                 '--aug-border-all': '2px',
-                '--aug-border-bg': '#39ff14',
+                '--aug-border-bg': 'var(--accent)',
               } as React.CSSProperties}
             >
-              <span className="text-[#39ff14] font-bold text-xl">A</span>
+              <span className="text-accent font-bold text-xl">A</span>
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">
+              <h1 className="text-2xl font-bold text-foreground tracking-tight">
                 AgentBox
               </h1>
-              <p className="text-white/40 text-sm">
-                4 agents deployed
+              <p className="text-muted-foreground text-sm">
+                {agents.length} agents deployed
               </p>
             </div>
           </div>
-          <button
-            data-augmented-ui="tl-clip br-clip border"
-            className="px-6 py-3 text-black font-bold text-sm uppercase tracking-wider"
-            style={{
-              '--aug-tl': '10px',
-              '--aug-br': '10px',
-              '--aug-border-all': '2px',
-              '--aug-border-bg': '#39ff14',
-              background: '#39ff14',
-            } as React.CSSProperties}
-          >
-            + Deploy Agent
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setTheme(nextTheme)}
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-4 py-2 text-muted-foreground text-xs font-bold uppercase tracking-wider hover:text-foreground transition-colors"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              {theme}
+            </button>
+            <button
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-6 py-3 text-accent-foreground font-bold text-sm uppercase tracking-wider bg-accent"
+              style={{
+                '--aug-tl': '10px',
+                '--aug-br': '10px',
+                '--aug-border-all': '2px',
+                '--aug-border-bg': 'var(--accent)',
+              } as React.CSSProperties}
+            >
+              + Deploy Agent
+            </button>
+          </div>
         </div>
       </header>
 
@@ -65,12 +114,12 @@ export default function DashboardPage() {
 
 function AgentCard({ agent }: { agent: Agent }) {
   const isWorking = agent.status === 'working';
-  const accentColor = isWorking ? '#39ff14' : '#ffffff';
+  const statusColor = STATUS_COLOR_VAR[agent.status];
 
   return (
     <div
       data-augmented-ui="tl-clip tr-2-clip-x br-clip bl-2-clip-x border"
-      className="bg-black/50 backdrop-blur"
+      className="bg-card backdrop-blur"
       style={{
         '--aug-tl': '20px',
         '--aug-tr-extend2': '40px',
@@ -79,7 +128,7 @@ function AgentCard({ agent }: { agent: Agent }) {
         '--aug-bl-extend2': '40px',
         '--aug-bl-height2': '8px',
         '--aug-border-all': '1px',
-        '--aug-border-bg': isWorking ? '#39ff14' : 'rgba(255,255,255,0.2)',
+        '--aug-border-bg': isWorking ? 'var(--agent-border-active)' : 'var(--agent-border)',
       } as React.CSSProperties}
     >
       <div className="p-6">
@@ -93,88 +142,67 @@ function AgentCard({ agent }: { agent: Agent }) {
                 '--aug-tl': '10px',
                 '--aug-br': '10px',
                 '--aug-border-all': '2px',
-                '--aug-border-bg': accentColor,
-                background: isWorking ? 'rgba(57, 255, 20, 0.1)' : 'transparent',
+                '--aug-border-bg': statusColor,
+                background: isWorking ? 'var(--agent-glow)' : 'transparent',
               } as React.CSSProperties}
             >
-              <span className="text-lg font-bold uppercase" style={{ color: accentColor }}>
+              <span className="text-lg font-bold uppercase" style={{ color: statusColor }}>
                 {agent.name.slice(0, 2)}
               </span>
             </div>
             <div>
-              <h3 className="font-bold text-white text-lg capitalize">{agent.name}</h3>
+              <h3 className="font-bold text-card-foreground text-lg capitalize">{agent.name}</h3>
               <StatusBadge status={agent.status} />
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {isWorking && (
-              <div className="flex items-center gap-2 px-3 py-1 border border-[#39ff14]/30 rounded-full">
-                <div className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
-                <span className="text-[#39ff14] text-xs font-medium uppercase">Live</span>
-              </div>
-            )}
-          </div>
+          {isWorking && (
+            <div className="flex items-center gap-2 px-3 py-1 border border-agent-active/30 rounded-full">
+              <div className="w-2 h-2 rounded-full bg-agent-active animate-pulse" />
+              <span className="text-agent-active text-xs font-medium uppercase">Live</span>
+            </div>
+          )}
         </div>
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-3 gap-4">
-          {/* VNC Preview - spans 2 columns */}
+          {/* VNC Preview */}
           <div
-            data-augmented-ui="tl-clip br-clip border"
-            className="col-span-2 aspect-video bg-[#0a0a0a] flex items-center justify-center"
+            data-augmented-ui="tl-clip br-clip"
+            className="col-span-2 aspect-video bg-surface-inset flex items-center justify-center"
             style={{
               '--aug-tl': '12px',
               '--aug-br': '12px',
-              '--aug-border-all': '1px',
-              '--aug-border-bg': 'rgba(255,255,255,0.1)',
             } as React.CSSProperties}
           >
             <div className="text-center">
-              <Monitor className="w-8 h-8 text-white/20 mx-auto mb-2" />
-              <span className="text-white/30 text-xs uppercase tracking-wider">VNC Stream</span>
+              <Monitor className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+              <span className="text-muted-foreground text-xs uppercase tracking-wider">VNC Stream</span>
             </div>
           </div>
 
           {/* Stats Column */}
           <div className="space-y-3">
-            <StatWidget
-              icon={<Cpu className="w-4 h-4" />}
-              label="CPU"
-              value="42%"
-              accent={isWorking}
-            />
-            <StatWidget
-              icon={<HardDrive className="w-4 h-4" />}
-              label="RAM"
-              value="1.2GB"
-              accent={false}
-            />
-            <StatWidget
-              icon={<Zap className="w-4 h-4" />}
-              label="Cost"
-              value="$0.12"
-              accent={false}
-            />
+            <StatWidget icon={<Cpu className="w-4 h-4" />} label="CPU" value="42%" accent={isWorking} />
+            <StatWidget icon={<HardDrive className="w-4 h-4" />} label="RAM" value="1.2GB" accent={false} />
+            <StatWidget icon={<Zap className="w-4 h-4" />} label="Cost" value="$0.12" accent={false} />
           </div>
         </div>
 
-        {/* Chat/Activity Section */}
-        <div className="mt-4 pt-4 border-t border-white/10">
+        {/* Chat/Activity */}
+        <div className="mt-4 pt-4 border-t border-border">
           <div className="flex items-start gap-3">
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
               style={{
-                background: isWorking ? 'rgba(57, 255, 20, 0.2)' : 'rgba(255,255,255,0.1)',
-                border: `1px solid ${isWorking ? '#39ff14' : 'rgba(255,255,255,0.2)'}`
+                background: isWorking ? 'var(--agent-glow)' : 'var(--muted)',
+                border: `1px solid ${isWorking ? 'var(--agent-border-active)' : 'var(--border)'}`,
               }}
             >
-              <MessageSquare className="w-4 h-4" style={{ color: accentColor }} />
+              <MessageSquare className="w-4 h-4" style={{ color: isWorking ? 'var(--agent-active)' : 'var(--muted-foreground)' }} />
             </div>
-            <div className="flex-1">
-              <p className="text-white/70 text-sm leading-relaxed">
-                {agent.message || 'Waiting for instructions...'}
-              </p>
-            </div>
+            <p className="text-muted-foreground text-sm leading-relaxed flex-1">
+              {agent.message || 'Waiting for instructions...'}
+            </p>
           </div>
         </div>
 
@@ -182,23 +210,18 @@ function AgentCard({ agent }: { agent: Agent }) {
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ControlButton icon="||" label="Pause" />
-            <ControlButton icon={<Square className="w-3 h-3" />} label="Stop" danger />
+            <ControlButton icon={<Square className="w-3 h-3 text-destructive" />} label="Stop" />
           </div>
-          <div className="text-white/30 text-xs font-mono">
-            {agent.name.toUpperCase()}-{Math.random().toString(36).slice(2, 6).toUpperCase()}
-          </div>
+          <span className="text-muted-foreground text-xs font-mono">
+            {agent.name.toUpperCase()}-{agent.createdAt.slice(-4).toUpperCase()}
+          </span>
         </div>
       </div>
     </div>
   );
 }
 
-function StatWidget({
-  icon,
-  label,
-  value,
-  accent
-}: {
+function StatWidget({ icon, label, value, accent }: {
   icon: React.ReactNode;
   label: string;
   value: string;
@@ -211,40 +234,32 @@ function StatWidget({
       style={{
         '--aug-br': '8px',
         '--aug-border-all': '1px',
-        '--aug-border-bg': accent ? '#39ff14' : 'rgba(255,255,255,0.1)',
-        background: accent ? 'rgba(57, 255, 20, 0.05)' : 'rgba(255,255,255,0.02)',
+        '--aug-border-bg': accent ? 'var(--agent-border-active)' : 'var(--border)',
+        background: accent ? 'var(--agent-glow)' : 'var(--border-subtle)',
       } as React.CSSProperties}
     >
       <div className="flex items-center gap-2 mb-1">
-        <span style={{ color: accent ? '#39ff14' : 'rgba(255,255,255,0.4)' }}>{icon}</span>
-        <span className="text-white/40 text-xs uppercase">{label}</span>
+        <span style={{ color: accent ? 'var(--agent-active)' : 'var(--muted-foreground)' }}>{icon}</span>
+        <span className="text-muted-foreground text-xs uppercase">{label}</span>
       </div>
-      <div className="font-bold text-white text-lg font-mono">{value}</div>
+      <div className="font-bold text-foreground text-lg font-mono">{value}</div>
     </div>
   );
 }
 
-function ControlButton({
-  icon,
-  label,
-  danger = false
-}: {
+function ControlButton({ icon, label }: {
   icon: React.ReactNode;
   label: string;
-  danger?: boolean;
 }) {
-  const borderColor = danger ? '#ff4444' : 'rgba(255,255,255,0.2)';
-  const hoverBg = danger ? 'rgba(255,68,68,0.1)' : 'rgba(255,255,255,0.05)';
-
   return (
     <button
       data-augmented-ui="tl-clip br-clip border"
-      className="px-4 py-2 text-white/60 text-xs font-bold uppercase tracking-wider hover:text-white transition-colors"
+      className="px-4 py-2 text-muted-foreground text-xs font-bold uppercase tracking-wider hover:text-foreground transition-colors"
       style={{
         '--aug-tl': '6px',
         '--aug-br': '6px',
         '--aug-border-all': '1px',
-        '--aug-border-bg': borderColor,
+        '--aug-border-bg': 'var(--border)',
       } as React.CSSProperties}
       title={label}
     >
@@ -254,22 +269,20 @@ function ControlButton({
 }
 
 function StatusBadge({ status }: { status: AgentStatus }) {
-  const config: Record<AgentStatus, { color: string; label: string }> = {
-    idle: { color: '#6b7280', label: 'Idle' },
-    working: { color: '#39ff14', label: 'Working' },
-    completed: { color: '#22c55e', label: 'Completed' },
-    blocked: { color: '#f59e0b', label: 'Blocked' },
-    dead: { color: '#ef4444', label: 'Dead' },
+  const labels: Record<AgentStatus, string> = {
+    idle: 'Idle',
+    working: 'Working',
+    completed: 'Completed',
+    blocked: 'Blocked',
+    dead: 'Dead',
   };
-
-  const { color, label } = config[status];
 
   return (
     <span
       className="text-xs font-semibold uppercase tracking-wide"
-      style={{ color }}
+      style={{ color: STATUS_COLOR_VAR[status] }}
     >
-      {label}
+      {labels[status]}
     </span>
   );
 }
