@@ -2,11 +2,22 @@ import {createServer, type IncomingMessage, type ServerResponse} from 'node:http
 import {CALLBACK_PORT, EVENT_TAG} from '../types.js';
 import type {AgentEvent, AgentStatus} from '../types.js';
 import {agents} from '../tools/agents.js';
-import {localTmuxSendKeys} from './tmux.js';
+import {localTmuxSendKeys, tmuxSendKeys, tmuxHasSession} from './tmux.js';
+import {sendMessage} from './agento.js';
+import {randomBytes} from 'node:crypto';
 
 const VALID_STATES: AgentStatus[] = ['idle', 'working', 'completed', 'blocked', 'dead'];
 const AGENTO_SESSION = 'agento';
 const MAX_EVENTS_PER_AGENT = 50;
+
+// ── Route parsing ──────────────────────────────────────────────────────────
+
+function parseRoute(url: string): {projectId?: string; path: string; query: string} {
+  const [pathPart, query = ''] = (url ?? '/').split('?');
+  const match = pathPart.match(/^\/projects\/([^/]+)(\/.*)?$/);
+  if (match) return {projectId: match[1], path: match[2] || '/', query};
+  return {path: pathPart, query};
+}
 
 // ── Injection config ────────────────────────────────────────────────────────
 
@@ -86,6 +97,20 @@ export function getEvents(agentName?: string): AgentEvent[] {
   return all;
 }
 
+/** Get events filtered to agents belonging to a specific project */
+function getEventsForProject(projectId: string): AgentEvent[] {
+  const projectAgentNames = new Set<string>();
+  for (const a of agents.values()) {
+    if (a.projectId === projectId) projectAgentNames.add(a.name);
+  }
+  const all: AgentEvent[] = [];
+  for (const [agentName, events] of eventStore) {
+    if (projectAgentNames.has(agentName)) all.push(...events);
+  }
+  all.sort((a, b) => a.ts.localeCompare(b.ts));
+  return all;
+}
+
 export function pushEvent(event: AgentEvent): void {
   if (!eventStore.has(event.agent)) eventStore.set(event.agent, []);
   const list = eventStore.get(event.agent)!;
@@ -142,96 +167,195 @@ function notifyWaiters(name: string, result?: string): void {
   }
 }
 
+// ── In-memory chat store ────────────────────────────────────────────────────
+
+interface ChatMsg {
+  id: string;
+  role: 'user' | 'agento';
+  content: string;
+  ts: string;
+  target?: string;
+}
+
+const chatStore = new Map<string, ChatMsg[]>();
+const MAX_CHAT_PER_PROJECT = 200;
+
+function genChatId(): string {
+  return `msg-${Date.now()}-${randomBytes(3).toString('hex')}`;
+}
+
+function pushChat(projectId: string, msg: ChatMsg): void {
+  if (!chatStore.has(projectId)) chatStore.set(projectId, []);
+  const list = chatStore.get(projectId)!;
+  list.push(msg);
+  if (list.length > MAX_CHAT_PER_PROJECT) list.shift();
+}
+
+function getChat(projectId: string, since?: string): ChatMsg[] {
+  const list = chatStore.get(projectId) ?? [];
+  if (!since) return list;
+  return list.filter(m => m.ts > since);
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+function serializeAgentList(projectId?: string) {
+  let values = Array.from(agents.values());
+  if (projectId) values = values.filter(a => a.projectId === projectId);
+  return values.map(a => ({
+    name: a.name,
+    status: a.status,
+    task: a.task,
+    currentTask: a.currentTask ?? '',
+    lastEvent: a.lastEvent?.msg ?? '',
+    vncPort: a.vncPort,
+    vncUrl: `http://localhost:${a.vncPort}`,
+    uptime: Math.round((Date.now() - a.createdAt) / 1000),
+  }));
+}
+
+function handleEvent(data: {agent?: string; state?: string; msg?: string; task?: string}, projectId?: string): {status: number; body: string} {
+  const name = data.agent;
+  if (!name) return {status: 400, body: '{"error":"missing agent name"}'};
+
+  const state = data.state as AgentStatus;
+  if (!state || !VALID_STATES.includes(state)) {
+    return {status: 400, body: `{"error":"invalid state, must be one of: ${VALID_STATES.join(', ')}"}`};
+  }
+
+  const event: AgentEvent = {
+    ts: new Date().toISOString(),
+    agent: name,
+    state,
+    msg: (data.msg ?? '').slice(0, 100),
+  };
+
+  pushEvent(event);
+
+  // Update agent state if tracked
+  const agent = agents.get(name);
+  if (agent) {
+    agent.status = state;
+    agent.lastEvent = event;
+    if (projectId && !agent.projectId) agent.projectId = projectId;
+    if (data.task) agent.currentTask = data.task.slice(0, 100);
+    if (state === 'completed') agent.completedAt = Date.now();
+    console.error(`[event] ${name}: ${state}${data.task ? ` [${data.task}]` : ''}${event.msg ? ` — ${event.msg}` : ''}`);
+  }
+
+  if (state === 'completed') notifyWaiters(name);
+
+  // Queue for injection into Agento's tmux (batched or immediate)
+  if (agent && name !== AGENTO_SESSION) queueForInjection(event);
+
+  return {status: 200, body: '{"ok":true}'};
+}
+
 // ── Request handler ─────────────────────────────────────────────────────────
 
 function setCors(res: ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   setCors(res);
 
-  // OPTIONS preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
 
-  // GET /agents — live agent state for dashboard polling
-  if (req.method === 'GET' && req.url === '/agents') {
-    const list = Array.from(agents.values()).map(a => ({
-      name: a.name,
-      status: a.status,
-      task: a.task,
-      currentTask: a.currentTask ?? '',
-      lastEvent: a.lastEvent?.msg ?? '',
-      vncPort: a.vncPort,
-      vncUrl: `http://localhost:${a.vncPort}`,
-      uptime: Math.round((Date.now() - a.createdAt) / 1000),
-    }));
+  const {projectId, path} = parseRoute(req.url ?? '/');
+
+  // ── GET /agents or /projects/:id/agents ─────────────────────────────────
+  if (req.method === 'GET' && (path === '/agents' || req.url === '/agents')) {
+    const list = serializeAgentList(projectId);
     res.writeHead(200, {'Content-Type': 'application/json'});
     res.end(JSON.stringify({agents: list, count: list.length}));
     return;
   }
 
-  // POST /event — unified event ingestion
-  if (req.method === 'POST' && req.url === '/event') {
+  // ── POST /event or /projects/:id/event ──────────────────────────────────
+  if (req.method === 'POST' && (path === '/event' || req.url === '/event')) {
     try {
       const body = await readBody(req);
-      const data = JSON.parse(body) as {agent?: string; state?: string; msg?: string; task?: string};
-      const name = data.agent;
+      const data = JSON.parse(body);
+      const result = handleEvent(data, projectId);
+      res.writeHead(result.status);
+      res.end(result.body);
+    } catch {
+      res.writeHead(400);
+      res.end('{"error":"invalid request"}');
+    }
+    return;
+  }
 
-      if (!name) {
+  // ── GET /events or /projects/:id/events ─────────────────────────────────
+  if (req.method === 'GET' && (path?.startsWith('/events') || req.url?.startsWith('/events'))) {
+    const url = new URL(req.url ?? '/', `http://localhost:${CALLBACK_PORT}`);
+    const agentName = url.searchParams.get('agent') ?? undefined;
+
+    let events: AgentEvent[];
+    if (projectId) {
+      events = getEventsForProject(projectId);
+      if (agentName) events = events.filter(e => e.agent === agentName);
+    } else {
+      events = getEvents(agentName);
+    }
+
+    res.writeHead(200, {'Content-Type': 'application/json'});
+    res.end(JSON.stringify({events, count: events.length}));
+    return;
+  }
+
+  // ── POST /projects/:id/chat ───────────────────────────────────────────────
+  if (req.method === 'POST' && projectId && path === '/chat') {
+    try {
+      const body = await readBody(req);
+      const data = JSON.parse(body) as {target?: string; content?: string};
+      const content = data.content?.trim();
+      if (!content) {
         res.writeHead(400);
-        res.end('{"error":"missing agent name"}');
+        res.end('{"error":"missing content"}');
         return;
       }
 
-      const state = data.state as AgentStatus;
-      if (!state || !VALID_STATES.includes(state)) {
-        res.writeHead(400);
-        res.end(`{"error":"invalid state, must be one of: ${VALID_STATES.join(', ')}"}`);
-        return;
-      }
+      const target = data.target || 'agento';
+      const userMsg: ChatMsg = {id: genChatId(), role: 'user', content, ts: new Date().toISOString(), target};
+      pushChat(projectId, userMsg);
 
-      const event: AgentEvent = {
-        ts: new Date().toISOString(),
-        agent: name,
-        state,
-        msg: (data.msg ?? '').slice(0, 100),
-      };
-
-      pushEvent(event);
-
-      // Update agent state if tracked
-      const agent = agents.get(name);
-      if (agent) {
-        agent.status = state;
-        agent.lastEvent = event;
-        if (data.task) {
-          agent.currentTask = data.task.slice(0, 100);
+      if (target === 'agento') {
+        try {
+          const replyText = await sendMessage(projectId, content);
+          const reply: ChatMsg = {id: genChatId(), role: 'agento', content: replyText, ts: new Date().toISOString()};
+          pushChat(projectId, reply);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`[agento] LLM error: ${errMsg}`);
+          const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Error: ${errMsg}`, ts: new Date().toISOString()};
+          pushChat(projectId, reply);
         }
-        if (state === 'completed') {
-          agent.completedAt = Date.now();
+      } else {
+        // Direct agent messaging via tmux
+        const agent = agents.get(target);
+        if (!agent) {
+          const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Agent "${target}" not found.`, ts: new Date().toISOString()};
+          pushChat(projectId, reply);
+        } else if (!tmuxHasSession(target)) {
+          const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Agent "${target}" session is not active.`, ts: new Date().toISOString()};
+          pushChat(projectId, reply);
+        } else {
+          tmuxSendKeys(target, content, true);
+          tmuxSendKeys(target, 'Enter', false);
+          const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Sent to ${target}.`, ts: new Date().toISOString()};
+          pushChat(projectId, reply);
         }
-        console.error(`[event] ${name}: ${state}${data.task ? ` [${data.task}]` : ''}${event.msg ? ` — ${event.msg}` : ''}`);
       }
 
-      // Fire waiters on completion
-      if (state === 'completed') {
-        notifyWaiters(name);
-      }
-
-      // Queue for injection into Agento's tmux (batched or immediate)
-      // Skip agento's own events — don't inject back into itself
-      if (agent && name !== AGENTO_SESSION) {
-        queueForInjection(event);
-      }
-
-      res.writeHead(200);
+      res.writeHead(200, {'Content-Type': 'application/json'});
       res.end('{"ok":true}');
     } catch {
       res.writeHead(400);
@@ -240,13 +364,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  // GET /events?agent=X — read events
-  if (req.method === 'GET' && req.url?.startsWith('/events')) {
-    const url = new URL(req.url, `http://localhost:${CALLBACK_PORT}`);
-    const agentName = url.searchParams.get('agent') ?? undefined;
-    const events = getEvents(agentName);
+  // ── GET /projects/:id/chat ──────────────────────────────────────────────
+  if (req.method === 'GET' && projectId && path?.startsWith('/chat')) {
+    const url = new URL(req.url ?? '/', `http://localhost:${CALLBACK_PORT}`);
+    const since = url.searchParams.get('since') ?? undefined;
+    const messages = getChat(projectId, since);
     res.writeHead(200, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify({events, count: events.length}));
+    res.end(JSON.stringify({messages, count: messages.length}));
     return;
   }
 

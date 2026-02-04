@@ -1,37 +1,39 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useBentoStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
-import { mockBentos, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
+import { useProjectStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
+import { mockProjects, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
 import { useAgentPoller } from '@/hooks/use-agent-poller';
 import { useEventPoller } from '@/hooks/use-event-poller';
+import { useChatPoller } from '@/hooks/use-chat-poller';
 import { ThemeProvider } from './theme-provider';
 
 function StoreInitializer() {
-  const setBentos = useBentoStore((s) => s.setBentos);
+  const setProjects = useProjectStore((s) => s.setProjects);
   const setAgents = useAgentStore((s) => s.setAgents);
   const setEvents = useEventStore((s) => s.setEvents);
   const setMessages = useChatStore((s) => s.setMessages);
 
   useEffect(() => {
-    setBentos(mockBentos);
+    setProjects(mockProjects);
 
-    for (const [bentoId, agents] of Object.entries(mockAgents)) {
-      setAgents(bentoId, agents);
+    for (const [projectId, agents] of Object.entries(mockAgents)) {
+      setAgents(projectId, agents);
     }
 
-    for (const [bentoId, events] of Object.entries(mockEvents)) {
-      setEvents(bentoId, events);
+    for (const [projectId, events] of Object.entries(mockEvents)) {
+      setEvents(projectId, events);
     }
 
-    for (const [bentoId, messages] of Object.entries(mockChat)) {
-      setMessages(bentoId, messages);
+    for (const [projectId, messages] of Object.entries(mockChat)) {
+      setMessages(projectId, messages);
     }
-  }, [setBentos, setAgents, setEvents, setMessages]);
+  }, [setProjects, setAgents, setEvents, setMessages]);
 
-  // Poll live state — overwrites mock data for bento-1
-  useAgentPoller('bento-1');
-  useEventPoller('bento-1');
+  // Poll live state — overwrites mock data for project-1
+  useAgentPoller('project-1');
+  useEventPoller('project-1');
+  useChatPoller('project-1');
 
   return null;
 }

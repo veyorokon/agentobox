@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Send, Pause, Square, Search } from 'lucide-react';
+import { Monitor, Send, Pause, Square, Search, RefreshCw } from 'lucide-react';
 import { useAgentStore, useChatStore, useEventStore } from '@/stores';
+import { API_URL } from '@/lib/constants';
 import type { Agent, AgentStatus, AgentEvent, ChatMessage } from '@/types';
 
-const BENTO_ID = 'bento-1';
+const PROJECT_ID = 'project-1';
 const THEMES = ['cyberpunk', 'retro', 'rose-pine'] as const;
 type Theme = typeof THEMES[number];
 
@@ -52,7 +53,7 @@ function timeAgo(iso: string): string {
    ================================================================ */
 
 export default function DashboardPage() {
-  const agents = useAgentStore((s) => s.agents[BENTO_ID]) ?? [];
+  const agents = useAgentStore((s) => s.agents[PROJECT_ID]) ?? [];
   const { theme, setTheme } = useTheme();
   const nextTheme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
 
@@ -112,7 +113,7 @@ function CommandPanel({
   theme: Theme;
   onThemeToggle: () => void;
 }) {
-  const messages = useChatStore((s) => s.messages[BENTO_ID]) ?? [];
+  const messages = useChatStore((s) => s.messages[PROJECT_ID]) ?? [];
   const addMessage = useChatStore((s) => s.addMessage);
   const [activeTab, setActiveTab] = useState<PanelTab>('agento');
   const [input, setInput] = useState('');
@@ -135,14 +136,19 @@ function CommandPanel({
   const isAgentTab = activeTab !== 'agento' && activeTab !== 'feed';
   const selectedAgent = isAgentTab ? agents.find(a => a.name === activeTab) : null;
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim();
     if (!text) return;
-    if (activeTab === 'agento') {
-      addMessage(BENTO_ID, { role: 'user', content: text });
-    }
-    // Agent tab send_keys will be wired later
+    const target = activeTab === 'agento' ? 'agento' : activeTab;
+    addMessage(PROJECT_ID, { role: 'user', content: text }); // optimistic
     setInput('');
+    try {
+      await fetch(`${API_URL}/projects/${PROJECT_ID}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target, content: text }),
+      });
+    } catch { /* poller picks up server state */ }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -393,7 +399,7 @@ const STATE_SYMBOLS: Record<AgentStatus, string> = {
 };
 
 function EventFeed({ filter, onSelectAgent }: { filter: string; onSelectAgent: (name: string) => void }) {
-  const events = useEventStore((s) => s.events[BENTO_ID]) ?? [];
+  const events = useEventStore((s) => s.events[PROJECT_ID]) ?? [];
   const feedRef = useRef<HTMLDivElement>(null);
   const [userScrolled, setUserScrolled] = useState(false);
 
@@ -557,6 +563,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 function AgentCard({ agent }: { agent: Agent }) {
   const isWorking = agent.status === 'working';
   const statusColor = STATUS_COLOR_VAR[agent.status];
+  const vncRefreshRef = useRef<(() => void) | null>(null);
 
   return (
     <div
@@ -605,6 +612,13 @@ function AgentCard({ agent }: { agent: Agent }) {
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
+              onClick={() => vncRefreshRef.current?.()}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh VNC"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+            <button
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               title="Pause"
             >
@@ -622,7 +636,7 @@ function AgentCard({ agent }: { agent: Agent }) {
         {/* VNC Stream */}
         <div className="aspect-[4/3] bg-surface-inset overflow-hidden">
           {agent.vncUrl && agent.status !== 'dead' ? (
-            <VncFrame url={agent.vncUrl} />
+            <VncFrame url={agent.vncUrl} onRefresh={(fn) => { vncRefreshRef.current = fn; }} />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
               <div className="text-center">
@@ -641,9 +655,14 @@ function AgentCard({ agent }: { agent: Agent }) {
    Supporting components
    ================================================================ */
 
-function VncFrame({ url }: { url: string }) {
+function VncFrame({ url, onRefresh }: { url: string; onRefresh?: (refresh: () => void) => void }) {
   const [connected, setConnected] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+
+  // Expose refresh callback to parent
+  useEffect(() => {
+    onRefresh?.(() => setRetryKey(k => k + 1));
+  }, [onRefresh]);
 
   // Poll VNC server until reachable, then render iframe
   useEffect(() => {

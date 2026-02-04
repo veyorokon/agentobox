@@ -16,6 +16,7 @@ export interface AgentState {
   status: AgentStatus;
   lastEvent?: AgentEvent;
   currentTask?: string;  // Overarching goal from TodoWrite activeForm
+  projectId?: string;
   createdAt: number;
   completedAt?: number;
 }

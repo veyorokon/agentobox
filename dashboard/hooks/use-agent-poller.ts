@@ -2,9 +2,8 @@
 
 import { useEffect, useRef } from 'react';
 import { useAgentStore } from '@/stores';
+import { API_URL } from '@/lib/constants';
 import type { Agent, AgentStatus } from '@/types';
-
-const POLL_URL = 'http://localhost:9900/agents';
 
 interface LiveAgent {
   name: string;
@@ -29,7 +28,7 @@ function toAgent(live: LiveAgent): Agent {
   };
 }
 
-export function useAgentPoller(bentoId: string, intervalMs = 3000) {
+export function useAgentPoller(projectId: string, intervalMs = 3000) {
   const setAgents = useAgentStore((s) => s.setAgents);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -38,12 +37,12 @@ export function useAgentPoller(bentoId: string, intervalMs = 3000) {
 
     const poll = async () => {
       try {
-        const res = await fetch(POLL_URL);
+        const res = await fetch(`${API_URL}/projects/${projectId}/agents`);
         if (!res.ok || !active) return;
         const data = await res.json() as { agents: LiveAgent[] };
         if (!active) return;
         if (data.agents.length > 0) {
-          setAgents(bentoId, data.agents.map(toAgent));
+          setAgents(projectId, data.agents.map(toAgent));
         }
       } catch {
         // Server not running — silently skip
@@ -57,5 +56,5 @@ export function useAgentPoller(bentoId: string, intervalMs = 3000) {
       active = false;
       clearInterval(intervalRef.current);
     };
-  }, [bentoId, intervalMs, setAgents]);
+  }, [projectId, intervalMs, setAgents]);
 }

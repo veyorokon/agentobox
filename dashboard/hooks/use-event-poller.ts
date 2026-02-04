@@ -2,11 +2,10 @@
 
 import { useEffect, useRef } from 'react';
 import { useEventStore } from '@/stores';
+import { API_URL } from '@/lib/constants';
 import type { AgentEvent } from '@/types';
 
-const POLL_URL = 'http://localhost:9900/events';
-
-export function useEventPoller(bentoId: string, intervalMs = 3000) {
+export function useEventPoller(projectId: string, intervalMs = 3000) {
   const setEvents = useEventStore((s) => s.setEvents);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -15,11 +14,11 @@ export function useEventPoller(bentoId: string, intervalMs = 3000) {
 
     const poll = async () => {
       try {
-        const res = await fetch(POLL_URL);
+        const res = await fetch(`${API_URL}/projects/${projectId}/events`);
         if (!res.ok || !active) return;
         const data = await res.json() as { events: AgentEvent[] };
         if (!active || data.events.length === 0) return;
-        setEvents(bentoId, data.events);
+        setEvents(projectId, data.events);
       } catch {
         // Server not running — silently skip
       }
@@ -32,5 +31,5 @@ export function useEventPoller(bentoId: string, intervalMs = 3000) {
       active = false;
       clearInterval(intervalRef.current);
     };
-  }, [bentoId, intervalMs, setEvents]);
+  }, [projectId, intervalMs, setEvents]);
 }

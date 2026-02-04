@@ -2,44 +2,44 @@ import { create } from 'zustand';
 import type { Agent, AgentStatus } from '@/types';
 
 interface AgentStore {
-  agents: Record<string, Agent[]>; // bentoId -> agents
-  getAgentsForBento: (bentoId: string) => Agent[];
-  getAgent: (bentoId: string, name: string) => Agent | undefined;
-  setAgents: (bentoId: string, agents: Agent[]) => void;
-  updateAgent: (bentoId: string, name: string, updates: Partial<Agent>) => void;
-  createAgent: (bentoId: string, name: string) => void;
-  killAgent: (bentoId: string, name: string) => void;
+  agents: Record<string, Agent[]>; // projectId -> agents
+  getAgentsForProject: (projectId: string) => Agent[];
+  getAgent: (projectId: string, name: string) => Agent | undefined;
+  setAgents: (projectId: string, agents: Agent[]) => void;
+  updateAgent: (projectId: string, name: string, updates: Partial<Agent>) => void;
+  createAgent: (projectId: string, name: string) => void;
+  killAgent: (projectId: string, name: string) => void;
 }
 
 export const useAgentStore = create<AgentStore>()((set, get) => ({
   agents: {},
 
-  getAgentsForBento: (bentoId) => get().agents[bentoId] || [],
+  getAgentsForProject: (projectId) => get().agents[projectId] || [],
 
-  getAgent: (bentoId, name) =>
-    get().agents[bentoId]?.find((a) => a.name === name),
+  getAgent: (projectId, name) =>
+    get().agents[projectId]?.find((a) => a.name === name),
 
-  setAgents: (bentoId, agents) =>
+  setAgents: (projectId, agents) =>
     set((state) => ({
-      agents: { ...state.agents, [bentoId]: agents },
+      agents: { ...state.agents, [projectId]: agents },
     })),
 
-  updateAgent: (bentoId, name, updates) =>
+  updateAgent: (projectId, name, updates) =>
     set((state) => ({
       agents: {
         ...state.agents,
-        [bentoId]: (state.agents[bentoId] || []).map((a) =>
+        [projectId]: (state.agents[projectId] || []).map((a) =>
           a.name === name ? { ...a, ...updates, lastActivity: new Date().toISOString() } : a
         ),
       },
     })),
 
-  createAgent: (bentoId, name) =>
+  createAgent: (projectId, name) =>
     set((state) => ({
       agents: {
         ...state.agents,
-        [bentoId]: [
-          ...(state.agents[bentoId] || []),
+        [projectId]: [
+          ...(state.agents[projectId] || []),
           {
             name,
             status: 'idle' as AgentStatus,
@@ -52,11 +52,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
       },
     })),
 
-  killAgent: (bentoId, name) =>
+  killAgent: (projectId, name) =>
     set((state) => ({
       agents: {
         ...state.agents,
-        [bentoId]: (state.agents[bentoId] || []).map((a) =>
+        [projectId]: (state.agents[projectId] || []).map((a) =>
           a.name === name ? { ...a, status: 'dead' as AgentStatus, message: 'Killed by user' } : a
         ),
       },

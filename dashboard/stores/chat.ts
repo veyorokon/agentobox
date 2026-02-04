@@ -2,27 +2,27 @@ import { create } from 'zustand';
 import type { ChatMessage } from '@/types';
 
 interface ChatStore {
-  messages: Record<string, ChatMessage[]>; // bentoId -> messages
-  setMessages: (bentoId: string, messages: ChatMessage[]) => void;
-  addMessage: (bentoId: string, message: Omit<ChatMessage, 'id' | 'ts'>) => void;
-  getMessages: (bentoId: string) => ChatMessage[];
-  clearMessages: (bentoId: string) => void;
+  messages: Record<string, ChatMessage[]>; // projectId -> messages
+  setMessages: (projectId: string, messages: ChatMessage[]) => void;
+  addMessage: (projectId: string, message: Omit<ChatMessage, 'id' | 'ts'>) => void;
+  getMessages: (projectId: string) => ChatMessage[];
+  clearMessages: (projectId: string) => void;
 }
 
 export const useChatStore = create<ChatStore>()((set, get) => ({
   messages: {},
 
-  setMessages: (bentoId, messages) =>
+  setMessages: (projectId, messages) =>
     set((state) => ({
-      messages: { ...state.messages, [bentoId]: messages },
+      messages: { ...state.messages, [projectId]: messages },
     })),
 
-  addMessage: (bentoId, message) =>
+  addMessage: (projectId, message) =>
     set((state) => ({
       messages: {
         ...state.messages,
-        [bentoId]: [
-          ...(state.messages[bentoId] || []),
+        [projectId]: [
+          ...(state.messages[projectId] || []),
           {
             ...message,
             id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -32,10 +32,10 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       },
     })),
 
-  getMessages: (bentoId) => get().messages[bentoId] || [],
+  getMessages: (projectId) => get().messages[projectId] || [],
 
-  clearMessages: (bentoId) =>
+  clearMessages: (projectId) =>
     set((state) => ({
-      messages: { ...state.messages, [bentoId]: [] },
+      messages: { ...state.messages, [projectId]: [] },
     })),
 }));

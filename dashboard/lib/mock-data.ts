@@ -1,28 +1,28 @@
-import type { Bento, Agent, AgentEvent, ChatMessage, AgentStatus } from '@/types';
+import type { Project, Agent, AgentEvent, ChatMessage, AgentStatus } from '@/types';
 
 // Helper to generate timestamps relative to now
 function minutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60 * 1000).toISOString();
 }
 
-// Mock Bentos
-export const mockBentos: Bento[] = [
+// Mock Projects
+export const mockProjects: Project[] = [
   {
-    id: 'bento-1',
+    id: 'project-1',
     name: 'Website Redesign',
     agents: [],
     agentoOnline: true,
     lastActivity: minutesAgo(5),
   },
   {
-    id: 'bento-2',
+    id: 'project-2',
     name: 'Competitor Research',
     agents: [],
     agentoOnline: true,
     lastActivity: minutesAgo(12),
   },
   {
-    id: 'bento-3',
+    id: 'project-3',
     name: 'Data Migration',
     agents: [],
     agentoOnline: false,
@@ -30,9 +30,9 @@ export const mockBentos: Bento[] = [
   },
 ];
 
-// Mock Agents per Bento
+// Mock Agents per Project
 export const mockAgents: Record<string, Agent[]> = {
-  'bento-1': [
+  'project-1': [
     {
       name: 'scout',
       status: 'working',
@@ -75,7 +75,7 @@ export const mockAgents: Record<string, Agent[]> = {
       lastActivity: minutesAgo(25),
     },
   ],
-  'bento-2': [
+  'project-2': [
     {
       name: 'analyst',
       status: 'blocked',
@@ -93,7 +93,7 @@ export const mockAgents: Record<string, Agent[]> = {
       lastActivity: minutesAgo(1),
     },
   ],
-  'bento-3': [
+  'project-3': [
     {
       name: 'extractor',
       status: 'completed',
@@ -123,7 +123,7 @@ export const mockAgents: Record<string, Agent[]> = {
 
 // Mock Events
 export const mockEvents: Record<string, AgentEvent[]> = {
-  'bento-1': [
+  'project-1': [
     { ts: minutesAgo(2), agent: 'scout', state: 'working', msg: 'browsing competitor websites' },
     { ts: minutesAgo(5), agent: 'designer', state: 'working', msg: 'creating wireframes in Figma' },
     { ts: minutesAgo(8), agent: 'scout', state: 'working', msg: 'analyzing color schemes' },
@@ -135,7 +135,7 @@ export const mockEvents: Record<string, AgentEvent[]> = {
     { ts: minutesAgo(35), agent: 'writer', state: 'working', msg: 'drafting homepage copy' },
     { ts: minutesAgo(40), agent: 'designer', state: 'idle', msg: 'ready for next task' },
   ],
-  'bento-2': [
+  'project-2': [
     { ts: minutesAgo(1), agent: 'scraper', state: 'working', msg: 'extracting pricing data from ProductHunt' },
     { ts: minutesAgo(5), agent: 'scraper', state: 'working', msg: 'navigating to pricing page' },
     { ts: minutesAgo(8), agent: 'analyst', state: 'blocked', msg: 'need login credentials for LinkedIn' },
@@ -143,7 +143,7 @@ export const mockEvents: Record<string, AgentEvent[]> = {
     { ts: minutesAgo(15), agent: 'scraper', state: 'idle', msg: 'waiting for URLs' },
     { ts: minutesAgo(20), agent: 'analyst', state: 'working', msg: 'gathering competitor profiles' },
   ],
-  'bento-3': [
+  'project-3': [
     { ts: minutesAgo(80), agent: 'loader', state: 'completed', msg: '' },
     { ts: minutesAgo(82), agent: 'loader', state: 'working', msg: 'inserting batch 5/5' },
     { ts: minutesAgo(85), agent: 'validator', state: 'completed', msg: '' },
@@ -155,7 +155,7 @@ export const mockEvents: Record<string, AgentEvent[]> = {
 
 // Mock Chat Messages
 export const mockChat: Record<string, ChatMessage[]> = {
-  'bento-1': [
+  'project-1': [
     {
       id: 'msg-1',
       role: 'user',
@@ -193,7 +193,7 @@ export const mockChat: Record<string, ChatMessage[]> = {
       ts: minutesAgo(8),
     },
   ],
-  'bento-2': [
+  'project-2': [
     {
       id: 'msg-1',
       role: 'user',
@@ -213,7 +213,7 @@ export const mockChat: Record<string, ChatMessage[]> = {
       ts: minutesAgo(8),
     },
   ],
-  'bento-3': [
+  'project-3': [
     {
       id: 'msg-1',
       role: 'user',

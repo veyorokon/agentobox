@@ -10,7 +10,7 @@ export interface Agent {
   vncUrl?: string;
 }
 
-export interface Bento {
+export interface Project {
   id: string;
   name: string;
   agents: Agent[];
