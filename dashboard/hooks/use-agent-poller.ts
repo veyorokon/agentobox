@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useAgentStore } from '@/stores';
-import { API_URL } from '@/lib/constants';
+import { API_V1 } from '@/lib/constants';
 import type { Agent, AgentStatus } from '@/types';
 
 interface LiveAgent {
@@ -37,7 +37,7 @@ export function useAgentPoller(projectId: string, intervalMs = 3000) {
 
     const poll = async () => {
       try {
-        const res = await fetch(`${API_URL}/projects/${projectId}/agents`);
+        const res = await fetch(`${API_V1}/projects/${projectId}/agents`);
         if (!res.ok || !active) return;
         const data = await res.json() as { agents: LiveAgent[] };
         if (!active) return;

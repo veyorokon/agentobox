@@ -1,4 +1,3 @@
-import {execFileSync} from 'node:child_process';
 import {TMUX_PREFIX} from '../types.js';
 import {dockerExec} from './docker.js';
 
@@ -59,12 +58,4 @@ export function tmuxHasSession(name: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Send keys to a LOCAL tmux session (not inside a worker container). Used for Agento's own session. */
-export function localTmuxSendKeys(session: string, keys: string, literal = false): void {
-  const args = ['send-keys'];
-  if (literal) args.push('-l');
-  args.push('-t', session, keys);
-  execFileSync('tmux', args, {encoding: 'utf-8'});
 }

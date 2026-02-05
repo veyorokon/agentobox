@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Monitor, Send, Pause, Square, Search, RefreshCw } from 'lucide-react';
 import { useAgentStore, useChatStore, useEventStore } from '@/stores';
-import { API_URL } from '@/lib/constants';
+import { API_V1 } from '@/lib/constants';
 import type { Agent, AgentStatus, AgentEvent, ChatMessage } from '@/types';
 
 const PROJECT_ID = 'project-1';
@@ -114,7 +114,7 @@ function CommandPanel({
   onThemeToggle: () => void;
 }) {
   const messages = useChatStore((s) => s.messages[PROJECT_ID]) ?? [];
-  const addMessage = useChatStore((s) => s.addMessage);
+
   const [activeTab, setActiveTab] = useState<PanelTab>('agento');
   const [input, setInput] = useState('');
   const [feedFilter, setFeedFilter] = useState('');
@@ -140,10 +140,9 @@ function CommandPanel({
     const text = input.trim();
     if (!text) return;
     const target = activeTab === 'agento' ? 'agento' : activeTab;
-    addMessage(PROJECT_ID, { role: 'user', content: text }); // optimistic
     setInput('');
     try {
-      await fetch(`${API_URL}/projects/${PROJECT_ID}/chat`, {
+      await fetch(`${API_V1}/projects/${PROJECT_ID}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target, content: text }),

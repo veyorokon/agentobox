@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useChatStore } from '@/stores';
-import { API_URL } from '@/lib/constants';
+import { API_V1 } from '@/lib/constants';
 import type { ChatMessage } from '@/types';
 
 export function useChatPoller(projectId: string, intervalMs = 3000) {
@@ -16,7 +16,7 @@ export function useChatPoller(projectId: string, intervalMs = 3000) {
     const poll = async () => {
       try {
         const since = lastTsRef.current ? `?since=${encodeURIComponent(lastTsRef.current)}` : '';
-        const res = await fetch(`${API_URL}/projects/${projectId}/chat${since}`);
+        const res = await fetch(`${API_V1}/projects/${projectId}/chat${since}`);
         if (!res.ok || !active) return;
         const data = await res.json() as { messages: ChatMessage[] };
         if (!active || data.messages.length === 0) return;

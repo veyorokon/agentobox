@@ -1,240 +1,18 @@
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
-import type {AgentState, AgentEvent} from '../types.js';
-import {CONTAINER_WORKSPACE, agentClaudeMd, AGENT_MCP_JSON, agentSettingsJson, resolveAuth, claudeConfigJson} from '../types.js';
-import type {AuthConfig} from '../types.js';
-import {pushEvent, waitForAgent} from '../utils/callback.js';
-import {allocateVncPort, freeVncPort, reserveVncPort} from '../utils/ports.js';
-import {dockerRun, dockerStop, dockerRm, dockerExec, dockerCp, dockerListAbox} from '../utils/docker.js';
-import {tmuxNewSession, tmuxSendKeys, tmuxCapture, tmuxKill, tmuxHasSession} from '../utils/tmux.js';
 import {jsonResult, errorResult} from '../utils/response.js';
 
-export const agents = new Map<string, AgentState>();
+const SERVER_URL = process.env.ABOX_SERVER_URL || 'http://localhost:9900';
 
-/** Re-hydrate agent state from running abox-* containers on startup */
-export function recoverAgents(): number {
-  const containers = dockerListAbox();
-  for (const c of containers) {
-    if (agents.has(c.name)) continue;
-    if (c.name === 'agento') continue; // Skip orchestrator container
-    agents.set(c.name, {
-      name: c.name,
-      task: '',
-      containerId: c.containerId,
-      vncPort: c.vncPort,
-      tmuxSession: `abox-${c.name}`,
-      status: c.status === 'running' ? 'idle' : 'dead',
-      createdAt: c.createdAt,
-    });
-    if (c.vncPort > 0) reserveVncPort(c.vncPort);
-  }
-  return containers.length;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/** Poll until the computer-use MCP server port is listening inside the container. */
-async function waitForPort(name: string, port = 8808, timeoutMs = 60000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      dockerExec(name, ['bash', '-c', `timeout 1 bash -c '</dev/tcp/localhost/${port}'`], 'kasm-user');
-      return true;
-    } catch {
-      await sleep(1000);
-    }
-  }
-  return false;
-}
-
-/** Poll tmux output until it contains the target text (case-insensitive). */
-async function waitForText(name: string, text: string, timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  const lower = text.toLowerCase();
-  while (Date.now() - start < timeoutMs) {
-    if (!tmuxHasSession(name)) return false;
-    const output = tmuxCapture(name);
-    if (output.toLowerCase().includes(lower)) return true;
-    await sleep(1000);
-  }
-  return false;
-}
-
-// ── Core functions (used by both MCP tools and Agento LLM) ──────────────────
-
-export type KeyAction = {text: string} | {key: string};
-
-export async function createAgentCore(params: {
-  name: string;
-  task?: string;
-  autonomous?: boolean;
-  api_key?: string;
-  oauth_token?: string;
-}): Promise<{ok: true; name: string; status: string; vncPort: number; vncUrl: string; containerId: string}> {
-  const {name, task, autonomous, api_key, oauth_token} = params;
-
-  if (agents.has(name)) {
-    throw new Error(`Agent "${name}" already exists`);
-  }
-
-  const autoMode = autonomous !== false;
-  const vncPort = allocateVncPort();
-
-  const auth: AuthConfig = {
-    ...(api_key ? {apiKey: api_key} : {}),
-    ...(oauth_token ? {oauthToken: oauth_token} : {}),
-  };
-  const authEnvs = resolveAuth(Object.keys(auth).length > 0 ? auth : undefined);
-
-  try {
-    const containerId = dockerRun(name, vncPort, authEnvs);
-
-    const agent: AgentState = {
-      name,
-      task: task ?? '',
-      containerId,
-      vncPort,
-      tmuxSession: `abox-${name}`,
-      status: 'idle',
-      createdAt: Date.now(),
-    };
-    agents.set(name, agent);
-
-    const portReady = await waitForPort(name);
-    if (!portReady) {
-      agent.status = 'dead';
-      throw new Error('Container MCP server did not start within 60s');
-    }
-
-    dockerExec(name, ['mkdir', '-p', CONTAINER_WORKSPACE]);
-    dockerCp(name, agentClaudeMd(name), `${CONTAINER_WORKSPACE}/CLAUDE.md`);
-    dockerCp(name, AGENT_MCP_JSON, `${CONTAINER_WORKSPACE}/.mcp.json`);
-    dockerCp(name, claudeConfigJson(Object.keys(auth).length > 0 ? auth : undefined), '/home/kasm-user/.claude.json');
-    dockerExec(name, ['mkdir', '-p', '/home/kasm-user/.claude'], 'root');
-    dockerCp(name, agentSettingsJson(name), '/home/kasm-user/.claude/settings.json');
-    dockerExec(name, ['chown', '-R', 'kasm-user:kasm-user', CONTAINER_WORKSPACE], 'root');
-    dockerExec(name, ['chown', '-R', 'kasm-user:kasm-user', '/home/kasm-user/.claude'], 'root');
-    dockerExec(name, ['chown', 'kasm-user:kasm-user', '/home/kasm-user/.claude.json'], 'root');
-
-    const claudeCmd = autoMode
-      ? `cd ${CONTAINER_WORKSPACE} && claude --dangerously-skip-permissions`
-      : `cd ${CONTAINER_WORKSPACE} && claude`;
-    tmuxNewSession(name, claudeCmd);
-
-    if (autoMode) {
-      const bypassReady = await waitForText(name, 'bypass', 60000);
-      if (!bypassReady) {
-        agent.status = 'dead';
-        throw new Error('Claude Code did not show bypass prompt within 60s');
-      }
-      tmuxSendKeys(name, 'Down', false);
-      tmuxSendKeys(name, 'Enter', false);
-    }
-
-    const promptReady = await waitForText(name, 'Try', 30000);
-    if (!promptReady) {
-      agent.status = 'dead';
-      throw new Error('Claude Code did not become interactive within 30s');
-    }
-
-    agent.status = 'idle';
-    const event: AgentEvent = {ts: new Date().toISOString(), agent: name, state: 'idle', msg: ''};
-    agent.lastEvent = event;
-    pushEvent(event);
-
-    return {ok: true, name, status: 'idle', vncPort, vncUrl: `http://localhost:${vncPort}`, containerId: containerId.slice(0, 12)};
-  } catch (err) {
-    agents.delete(name);
-    freeVncPort(vncPort);
-    dockerRm(name);
-    throw err;
-  }
-}
-
-export async function killAgentCore(name: string): Promise<{ok: true; killed: string}> {
-  const agent = agents.get(name);
-  if (!agent) throw new Error(`Agent "${name}" not found`);
-
-  agent.status = 'dead';
-  tmuxKill(name);
-  dockerStop(name);
-  dockerRm(name);
-  freeVncPort(agent.vncPort);
-  agents.delete(name);
-
-  return {ok: true, killed: name};
-}
-
-export async function sendKeysCore(name: string, keys: KeyAction[]): Promise<{ok: true; sent: KeyAction[]; to: string}> {
-  const agent = agents.get(name);
-  if (!agent) throw new Error(`Agent "${name}" not found`);
-  if (!tmuxHasSession(name)) {
-    agent.status = 'dead';
-    throw new Error(`Agent "${name}" tmux session not found (may have exited)`);
-  }
-
-  for (const action of keys) {
-    if ('text' in action) {
-      tmuxSendKeys(name, action.text, true);
-    } else {
-      tmuxSendKeys(name, action.key, false);
-    }
-  }
-
-  const firstText = keys.find((k): k is {text: string} => 'text' in k);
-  const msg = firstText ? firstText.text.slice(0, 100) : '';
-
-  agent.status = 'working';
-  const event: AgentEvent = {ts: new Date().toISOString(), agent: name, state: 'working', msg};
-  agent.lastEvent = event;
-  pushEvent(event);
-
-  return {ok: true, sent: keys, to: name};
-}
-
-export async function readOutputCore(name: string, lines = 200): Promise<{name: string; output: string}> {
-  const agent = agents.get(name);
-  if (!agent) throw new Error(`Agent "${name}" not found`);
-  if (!tmuxHasSession(name)) {
-    agent.status = 'dead';
-    throw new Error(`Agent "${name}" tmux session not found`);
-  }
-
-  const output = tmuxCapture(name, lines);
-  return {name, output};
-}
-
-export async function listAgentsCore(): Promise<{agents: Array<Record<string, unknown>>; count: number}> {
-  const list = Array.from(agents.values()).map(a => {
-    const sessionAlive = tmuxHasSession(a.name);
-    if (!sessionAlive && a.status !== 'dead') {
-      let lastLine = 'session lost';
-      try {
-        const output = tmuxCapture(a.name);
-        const lines = output.trim().split('\n').filter(l => l.trim());
-        if (lines.length > 0) lastLine = lines[lines.length - 1].slice(0, 100);
-      } catch { /* container may be gone */ }
-
-      a.status = 'dead';
-      const event: AgentEvent = {ts: new Date().toISOString(), agent: a.name, state: 'dead', msg: lastLine};
-      a.lastEvent = event;
-      pushEvent(event);
-    }
-    return {
-      name: a.name,
-      status: a.status,
-      task: a.task,
-      currentTask: a.currentTask ?? '',
-      lastEvent: a.lastEvent?.msg ?? '',
-      vncPort: a.vncPort,
-      vncUrl: `http://localhost:${a.vncPort}`,
-      uptime: Math.round((Date.now() - a.createdAt) / 1000),
-    };
+/** Fetch helper with long timeout for blocking operations */
+async function api(path: string, init?: RequestInit & {timeoutMs?: number}): Promise<Record<string, unknown>> {
+  const {timeoutMs = 10_000, ...fetchInit} = init ?? {};
+  const res = await fetch(`${SERVER_URL}/api/v1${path}`, {
+    ...fetchInit,
+    headers: {'Content-Type': 'application/json', ...fetchInit.headers},
+    signal: AbortSignal.timeout(timeoutMs),
   });
-
-  return {agents: list, count: list.length};
+  return res.json() as Promise<Record<string, unknown>>;
 }
 
 // ── MCP tool registration ────────────────────────────────────────────────────
@@ -252,7 +30,12 @@ export function registerAgents(server: McpServer): void {
     },
     async (params) => {
       try {
-        const result = await createAgentCore(params);
+        const result = await api('/agents', {
+          method: 'POST',
+          body: JSON.stringify(params),
+          timeoutMs: 120_000,
+        });
+        if (result.error) return errorResult(result.error as string);
         return jsonResult({...result, ready: true});
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
@@ -266,7 +49,12 @@ export function registerAgents(server: McpServer): void {
     {name: z.string().describe('Name of the agent to kill')},
     async ({name}) => {
       try {
-        return jsonResult(await killAgentCore(name));
+        const result = await api(`/agents/${encodeURIComponent(name)}`, {
+          method: 'DELETE',
+          timeoutMs: 20_000,
+        });
+        if (result.error) return errorResult(result.error as string);
+        return jsonResult(result);
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
       }
@@ -287,7 +75,12 @@ export function registerAgents(server: McpServer): void {
     },
     async ({name, keys}) => {
       try {
-        return jsonResult(await sendKeysCore(name, keys));
+        const result = await api(`/agents/${encodeURIComponent(name)}/keys`, {
+          method: 'POST',
+          body: JSON.stringify({keys}),
+        });
+        if (result.error) return errorResult(result.error as string);
+        return jsonResult(result);
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
       }
@@ -303,7 +96,10 @@ export function registerAgents(server: McpServer): void {
     },
     async ({name, lines}) => {
       try {
-        return jsonResult(await readOutputCore(name, lines ?? 200));
+        const qs = lines ? `?lines=${lines}` : '';
+        const result = await api(`/agents/${encodeURIComponent(name)}/output${qs}`);
+        if (result.error) return errorResult(result.error as string);
+        return jsonResult(result);
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
       }
@@ -315,7 +111,12 @@ export function registerAgents(server: McpServer): void {
     'List all active worker agents with their status, ports, and tasks',
     {},
     async () => {
-      return jsonResult(await listAgentsCore());
+      try {
+        const result = await api('/projects/_all/agents');
+        return jsonResult(result);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
     },
   );
 
@@ -328,25 +129,17 @@ export function registerAgents(server: McpServer): void {
       timeout: z.number().optional().describe('Timeout in seconds (default: 30)'),
     },
     async ({name, text, timeout}) => {
-      const agent = agents.get(name);
-      if (!agent) return errorResult(`Agent "${name}" not found`);
-
-      const timeoutMs = (timeout ?? 30) * 1000;
-      const start = Date.now();
-
-      while (Date.now() - start < timeoutMs) {
-        if (!tmuxHasSession(name)) {
-          agent.status = 'dead';
-          return errorResult(`Agent "${name}" tmux session ended while waiting`);
-        }
-        const output = tmuxCapture(name);
-        if (output.includes(text)) {
-          return jsonResult({ok: true, found: true, text, elapsed: Math.round((Date.now() - start) / 1000)});
-        }
-        await sleep(1000);
+      try {
+        const result = await api(`/agents/${encodeURIComponent(name)}/wait-output`, {
+          method: 'POST',
+          body: JSON.stringify({text, timeout: timeout ?? 30}),
+          timeoutMs: ((timeout ?? 30) + 5) * 1000,
+        });
+        if (result.error) return errorResult(result.error as string);
+        return jsonResult(result);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
       }
-
-      return jsonResult({ok: false, found: false, text, timedOut: true});
     },
   );
 
@@ -358,21 +151,17 @@ export function registerAgents(server: McpServer): void {
       timeout: z.number().optional().describe('Timeout in seconds (default: 300)'),
     },
     async ({name, timeout}) => {
-      const agent = agents.get(name);
-      if (!agent) return errorResult(`Agent "${name}" not found`);
-
-      if (agent.status === 'completed') {
-        return jsonResult({
-          ok: true, completed: true, agent: name,
-          elapsed: agent.completedAt ? Math.round((agent.completedAt - agent.createdAt) / 1000) : 0,
+      try {
+        const result = await api(`/agents/${encodeURIComponent(name)}/wait-completion`, {
+          method: 'POST',
+          body: JSON.stringify({timeout: timeout ?? 300}),
+          timeoutMs: ((timeout ?? 300) + 5) * 1000,
         });
+        if (result.error) return errorResult(result.error as string);
+        return jsonResult(result);
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
       }
-
-      const timeoutMs = (timeout ?? 300) * 1000;
-      const {completed} = await waitForAgent(name, timeoutMs);
-
-      if (completed) return jsonResult({ok: true, completed: true, agent: name});
-      return jsonResult({ok: false, completed: false, agent: name, timedOut: true});
     },
   );
 }

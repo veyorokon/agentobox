@@ -1,33 +1,33 @@
 #!/usr/bin/env node
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {createServer} from './index.js';
-import {agents, recoverAgents} from './tools/agents.js';
-import {startCallbackServer} from './utils/callback.js';
 
-function setupSignalHandlers(): void {
-  // Agents persist across MCP restarts — recoverAgents() re-discovers them.
-  // Only clean up the in-memory map, not the containers.
-  process.on('SIGINT', () => {
-    agents.clear();
-    process.exit(0);
-  });
-  process.on('SIGTERM', () => {
-    agents.clear();
-    process.exit(0);
-  });
+const SERVER_URL = process.env.ABOX_SERVER_URL || 'http://localhost:9900';
+
+/** Wait for the Hono server to be reachable before starting MCP */
+async function waitForServer(maxRetries = 10, intervalMs = 2000): Promise<boolean> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(`${SERVER_URL}/agents`, {signal: AbortSignal.timeout(2000)});
+      if (res.ok) return true;
+    } catch {
+      // Server not ready yet
+    }
+    if (i < maxRetries - 1) {
+      console.error(`Waiting for server at ${SERVER_URL}... (${i + 1}/${maxRetries})`);
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+  }
+  return false;
 }
 
 (async () => {
-  // Recover any agents from previous MCP session
-  const recovered = recoverAgents();
-  if (recovered > 0) {
-    console.error(`Recovered ${recovered} agent(s) from running containers`);
+  const serverReady = await waitForServer();
+  if (!serverReady) {
+    console.error(`Warning: Server at ${SERVER_URL} not reachable. MCP tools will fail until server starts.`);
   }
 
   const server = createServer();
-  startCallbackServer();
-  setupSignalHandlers();
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('Agent Manager MCP server running on stdio');

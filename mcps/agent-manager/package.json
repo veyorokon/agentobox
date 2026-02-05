@@ -10,7 +10,6 @@
     "build": "tsc --project tsconfig.build.json"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.72.1",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "zod": "^4.1.13"
   },

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
-import {createAgentCore, killAgentCore, sendKeysCore, readOutputCore, listAgentsCore} from '../tools/agents.js';
-import type {KeyAction} from '../tools/agents.js';
+import {createAgentCore, killAgentCore, sendKeysCore, readOutputCore, listAgentsCore} from './agents.js';
+import type {KeyAction} from './agents.js';
 
 const MODEL = process.env.ABOX_LLM_MODEL || 'claude-sonnet-4-20250514';
 const MAX_HISTORY = 50;
@@ -18,12 +18,13 @@ Your capabilities:
 - List all active agents and their status
 
 Guidelines:
-- When asked to do something, decide whether to delegate to an existing agent or create a new one
+- When asked to do something, delegate to an existing agent or create a new one
 - Agent names must be lowercase with no spaces (e.g., "researcher", "browser-1")
-- When sending keys to an agent, the text gets typed into their Claude Code session
-- After sending a task, you can read_output to check if the agent is making progress
-- Be concise in your responses — the user sees this in a chat panel
-- If an agent is stuck or dead, kill it and create a new one`;
+- When using send_keys, ALWAYS include {key: "Enter"} as the last action to submit the message
+- After sending a task, use read_output to check progress
+- Be very concise — 1-2 sentences max. The user sees this in a small chat panel
+- If an agent is stuck or dead, kill it and create a new one
+- Do not narrate what you think will happen. Just do it and report the result briefly`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -56,7 +57,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'send_keys',
-    description: "Send keystrokes to an agent's Claude Code terminal. Use {text: \"...\"} for literal text and {key: \"Enter\"} for special keys.",
+    description: "Send keystrokes to an agent's Claude Code terminal. IMPORTANT: Always end with {key: \"Enter\"} to submit. Example: keys: [{text: \"do something\"}, {key: \"Enter\"}]",
     input_schema: {
       type: 'object' as const,
       properties: {

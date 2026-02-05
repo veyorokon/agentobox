@@ -1,3 +1,7 @@
+import {randomBytes} from 'node:crypto';
+
+// ── Agent types ──────────────────────────────────────────────────────────────
+
 export type AgentStatus = 'idle' | 'working' | 'completed' | 'blocked' | 'dead';
 
 export interface AgentEvent {
@@ -15,16 +19,72 @@ export interface AgentState {
   tmuxSession: string;
   status: AgentStatus;
   lastEvent?: AgentEvent;
-  currentTask?: string;  // Overarching goal from TodoWrite activeForm
+  currentTask?: string;
   projectId?: string;
   createdAt: number;
   completedAt?: number;
 }
 
+// ── Chat types ───────────────────────────────────────────────────────────────
+
+export interface ChatMsg {
+  id: string;
+  role: 'user' | 'agento';
+  content: string;
+  ts: string;
+  target?: string;
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export interface AuthConfig {
+  apiKey?: string;
+  oauthToken?: string;
+}
+
+/** Resolve auth: explicit override > env vars. Returns `-e` flag pairs for docker. */
+export function resolveAuth(override?: AuthConfig): string[][] {
+  const apiKey = override?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
+  const oauthToken = override?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '';
+  const envs: string[][] = [];
+  if (oauthToken) envs.push(['-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`]);
+  if (apiKey) envs.push(['-e', `ANTHROPIC_API_KEY=${apiKey}`]);
+  return envs;
+}
+
+/** Build .claude.json content. Only needs customApiKeyResponses for API key mode. */
+export function claudeConfigJson(override?: AuthConfig): string {
+  const apiKey = override?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
+  const oauthToken = override?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '';
+  const config: Record<string, unknown> = {
+    shiftEnterKeyBindingInstalled: true,
+    theme: 'dark',
+    hasCompletedOnboarding: true,
+  };
+  if (apiKey && !oauthToken) {
+    config.customApiKeyResponses = {
+      approved: [apiKey.slice(-20)],
+      rejected: [],
+    };
+  }
+  return JSON.stringify(config, null, 2);
+}
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
 export const DOCKER_IMAGE = 'agentobox-agent';
 export const VNC_PORT_BASE = 6902;
 export const TMUX_PREFIX = 'abox';
 export const CONTAINER_WORKSPACE = '/home/kasm-user/workspace';
+
+export const SERVER_PORT = parseInt(process.env.ABOX_SERVER_PORT ?? '9900', 10);
+export const AGENTO_HOSTNAME = process.env.ABOX_AGENTO_HOSTNAME ?? 'host.docker.internal';
+export const ABOX_NETWORK = process.env.ABOX_NETWORK ?? 'agentobox';
+export const EVENT_TAG = process.env.ABOX_EVENT_TAG || randomBytes(2).toString('hex');
+
+export const VALID_STATES: AgentStatus[] = ['idle', 'working', 'completed', 'blocked', 'dead'];
+
+// ── Agent container config generators ────────────────────────────────────────
 
 export function agentClaudeMd(agentName: string): string {
   return `# agentobox Worker Agent
@@ -93,58 +153,12 @@ Most status updates are **automatic** via hooks:
 
 The only state you need to set **manually** is \`blocked\`:
 \`\`\`bash
-curl -s -X POST http://${AGENTO_HOSTNAME}:${CALLBACK_PORT}/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"blocked","msg":"brief description of blocker"}'
+curl -s -X POST http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"blocked","msg":"brief description of blocker"}'
 \`\`\`
 
 Use \`blocked\` when you truly cannot proceed without external help — e.g. "need GitHub credentials", "CAPTCHA on login page".
 `;
 }
-
-// ── Auth ────────────────────────────────────────────────────────────────────
-
-export interface AuthConfig {
-  apiKey?: string;
-  oauthToken?: string;
-}
-
-/** Resolve auth: explicit override > env vars. Returns `-e` flag pairs for docker. */
-export function resolveAuth(override?: AuthConfig): string[][] {
-  const apiKey = override?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
-  const oauthToken = override?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '';
-  const envs: string[][] = [];
-  if (oauthToken) envs.push(['-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`]);
-  if (apiKey) envs.push(['-e', `ANTHROPIC_API_KEY=${apiKey}`]);
-  return envs;
-}
-
-/** Build .claude.json content. Only needs customApiKeyResponses for API key mode. */
-export function claudeConfigJson(override?: AuthConfig): string {
-  const apiKey = override?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
-  const oauthToken = override?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '';
-  const config: Record<string, unknown> = {
-    shiftEnterKeyBindingInstalled: true,
-    theme: 'dark',
-    hasCompletedOnboarding: true,
-  };
-  if (apiKey && !oauthToken) {
-    config.customApiKeyResponses = {
-      approved: [apiKey.slice(-20)],
-      rejected: [],
-    };
-  }
-  return JSON.stringify(config, null, 2);
-}
-
-// ── Callback / networking ───────────────────────────────────────────────────
-
-export const CALLBACK_PORT = 9900;
-export const AGENTO_HOSTNAME = process.env.ABOX_AGENTO_HOSTNAME ?? 'host.docker.internal';
-export const ABOX_NETWORK = process.env.ABOX_NETWORK ?? 'agentobox';
-
-// Event tag for distinguishing injected events from user messages in Agento's conversation.
-// Set via env var in production; falls back to random 4-char hex for local dev.
-import {randomBytes} from 'node:crypto';
-export const EVENT_TAG = process.env.ABOX_EVENT_TAG || randomBytes(2).toString('hex');
 
 export function agentSettingsJson(agentName: string): string {
   return JSON.stringify({
@@ -154,7 +168,7 @@ export function agentSettingsJson(agentName: string): string {
           hooks: [
             {
               type: 'command',
-              command: `curl -s -X POST http://${AGENTO_HOSTNAME}:${CALLBACK_PORT}/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"completed","msg":""}'`,
+              command: `curl -s -X POST http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"completed","msg":""}'`,
               async: true,
             },
           ],

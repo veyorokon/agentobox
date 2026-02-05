@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useEventStore } from '@/stores';
-import { API_URL } from '@/lib/constants';
+import { API_V1 } from '@/lib/constants';
 import type { AgentEvent } from '@/types';
 
 export function useEventPoller(projectId: string, intervalMs = 3000) {
@@ -14,7 +14,7 @@ export function useEventPoller(projectId: string, intervalMs = 3000) {
 
     const poll = async () => {
       try {
-        const res = await fetch(`${API_URL}/projects/${projectId}/events`);
+        const res = await fetch(`${API_V1}/projects/${projectId}/events`);
         if (!res.ok || !active) return;
         const data = await res.json() as { events: AgentEvent[] };
         if (!active || data.events.length === 0) return;

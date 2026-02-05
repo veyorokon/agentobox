@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {DOCKER_IMAGE, TMUX_PREFIX, ABOX_NETWORK, AGENTO_HOSTNAME, CALLBACK_PORT} from '../types.js';
+import {DOCKER_IMAGE, TMUX_PREFIX, ABOX_NETWORK, AGENTO_HOSTNAME, SERVER_PORT} from '../types.js';
 
 function containerName(name: string): string {
   return `${TMUX_PREFIX}-${name}`;
@@ -33,7 +33,7 @@ export function dockerRun(name: string, vncPort: number, authEnvs: string[][] = 
       '-e', 'VNC_PW=password',
       '-e', 'VNC_RESOLUTION=1920x1080',
       '-e', `ABOX_AGENT_NAME=${name}`,
-      '-e', `ABOX_CALLBACK_URL=http://${AGENTO_HOSTNAME}:${CALLBACK_PORT}/event`,
+      '-e', `ABOX_CALLBACK_URL=http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event`,
       ...authEnvs.flat(),
       DOCKER_IMAGE,
     ], {encoding: 'utf-8'});
@@ -50,7 +50,6 @@ export function dockerExec(name: string, args: string[], user = 'kasm-user'): st
 }
 
 export function dockerCp(name: string, content: string, destPath: string): void {
-  // Write content to a file inside the container via stdin
   execFileSync('docker', [
     'exec', '-i', containerName(name), 'bash', '-c', `cat > ${destPath}`,
   ], {encoding: 'utf-8', input: content});
@@ -71,7 +70,6 @@ export function dockerListAbox(): Array<{name: string; containerId: string; vncP
       const [containerId, containerNameStr, ports, status, createdAt] = line.split('\t');
       const agentName = containerNameStr.replace(`${TMUX_PREFIX}-`, '');
 
-      // Parse VNC port from port mapping like "0.0.0.0:6902->6901/tcp"
       const vncMatch = ports.match(/(\d+)->6901/);
       const vncPort = vncMatch ? parseInt(vncMatch[1], 10) : 0;
 

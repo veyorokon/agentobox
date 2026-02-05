@@ -5,31 +5,40 @@ Living document tracking architecture decisions, completed work, and next steps.
 ## Architecture (current)
 
 ```
-User (CLI / future UI)
-  |
-  +-- Agento (orchestrator)
-  |     Claude Code + agent-manager MCP
-  |     Text-only coordinator (no desktop access)
-  |     Receives events via tmux injection (tagged @abox:e:XXXX)
-  |     |
-  |     +-- Worker A                +-- Worker B
-  |     |   Claude Code             |   Claude Code
-  |     |   computer-use MCP        |   computer-use MCP
-  |     |   (fixed: own desktop)    |   (fixed: own desktop)
-  |     |   Container + VNC         |   Container + VNC
-  |     |                           |
-  |     +-- Worker C ...
-  |
-  +-- Callback Server (port 9900)
-  |     POST /event — unified state ingestion from all agents
-  |     GET /events — query events by agent
-  |     Batched event injection into Agento's tmux session
-  |     Routes completion events to wait_for_completion waiters
-  |
-  +-- Event Store (in-memory)
-        Capped per-agent (50 events)
-        Persistent storage deferred to Dashboard phase
+Dashboard (Next.js :3000)              User (CLI)
+  |                                       |
+  +-- polls/SSE ----+                     +-- MCP tools (stdio)
+                     |                    |
+                     v                    v
+               Hono Server (:9900)  <--  MCP Server (HTTP client)
+               /api/v1/*                 fetch() calls to Hono
+               |
+               +-- Agento LLM (per-project, server-side)
+               |     Anthropic SDK + tool-use loop
+               |     Tools: create_agent, kill_agent, send_keys, read_output, list_agents
+               |     Conversation history keyed by projectId
+               |
+               +-- Agent lifecycle (Docker + tmux)
+               |     createAgentCore, killAgentCore, sendKeysCore, ...
+               |
+               +-- State (in-memory, SQLite planned)
+               |     agents Map, eventStore, chatStore, waiters
+               |
+               +-- Worker containers
+                     Worker A              Worker B
+                     Claude Code           Claude Code
+                     computer-use MCP      computer-use MCP
+                     Container + VNC       Container + VNC
 ```
+
+**Agento** is a server-side LLM orchestrator (not a container). It's an Anthropic API client
+with tool-calling that manages worker agents via the same REST API the dashboard uses.
+Each project gets its own conversation history. In production, this could be swapped for
+any LLM with tool-calling (LangChain, LiteLLM, etc.) — it's isolated to one file (`services/agento.ts`).
+
+**MCP Server** is now a stateless HTTP client. All state lives in the Hono server.
+MCP tools call `fetch()` to `/api/v1/*` endpoints. This means the Hono server must
+be running before the MCP server starts.
 
 ## Three Layers / Intelligent Teaming
 
@@ -42,8 +51,9 @@ Each layer handles what it can and escalates what it can't.
 | User | Strategic direction, credentials, approvals | N/A |
 
 **Signal flow:**
-- Upward: HTTP POST to callback server (port 9900) with `{agent, state, msg}`
-- Downward: MCP tools (send_keys, create_agent, etc.)
+- Upward: HTTP POST to Hono server (`/api/v1/projects/:id/event`) with `{agent, state, msg}`
+- Downward: REST API calls (create_agent, send_keys, etc.) or MCP tools wrapping same
+- Lateral: Dashboard polls or SSE from `/api/v1/projects/:id/stream` (SSE planned)
 
 ## Event System (implemented)
 
@@ -177,47 +187,97 @@ Agento is a text-only coordinator. It monitors workers via state events and `rea
 - [x] Agento tool surface scoped via `permissions.deny`: `wait_for_completion`, `wait_for_output`, `screenshot_terminal` blocked
 - [x] Agento entrypoint Stop hook updated to POST `/event`
 
-### Phase 6b: Batched Event Injection
+### Phase 6b: Batched Event Injection (deprecated)
 - [x] Callback server injects events into Agento's local tmux session via `localTmuxSendKeys`
 - [x] Batching: `completed` events buffered (5s window / 10 max), deduplicated per agent on flush
 - [x] Immediate injection for `blocked` and `dead` (bypass buffer, flush pending first)
-- [x] `working` and `idle` events filtered out — not injected, visible via `list_agents`
-- [x] Tagged format: `@abox:e:XXXX [agent] state: msg` — nonce prevents collision with user messages
-- [x] `ABOX_EVENT_TAG` env var for production; random 4-char hex fallback for local dev
-- [x] Agento CLAUDE.md documents event stream format, noop (`{}`), and handling per state
-- [x] Agento excluded from self-injection (own Stop hook events not injected back)
-- [x] Agento excluded from `recoverAgents` (container name `abox-agento` no longer tracked as worker)
-- [x] Agento entrypoint auto-accepts bypass prompt (wait + Down + Enter, same as worker bootstrap)
-- [x] `dockerRun` removes existing stopped containers before `docker run` (prevents name conflicts)
-- [x] Kasm default desktop icons (Downloads/Uploads) removed in worker Dockerfile
+
+*Note: tmux injection was removed in Phase 8a. Agento is now a server-side LLM orchestrator,
+not a container with a tmux session. Events reach Agento through the REST API.*
+
+### Phase 7: Dashboard (initial)
+- [x] Next.js app at `:3000` with neo-brutalism / Rose Pine Moon aesthetic
+- [x] Live VNC desktop streams via noVNC embedded iframes
+- [x] Agent grid view with live state indicators and status badges
+- [x] Command panel with Agento chat (message input + history)
+- [x] Agent roster with status, task, and VNC port display
+- [x] Zustand stores for agents, events, and chat state
+- [x] Polling hooks for agents, events, and chat (3s interval)
+- [x] `API_V1` constant for versioned API endpoints
+
+### Phase 8a: Backend — Hono Server + REST API
+- [x] Standalone `server/` package (Hono + @hono/node-server)
+- [x] All state centralized in Hono server (agents Map, eventStore, chatStore, waiters)
+- [x] Versioned REST API under `/api/v1/` with full CRUD for agents, events, chat
+- [x] Backward-compat aliases for agent container callbacks (`POST /event`, `GET /agents`)
+- [x] Agento as server-side LLM orchestrator (`services/agento.ts`) — not a container
+- [x] `AbortSignal` support on long-poll endpoints (wait-completion, wait-output)
+- [x] Agent lifecycle services lifted from MCP (docker, tmux, ports utils)
+- [x] MCP server converted to stateless HTTP client (fetch to Hono)
+- [x] MCP `main.ts` retries Hono connection with backoff on startup
+- [x] Dashboard hooks switched to `API_V1` URLs
+- [x] Dropped tmux injection (`localTmuxSendKeys`, `injectIntoAgento`, batched event buffer)
+- [x] All 3 packages build clean (server, MCP, dashboard)
 
 ## Next Up
 
-### Phase 7: Dashboard
-Web UI for observation and control.
+### Phase 8b: Async Docker
+Unblock the event loop. Container operations no longer freeze the server.
 
-- [ ] Next.js app with noVNC for live desktop streams
-- [ ] Grid view: all agent thumbnails with live state
+- [ ] Replace `execFileSync` with promisified `execFile` in `server/src/utils/docker.ts`
+- [ ] Convert tmux utils to async in `server/src/utils/tmux.ts`
+- [ ] Update all callers in services layer (`await` on docker/tmux calls)
+- [ ] Parallel agent creation without blocking
+
+### Phase 8c: SSE + EventBus
+Single SSE stream replaces 3 polling hooks. Real-time updates.
+
+- [ ] `EventBus` class (EventEmitter) in `server/src/bus.ts`
+- [ ] `GET /api/v1/projects/:id/stream` — SSE endpoint with heartbeat
+- [ ] Services emit events on agent/event/chat changes
+- [ ] Dashboard `useSSE` hook replaces 3 polling hooks
+- [ ] Delete `use-agent-poller.ts`, `use-event-poller.ts`, `use-chat-poller.ts`
+
+### Phase 8d: Drizzle + SQLite
+Persist state across server restarts.
+
+- [ ] `drizzle-orm` + `better-sqlite3` with WAL mode
+- [ ] Schema: projects, agents, events, messages, conversations
+- [ ] Replace in-memory Maps in `state.ts` with Drizzle queries
+- [ ] Startup recovery from SQLite + Docker cross-reference
+- [ ] Conversation history persisted for Agento LLM
+
+### Phase 8e: MCP Consolidation + Cleanup
+Embed MCP directly in Hono. Eliminate the separate `mcps/agent-manager/` package.
+
+- [ ] Add `@modelcontextprotocol/sdk` to server package
+- [ ] MCP tool definitions call service functions directly (no HTTP hop)
+- [ ] Streamable HTTP transport at `/mcp` endpoint
+- [ ] Update `.mcp.json` templates to use HTTP transport URL
+- [ ] Delete `mcps/agent-manager/` entirely
+- [ ] Update agent container Dockerfiles (no MCP binary to build/install)
+- [ ] Update backward-compat aliases to versioned URLs in container templates
+- [ ] `GET /api/v1/health` endpoint
+
+### Dashboard Enhancements
 - [ ] Agent sprites: diffusion-generated pixel art depicting current activity (msg → sprite)
-  - "reading documentation" → agent reading a book
-  - "browsing google.com" → agent on laptop
-  - "bored" → agent yawning
-  - Sprite cache by semantic similarity to avoid regenerating per-event
-- [ ] Detail view: desktop + terminal + chat
-- [ ] User can take control (mouse/keyboard passthrough)
+- [ ] Detail view: full-size desktop + terminal + chat per agent
+- [ ] User can take control (mouse/keyboard passthrough via noVNC)
 - [ ] Event feed with state filtering
-- [ ] Chat with Agento or any worker
-- [ ] Persistent event storage (SQLite) for historical analysis
+- [ ] Chat routing: talk to Agento or any worker directly
 
 ### Future: Deployment Backends
-- [ ] K8s backend for agent-manager (kubectl / k8s API)
+- [ ] K8s backend for agent lifecycle (kubectl / k8s API)
 - [ ] Modal backend (Modal sandboxes)
-- [ ] Backend interface abstraction in agent-manager
+- [ ] Backend interface abstraction in server services
 
 ## Dropped
 
-### ~~Phase 7: Remote Computer-Use~~
-Dropped. Agento is a text-only coordinator — it doesn't need to see or control worker desktops. It monitors workers via state events (`list_agents`) and reads terminal output (`read_output`) for drill-down. Screenshots and remote desktop add complexity without clear value for coordination.
+### ~~Remote Computer-Use for Agento~~
+Dropped. Agento is a text-only coordinator — it doesn't need to see or control worker desktops. It monitors workers via state events (`list_agents`) and reads terminal output (`read_output`) for drill-down.
+
+### ~~Agento as Container~~
+Dropped in Phase 8a. Agento is now a server-side LLM orchestrator (Anthropic SDK + tool-use loop) running inside the Hono server process. Each project gets its own conversation history. In production, swappable for any LLM with tool-calling (LangChain, LiteLLM, etc.) — isolated to `services/agento.ts`. This eliminated tmux injection, batched event buffering, and the Agento container image.
 
 ## Key Decisions
 
@@ -225,21 +285,30 @@ Dropped. Agento is a text-only coordinator — it doesn't need to see or control
 |----------|-----------|
 | Claude Code inside container | Bash/files run in isolation, not on host |
 | Stop hook for completion | Mechanical, not behavioral — agent can't forget |
-| Callback server as event bus | Universal upward signal path for all layers via `POST /event` |
+| Hono server owns all state | Single source of truth. No split-brain between processes |
+| MCP as stateless HTTP client | Eliminates duplicate state. Will be folded into Hono entirely (Phase 8e) |
+| Agento is server-side LLM | Not a container. Anthropic SDK + tool-use loop in `services/agento.ts`. Swappable for LangChain/LiteLLM |
+| Versioned API (`/api/v1/`) | Clean contract. Backward-compat aliases for container hooks until Phase 8e |
 | tmux send-keys for downward messages | Same pattern at every layer |
 | send_keys over send_message | Honest about what it is (tmux wrapper), atomic actions, no auto-Enter |
 | create_agent = full bootstrap | One call returns ready worker — mechanical, not behavioral |
 | Workers are long-lived | Reuse for multiple tasks, kill only when no longer needed |
-| Agent-manager is worker-only | Doesn't track Agento; User->Agento is a separate channel |
-| Agento in container | Inspectable, testable, same tooling as workers |
-| Agento is text-only coordinator | No screenshots, no remote desktop — monitors via events + read_output |
 | No role param in create_agent | Role is implicit in CLAUDE.md + .mcp.json config |
 | API key pre-seed in .claude.json | Skip onboarding without human intervention |
 | VNC-only port mapping | MCP is internal (localhost:8808), no host exposure needed |
 | 4-field event schema | `{ts, agent, state, msg}` — minimal surface, free-form msg for LLMs |
 | Agents own their msg | System sets state mechanically; agents update msg semantically ("reading docs", "bored"). Two consumers: LLMs for coordination, diffusion models for sprite visualization |
-| Agento is a dispatcher | Tools scoped via permissions.deny — no wait_for_completion, no polling. Dispatch and return to user. Events come to Agento, not the other way around |
-| In-memory event store | Events are ephemeral coordination signals; persist when dashboard needs history |
-| Batched event injection | Reduces Agento turn count — batch completions, inject blocked/dead immediately |
-| Tagged event messages | `@abox:e:XXXX` prefix with session nonce — UI can filter events from user messages |
-| Events as tmux user messages | Only external injection point into running Claude Code — no API for system messages |
+| In-memory event store (for now) | Events are ephemeral coordination signals; SQLite persistence in Phase 8d |
+| AbortSignal on long-polls | Clean up waiters when clients disconnect — no leaked promises |
+
+## Env Vars
+
+| Var | Default | Used by |
+|-----|---------|---------|
+| `ANTHROPIC_API_KEY` | (required) | server — Agento LLM |
+| `ABOX_LLM_MODEL` | `claude-sonnet-4-20250514` | server — Agento LLM |
+| `ABOX_SERVER_PORT` | `9900` | server — Hono listen port |
+| `ABOX_SERVER_URL` | `http://localhost:9900` | MCP — server address (until Phase 8e) |
+| `ABOX_AGENTO_HOSTNAME` | `host.docker.internal` | server — container networking |
+| `ABOX_NETWORK` | `agentobox` | server — Docker network |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:9900` | dashboard — API base |
