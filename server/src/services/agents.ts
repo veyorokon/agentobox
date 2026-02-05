@@ -1,6 +1,6 @@
 import type {AgentState, AgentEvent, AuthConfig} from '../types.js';
 import {CONTAINER_WORKSPACE, agentClaudeMd, AGENT_MCP_JSON, agentSettingsJson, resolveAuth, claudeConfigJson} from '../types.js';
-import {agents, pushEvent} from '../state.js';
+import {agents, pushEvent, persistAgent, deleteAgentFromDb, loadAgentsFromDb} from '../state.js';
 import {bus} from '../bus.js';
 import {allocateVncPort, freeVncPort, reserveVncPort} from '../utils/ports.js';
 import {dockerRun, dockerStop, dockerRm, dockerExec, dockerCp, dockerListAbox} from '../utils/docker.js';
@@ -134,11 +134,13 @@ export async function createAgentCore(params: {
     const event: AgentEvent = {ts: new Date().toISOString(), agent: name, state: 'idle', msg: ''};
     agent.lastEvent = event;
     pushEvent(event);
+    persistAgent(agent);
     emitAgentUpdate(projectId);
 
     return {ok: true, name, status: 'idle', vncPort, vncUrl: `http://localhost:${vncPort}`, containerId: containerId.slice(0, 12)};
   } catch (err) {
     agents.delete(name);
+    deleteAgentFromDb(name);
     freeVncPort(vncPort);
     await dockerRm(name);
     throw err;
@@ -156,6 +158,7 @@ export async function killAgentCore(name: string): Promise<{ok: true; killed: st
   await dockerRm(name);
   freeVncPort(agent.vncPort);
   agents.delete(name);
+  deleteAgentFromDb(name);
   emitAgentUpdate(projectId);
 
   return {ok: true, killed: name};
@@ -184,6 +187,7 @@ export async function sendKeysCore(name: string, keys: KeyAction[]): Promise<{ok
   const event: AgentEvent = {ts: new Date().toISOString(), agent: name, state: 'working', msg};
   agent.lastEvent = event;
   pushEvent(event);
+  persistAgent(agent);
   emitAgentUpdate(agent.projectId);
 
   return {ok: true, sent: keys, to: name};
@@ -220,6 +224,7 @@ export async function listAgentsCore(projectId?: string): Promise<{agents: Array
       const event: AgentEvent = {ts: new Date().toISOString(), agent: a.name, state: 'dead', msg: lastLine};
       a.lastEvent = event;
       pushEvent(event);
+      persistAgent(a);
     }
     list.push({
       name: a.name,
@@ -236,24 +241,58 @@ export async function listAgentsCore(projectId?: string): Promise<{agents: Array
   return {agents: list, count: list.length};
 }
 
-/** Re-hydrate agent state from running abox-* containers on startup */
+/** Re-hydrate agent state from SQLite + running containers on startup. */
 export async function recoverAgents(): Promise<number> {
+  // 1. Load persisted agents from SQLite into the in-memory Map
+  const fromDb = loadAgentsFromDb();
+
+  // 2. Discover running containers and merge
   const containers = await dockerListAbox();
+  const runningNames = new Set<string>();
   for (const c of containers) {
-    if (agents.has(c.name)) continue;
-    if (c.name === 'agento') continue;
-    agents.set(c.name, {
-      name: c.name,
-      task: '',
-      containerId: c.containerId,
-      vncPort: c.vncPort,
-      tmuxSession: `abox-${c.name}`,
-      status: c.status === 'running' ? 'idle' : 'dead',
-      createdAt: c.createdAt,
-    });
-    if (c.vncPort > 0) reserveVncPort(c.vncPort);
+    runningNames.add(c.name);
+    if (agents.has(c.name)) {
+      // DB agent exists, update containerId if container was recreated
+      const agent = agents.get(c.name)!;
+      agent.containerId = c.containerId;
+      if (c.vncPort > 0) {
+        agent.vncPort = c.vncPort;
+        reserveVncPort(c.vncPort);
+      }
+      if (agent.status === 'dead' && c.status === 'running') {
+        agent.status = 'idle';
+      }
+      persistAgent(agent);
+    } else if (c.name !== 'agento') {
+      // New container not in DB
+      const agent: AgentState = {
+        name: c.name,
+        task: '',
+        containerId: c.containerId,
+        vncPort: c.vncPort,
+        tmuxSession: `abox-${c.name}`,
+        status: c.status === 'running' ? 'idle' : 'dead',
+        createdAt: c.createdAt,
+      };
+      agents.set(c.name, agent);
+      persistAgent(agent);
+      if (c.vncPort > 0) reserveVncPort(c.vncPort);
+    }
   }
-  return containers.length;
+
+  // 3. Mark DB agents as dead if their container is gone
+  for (const [name, agent] of agents) {
+    if (!runningNames.has(name) && agent.status !== 'dead') {
+      agent.status = 'dead';
+      persistAgent(agent);
+    }
+    // Reserve VNC ports for all live agents
+    if (agent.status !== 'dead' && agent.vncPort > 0) {
+      reserveVncPort(agent.vncPort);
+    }
+  }
+
+  return agents.size;
 }
 
 /** Wait for specific text to appear in an agent's terminal output. */

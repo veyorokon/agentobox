@@ -1,6 +1,6 @@
 import type {AgentEvent, AgentStatus} from '../types.js';
 import {VALID_STATES} from '../types.js';
-import {agents, pushEvent, notifyWaiters} from '../state.js';
+import {agents, pushEvent, notifyWaiters, persistAgent} from '../state.js';
 import {bus} from '../bus.js';
 
 /** Process an incoming event from an agent container callback. */
@@ -34,6 +34,7 @@ export function handleEvent(data: {agent?: string; state?: string; msg?: string;
     if (projectId && !agent.projectId) agent.projectId = projectId;
     if (data.task) agent.currentTask = data.task.slice(0, 100);
     if (state === 'completed') agent.completedAt = Date.now();
+    persistAgent(agent);
     console.error(`[event] ${name}: ${state}${data.task ? ` [${data.task}]` : ''}${event.msg ? ` — ${event.msg}` : ''}`);
   }
 

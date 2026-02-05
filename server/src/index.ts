@@ -3,6 +3,7 @@ import {Hono} from 'hono';
 import {cors} from 'hono/cors';
 import {logger} from 'hono/logger';
 import {SERVER_PORT} from './types.js';
+import {initDb} from './db/index.js';
 import {recoverAgents} from './services/agents.js';
 import {handleEvent} from './services/events.js';
 import {listAgentsCore} from './services/agents.js';
@@ -71,9 +72,12 @@ app.notFound((c) => {
 // ── Startup ──────────────────────────────────────────────────────────────────
 
 async function main() {
+  initDb();
+  console.error('Database initialized');
+
   const recovered = await recoverAgents();
   if (recovered > 0) {
-    console.error(`Recovered ${recovered} agent(s) from running containers`);
+    console.error(`Recovered ${recovered} agent(s)`);
   }
 
   const server = serve({

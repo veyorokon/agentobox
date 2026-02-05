@@ -1,4 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
+import {eq} from 'drizzle-orm';
+import {db} from '../db/index.js';
+import * as schema from '../db/schema.js';
 import {sendKeysCore, readOutputCore, listAgentsCore} from './agents.js';
 import type {KeyAction} from './agents.js';
 
@@ -6,7 +9,24 @@ const MODEL = process.env.ABOX_LLM_MODEL || 'claude-sonnet-4-20250514';
 const MAX_HISTORY = 50;
 
 const client = new Anthropic();
-const conversations = new Map<string, Anthropic.MessageParam[]>();
+
+function loadHistory(projectId: string): Anthropic.MessageParam[] {
+  const row = db.select().from(schema.conversations)
+    .where(eq(schema.conversations.projectId, projectId))
+    .get();
+  if (!row) return [];
+  try { return JSON.parse(row.history); } catch { return []; }
+}
+
+function saveHistory(projectId: string, history: Anthropic.MessageParam[]): void {
+  db.insert(schema.conversations).values({
+    projectId,
+    history: JSON.stringify(history),
+  }).onConflictDoUpdate({
+    target: schema.conversations.projectId,
+    set: {history: JSON.stringify(history)},
+  }).run();
+}
 
 const SYSTEM_PROMPT = `You are Agento, an AI coordinator for a fleet of worker agents. Each agent runs inside an isolated Linux desktop container with Chrome and Claude Code.
 
@@ -89,8 +109,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 }
 
 export async function sendMessage(projectId: string, content: string): Promise<string> {
-  if (!conversations.has(projectId)) conversations.set(projectId, []);
-  const history = conversations.get(projectId)!;
+  const history = loadHistory(projectId);
 
   history.push({role: 'user', content});
 
@@ -135,6 +154,8 @@ export async function sendMessage(projectId: string, content: string): Promise<s
   history.push({role: 'assistant', content: response.content});
 
   while (history.length > MAX_HISTORY) history.shift();
+
+  saveHistory(projectId, history);
 
   return reply;
 }
