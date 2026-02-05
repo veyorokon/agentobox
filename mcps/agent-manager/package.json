@@ -10,7 +10,7 @@
     "build": "tsc --project tsconfig.build.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.24.3",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
