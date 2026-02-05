@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import {createAgentCore, killAgentCore, sendKeysCore, readOutputCore, listAgentsCore} from './agents.js';
+import {sendKeysCore, readOutputCore, listAgentsCore} from './agents.js';
 import type {KeyAction} from './agents.js';
 
 const MODEL = process.env.ABOX_LLM_MODEL || 'claude-sonnet-4-20250514';
@@ -8,22 +8,19 @@ const MAX_HISTORY = 50;
 const client = new Anthropic();
 const conversations = new Map<string, Anthropic.MessageParam[]>();
 
-const SYSTEM_PROMPT = `You are Agento, an AI orchestrator managing a fleet of worker agents. Each agent runs inside an isolated Linux desktop container with Chrome and Claude Code.
+const SYSTEM_PROMPT = `You are Agento, an AI coordinator for a fleet of worker agents. Each agent runs inside an isolated Linux desktop container with Chrome and Claude Code.
 
 Your capabilities:
-- Create new agents to perform tasks (browsing, research, coding, etc.)
+- List all active agents and their status
 - Send instructions to running agents via their terminal
 - Read agent output to check progress
-- Kill agents when they're done or stuck
-- List all active agents and their status
+
+You do NOT create or kill agents — the user manages agent lifecycle through the dashboard.
 
 Guidelines:
-- When asked to do something, delegate to an existing agent or create a new one
-- Agent names must be lowercase with no spaces (e.g., "researcher", "browser-1")
 - When using send_keys, ALWAYS include {key: "Enter"} as the last action to submit the message
 - After sending a task, use read_output to check progress
 - Be very concise — 1-2 sentences max. The user sees this in a small chat panel
-- If an agent is stuck or dead, kill it and create a new one
 - Do not narrate what you think will happen. Just do it and report the result briefly`;
 
 const TOOLS: Anthropic.Tool[] = [
@@ -31,29 +28,6 @@ const TOOLS: Anthropic.Tool[] = [
     name: 'list_agents',
     description: 'List all active worker agents with their status, tasks, and VNC URLs',
     input_schema: {type: 'object' as const, properties: {}, required: []},
-  },
-  {
-    name: 'create_agent',
-    description: 'Create a new worker agent. Returns when the agent is fully interactive and ready for tasks.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        name: {type: 'string', description: 'Unique name (lowercase, no spaces)'},
-        task: {type: 'string', description: 'Description of the task for the agent'},
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'kill_agent',
-    description: 'Stop and remove a worker agent',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        name: {type: 'string', description: 'Name of the agent to kill'},
-      },
-      required: ['name'],
-    },
   },
   {
     name: 'send_keys',
@@ -96,17 +70,6 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     switch (name) {
       case 'list_agents': {
         const result = await listAgentsCore();
-        return JSON.stringify(result);
-      }
-      case 'create_agent': {
-        const result = await createAgentCore({
-          name: input.name as string,
-          task: input.task as string | undefined,
-        });
-        return JSON.stringify(result);
-      }
-      case 'kill_agent': {
-        const result = await killAgentCore(input.name as string);
         return JSON.stringify(result);
       }
       case 'send_keys': {

@@ -1,6 +1,7 @@
 import type {AgentEvent, AgentStatus} from '../types.js';
 import {VALID_STATES} from '../types.js';
 import {agents, pushEvent, notifyWaiters} from '../state.js';
+import {bus} from '../bus.js';
 
 /** Process an incoming event from an agent container callback. */
 export function handleEvent(data: {agent?: string; state?: string; msg?: string; task?: string}, projectId?: string): {status: number; body: Record<string, unknown>} {
@@ -21,8 +22,12 @@ export function handleEvent(data: {agent?: string; state?: string; msg?: string;
 
   pushEvent(event);
 
-  // Update agent state if tracked
+  // Determine project for bus emission
   const agent = agents.get(name);
+  const pid = projectId || agent?.projectId;
+  if (pid) bus.emitNewEvent(pid, event);
+
+  // Update agent state if tracked
   if (agent) {
     agent.status = state;
     agent.lastEvent = event;

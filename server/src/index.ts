@@ -11,6 +11,7 @@ import {getEvents} from './state.js';
 import agentRoutes from './routes/agents.js';
 import eventRoutes from './routes/events.js';
 import chatRoutes from './routes/chat.js';
+import sseRoutes from './routes/sse.js';
 
 const app = new Hono();
 
@@ -31,6 +32,7 @@ app.onError((err, c) => {
 app.route('/api/v1', agentRoutes);
 app.route('/api/v1', eventRoutes);
 app.route('/api/v1', chatRoutes);
+app.route('/api/v1', sseRoutes);
 
 // ── Backward-compat (unversioned) ────────────────────────────────────────────
 // Agent containers POST to /event (hardcoded in Stop hooks + CLAUDE.md).

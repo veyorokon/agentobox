@@ -3,9 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useProjectStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
 import { mockProjects, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
-import { useAgentPoller } from '@/hooks/use-agent-poller';
-import { useEventPoller } from '@/hooks/use-event-poller';
-import { useChatPoller } from '@/hooks/use-chat-poller';
+import { useSSE } from '@/hooks/use-sse';
 import { ThemeProvider } from './theme-provider';
 
 function StoreInitializer() {
@@ -30,10 +28,8 @@ function StoreInitializer() {
     }
   }, [setProjects, setAgents, setEvents, setMessages]);
 
-  // Poll live state — overwrites mock data for project-1
-  useAgentPoller('project-1');
-  useEventPoller('project-1');
-  useChatPoller('project-1');
+  // SSE stream — real-time updates, replaces polling
+  useSSE('project-1');
 
   return null;
 }

@@ -1,9 +1,15 @@
 import {Hono} from 'hono';
 import {pushChat, getChat, genChatId, agents} from '../state.js';
+import {bus} from '../bus.js';
 import {sendKeysCore} from '../services/agents.js';
 import {sendMessage} from '../services/agento.js';
 import {tmuxHasSession} from '../utils/tmux.js';
 import type {ChatMsg} from '../types.js';
+
+function emitChat(projectId: string, msg: ChatMsg) {
+  pushChat(projectId, msg);
+  bus.emitNewChat(projectId, msg);
+}
 
 const app = new Hono();
 
@@ -19,32 +25,32 @@ app.post('/projects/:projectId/chat', async (c) => {
 
     const target = data.target || 'agento';
     const userMsg: ChatMsg = {id: genChatId(), role: 'user', content, ts: new Date().toISOString(), target};
-    pushChat(projectId, userMsg);
+    emitChat(projectId, userMsg);
 
     if (target === 'agento') {
       try {
         const replyText = await sendMessage(projectId, content);
         const reply: ChatMsg = {id: genChatId(), role: 'agento', content: replyText, ts: new Date().toISOString()};
-        pushChat(projectId, reply);
+        emitChat(projectId, reply);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error(`[agento] LLM error: ${errMsg}`);
         const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Error: ${errMsg}`, ts: new Date().toISOString()};
-        pushChat(projectId, reply);
+        emitChat(projectId, reply);
       }
     } else {
       // Direct agent messaging via tmux
       const agent = agents.get(target);
       if (!agent) {
         const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Agent "${target}" not found.`, ts: new Date().toISOString()};
-        pushChat(projectId, reply);
+        emitChat(projectId, reply);
       } else if (!tmuxHasSession(target)) {
         const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Agent "${target}" session is not active.`, ts: new Date().toISOString()};
-        pushChat(projectId, reply);
+        emitChat(projectId, reply);
       } else {
         await sendKeysCore(target, [{text: content}, {key: 'Enter'}]);
         const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Sent to ${target}.`, ts: new Date().toISOString()};
-        pushChat(projectId, reply);
+        emitChat(projectId, reply);
       }
     }
 

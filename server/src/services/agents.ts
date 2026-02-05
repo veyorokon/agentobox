@@ -1,6 +1,7 @@
 import type {AgentState, AgentEvent, AuthConfig} from '../types.js';
 import {CONTAINER_WORKSPACE, agentClaudeMd, AGENT_MCP_JSON, agentSettingsJson, resolveAuth, claudeConfigJson} from '../types.js';
 import {agents, pushEvent} from '../state.js';
+import {bus} from '../bus.js';
 import {allocateVncPort, freeVncPort, reserveVncPort} from '../utils/ports.js';
 import {dockerRun, dockerStop, dockerRm, dockerExec, dockerCp, dockerListAbox} from '../utils/docker.js';
 import {tmuxNewSession, tmuxSendKeys, tmuxCapture, tmuxKill, tmuxHasSession} from '../utils/tmux.js';
@@ -9,6 +10,20 @@ export type KeyAction = {text: string} | {key: string};
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Emit agent_update for a project via the bus. */
+function emitAgentUpdate(projectId?: string) {
+  if (!projectId) return;
+  const list = Array.from(agents.values())
+    .filter(a => a.projectId === projectId)
+    .map(a => ({
+      name: a.name, status: a.status, task: a.task,
+      currentTask: a.currentTask ?? '', lastEvent: a.lastEvent?.msg ?? '',
+      vncPort: a.vncPort, vncUrl: `http://localhost:${a.vncPort}`,
+      uptime: Math.round((Date.now() - a.createdAt) / 1000),
+    }));
+  bus.emitAgentUpdate(projectId, list);
 }
 
 /** Poll until the computer-use MCP server port is listening inside the container. */
@@ -119,6 +134,7 @@ export async function createAgentCore(params: {
     const event: AgentEvent = {ts: new Date().toISOString(), agent: name, state: 'idle', msg: ''};
     agent.lastEvent = event;
     pushEvent(event);
+    emitAgentUpdate(projectId);
 
     return {ok: true, name, status: 'idle', vncPort, vncUrl: `http://localhost:${vncPort}`, containerId: containerId.slice(0, 12)};
   } catch (err) {
@@ -133,12 +149,14 @@ export async function killAgentCore(name: string): Promise<{ok: true; killed: st
   const agent = agents.get(name);
   if (!agent) throw new Error(`Agent "${name}" not found`);
 
+  const projectId = agent.projectId;
   agent.status = 'dead';
   await tmuxKill(name);
   await dockerStop(name);
   await dockerRm(name);
   freeVncPort(agent.vncPort);
   agents.delete(name);
+  emitAgentUpdate(projectId);
 
   return {ok: true, killed: name};
 }
@@ -166,6 +184,7 @@ export async function sendKeysCore(name: string, keys: KeyAction[]): Promise<{ok
   const event: AgentEvent = {ts: new Date().toISOString(), agent: name, state: 'working', msg};
   agent.lastEvent = event;
   pushEvent(event);
+  emitAgentUpdate(agent.projectId);
 
   return {ok: true, sent: keys, to: name};
 }
