@@ -1,11 +1,13 @@
 import {serve} from '@hono/node-server';
 import {Hono} from 'hono';
 import {cors} from 'hono/cors';
-import {logger} from 'hono/logger';
+import {httpInstrumentationMiddleware} from '@hono/otel';
 import {SERVER_PORT} from './types.js';
 import {initDb} from './db/index.js';
 import {recoverAgents} from './services/agents.js';
 import {agents} from './state.js';
+import {logger} from './logger.js';
+import {shutdownOtel} from './instrumentation.js';
 
 import agentRoutes from './routes/agents.js';
 import eventRoutes from './routes/events.js';
@@ -17,12 +19,28 @@ const app = new Hono();
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 app.use('*', cors());
-app.use('*', logger());
+app.use(
+  '*',
+  httpInstrumentationMiddleware({
+    serviceName: 'agentobox-server',
+    serviceVersion: '0.1.0',
+  }),
+);
+
+// Pino access log (replaces hono/logger)
+app.use('*', async (c, next) => {
+  const start = Date.now();
+  await next();
+  logger.info(
+    {method: c.req.method, path: c.req.path, status: c.res.status, ms: Date.now() - start},
+    `${c.req.method} ${c.req.path}`,
+  );
+});
 
 // ── Error handling ───────────────────────────────────────────────────────────
 
 app.onError((err, c) => {
-  console.error(`[error] ${err.message}`);
+  logger.error({err}, err.message);
   return c.json({error: err.message}, 500);
 });
 
@@ -55,28 +73,31 @@ app.notFound((c) => {
 
 async function main() {
   initDb();
-  console.error('Database initialized');
+  logger.info('Database initialized');
 
   const recovered = await recoverAgents();
   if (recovered > 0) {
-    console.error(`Recovered ${recovered} agent(s)`);
+    logger.info({recovered}, `Recovered ${recovered} agent(s)`);
   }
 
-  const server = serve({
-    fetch: app.fetch,
-    port: SERVER_PORT,
-  }, (info) => {
-    console.error(`Agentobox server listening on port ${info.port}`);
-  });
+  const server = serve(
+    {
+      fetch: app.fetch,
+      port: SERVER_PORT,
+    },
+    (info) => {
+      logger.info({port: info.port}, `Agentobox server listening on port ${info.port}`);
+    },
+  );
 
-  process.on('SIGTERM', () => {
-    console.error('SIGTERM received, shutting down...');
+  const shutdown = async (signal: string) => {
+    logger.info({signal}, `${signal} received, shutting down...`);
+    await shutdownOtel();
     server.close(() => process.exit(0));
-  });
-  process.on('SIGINT', () => {
-    console.error('SIGINT received, shutting down...');
-    server.close(() => process.exit(0));
-  });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 main();

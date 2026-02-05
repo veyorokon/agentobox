@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/stores';
 import { useSSE } from '@/hooks/use-sse';
 import { ThemeProvider } from './theme-provider';
+import { ErrorBoundary } from './error-boundary';
+import { Toaster } from '@/components/ui/sonner';
 
 function StoreInitializer() {
   const setProjects = useProjectStore((s) => s.setProjects);
@@ -46,8 +48,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
       enableSystem={false}
       disableTransitionOnChange
     >
-      <StoreInitializer />
-      {children}
+      <ErrorBoundary>
+        <StoreInitializer />
+        {children}
+      </ErrorBoundary>
+      <Toaster position="bottom-right" />
     </ThemeProvider>
   );
 }

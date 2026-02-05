@@ -47,6 +47,7 @@
   --agent-completed: #22c55e;
   --agent-blocked: #f59e0b;
   --agent-dead: #ef4444;
+  --agent-deploying: #38bdf8;
 
   /* Agent UI */
   --agent-border: rgba(0, 0, 0, 0.2);
@@ -93,6 +94,7 @@
   --agent-completed: #22c55e;
   --agent-blocked: #f59e0b;
   --agent-dead: #ef4444;
+  --agent-deploying: #38bdf8;
 
   --agent-border: rgba(255, 255, 255, 0.2);
   --agent-border-active: #39ff14;
@@ -136,6 +138,7 @@
   --agent-completed: #658761;
   --agent-blocked: #DFA05D;
   --agent-dead: #AC5045;
+  --agent-deploying: #7ba5b5;
 
   --agent-border: rgba(232, 216, 201, 0.2);
   --agent-border-active: #658761;
@@ -180,6 +183,7 @@
   --agent-completed: #9ccfd8;
   --agent-blocked: #f6c177;
   --agent-dead: #eb6f92;
+  --agent-deploying: #3e8fb0;
 
   --agent-border: rgba(224, 222, 244, 0.2);
   --agent-border-active: #c4a7e7;
@@ -224,6 +228,7 @@
   --color-agent-completed: var(--agent-completed);
   --color-agent-blocked: var(--agent-blocked);
   --color-agent-dead: var(--agent-dead);
+  --color-agent-deploying: var(--agent-deploying);
   --color-agent-border: var(--agent-border);
   --color-agent-border-active: var(--agent-border-active);
   --color-agent-glow: var(--agent-glow);
@@ -248,6 +253,38 @@
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
+}
+
+/* ============================================
+   Animations
+   ============================================ */
+
+@keyframes card-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes border-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-card-enter {
+  animation: card-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.deploying-card::after {
+  animation: border-pulse 2s ease-in-out infinite !important;
 }
 
 @layer base {

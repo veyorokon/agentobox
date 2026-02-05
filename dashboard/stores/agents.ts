@@ -7,7 +7,7 @@ interface AgentStore {
   getAgent: (projectId: string, name: string) => Agent | undefined;
   setAgents: (projectId: string, agents: Agent[]) => void;
   updateAgent: (projectId: string, name: string, updates: Partial<Agent>) => void;
-  createAgent: (projectId: string, name: string) => void;
+  createAgent: (projectId: string, name: string, task?: string) => void;
   killAgent: (projectId: string, name: string) => void;
 }
 
@@ -34,7 +34,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
       },
     })),
 
-  createAgent: (projectId, name) =>
+  createAgent: (projectId, name, task) =>
     set((state) => ({
       agents: {
         ...state.agents,
@@ -42,9 +42,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
           ...(state.agents[projectId] || []),
           {
             name,
-            status: 'idle' as AgentStatus,
-            task: '',
-            message: 'Ready for tasks',
+            status: 'deploying' as AgentStatus,
+            task: task || '',
+            message: 'Spinning up container...',
             createdAt: new Date().toISOString(),
             lastActivity: new Date().toISOString(),
           },

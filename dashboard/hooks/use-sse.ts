@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { useAgentStore, useEventStore, useChatStore } from '@/stores';
 import { API_V1 } from '@/lib/constants';
+import { logger } from '@/lib/observability';
 import type { Agent, AgentStatus, AgentEvent, ChatMessage } from '@/types';
 
 interface LiveAgent {
@@ -40,6 +41,8 @@ export function useSSE(projectId: string) {
   const addEvent = useEventStore((s) => s.addEvent);
   const setMessages = useChatStore((s) => s.setMessages);
   const esRef = useRef<EventSource | null>(null);
+  const reconnectCountRef = useRef(0);
+  const lastMessageRef = useRef(Date.now());
 
   useEffect(() => {
     let active = true;
@@ -86,8 +89,23 @@ export function useSSE(projectId: string) {
     const es = new EventSource(`${API_V1}/projects/${projectId}/stream`);
     esRef.current = es;
 
+    es.onopen = () => {
+      if (reconnectCountRef.current > 0) {
+        logger.info('sse', `reconnected after ${reconnectCountRef.current} attempts`);
+      }
+      reconnectCountRef.current = 0;
+      lastMessageRef.current = Date.now();
+    };
+
+    es.onerror = () => {
+      reconnectCountRef.current++;
+      const staleSec = Math.round((Date.now() - lastMessageRef.current) / 1000);
+      logger.warn('sse', `connection error`, {reconnects: reconnectCountRef.current, staleSec});
+    };
+
     es.addEventListener('agent_update', (e) => {
       if (!active) return;
+      lastMessageRef.current = Date.now();
       try {
         const data = JSON.parse(e.data) as { agents: LiveAgent[] };
         setAgents(projectId, data.agents.map(toAgent));
@@ -96,6 +114,7 @@ export function useSSE(projectId: string) {
 
     es.addEventListener('new_event', (e) => {
       if (!active) return;
+      lastMessageRef.current = Date.now();
       try {
         const data = JSON.parse(e.data) as { event: AgentEvent };
         addEvent(projectId, data.event);
@@ -104,6 +123,7 @@ export function useSSE(projectId: string) {
 
     es.addEventListener('new_chat', (e) => {
       if (!active) return;
+      lastMessageRef.current = Date.now();
       try {
         const data = JSON.parse(e.data) as { message: ChatMessage };
         const existing = useChatStore.getState().messages[projectId] ?? [];
@@ -111,6 +131,10 @@ export function useSSE(projectId: string) {
           setMessages(projectId, [...existing, data.message]);
         }
       } catch { /* malformed SSE data */ }
+    });
+
+    es.addEventListener('keepalive', () => {
+      lastMessageRef.current = Date.now();
     });
 
     return () => {

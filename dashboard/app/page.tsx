@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Send, Pause, Square, Search, RefreshCw } from 'lucide-react';
+import { Monitor, Send, Pause, Square, Search, RefreshCw, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAgentStore, useChatStore, useEventStore } from '@/stores';
 import { API_V1 } from '@/lib/constants';
+import { logger } from '@/lib/observability';
 import type { Agent, AgentStatus, AgentEvent, ChatMessage } from '@/types';
 
 const PROJECT_ID = 'project-1';
@@ -16,6 +18,7 @@ const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
   completed: 'var(--agent-completed)',
   blocked: 'var(--agent-blocked)',
   dead: 'var(--agent-dead)',
+  deploying: 'var(--agent-deploying)',
 };
 
 function useTheme() {
@@ -49,28 +52,296 @@ function timeAgo(iso: string): string {
 }
 
 /* ================================================================
+   Deploy Modal
+   ================================================================ */
+
+function DeployModal({
+  open,
+  onClose,
+  onDeploy,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onDeploy: (name: string, task: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [task, setTask] = useState('');
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setName('');
+      setTask('');
+      setTimeout(() => nameRef.current?.focus(), 50);
+    }
+  }, [open]);
+
+  const handleSubmit = () => {
+    const trimmed = name.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!trimmed) return;
+    onDeploy(trimmed, task.trim());
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit();
+    }
+    if (e.key === 'Escape') onClose();
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleKeyDown}
+        data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
+        className="relative w-[420px] bg-card"
+        style={{
+          '--aug-tl': '16px',
+          '--aug-tr': '16px',
+          '--aug-br': '16px',
+          '--aug-bl': '16px',
+          '--aug-border-all': '2px',
+          '--aug-border-bg': 'var(--accent)',
+        } as React.CSSProperties}
+      >
+        <div className="p-6">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-accent font-bold text-xs uppercase tracking-widest">
+              Deploy Agent
+            </h2>
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Name field */}
+          <div className="mb-4">
+            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
+              Name
+            </label>
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <input
+                ref={nameRef}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="scout"
+                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
+              />
+            </div>
+            <p className="text-muted-foreground/50 text-[10px] mt-1 pl-1">
+              Lowercase, no spaces
+            </p>
+          </div>
+
+          {/* Task field */}
+          <div className="mb-6">
+            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
+              Task <span className="text-muted-foreground/30">(optional)</span>
+            </label>
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <input
+                type="text"
+                value={task}
+                onChange={(e) => setTask(e.target.value)}
+                placeholder="Investigate the auth module..."
+                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3">
+            <button
+              onClick={onClose}
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-4 py-2 text-muted-foreground font-bold text-xs uppercase tracking-wider hover:text-foreground transition-colors"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!name.trim()}
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-5 py-2 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '2px',
+                '--aug-border-bg': 'var(--accent)',
+              } as React.CSSProperties}
+            >
+              Deploy
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================
+   Confirm Modal
+   ================================================================ */
+
+function ConfirmModal({
+  open,
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  destructive = false,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  destructive?: boolean;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Enter') onConfirm();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [open, onConfirm, onCancel]);
+
+  if (!open) return null;
+
+  const borderColor = destructive ? 'var(--destructive)' : 'var(--accent)';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      onClick={onCancel}
+    >
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+      <div
+        onClick={(e) => e.stopPropagation()}
+        data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
+        className="relative w-[360px] bg-card"
+        style={{
+          '--aug-tl': '14px',
+          '--aug-tr': '14px',
+          '--aug-br': '14px',
+          '--aug-bl': '14px',
+          '--aug-border-all': '2px',
+          '--aug-border-bg': borderColor,
+        } as React.CSSProperties}
+      >
+        <div className="p-6">
+          <h2
+            className="font-bold text-xs uppercase tracking-widest mb-3"
+            style={{ color: borderColor }}
+          >
+            {title}
+          </h2>
+          <p className="text-foreground text-sm leading-relaxed mb-6">
+            {message}
+          </p>
+          <div className="flex items-center justify-end gap-3">
+            <button
+              onClick={onCancel}
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-4 py-2 text-muted-foreground font-bold text-xs uppercase tracking-wider hover:text-foreground transition-colors"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-5 py-2 font-bold text-xs uppercase tracking-wider"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '2px',
+                '--aug-border-bg': borderColor,
+                background: borderColor,
+                color: 'var(--background)',
+              } as React.CSSProperties}
+            >
+              {confirmLabel ?? 'Confirm'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================
    Page
    ================================================================ */
 
 export default function DashboardPage() {
   const agents = useAgentStore((s) => s.agents[PROJECT_ID]) ?? [];
-  const [deploying, setDeploying] = useState(false);
+  const createAgent = useAgentStore((s) => s.createAgent);
+  const [showDeployModal, setShowDeployModal] = useState(false);
   const { theme, setTheme } = useTheme();
   const nextTheme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
 
-  const handleDeploy = async () => {
-    const name = window.prompt('Agent name (lowercase, no spaces):');
-    if (!name?.trim()) return;
-    const task = window.prompt('Task (optional):') || '';
-    setDeploying(true);
+  const handleDeploy = async (name: string, task: string) => {
+    setShowDeployModal(false);
+    createAgent(PROJECT_ID, name, task);
+    toast(`Deploying ${name}...`, {
+      description: 'Spinning up container — this takes about 30-60s.',
+    });
     try {
-      await fetch(`${API_V1}/agents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim().toLowerCase(), task, projectId: PROJECT_ID }),
-      });
+      await logger.withSpan('deployAgent', () =>
+        fetch(`${API_V1}/agents`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...logger.getTraceHeaders() },
+          body: JSON.stringify({ name, task, projectId: PROJECT_ID }),
+        }),
+      );
     } catch { /* SSE will reflect state */ }
-    setDeploying(false);
   };
 
   return (
@@ -89,10 +360,9 @@ export default function DashboardPage() {
             {agents.length} agents deployed
           </p>
           <button
-            onClick={handleDeploy}
-            disabled={deploying}
+            onClick={() => setShowDeployModal(true)}
             data-augmented-ui="tl-clip br-clip border"
-            className="px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent disabled:opacity-50"
+            className="px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
             style={{
               '--aug-tl': '8px',
               '--aug-br': '8px',
@@ -100,7 +370,7 @@ export default function DashboardPage() {
               '--aug-border-bg': 'var(--accent)',
             } as React.CSSProperties}
           >
-            {deploying ? 'Deploying...' : '+ Deploy Agent'}
+            + Deploy Agent
           </button>
         </div>
 
@@ -112,6 +382,12 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
+
+      <DeployModal
+        open={showDeployModal}
+        onClose={() => setShowDeployModal(false)}
+        onDeploy={handleDeploy}
+      />
     </div>
   );
 }
@@ -160,12 +436,14 @@ function CommandPanel({
     const target = activeTab === 'agento' ? 'agento' : activeTab;
     setInput('');
     try {
-      await fetch(`${API_V1}/projects/${PROJECT_ID}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target, content: text }),
-      });
-    } catch { /* poller picks up server state */ }
+      await logger.withSpan('sendChat', () =>
+        fetch(`${API_V1}/projects/${PROJECT_ID}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...logger.getTraceHeaders() },
+          body: JSON.stringify({ target, content: text }),
+        }),
+      );
+    } catch { /* SSE will reflect state */ }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -413,6 +691,7 @@ const STATE_SYMBOLS: Record<AgentStatus, string> = {
   completed: '\u2713', // ✓
   blocked: '\u26A0',   // ⚠
   dead: '\u2717',      // ✗
+  deploying: '\u25E6', // ◦
 };
 
 function EventFeed({ filter, onSelectAgent }: { filter: string; onSelectAgent: (name: string) => void }) {
@@ -578,28 +857,41 @@ function ChatBubble({ message }: { message: ChatMessage }) {
    ================================================================ */
 
 function AgentCard({ agent }: { agent: Agent }) {
+  const isDeploying = agent.status === 'deploying';
   const isWorking = agent.status === 'working';
   const statusColor = STATUS_COLOR_VAR[agent.status];
   const vncRefreshRef = useRef<(() => void) | null>(null);
+  const [showKillConfirm, setShowKillConfirm] = useState(false);
 
   const handleKill = async () => {
-    if (!confirm(`Kill agent "${agent.name}"?`)) return;
+    setShowKillConfirm(false);
     try {
-      await fetch(`${API_V1}/agents/${agent.name}`, { method: 'DELETE' });
+      await logger.withSpan('killAgent', () =>
+        fetch(`${API_V1}/agents/${agent.name}`, {
+          method: 'DELETE',
+          headers: logger.getTraceHeaders(),
+        }),
+      );
     } catch { /* SSE will reflect state */ }
   };
+
+  const borderColor = isDeploying
+    ? 'var(--agent-deploying)'
+    : isWorking
+      ? 'var(--agent-border-active)'
+      : 'var(--agent-border)';
 
   return (
     <div
       data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-      className="bg-card backdrop-blur overflow-hidden"
+      className={`bg-card backdrop-blur overflow-hidden ${isDeploying ? 'animate-card-enter deploying-card' : ''}`}
       style={{
         '--aug-tl': '20px',
         '--aug-tr': '20px',
         '--aug-br': '20px',
         '--aug-bl': '20px',
-        '--aug-border-all': '1px',
-        '--aug-border-bg': isWorking ? 'var(--agent-border-active)' : 'var(--agent-border)',
+        '--aug-border-all': isDeploying ? '2px' : '1px',
+        '--aug-border-bg': borderColor,
       } as React.CSSProperties}
     >
       <div className="p-5">
@@ -634,33 +926,55 @@ function AgentCard({ agent }: { agent: Agent }) {
               {agent.message || (agent.task ? '' : 'Waiting for instructions...')}
             </p>
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button
-              onClick={() => vncRefreshRef.current?.()}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-              title="Refresh VNC"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-            <button
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-              title="Pause"
-            >
-              <Pause className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={handleKill}
-              className="w-7 h-7 flex items-center justify-center text-destructive/60 hover:text-destructive transition-colors"
-              title="Kill agent"
-            >
-              <Square className="w-3 h-3" />
-            </button>
-          </div>
+          {!isDeploying && (
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                onClick={() => vncRefreshRef.current?.()}
+                className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                title="Refresh VNC"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                title="Pause"
+              >
+                <Pause className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setShowKillConfirm(true)}
+                className="w-7 h-7 flex items-center justify-center text-destructive/60 hover:text-destructive transition-colors"
+                title="Kill agent"
+              >
+                <Square className="w-3 h-3" />
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* VNC Stream */}
+        {/* VNC Stream / Deploying skeleton */}
         <div className="aspect-[4/3] bg-surface-inset overflow-hidden">
-          {agent.vncUrl && agent.status !== 'dead' ? (
+          {isDeploying ? (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+              <div className="relative">
+                <div
+                  className="w-10 h-10 border-2 rounded-full animate-spin"
+                  style={{
+                    borderColor: 'var(--agent-deploying)',
+                    borderTopColor: 'transparent',
+                  }}
+                />
+              </div>
+              <div className="text-center">
+                <p className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--agent-deploying)' }}>
+                  Deploying
+                </p>
+                <p className="text-muted-foreground text-[10px] mt-1">
+                  Pulling image & configuring...
+                </p>
+              </div>
+            </div>
+          ) : agent.vncUrl && agent.status !== 'dead' ? (
             <VncFrame url={agent.vncUrl} onRefresh={(fn) => { vncRefreshRef.current = fn; }} />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
@@ -672,6 +986,16 @@ function AgentCard({ agent }: { agent: Agent }) {
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={showKillConfirm}
+        title="Terminate Agent"
+        message={`This will stop the container and remove agent "${agent.name}". This action cannot be undone.`}
+        confirmLabel="Kill"
+        destructive
+        onConfirm={handleKill}
+        onCancel={() => setShowKillConfirm(false)}
+      />
     </div>
   );
 }
@@ -730,6 +1054,7 @@ function StatusBadge({ status }: { status: AgentStatus }) {
     completed: 'Completed',
     blocked: 'Blocked',
     dead: 'Dead',
+    deploying: 'Deploying',
   };
 
   return (

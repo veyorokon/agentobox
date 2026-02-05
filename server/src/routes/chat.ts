@@ -5,6 +5,7 @@ import {sendKeysCore} from '../services/agents.js';
 import {sendMessage} from '../services/agento.js';
 import {tmuxHasSession} from '../utils/tmux.js';
 import type {ChatMsg} from '../types.js';
+import {llmLog} from '../logger.js';
 
 function emitChat(projectId: string, msg: ChatMsg) {
   pushChat(projectId, msg);
@@ -34,7 +35,7 @@ app.post('/projects/:projectId/chat', async (c) => {
         emitChat(projectId, reply);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.error(`[agento] LLM error: ${errMsg}`);
+        llmLog.error({err}, `LLM error: ${errMsg}`);
         const reply: ChatMsg = {id: genChatId(), role: 'agento', content: `Error: ${errMsg}`, ts: new Date().toISOString()};
         emitChat(projectId, reply);
       }

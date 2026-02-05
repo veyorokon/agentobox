@@ -2,6 +2,7 @@ import type {AgentEvent, AgentStatus} from '../types.js';
 import {VALID_STATES} from '../types.js';
 import {agents, pushEvent, notifyWaiters, persistAgent} from '../state.js';
 import {bus} from '../bus.js';
+import {eventLog} from '../logger.js';
 
 /** Process an incoming event from an agent container callback. */
 export function handleEvent(data: {agent?: string; state?: string; msg?: string; task?: string}, projectId?: string): {status: number; body: Record<string, unknown>} {
@@ -35,7 +36,7 @@ export function handleEvent(data: {agent?: string; state?: string; msg?: string;
     if (data.task) agent.currentTask = data.task.slice(0, 100);
     if (state === 'completed') agent.completedAt = Date.now();
     persistAgent(agent);
-    console.error(`[event] ${name}: ${state}${data.task ? ` [${data.task}]` : ''}${event.msg ? ` — ${event.msg}` : ''}`);
+    eventLog.info({agent: name, state, task: data.task}, `${name}: ${state}${data.task ? ` [${data.task}]` : ''}${event.msg ? ` — ${event.msg}` : ''}`);
   }
 
   if (state === 'completed') notifyWaiters(name);

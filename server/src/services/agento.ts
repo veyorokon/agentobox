@@ -1,14 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk';
+import {wrapAnthropic, initLogger} from 'braintrust';
 import {eq} from 'drizzle-orm';
 import {db} from '../db/index.js';
 import * as schema from '../db/schema.js';
 import {sendKeysCore, readOutputCore, listAgentsCore} from './agents.js';
 import type {KeyAction} from './agents.js';
+import {withSpan} from '../telemetry.js';
+import {llmLog} from '../logger.js';
 
 const MODEL = process.env.ABOX_LLM_MODEL || 'claude-sonnet-4-20250514';
 const MAX_HISTORY = 50;
 
-const client = new Anthropic();
+// Braintrust wraps the Anthropic client for LLM tracing (no-op without BRAINTRUST_API_KEY)
+const rawClient = new Anthropic();
+const client = wrapAnthropic(rawClient);
+
+if (process.env.BRAINTRUST_API_KEY) {
+  initLogger({projectName: 'agentobox', apiKey: process.env.BRAINTRUST_API_KEY});
+}
 
 function loadHistory(projectId: string): Anthropic.MessageParam[] {
   const row = db.select().from(schema.conversations)
@@ -86,76 +95,97 @@ const TOOLS: Anthropic.Tool[] = [
 ];
 
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-  try {
-    switch (name) {
-      case 'list_agents': {
-        const result = await listAgentsCore();
-        return JSON.stringify(result);
+  return withSpan(`llm.tool_execution:${name}`, {'llm.tool': name}, async () => {
+    try {
+      switch (name) {
+        case 'list_agents': {
+          const result = await listAgentsCore();
+          return JSON.stringify(result);
+        }
+        case 'send_keys': {
+          const result = await sendKeysCore(input.name as string, input.keys as KeyAction[]);
+          return JSON.stringify(result);
+        }
+        case 'read_output': {
+          const result = await readOutputCore(input.name as string, input.lines as number | undefined);
+          return JSON.stringify(result);
+        }
+        default:
+          return JSON.stringify({error: `Unknown tool: ${name}`});
       }
-      case 'send_keys': {
-        const result = await sendKeysCore(input.name as string, input.keys as KeyAction[]);
-        return JSON.stringify(result);
-      }
-      case 'read_output': {
-        const result = await readOutputCore(input.name as string, input.lines as number | undefined);
-        return JSON.stringify(result);
-      }
-      default:
-        return JSON.stringify({error: `Unknown tool: ${name}`});
+    } catch (err) {
+      return JSON.stringify({error: err instanceof Error ? err.message : String(err)});
     }
-  } catch (err) {
-    return JSON.stringify({error: err instanceof Error ? err.message : String(err)});
-  }
+  });
 }
 
 export async function sendMessage(projectId: string, content: string): Promise<string> {
-  const history = loadHistory(projectId);
+  return withSpan('llm.conversation', {'llm.model': MODEL, 'llm.project_id': projectId}, async (conversationSpan) => {
+    const history = loadHistory(projectId);
+    history.push({role: 'user', content});
+    while (history.length > MAX_HISTORY) history.shift();
 
-  history.push({role: 'user', content});
+    let totalTokens = 0;
+    let toolIterations = 0;
 
-  while (history.length > MAX_HISTORY) history.shift();
+    let response = await withSpan('llm.chat_completion', {'llm.model': MODEL, 'llm.iteration': 0}, async (span) => {
+      const res = await client.messages.create({
+        model: MODEL,
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
+        messages: history,
+      });
+      span.setAttribute('llm.input_tokens', res.usage.input_tokens);
+      span.setAttribute('llm.output_tokens', res.usage.output_tokens);
+      span.setAttribute('llm.stop_reason', res.stop_reason ?? '');
+      totalTokens += res.usage.input_tokens + res.usage.output_tokens;
+      return res;
+    });
 
-  let response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    tools: TOOLS,
-    messages: history,
-  });
+    // Tool-use loop: keep going until we get a final text response
+    while (response.stop_reason === 'tool_use') {
+      toolIterations++;
+      const assistantContent = response.content;
+      history.push({role: 'assistant', content: assistantContent});
 
-  // Tool-use loop: keep going until we get a final text response
-  while (response.stop_reason === 'tool_use') {
-    const assistantContent = response.content;
-    history.push({role: 'assistant', content: assistantContent});
-
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of assistantContent) {
-      if (block.type === 'tool_use') {
-        const result = await executeTool(block.name, block.input as Record<string, unknown>);
-        toolResults.push({type: 'tool_result', tool_use_id: block.id, content: result});
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of assistantContent) {
+        if (block.type === 'tool_use') {
+          const result = await executeTool(block.name, block.input as Record<string, unknown>);
+          toolResults.push({type: 'tool_result', tool_use_id: block.id, content: result});
+        }
       }
+
+      history.push({role: 'user', content: toolResults});
+
+      response = await withSpan('llm.chat_completion', {'llm.model': MODEL, 'llm.iteration': toolIterations}, async (span) => {
+        const res = await client.messages.create({
+          model: MODEL,
+          max_tokens: 4096,
+          system: SYSTEM_PROMPT,
+          tools: TOOLS,
+          messages: history,
+        });
+        span.setAttribute('llm.input_tokens', res.usage.input_tokens);
+        span.setAttribute('llm.output_tokens', res.usage.output_tokens);
+        span.setAttribute('llm.stop_reason', res.stop_reason ?? '');
+        totalTokens += res.usage.input_tokens + res.usage.output_tokens;
+        return res;
+      });
     }
 
-    history.push({role: 'user', content: toolResults});
+    // Extract final text
+    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === 'text');
+    const reply = textBlocks.map(b => b.text).join('\n') || 'No response generated.';
 
-    response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools: TOOLS,
-      messages: history,
-    });
-  }
+    history.push({role: 'assistant', content: response.content});
+    while (history.length > MAX_HISTORY) history.shift();
+    saveHistory(projectId, history);
 
-  // Extract final text
-  const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === 'text');
-  const reply = textBlocks.map(b => b.text).join('\n') || 'No response generated.';
+    conversationSpan.setAttribute('llm.total_tokens', totalTokens);
+    conversationSpan.setAttribute('llm.tool_iterations', toolIterations);
 
-  history.push({role: 'assistant', content: response.content});
-
-  while (history.length > MAX_HISTORY) history.shift();
-
-  saveHistory(projectId, history);
-
-  return reply;
+    return reply;
+  });
 }
