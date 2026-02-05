@@ -4,7 +4,18 @@ import {getEvents, getEventsForProject} from '../state.js';
 
 const app = new Hono();
 
-// Receive event from agent container callback
+// Receive event from agent container callback (unscoped — containers use this)
+app.post('/event', async (c) => {
+  try {
+    const body = await c.req.json();
+    const result = handleEvent(body);
+    return c.json(result.body, result.status as 200);
+  } catch {
+    return c.json({error: 'invalid request'}, 400);
+  }
+});
+
+// Receive event with explicit project scope
 app.post('/projects/:projectId/event', async (c) => {
   try {
     const projectId = c.req.param('projectId');

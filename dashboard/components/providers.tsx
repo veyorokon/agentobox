@@ -1,34 +1,25 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useProjectStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
-import { mockProjects, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
+import { useProjectStore } from '@/stores';
 import { useSSE } from '@/hooks/use-sse';
 import { ThemeProvider } from './theme-provider';
 
 function StoreInitializer() {
   const setProjects = useProjectStore((s) => s.setProjects);
-  const setAgents = useAgentStore((s) => s.setAgents);
-  const setEvents = useEventStore((s) => s.setEvents);
-  const setMessages = useChatStore((s) => s.setMessages);
 
   useEffect(() => {
-    setProjects(mockProjects);
+    // Seed a default project until project management is built
+    setProjects([{
+      id: 'project-1',
+      name: 'agentobox',
+      agents: [],
+      agentoOnline: true,
+      lastActivity: new Date().toISOString(),
+    }]);
+  }, [setProjects]);
 
-    for (const [projectId, agents] of Object.entries(mockAgents)) {
-      setAgents(projectId, agents);
-    }
-
-    for (const [projectId, events] of Object.entries(mockEvents)) {
-      setEvents(projectId, events);
-    }
-
-    for (const [projectId, messages] of Object.entries(mockChat)) {
-      setMessages(projectId, messages);
-    }
-  }, [setProjects, setAgents, setEvents, setMessages]);
-
-  // SSE stream — real-time updates, replaces polling
+  // SSE stream — real-time updates from server
   useSSE('project-1');
 
   return null;

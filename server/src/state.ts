@@ -1,5 +1,5 @@
 import {randomBytes} from 'node:crypto';
-import {eq, desc, gt} from 'drizzle-orm';
+import {eq} from 'drizzle-orm';
 import {db} from './db/index.js';
 import * as schema from './db/schema.js';
 import type {AgentState, AgentEvent, ChatMsg} from './types.js';

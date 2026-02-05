@@ -153,7 +153,7 @@ Most status updates are **automatic** via hooks:
 
 The only state you need to set **manually** is \`blocked\`:
 \`\`\`bash
-curl -s -X POST http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"blocked","msg":"brief description of blocker"}'
+curl -s -X POST http://${AGENTO_HOSTNAME}:${SERVER_PORT}/api/v1/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"blocked","msg":"brief description of blocker"}'
 \`\`\`
 
 Use \`blocked\` when you truly cannot proceed without external help — e.g. "need GitHub credentials", "CAPTCHA on login page".
@@ -168,7 +168,7 @@ export function agentSettingsJson(agentName: string): string {
           hooks: [
             {
               type: 'command',
-              command: `curl -s -X POST http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"completed","msg":""}'`,
+              command: `curl -s -X POST http://${AGENTO_HOSTNAME}:${SERVER_PORT}/api/v1/event -H 'Content-Type: application/json' -d '{"agent":"${agentName}","state":"completed","msg":""}'`,
               async: true,
             },
           ],

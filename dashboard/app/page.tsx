@@ -54,8 +54,24 @@ function timeAgo(iso: string): string {
 
 export default function DashboardPage() {
   const agents = useAgentStore((s) => s.agents[PROJECT_ID]) ?? [];
+  const [deploying, setDeploying] = useState(false);
   const { theme, setTheme } = useTheme();
   const nextTheme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+
+  const handleDeploy = async () => {
+    const name = window.prompt('Agent name (lowercase, no spaces):');
+    if (!name?.trim()) return;
+    const task = window.prompt('Task (optional):') || '';
+    setDeploying(true);
+    try {
+      await fetch(`${API_V1}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim().toLowerCase(), task, projectId: PROJECT_ID }),
+      });
+    } catch { /* SSE will reflect state */ }
+    setDeploying(false);
+  };
 
   return (
     <div className="h-screen flex overflow-hidden bg-background">
@@ -73,8 +89,10 @@ export default function DashboardPage() {
             {agents.length} agents deployed
           </p>
           <button
+            onClick={handleDeploy}
+            disabled={deploying}
             data-augmented-ui="tl-clip br-clip border"
-            className="px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
+            className="px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent disabled:opacity-50"
             style={{
               '--aug-tl': '8px',
               '--aug-br': '8px',
@@ -82,7 +100,7 @@ export default function DashboardPage() {
               '--aug-border-bg': 'var(--accent)',
             } as React.CSSProperties}
           >
-            + Deploy Agent
+            {deploying ? 'Deploying...' : '+ Deploy Agent'}
           </button>
         </div>
 
@@ -564,6 +582,13 @@ function AgentCard({ agent }: { agent: Agent }) {
   const statusColor = STATUS_COLOR_VAR[agent.status];
   const vncRefreshRef = useRef<(() => void) | null>(null);
 
+  const handleKill = async () => {
+    if (!confirm(`Kill agent "${agent.name}"?`)) return;
+    try {
+      await fetch(`${API_V1}/agents/${agent.name}`, { method: 'DELETE' });
+    } catch { /* SSE will reflect state */ }
+  };
+
   return (
     <div
       data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
@@ -624,8 +649,9 @@ function AgentCard({ agent }: { agent: Agent }) {
               <Pause className="w-3.5 h-3.5" />
             </button>
             <button
+              onClick={handleKill}
               className="w-7 h-7 flex items-center justify-center text-destructive/60 hover:text-destructive transition-colors"
-              title="Stop"
+              title="Kill agent"
             >
               <Square className="w-3 h-3" />
             </button>

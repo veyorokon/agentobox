@@ -36,7 +36,7 @@ export async function dockerRun(name: string, vncPort: number, authEnvs: string[
       '-e', 'VNC_PW=password',
       '-e', 'VNC_RESOLUTION=1920x1080',
       '-e', `ABOX_AGENT_NAME=${name}`,
-      '-e', `ABOX_CALLBACK_URL=http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event`,
+      '-e', `ABOX_CALLBACK_URL=http://${AGENTO_HOSTNAME}:${SERVER_PORT}/api/v1/event`,
       ...authEnvs.flat(),
       DOCKER_IMAGE,
     ]);

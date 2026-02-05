@@ -5,9 +5,7 @@ import {logger} from 'hono/logger';
 import {SERVER_PORT} from './types.js';
 import {initDb} from './db/index.js';
 import {recoverAgents} from './services/agents.js';
-import {handleEvent} from './services/events.js';
-import {listAgentsCore} from './services/agents.js';
-import {getEvents} from './state.js';
+import {agents} from './state.js';
 
 import agentRoutes from './routes/agents.js';
 import eventRoutes from './routes/events.js';
@@ -35,32 +33,16 @@ app.route('/api/v1', eventRoutes);
 app.route('/api/v1', chatRoutes);
 app.route('/api/v1', sseRoutes);
 
-// ── Backward-compat (unversioned) ────────────────────────────────────────────
-// Agent containers POST to /event (hardcoded in Stop hooks + CLAUDE.md).
-// These stay until container templates are updated to use /api/v1/ paths.
+// ── Health ──────────────────────────────────────────────────────────────────
 
-// POST /event (unscoped — agent containers use this)
-app.post('/event', async (c) => {
-  try {
-    const body = await c.req.json();
-    const result = handleEvent(body);
-    return c.json(result.body, result.status as 200);
-  } catch {
-    return c.json({error: 'invalid request'}, 400);
-  }
-});
+const startedAt = Date.now();
 
-// GET /agents (unscoped — list all)
-app.get('/agents', async (c) => {
-  const result = await listAgentsCore();
-  return c.json({agents: result.agents, count: result.count});
-});
-
-// GET /events (unscoped — debugging convenience)
-app.get('/events', (c) => {
-  const agentName = c.req.query('agent');
-  const events = getEvents(agentName);
-  return c.json({events, count: events.length});
+app.get('/api/v1/health', (c) => {
+  return c.json({
+    ok: true,
+    agents: agents.size,
+    uptime: Math.round((Date.now() - startedAt) / 1000),
+  });
 });
 
 // ── 404 ──────────────────────────────────────────────────────────────────────
