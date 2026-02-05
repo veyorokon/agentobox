@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: RFC / Proposal
+    url: https://github.com/veyorokon/agentobox/issues/new?labels=rfc&title=%5BRFC%5D+
+    about: Propose an architectural change or new pattern
+  - name: Question
+    url: https://github.com/veyorokon/agentobox/discussions/new?category=q-a
+    about: Ask a question in Discussions instead

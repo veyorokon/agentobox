@@ -1,0 +1,52 @@
+name: Task
+description: Create a task for an agent to work on
+labels: ["task"]
+body:
+  - type: dropdown
+    id: persona
+    attributes:
+      label: Persona
+      description: How should the agent approach this task?
+      options:
+        - default (balanced, follows conventions)
+        - careful (thorough, extra validation, defensive)
+        - fast (minimal, ship quickly, iterate later)
+        - exploratory (research-first, document findings)
+        - refactor (clean up, simplify, no new features)
+    validations:
+      required: false
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be accomplished? Use Gherkin syntax if helpful (Given/When/Then).
+      placeholder: |
+        Given the dashboard is running
+        When a user deploys an agent
+        Then they should see a progress indicator
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Relevant files, prior decisions, or constraints the agent should know.
+      placeholder: |
+        - Related to RFC #15
+        - See server/src/services/agents.ts
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: How do we know when this is done?
+      placeholder: |
+        - [ ] Feature works as described
+        - [ ] Tests pass
+        - [ ] No new warnings
+    validations:
+      required: false
