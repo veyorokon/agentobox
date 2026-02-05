@@ -16,7 +16,7 @@ async function waitForPort(name: string, port = 8808, timeoutMs = 60000): Promis
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      dockerExec(name, ['bash', '-c', `timeout 1 bash -c '</dev/tcp/localhost/${port}'`], 'kasm-user');
+      await dockerExec(name, ['bash', '-c', `timeout 1 bash -c '</dev/tcp/localhost/${port}'`], 'kasm-user');
       return true;
     } catch {
       await sleep(1000);
@@ -30,8 +30,8 @@ async function waitForText(name: string, text: string, timeoutMs: number): Promi
   const start = Date.now();
   const lower = text.toLowerCase();
   while (Date.now() - start < timeoutMs) {
-    if (!tmuxHasSession(name)) return false;
-    const output = tmuxCapture(name);
+    if (!(await tmuxHasSession(name))) return false;
+    const output = await tmuxCapture(name);
     if (output.toLowerCase().includes(lower)) return true;
     await sleep(1000);
   }
@@ -64,7 +64,7 @@ export async function createAgentCore(params: {
   const authEnvs = resolveAuth(Object.keys(auth).length > 0 ? auth : undefined);
 
   try {
-    const containerId = dockerRun(name, vncPort, authEnvs);
+    const containerId = await dockerRun(name, vncPort, authEnvs);
 
     const agent: AgentState = {
       name,
@@ -84,20 +84,20 @@ export async function createAgentCore(params: {
       throw new Error('Container MCP server did not start within 60s');
     }
 
-    dockerExec(name, ['mkdir', '-p', CONTAINER_WORKSPACE]);
-    dockerCp(name, agentClaudeMd(name), `${CONTAINER_WORKSPACE}/CLAUDE.md`);
-    dockerCp(name, AGENT_MCP_JSON, `${CONTAINER_WORKSPACE}/.mcp.json`);
-    dockerCp(name, claudeConfigJson(Object.keys(auth).length > 0 ? auth : undefined), '/home/kasm-user/.claude.json');
-    dockerExec(name, ['mkdir', '-p', '/home/kasm-user/.claude'], 'root');
-    dockerCp(name, agentSettingsJson(name), '/home/kasm-user/.claude/settings.json');
-    dockerExec(name, ['chown', '-R', 'kasm-user:kasm-user', CONTAINER_WORKSPACE], 'root');
-    dockerExec(name, ['chown', '-R', 'kasm-user:kasm-user', '/home/kasm-user/.claude'], 'root');
-    dockerExec(name, ['chown', 'kasm-user:kasm-user', '/home/kasm-user/.claude.json'], 'root');
+    await dockerExec(name, ['mkdir', '-p', CONTAINER_WORKSPACE]);
+    await dockerCp(name, agentClaudeMd(name), `${CONTAINER_WORKSPACE}/CLAUDE.md`);
+    await dockerCp(name, AGENT_MCP_JSON, `${CONTAINER_WORKSPACE}/.mcp.json`);
+    await dockerCp(name, claudeConfigJson(Object.keys(auth).length > 0 ? auth : undefined), '/home/kasm-user/.claude.json');
+    await dockerExec(name, ['mkdir', '-p', '/home/kasm-user/.claude'], 'root');
+    await dockerCp(name, agentSettingsJson(name), '/home/kasm-user/.claude/settings.json');
+    await dockerExec(name, ['chown', '-R', 'kasm-user:kasm-user', CONTAINER_WORKSPACE], 'root');
+    await dockerExec(name, ['chown', '-R', 'kasm-user:kasm-user', '/home/kasm-user/.claude'], 'root');
+    await dockerExec(name, ['chown', 'kasm-user:kasm-user', '/home/kasm-user/.claude.json'], 'root');
 
     const claudeCmd = autoMode
       ? `cd ${CONTAINER_WORKSPACE} && claude --dangerously-skip-permissions`
       : `cd ${CONTAINER_WORKSPACE} && claude`;
-    tmuxNewSession(name, claudeCmd);
+    await tmuxNewSession(name, claudeCmd);
 
     if (autoMode) {
       const bypassReady = await waitForText(name, 'bypass', 60000);
@@ -105,8 +105,8 @@ export async function createAgentCore(params: {
         agent.status = 'dead';
         throw new Error('Claude Code did not show bypass prompt within 60s');
       }
-      tmuxSendKeys(name, 'Down', false);
-      tmuxSendKeys(name, 'Enter', false);
+      await tmuxSendKeys(name, 'Down', false);
+      await tmuxSendKeys(name, 'Enter', false);
     }
 
     const promptReady = await waitForText(name, 'Try', 30000);
@@ -124,7 +124,7 @@ export async function createAgentCore(params: {
   } catch (err) {
     agents.delete(name);
     freeVncPort(vncPort);
-    dockerRm(name);
+    await dockerRm(name);
     throw err;
   }
 }
@@ -134,9 +134,9 @@ export async function killAgentCore(name: string): Promise<{ok: true; killed: st
   if (!agent) throw new Error(`Agent "${name}" not found`);
 
   agent.status = 'dead';
-  tmuxKill(name);
-  dockerStop(name);
-  dockerRm(name);
+  await tmuxKill(name);
+  await dockerStop(name);
+  await dockerRm(name);
   freeVncPort(agent.vncPort);
   agents.delete(name);
 
@@ -146,16 +146,16 @@ export async function killAgentCore(name: string): Promise<{ok: true; killed: st
 export async function sendKeysCore(name: string, keys: KeyAction[]): Promise<{ok: true; sent: KeyAction[]; to: string}> {
   const agent = agents.get(name);
   if (!agent) throw new Error(`Agent "${name}" not found`);
-  if (!tmuxHasSession(name)) {
+  if (!(await tmuxHasSession(name))) {
     agent.status = 'dead';
     throw new Error(`Agent "${name}" tmux session not found (may have exited)`);
   }
 
   for (const action of keys) {
     if ('text' in action) {
-      tmuxSendKeys(name, action.text, true);
+      await tmuxSendKeys(name, action.text, true);
     } else {
-      tmuxSendKeys(name, action.key, false);
+      await tmuxSendKeys(name, action.key, false);
     }
   }
 
@@ -173,12 +173,12 @@ export async function sendKeysCore(name: string, keys: KeyAction[]): Promise<{ok
 export async function readOutputCore(name: string, lines = 200): Promise<{name: string; output: string}> {
   const agent = agents.get(name);
   if (!agent) throw new Error(`Agent "${name}" not found`);
-  if (!tmuxHasSession(name)) {
+  if (!(await tmuxHasSession(name))) {
     agent.status = 'dead';
     throw new Error(`Agent "${name}" tmux session not found`);
   }
 
-  const output = tmuxCapture(name, lines);
+  const output = await tmuxCapture(name, lines);
   return {name, output};
 }
 
@@ -186,12 +186,13 @@ export async function listAgentsCore(projectId?: string): Promise<{agents: Array
   let values = Array.from(agents.values());
   if (projectId) values = values.filter(a => a.projectId === projectId);
 
-  const list = values.map(a => {
-    const sessionAlive = tmuxHasSession(a.name);
+  const list: Array<Record<string, unknown>> = [];
+  for (const a of values) {
+    const sessionAlive = await tmuxHasSession(a.name);
     if (!sessionAlive && a.status !== 'dead') {
       let lastLine = 'session lost';
       try {
-        const output = tmuxCapture(a.name);
+        const output = await tmuxCapture(a.name);
         const lines = output.trim().split('\n').filter(l => l.trim());
         if (lines.length > 0) lastLine = lines[lines.length - 1].slice(0, 100);
       } catch { /* container may be gone */ }
@@ -201,7 +202,7 @@ export async function listAgentsCore(projectId?: string): Promise<{agents: Array
       a.lastEvent = event;
       pushEvent(event);
     }
-    return {
+    list.push({
       name: a.name,
       status: a.status,
       task: a.task,
@@ -210,15 +211,15 @@ export async function listAgentsCore(projectId?: string): Promise<{agents: Array
       vncPort: a.vncPort,
       vncUrl: `http://localhost:${a.vncPort}`,
       uptime: Math.round((Date.now() - a.createdAt) / 1000),
-    };
-  });
+    });
+  }
 
   return {agents: list, count: list.length};
 }
 
 /** Re-hydrate agent state from running abox-* containers on startup */
-export function recoverAgents(): number {
-  const containers = dockerListAbox();
+export async function recoverAgents(): Promise<number> {
+  const containers = await dockerListAbox();
   for (const c of containers) {
     if (agents.has(c.name)) continue;
     if (c.name === 'agento') continue;
@@ -245,11 +246,11 @@ export async function waitForOutputCore(name: string, text: string, timeoutMs: n
 
   while (Date.now() - start < timeoutMs) {
     if (signal?.aborted) return {found: false, elapsed: Math.round((Date.now() - start) / 1000)};
-    if (!tmuxHasSession(name)) {
+    if (!(await tmuxHasSession(name))) {
       agent.status = 'dead';
       throw new Error(`Agent "${name}" tmux session ended while waiting`);
     }
-    const output = tmuxCapture(name);
+    const output = await tmuxCapture(name);
     if (output.includes(text)) {
       return {found: true, elapsed: Math.round((Date.now() - start) / 1000)};
     }

@@ -69,8 +69,8 @@ app.get('/agents/:name/output', async (c) => {
 });
 
 // Recover agents from running containers
-app.post('/agents/recover', (c) => {
-  const count = recoverAgents();
+app.post('/agents/recover', async (c) => {
+  const count = await recoverAgents();
   return c.json({ok: true, recovered: count});
 });
 

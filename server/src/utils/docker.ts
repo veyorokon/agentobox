@@ -1,5 +1,8 @@
-import {execFileSync} from 'node:child_process';
+import {execFile as execFileCb} from 'node:child_process';
+import {promisify} from 'node:util';
 import {DOCKER_IMAGE, TMUX_PREFIX, ABOX_NETWORK, AGENTO_HOSTNAME, SERVER_PORT} from '../types.js';
+
+const execFile = promisify(execFileCb);
 
 function containerName(name: string): string {
   return `${TMUX_PREFIX}-${name}`;
@@ -13,16 +16,16 @@ function sanitizeError(err: unknown): string {
     .replace(/CLAUDE_CODE_OAUTH_TOKEN=\S+/g, 'CLAUDE_CODE_OAUTH_TOKEN=***');
 }
 
-export function dockerRun(name: string, vncPort: number, authEnvs: string[][] = []): string {
+export async function dockerRun(name: string, vncPort: number, authEnvs: string[][] = []): Promise<string> {
   // Remove any existing stopped container with the same name
   try {
-    execFileSync('docker', ['rm', '-f', containerName(name)], {encoding: 'utf-8'});
+    await execFile('docker', ['rm', '-f', containerName(name)]);
   } catch {
     // No existing container — fine
   }
 
   try {
-    const result = execFileSync('docker', [
+    const {stdout} = await execFile('docker', [
       'run', '-d',
       '--platform', 'linux/amd64',
       '--name', containerName(name),
@@ -36,34 +39,36 @@ export function dockerRun(name: string, vncPort: number, authEnvs: string[][] = 
       '-e', `ABOX_CALLBACK_URL=http://${AGENTO_HOSTNAME}:${SERVER_PORT}/event`,
       ...authEnvs.flat(),
       DOCKER_IMAGE,
-    ], {encoding: 'utf-8'});
-    return result.trim();
+    ]);
+    return stdout.trim();
   } catch (err) {
     throw new Error(sanitizeError(err));
   }
 }
 
-export function dockerExec(name: string, args: string[], user = 'kasm-user'): string {
-  return execFileSync('docker', [
+export async function dockerExec(name: string, args: string[], user = 'kasm-user'): Promise<string> {
+  const {stdout} = await execFile('docker', [
     'exec', '-u', user, containerName(name), ...args,
-  ], {encoding: 'utf-8'});
+  ]);
+  return stdout;
 }
 
-export function dockerCp(name: string, content: string, destPath: string): void {
-  execFileSync('docker', [
+export async function dockerCp(name: string, content: string, destPath: string): Promise<void> {
+  await execFile('docker', [
     'exec', '-i', containerName(name), 'bash', '-c', `cat > ${destPath}`,
-  ], {encoding: 'utf-8', input: content});
+  ], {input: content} as any);
 }
 
 /** List running abox-* containers and parse their metadata */
-export function dockerListAbox(): Array<{name: string; containerId: string; vncPort: number; status: string; createdAt: number}> {
+export async function dockerListAbox(): Promise<Array<{name: string; containerId: string; vncPort: number; status: string; createdAt: number}>> {
   try {
-    const output = execFileSync('docker', [
+    const {stdout} = await execFile('docker', [
       'ps', '-a',
       '--filter', `name=${TMUX_PREFIX}-`,
       '--format', '{{.ID}}\t{{.Names}}\t{{.Ports}}\t{{.Status}}\t{{.CreatedAt}}',
-    ], {encoding: 'utf-8'}).trim();
+    ]);
 
+    const output = stdout.trim();
     if (!output) return [];
 
     return output.split('\n').map(line => {
@@ -86,17 +91,17 @@ export function dockerListAbox(): Array<{name: string; containerId: string; vncP
   }
 }
 
-export function dockerStop(name: string): void {
+export async function dockerStop(name: string): Promise<void> {
   try {
-    execFileSync('docker', ['stop', containerName(name)], {encoding: 'utf-8', timeout: 15000});
+    await execFile('docker', ['stop', containerName(name)], {timeout: 15000});
   } catch {
     // Container may already be stopped
   }
 }
 
-export function dockerRm(name: string): void {
+export async function dockerRm(name: string): Promise<void> {
   try {
-    execFileSync('docker', ['rm', '-f', containerName(name)], {encoding: 'utf-8'});
+    await execFile('docker', ['rm', '-f', containerName(name)]);
   } catch {
     // Container may already be removed
   }

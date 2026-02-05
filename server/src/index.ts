@@ -68,24 +68,27 @@ app.notFound((c) => {
 
 // ── Startup ──────────────────────────────────────────────────────────────────
 
-const recovered = recoverAgents();
-if (recovered > 0) {
-  console.error(`Recovered ${recovered} agent(s) from running containers`);
+async function main() {
+  const recovered = await recoverAgents();
+  if (recovered > 0) {
+    console.error(`Recovered ${recovered} agent(s) from running containers`);
+  }
+
+  const server = serve({
+    fetch: app.fetch,
+    port: SERVER_PORT,
+  }, (info) => {
+    console.error(`Agentobox server listening on port ${info.port}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.error('SIGTERM received, shutting down...');
+    server.close(() => process.exit(0));
+  });
+  process.on('SIGINT', () => {
+    console.error('SIGINT received, shutting down...');
+    server.close(() => process.exit(0));
+  });
 }
 
-const server = serve({
-  fetch: app.fetch,
-  port: SERVER_PORT,
-}, (info) => {
-  console.error(`Agentobox server listening on port ${info.port}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.error('SIGTERM received, shutting down...');
-  server.close(() => process.exit(0));
-});
-process.on('SIGINT', () => {
-  console.error('SIGINT received, shutting down...');
-  server.close(() => process.exit(0));
-});
+main();
