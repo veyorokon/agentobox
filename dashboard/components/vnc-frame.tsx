@@ -43,7 +43,7 @@ export function VncFrame({
 
   return (
     <iframe
-      src={`${url}/?autoconnect=1&resize=scale&password=password`}
+      src={`${url}/viewer.html?password=password`}
       className="w-full h-full border-0"
       allow="clipboard-read; clipboard-write"
       onError={() => setConnected(false)}

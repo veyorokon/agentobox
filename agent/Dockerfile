@@ -57,6 +57,9 @@ RUN git clone --depth 1 https://github.com/novnc/noVNC.git /opt/noVNC \
     && git clone --depth 1 https://github.com/novnc/websockify.git /opt/noVNC/utils/websockify \
     && ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
 
+# --- Custom noVNC viewer (no status bar, auto-scale) ---
+COPY novnc/viewer.html /opt/noVNC/viewer.html
+
 # --- textfox (upstream) ---
 RUN git clone --depth 1 https://github.com/adriankarlen/textfox.git /opt/textfox
 
@@ -76,7 +79,6 @@ COPY firefox/ /home/computeruse/.firefox-config/
 # --- Environment ---
 ENV DISPLAY=:1
 ENV RESOLUTION=1920x1080
-ENV MOZ_DISABLE_CONTENT_SANDBOX=1
 
 # --- Copy hooks and entrypoint ---
 COPY hooks/ /home/computeruse/hooks/

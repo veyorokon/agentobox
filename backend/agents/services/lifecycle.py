@@ -29,7 +29,7 @@ async def create_agent(
     goal = await Goal.objects.acreate(
         project=project,
         text=goal_text,
-        context_path=context_path,
+        context_path=context_path or "/home/computeruse",
     )
     await GoalTrajectory.objects.acreate(
         goal=goal,

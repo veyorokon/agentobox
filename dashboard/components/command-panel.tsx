@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Send, Search } from 'lucide-react';
+import { Send, Search, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
@@ -12,16 +12,21 @@ import { PanelTabs, type PanelTab } from './panel-tabs';
 import { EventFeed } from './event-feed';
 import { ChatBubble } from './chat-bubble';
 import { ProjectSelector } from './project-selector';
+import { STATUS_COLOR_VAR } from './status-badge';
 import type { Agent, AgentEvent } from '@/types';
 
 export function CommandPanel({
   agents,
   events,
   projectId,
+  collapsed,
+  onToggle,
 }: {
   agents: Agent[];
   events: AgentEvent[];
   projectId: string;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   const { theme, setTheme, themes } = useTheme();
   const nextTheme = themes[(themes.indexOf(theme) + 1) % themes.length];
@@ -81,9 +86,74 @@ export function CommandPanel({
         ? 'Message agento...'
         : `Message ${activeTab}...`;
 
+  if (collapsed) {
+    return (
+      <aside
+        className="w-14 flex-shrink-0 flex flex-col items-center bg-surface py-4 gap-3 transition-all duration-200"
+        style={{ borderRight: '1px solid var(--border)' }}
+      >
+        {/* Logo */}
+        <div
+          data-augmented-ui="tl-clip br-clip border"
+          className="w-9 h-9 flex items-center justify-center flex-shrink-0"
+          style={{
+            '--aug-tl': '6px',
+            '--aug-br': '6px',
+            '--aug-border-all': '2px',
+            '--aug-border-bg': 'var(--accent)',
+          } as React.CSSProperties}
+        >
+          <span className="text-accent font-bold text-sm">A</span>
+        </div>
+
+        {/* Divider */}
+        <div className="w-6 h-px bg-border" />
+
+        {/* Agent avatars */}
+        <div className="flex-1 flex flex-col items-center gap-2 overflow-y-auto scrollbar-thin">
+          {agents.map((agent) => {
+            const color = STATUS_COLOR_VAR[agent.status];
+            const isWorking = agent.status === 'working';
+            return (
+              <button
+                key={agent.name}
+                title={`${agent.name} — ${agent.status}`}
+                data-augmented-ui="tl-clip br-clip border"
+                className="w-9 h-9 flex items-center justify-center flex-shrink-0"
+                style={{
+                  '--aug-tl': '6px',
+                  '--aug-br': '6px',
+                  '--aug-border-all': '1.5px',
+                  '--aug-border-bg': color,
+                  background: isWorking ? 'var(--agent-glow)' : 'transparent',
+                } as React.CSSProperties}
+              >
+                <span
+                  className="text-[10px] font-bold uppercase"
+                  style={{ color }}
+                >
+                  {agent.name.slice(0, 2)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Expand toggle */}
+        <button
+          onClick={onToggle}
+          className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+          title="Expand sidebar (⌘B)"
+        >
+          <ChevronsRight className="w-4 h-4" />
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside
-      className="w-[380px] flex-shrink-0 flex flex-col bg-surface"
+      className="w-[380px] flex-shrink-0 flex flex-col bg-surface transition-all duration-200"
       style={{ borderRight: '1px solid var(--border)' }}
     >
       {/* Panel Header */}
@@ -106,19 +176,28 @@ export function CommandPanel({
               agentobox
             </h1>
           </div>
-          <button
-            onClick={() => setTheme(nextTheme)}
-            data-augmented-ui="tl-clip br-clip border"
-            className="px-3 py-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider hover:text-foreground transition-colors"
-            style={{
-              '--aug-tl': '5px',
-              '--aug-br': '5px',
-              '--aug-border-all': '1px',
-              '--aug-border-bg': 'var(--border)',
-            } as React.CSSProperties}
-          >
-            {theme}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setTheme(nextTheme)}
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-3 py-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider hover:text-foreground transition-colors"
+              style={{
+                '--aug-tl': '5px',
+                '--aug-br': '5px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              {theme}
+            </button>
+            <button
+              onClick={onToggle}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              title="Collapse sidebar (⌘B)"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         <ProjectSelector />
       </div>

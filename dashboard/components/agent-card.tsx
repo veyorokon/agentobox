@@ -122,7 +122,7 @@ export function AgentCard({
         </div>
 
         {/* VNC Stream */}
-        <div className="aspect-[4/3] bg-surface-inset overflow-hidden">
+        <div className="aspect-video bg-surface-inset overflow-hidden">
           {agent.vncUrl && agent.status !== 'dead' ? (
             <VncFrame
               url={agent.vncUrl}

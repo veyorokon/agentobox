@@ -42,7 +42,7 @@ class DockerRuntime:
             port_bindings = container.ports.get("6080/tcp")
             if port_bindings:
                 host_port = port_bindings[0]["HostPort"]
-                vnc_url = f"http://localhost:{host_port}/vnc.html"
+                vnc_url = f"http://localhost:{host_port}"
             else:
                 vnc_url = ""
             return SandboxInstance(id=container.id, vnc_url=vnc_url)
@@ -99,7 +99,7 @@ class DockerRuntime:
                 port_bindings = c.ports.get("6080/tcp")
                 if port_bindings:
                     host_port = port_bindings[0]["HostPort"]
-                    vnc_url = f"http://localhost:{host_port}/vnc.html"
+                    vnc_url = f"http://localhost:{host_port}"
                 else:
                     vnc_url = ""
                 results.append(SandboxInstance(id=c.id, vnc_url=vnc_url))

@@ -18,6 +18,12 @@ user_pref("security.enterprise_roots.enabled", true);
 user_pref("network.stricttransportsecurity.preloadlist", false);
 user_pref("security.cert_pinning.enforcement_level", 0);
 
+// Suppress sandbox warning banner (sandbox degrades gracefully in containers)
+user_pref("security.sandbox.warn_unprivileged_namespaces", false);
+
+// Hide bookmarks toolbar
+user_pref("browser.toolbars.bookmarks.visibility", "never");
+
 // Disable auto-update (container image is the source of truth)
 user_pref("app.update.enabled", false);
 user_pref("app.update.auto", false);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useQuery, useSubscription } from 'urql';
 import { toast } from 'sonner';
 import { useProjectsStore } from '@/stores/projects';
@@ -13,6 +13,7 @@ import {
 } from '@/lib/graphql/subscriptions';
 import { CommandPanel } from '@/components/command-panel';
 import { AgentCard } from '@/components/agent-card';
+import { GridControl, type GridLayout, GRID_CLASSES } from '@/components/grid-control';
 import { DeployModal } from '@/components/modals/deploy-modal';
 import { ProjectSelector } from '@/components/project-selector';
 import { CREATE_AGENT_MUTATION } from '@/lib/graphql/mutations';
@@ -36,7 +37,28 @@ export default function DashboardPage() {
   const addEvent = useEventsStore((s) => s.addEvent);
 
   const [showDeployModal, setShowDeployModal] = useState(false);
+  const [gridLayout, setGridLayout] = useState<GridLayout>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('agentobox-grid') as GridLayout | null;
+      if (saved) return saved;
+      return window.innerWidth >= 768 ? '2' : '1';
+    }
+    return '1';
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [, createAgentMut] = useMutation(CREATE_AGENT_MUTATION);
+
+  // Cmd+B to toggle sidebar
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        setSidebarCollapsed((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   const queryVars = useMemo(() => ({ projectId }), [projectId]);
   const paused = !projectId;
@@ -149,13 +171,20 @@ export default function DashboardPage() {
         agents={agents}
         events={events}
         projectId={projectId}
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed((v) => !v)}
       />
 
       <main className="flex-1 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 pt-5 pb-4">
-          <p className="text-muted-foreground text-sm font-mono">
-            {agents.length} agent{agents.length !== 1 ? 's' : ''} deployed
-          </p>
+          <div className="flex items-center gap-4">
+            <p className="text-muted-foreground text-sm font-mono">
+              {agents.length} agent{agents.length !== 1 ? 's' : ''} deployed
+            </p>
+            {agents.length > 0 && (
+              <GridControl value={gridLayout} onChange={setGridLayout} />
+            )}
+          </div>
           <button
             onClick={() => setShowDeployModal(true)}
             data-augmented-ui="tl-clip br-clip border"
@@ -184,7 +213,7 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            <div className={`grid gap-5 ${GRID_CLASSES[gridLayout]}`}>
               {agents.map((agent) => (
                 <AgentCard
                   key={agent.id}

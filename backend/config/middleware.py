@@ -1,7 +1,8 @@
 import structlog
+from django.utils.deprecation import MiddlewareMixin
 
 
-class TraceContextMiddleware:
+class TraceContextMiddleware(MiddlewareMixin):
     """Extract W3C traceparent from request headers, bind to structlog contextvars.
 
     When OTEL is enabled, DjangoInstrumentor already creates child spans from
@@ -12,10 +13,7 @@ class TraceContextMiddleware:
     in every log line by parsing the header directly.
     """
 
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    async def __call__(self, request):
+    def process_request(self, request):
         traceparent = request.headers.get("traceparent", "")
         parts = traceparent.split("-")
         if len(parts) == 4:
@@ -23,5 +21,3 @@ class TraceContextMiddleware:
                 trace_id=parts[1],
                 span_id=parts[2],
             )
-        response = await self.get_response(request)
-        return response
