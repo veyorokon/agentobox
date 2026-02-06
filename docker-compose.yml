@@ -24,7 +24,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
-      WEBHOOK_SECRET: dev-secret
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-only-change-in-production}
       AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
       ABOX_CALLBACK_URL: http://backend:8000
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -46,7 +47,8 @@ services:
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
-      WEBHOOK_SECRET: dev-secret
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-only-change-in-production}
     depends_on:
       - postgres
       - redis
