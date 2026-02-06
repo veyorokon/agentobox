@@ -1,0 +1,49 @@
+import strawberry
+from strawberry import ID
+
+from agents.graphql.types import AgentType
+
+
+@strawberry.input
+class CreateAgentInput:
+    project_id: ID
+    name: str
+    goal_text: str
+    context_path: str
+    runtime: str = "modal"
+
+
+@strawberry.input
+class SendMessageInput:
+    project_id: ID
+    agent_name: str
+    message: str
+
+
+@strawberry.type
+class AgentMutation:
+    @strawberry.mutation
+    async def create_agent(self, input: CreateAgentInput) -> AgentType:
+        from agents.services.lifecycle import create_agent
+
+        return await create_agent(
+            project_id=input.project_id,
+            name=input.name,
+            goal_text=input.goal_text,
+            context_path=input.context_path,
+            runtime_name=input.runtime,
+        )
+
+    @strawberry.mutation
+    async def kill_agent(self, project_id: ID, name: str) -> bool:
+        from agents.services.lifecycle import kill_agent
+
+        return await kill_agent(project_id, name)
+
+    @strawberry.mutation
+    async def send_message(self, input: SendMessageInput) -> bool:
+        from agents.services.comms import send_message
+
+        return await send_message(
+            input.project_id, input.agent_name, input.message
+        )

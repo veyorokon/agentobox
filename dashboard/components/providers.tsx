@@ -1,34 +1,33 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useBentoStore, useAgentStore, useEventStore, useChatStore } from '@/stores';
-import { mockBentos, mockAgents, mockEvents, mockChat } from '@/lib/mock-data';
+import { Provider as UrqlProvider } from 'urql';
+import { useRouter, usePathname } from 'next/navigation';
+import { client } from '@/lib/graphql/client';
+import { useAuthStore } from '@/stores/auth';
 import { ThemeProvider } from './theme-provider';
+import { ErrorBoundary } from './error-boundary';
+import { Toaster } from '@/components/ui/sonner';
 
-function StoreInitializer() {
-  const setBentos = useBentoStore((s) => s.setBentos);
-  const setAgents = useAgentStore((s) => s.setAgents);
-  const setEvents = useEventStore((s) => s.setEvents);
-  const setMessages = useChatStore((s) => s.setMessages);
+const PUBLIC_PATHS = ['/login'];
+
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const token = useAuthStore((s) => s.token);
+  const isPublic = PUBLIC_PATHS.includes(pathname);
 
   useEffect(() => {
-    // Initialize with mock data
-    setBentos(mockBentos);
-
-    for (const [bentoId, agents] of Object.entries(mockAgents)) {
-      setAgents(bentoId, agents);
+    if (!token && !isPublic) {
+      router.replace('/login');
     }
+  }, [token, isPublic, router]);
 
-    for (const [bentoId, events] of Object.entries(mockEvents)) {
-      setEvents(bentoId, events);
-    }
+  if (!token && !isPublic) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
-    for (const [bentoId, messages] of Object.entries(mockChat)) {
-      setMessages(bentoId, messages);
-    }
-  }, [setBentos, setAgents, setEvents, setMessages]);
-
-  return null;
+  return <>{children}</>;
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -38,22 +37,23 @@ export function Providers({ children }: { children: React.ReactNode }) {
     setMounted(true);
   }, []);
 
-  // Avoid hydration mismatch by not rendering until mounted
   if (!mounted) {
-    return (
-      <div className="min-h-screen bg-gray-950" />
-    );
+    return <div className="min-h-screen bg-background" />;
   }
 
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="dark"
-      enableSystem={false}
-      disableTransitionOnChange
-    >
-      <StoreInitializer />
-      {children}
-    </ThemeProvider>
+    <UrqlProvider value={client}>
+      <ThemeProvider
+        attribute="class"
+        defaultTheme="dark"
+        enableSystem={false}
+        disableTransitionOnChange
+      >
+        <ErrorBoundary>
+          <AuthGuard>{children}</AuthGuard>
+        </ErrorBoundary>
+        <Toaster position="bottom-right" />
+      </ThemeProvider>
+    </UrqlProvider>
   );
 }

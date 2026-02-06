@@ -1,118 +1,315 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import 'augmented-ui/augmented-ui.min.css';
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================
+   Semantic token system
+   - Components reference these tokens, never raw colors
+   - Swap themes by changing the values below
+   ============================================ */
+
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  /* Core surfaces */
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --surface: #f5f5f5;
+  --surface-inset: #e5e5e5;
+
+  /* Brand */
+  --primary: #0a0a0a;
+  --primary-foreground: #fafafa;
+  --secondary: #f5f5f5;
+  --secondary-foreground: #0a0a0a;
+  --accent: #39ff14;
+  --accent-foreground: #0a0a0a;
+
+  /* States */
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+
+  /* Borders & inputs */
+  --border: #e5e5e5;
+  --border-subtle: rgba(0, 0, 0, 0.1);
+  --input: #e5e5e5;
+  --ring: #a3a3a3;
+
+  /* Agent status colors */
+  --agent-active: #39ff14;
+  --agent-conversing: #38bdf8;
+  --agent-needs-info: #a78bfa;
+  --agent-completed: #22c55e;
+  --agent-blocked: #f59e0b;
+  --agent-goal-changed: #f472b6;
+  --agent-dead: #ef4444;
+
+  /* Agent UI */
+  --agent-border: rgba(0, 0, 0, 0.2);
+  --agent-border-active: #39ff14;
+  --agent-glow: rgba(57, 255, 20, 0.1);
+
+  /* Misc */
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.145 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.145 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: oklch(0.269 0 0);
-  --input: oklch(0.269 0 0);
-  --ring: oklch(0.439 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.439 0 0);
+/* ============================================
+   Cyberpunk dark theme (default dark)
+   ============================================ */
+.dark, [data-theme="cyberpunk"] {
+  --background: #000000;
+  --foreground: #fafafa;
+  --card: rgba(0, 0, 0, 0.5);
+  --card-foreground: #fafafa;
+  --popover: #0a0a0a;
+  --popover-foreground: #fafafa;
+  --surface: #0a0a0a;
+  --surface-inset: #050505;
+
+  --primary: #fafafa;
+  --primary-foreground: #0a0a0a;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #fafafa;
+  --accent: #39ff14;
+  --accent-foreground: #0a0a0a;
+
+  --muted: #1a1a1a;
+  --muted-foreground: rgba(255, 255, 255, 0.4);
+
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(255, 255, 255, 0.2);
+
+  --agent-active: #39ff14;
+  --agent-conversing: #38bdf8;
+  --agent-needs-info: #a78bfa;
+  --agent-completed: #22c55e;
+  --agent-blocked: #f59e0b;
+  --agent-goal-changed: #f472b6;
+  --agent-dead: #ef4444;
+
+  --agent-border: rgba(255, 255, 255, 0.2);
+  --agent-border-active: #39ff14;
+  --agent-glow: rgba(57, 255, 20, 0.1);
 }
 
+/* ============================================
+   Retro dark theme
+   Palette mix: cream, steel blue, orange, sage, dusty rose
+   ============================================ */
+[data-theme="retro"] {
+  --background: #1a1714;
+  --foreground: #e8d8c9;
+  --card: rgba(26, 23, 20, 0.8);
+  --card-foreground: #e8d8c9;
+  --popover: #1a1714;
+  --popover-foreground: #e8d8c9;
+  --surface: #231f1b;
+  --surface-inset: #151210;
+
+  --primary: #e8d8c9;
+  --primary-foreground: #1a1714;
+  --secondary: #2a2520;
+  --secondary-foreground: #e8d8c9;
+  --accent: #f3701e;
+  --accent-foreground: #1a1714;
+
+  --muted: #2a2520;
+  --muted-foreground: #4b607f;
+
+  --destructive: #D12128;
+  --destructive-foreground: #e8d8c9;
+
+  --border: rgba(232, 216, 201, 0.12);
+  --border-subtle: rgba(232, 216, 201, 0.06);
+  --input: rgba(232, 216, 201, 0.12);
+  --ring: rgba(232, 216, 201, 0.2);
+
+  --agent-active: #658761;
+  --agent-conversing: #7ba5b5;
+  --agent-needs-info: #967bb6;
+  --agent-completed: #658761;
+  --agent-blocked: #DFA05D;
+  --agent-goal-changed: #c77986;
+  --agent-dead: #AC5045;
+
+  --agent-border: rgba(232, 216, 201, 0.2);
+  --agent-border-active: #658761;
+  --agent-glow: rgba(101, 135, 97, 0.12);
+}
+
+/* ============================================
+   Rose Pine Moon theme
+   Palette: base, surface, overlay, text, subtle, muted,
+            love, gold, foam, iris
+   ============================================ */
+[data-theme="rose-pine"] {
+  --background: #232136;
+  --foreground: #e0def4;
+  --card: rgba(42, 39, 63, 0.8);
+  --card-foreground: #e0def4;
+  --popover: #393552;
+  --popover-foreground: #e0def4;
+  --surface: #2a273f;
+  --surface-inset: #1e1b30;
+
+  --primary: #e0def4;
+  --primary-foreground: #232136;
+  --secondary: #393552;
+  --secondary-foreground: #e0def4;
+  --accent: #c4a7e7;
+  --accent-foreground: #232136;
+
+  --muted: #393552;
+  --muted-foreground: #6e6a86;
+
+  --destructive: #eb6f92;
+  --destructive-foreground: #e0def4;
+
+  --border: rgba(224, 222, 244, 0.12);
+  --border-subtle: rgba(224, 222, 244, 0.06);
+  --input: rgba(224, 222, 244, 0.12);
+  --ring: rgba(196, 167, 231, 0.3);
+
+  --agent-active: #9ccfd8;
+  --agent-conversing: #3e8fb0;
+  --agent-needs-info: #c4a7e7;
+  --agent-completed: #9ccfd8;
+  --agent-blocked: #f6c177;
+  --agent-goal-changed: #ea9a97;
+  --agent-dead: #eb6f92;
+
+  --agent-border: rgba(224, 222, 244, 0.2);
+  --agent-border-active: #c4a7e7;
+  --agent-glow: rgba(196, 167, 231, 0.12);
+}
+
+/* ============================================
+   Tailwind theme mapping
+   ============================================ */
 @theme inline {
   --font-sans: 'Geist', 'Geist Fallback';
   --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-surface: var(--surface);
+  --color-surface-inset: var(--surface-inset);
+
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+
   --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
+
+  --color-agent-active: var(--agent-active);
+  --color-agent-conversing: var(--agent-conversing);
+  --color-agent-needs-info: var(--agent-needs-info);
+  --color-agent-completed: var(--agent-completed);
+  --color-agent-blocked: var(--agent-blocked);
+  --color-agent-goal-changed: var(--agent-goal-changed);
+  --color-agent-dead: var(--agent-dead);
+  --color-agent-border: var(--agent-border);
+  --color-agent-border-active: var(--agent-border-active);
+  --color-agent-glow: var(--agent-glow);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* Global scrollbar theming */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Narrower scrollbar for panels */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+/* ============================================
+   Animations
+   ============================================ */
+
+@keyframes card-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes border-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-card-enter {
+  animation: card-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.deploying-card::after {
+  animation: border-pulse 2s ease-in-out infinite !important;
 }
 
 @layer base {

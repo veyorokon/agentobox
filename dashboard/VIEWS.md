@@ -1,162 +1,160 @@
-# AgentBox Dashboard Views
+# Dashboard Views
 
-Design brief for frontend implementation. Use the existing aesthetic from `ui-ux-designer-chat/` as reference. Follow the same design language, color palette, and component patterns. Use shadcn/ui components and Tailwind.
+Design brief for the agentobox dashboard. Single-page app with two routes: `/login` and `/` (main dashboard). Uses augmented-ui for cyberpunk-style clipped borders, shadcn/ui components, and Tailwind.
 
 ## Context
 
-AgentBox is a multi-agent orchestration system. Users create **bentos** (projects), each with one **Agento** (orchestrator) and multiple **boxes** (worker agents). Each worker is a Claude Code instance in an isolated Linux desktop container with browser access.
+Agentobox is a multi-agent orchestration system. Users create **projects**, each containing multiple **agents**. Each agent is a Claude Code instance in an isolated Linux desktop container with browser access and VNC streaming.
 
-Agent states: `idle`, `working`, `completed`, `blocked`, `dead`
-Each state has a free-form message (e.g. "browsing google.com", "need GitHub credentials").
+**Agent statuses:** `working`, `conversing`, `needs_info`, `blocked`, `completed`, `goal_changed`, `dead`
 
----
+**Goal statuses:** `active`, `satisfied`, `abandoned`
 
-## View 1: Bento List (`/`)
-
-Landing page. Grid of project cards.
-
-**Each bento card shows:**
-- Project name
-- Number of active agents (boxes)
-- Agento status indicator (online/offline pulse)
-- Summary: "3 working, 1 blocked, 2 idle"
-- Last activity timestamp
-
-**Actions:**
-- "Create Bento" button → opens modal (just name field for now)
-- Click card → navigate to `/bento/[id]`
-
-**Layout:** Responsive grid, 2-3 columns
+Each agent has a goal (text + context path + plan) and reports status with confidence, sentiment, summary, and reasoning fields.
 
 ---
 
-## View 2: Bento Grid (`/bento/[id]`)
+## Route: Login (`/login`)
 
-Main workspace for a project. Split layout.
-
-**Left: Agento Chat Sidebar (~350px, persistent)**
-- Chat interface between user and Agento
-- Message input at bottom
-- Conversation flow: user on right, Agento on left
-- This is clean chat — no system events shown here
-- Agento status indicator at top
-
-**Right: Box Grid (main area)**
-- Grid of agent cards
-- Responsive: 2-3 columns depending on width
-
-**Each box card shows:**
-- Agent name
-- State badge (colored by state)
-- Status message (the free-form text)
-- Thumbnail area (placeholder for sprite — show a colored box with state icon for now)
-
-**Card states (visual distinction):**
-- `idle`: Muted/gray
-- `working`: Active/blue, subtle animation
-- `completed`: Success/green
-- `blocked`: Warning/orange, attention-grabbing
-- `dead`: Dimmed/red, faded
-
-**Actions:**
-- "Create Agent" button in grid area
-- Click card → navigate to `/bento/[id]/[name]`
-- Tab/link to Event Feed
-
----
-
-## View 3: Box Detail (`/bento/[id]/[name]`)
-
-Full view for a single agent. Split layout.
-
-**Top section (~60% height):**
-- Large placeholder for live desktop (dark area with "Live Desktop" text, "LIVE" indicator in corner)
-- Adjacent or below: Terminal panel (dark background, monospace placeholder text, scrollable)
-- These could be side-by-side or stacked depending on viewport
-
-**Bottom section:**
-- Agent info panel: name, state badge, current message, uptime, created timestamp
-- Controls row:
-  - "Send Message" button (opens input modal or inline input)
-  - "Kill Agent" button (red, with confirmation)
-- Recent events: compact list of last 5-10 state changes with timestamps
-
-**Navigation:**
-- Back button/breadcrumb to bento grid
-- Agent name in header
-
----
-
-## View 4: Event Feed (`/bento/[id]/events`)
-
-Activity log for the entire project. Timeline view.
-
-**Each event row shows:**
-- Timestamp (compact format)
-- Agent name as colored badge
-- State as text or icon
-- Message text
-
-**Filters (top of page):**
-- Agent filter: multi-select dropdown (filter to specific agents)
-- State filter: toggle buttons for each state (idle, working, completed, blocked, dead)
+Authentication page. Register or login with email/password.
 
 **Layout:**
-- Compact rows, scannable log format
-- State badges use consistent colors from the rest of the app
-- Reverse chronological (newest first) with option to toggle
+- Centered card with augmented-ui border
+- Toggle between login and register forms
+- On success: stores JWT token, redirects to `/`
 
-**Navigation:**
-- Same layout as bento grid (agento chat sidebar persists)
-- Tab to switch between Grid and Events
+**State:** `useAuthStore` — manages token and user info.
 
 ---
 
-## View 5: Navigation
+## Route: Dashboard (`/`)
 
-**Top nav bar (all views):**
-- App logo/name: "AgentBox" (left)
-- When in a project: breadcrumb showing project name, link back to bento list
-- Navigation: links to Grid, Events (when inside a project)
+Main workspace. Two states based on whether a project is selected.
 
-**Agento chat sidebar:**
-- Persists across Grid and Events views within a project
-- Collapsible on mobile
-- Not shown on the Bento List page
+### No Project Selected
+
+Centered landing with:
+- Agentobox logo (augmented-ui clipped box with "A")
+- "Create a project to get started" message
+- `ProjectSelector` component
+
+### Project Selected — Split Layout
+
+Full-height flex layout: `CommandPanel` (left sidebar) + main agent grid (right).
+
+#### CommandPanel (Left Sidebar)
+
+Persistent sidebar with two tabs:
+
+1. **Chat Tab** — Send messages to agents
+   - Agent selector dropdown
+   - Message input
+   - Chat history with `ChatBubble` components
+
+2. **Events Tab** — Real-time event feed
+   - `EventFeed` component showing agent state changes
+   - Each event: timestamp, agent name badge, status, message
+   - Auto-scrolls on new events
+
+**Top of sidebar:** `ProjectSelector` for switching/creating projects.
+
+#### Main Area (Right)
+
+**Header row:**
+- Agent count: "N agents deployed"
+- "+ Deploy Agent" button (augmented-ui styled) → opens `DeployModal`
+
+**Agent Grid:**
+- Responsive: 1 column default, 2 columns on XL screens
+- Each agent rendered as `AgentCard`
+
+**Empty state:** "No agents deployed yet" centered message.
 
 ---
 
-## Mock Data
+## Components
 
-Use placeholder data for all views:
+### AgentCard
 
-**Projects (3-4):**
-- "Website Redesign" - 4 agents, 2 working, 1 completed, 1 idle
-- "Competitor Research" - 2 agents, 1 blocked ("need login credentials"), 1 working
-- "Data Migration" - 3 agents, all completed
+Displays a single agent with:
+- Agent name + status badge (`StatusBadge`)
+- VNC stream thumbnail (live desktop view via `vncUrl`)
+- Goal text and plan
+- Confidence/sentiment indicators
+- Summary and reasoning text
+- Action buttons: send message, kill agent
 
-**Agents per project:**
-- scout: working, "browsing competitor websites"
-- researcher: completed, ""
-- writer: idle, "waiting for next task"
-- builder: blocked, "need GitHub credentials"
+**Status colors (CSS custom properties):**
+- `working` → `--agent-active`
+- `conversing` → `--agent-conversing`
+- `needs_info` → `--agent-needs-info`
+- `blocked` → `--agent-blocked`
+- `completed` → `--agent-completed`
+- `goal_changed` → `--agent-goal-changed`
+- `dead` → `--agent-dead`
 
-**Events (10-15 sample):**
-- Timestamps in last hour
-- Mix of all states
-- Realistic messages
+### StatusBadge
 
-**Chat messages (5-6):**
-- User: "Create 3 agents to research competitors"
-- Agento: "I've created scout, researcher, and analyst..."
-- etc.
+Color-coded badge showing agent status. Maps status enum to color token and display label.
+
+### ProjectSelector
+
+Dropdown for selecting existing projects or creating new ones. Uses `useProjectsStore`.
+
+### DeployModal
+
+Form for deploying a new agent:
+- Name (text input)
+- Goal text (textarea)
+- Context path (text input)
+- Runtime: currently hardcoded to "modal"
+
+On submit: calls `CREATE_AGENT_MUTATION`, shows toast with deploy progress.
+
+### EventFeed
+
+Scrollable list of `AgentEvent` entries for the current project. Events arrive via `NEW_EVENT_SUBSCRIPTION`.
+
+### ChatBubble
+
+Individual message in the chat panel. Shows sender, message text, timestamp.
 
 ---
 
-## Notes
+## Data Flow
 
-- Focus on layout, information hierarchy, interaction patterns
-- Components will be wired to real data later
-- Use the existing `ui-ux-designer-chat/components/ui/` library
-- Match the bold, distinctive aesthetic of the existing mockup
-- State colors should be consistent and meaningful across all views
+### GraphQL Operations
+
+**Queries:**
+- `ME_QUERY` — current user
+- `PROJECTS_QUERY` — user's projects
+- `AGENTS_QUERY` — agents for a project
+- `GOALS_QUERY` — goals for a project
+
+**Mutations:**
+- `LOGIN_MUTATION`, `REGISTER_MUTATION` — auth
+- `CREATE_PROJECT_MUTATION` — new project
+- `CREATE_AGENT_MUTATION` — deploy agent
+- `KILL_AGENT_MUTATION` — terminate agent
+- `SEND_MESSAGE_MUTATION` — message an agent
+
+**Subscriptions:**
+- `AGENT_UPDATED_SUBSCRIPTION` — real-time agent state changes
+- `NEW_EVENT_SUBSCRIPTION` — real-time event feed
+
+### State Management (Zustand)
+
+- `useAuthStore` — token, user, login/logout
+- `useProjectsStore` — projects list, current project ID
+- `useAgentsStore` — agents indexed by project ID, upsert on subscription
+- `useEventsStore` — events indexed by project ID, append on subscription
+
+---
+
+## Theme
+
+- Augmented-ui for cyberpunk clipped borders on cards, buttons, panels
+- Light/dark theme support
+- Monospace font for status text and metadata
+- Muted foreground for secondary text
+- Accent color for primary actions and highlights

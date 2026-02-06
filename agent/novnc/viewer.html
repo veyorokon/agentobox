@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>agentobox</title>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #232136; }
+        #screen { width: 100%; height: 100%; }
+    </style>
+    <script type="module" crossorigin="anonymous">
+        import RFB from './core/rfb.js';
+
+        function readParam(name, def) {
+            const m = location.href.match(new RegExp('[?&]' + name + '=([^&#]*)'));
+            return m ? decodeURIComponent(m[1]) : def;
+        }
+
+        const host = readParam('host', location.hostname);
+        const port = readParam('port', location.port);
+        const password = readParam('password', '');
+        const path = readParam('path', 'websockify');
+
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const url = proto + '://' + host + (port ? ':' + port : '') + '/' + path;
+
+        const rfb = new RFB(document.getElementById('screen'), url, {
+            credentials: { password },
+        });
+
+        rfb.scaleViewport = true;
+        rfb.resizeSession = true;
+        rfb.clipViewport = false;
+    </script>
+</head>
+<body>
+    <div id="screen"></div>
+</body>
+</html>

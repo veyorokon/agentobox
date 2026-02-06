@@ -1,21 +1,74 @@
-networks:
-  agentobox:
-    name: agentobox
-
 services:
-  agento:
-    platform: linux/amd64
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.agento
-    container_name: abox-agento
-    networks:
-      - agentobox
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+  postgres:
+    image: pgvector/pgvector:pg17
     environment:
-      - ABOX_AGENTO_HOSTNAME=abox-agento
-      - ABOX_NETWORK=agentobox
-      - ABOX_EVENT_TAG=${ABOX_EVENT_TAG:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      POSTGRES_DB: agentobox
+      POSTGRES_USER: agentobox
+      POSTGRES_PASSWORD: agentobox
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    entrypoint: ["bash", "/app/entrypoint.sh"]
+    command: ["uv", "run", "daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+    environment:
+      DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "true"
+      ALLOWED_HOSTS: "*"
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-only-change-in-production}
+      AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
+      ABOX_CALLBACK_URL: http://backend:8000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DOCKER_NETWORK: agentobox_default
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  gda:
+    build: ./backend
+    entrypoint: ["bash", "/app/entrypoint.sh"]
+    command: ["uv", "run", "python", "manage.py", "gda_loop"]
+    environment:
+      DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-only-change-in-production}
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+
+  dashboard:
+    build: ./dashboard
+    environment:
+      NEXT_PUBLIC_GRAPHQL_HTTP: http://localhost:8000/graphql
+      NEXT_PUBLIC_GRAPHQL_WS: ws://localhost:8000/graphql
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  pgdata:
