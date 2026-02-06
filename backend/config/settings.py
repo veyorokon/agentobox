@@ -14,6 +14,8 @@ env = environ.Env(
     ABOX_CALLBACK_URL=(str, "http://backend:8000"),
     ANTHROPIC_API_KEY=(str, ""),
     DOCKER_NETWORK=(str, "agentobox_default"),
+    MODAL_APP_NAME=(str, "agentobox"),
+    MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent:latest"),
 )
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 
@@ -126,6 +128,8 @@ AGENT_IMAGE = env("AGENT_IMAGE")
 ABOX_CALLBACK_URL = env("ABOX_CALLBACK_URL")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
 DOCKER_NETWORK = env("DOCKER_NETWORK")
+MODAL_APP_NAME = env("MODAL_APP_NAME")
+MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
 
 # --- CORS ---
 

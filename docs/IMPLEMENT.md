@@ -1300,12 +1300,13 @@ Each step produces something verifiable before moving on.
 - GraphQL client (urql or Apollo) with subscription support
 - **Verify**: create agent via GraphiQL, dashboard updates live without refresh
 
-### Step 7: Modal Runtime
-- Modal Python SDK implementation of Runtime protocol
-- modal_app.py + agent Dockerfile (universal desktop image)
-- Swap runtime via `createAgent(runtime: "modal")`
-- VNC tunneling from Modal container
-- **Verify**: `createAgent` with modal runtime, VNC works, events flow back to Railway
+### Step 7: Modal Runtime + Unified Agent Image
+- Modal Sandbox API implementation of Runtime protocol (`agents/runtimes/modal.py`)
+- Unified agent Dockerfile: Ubuntu 22.04 + AwesomeWM + textfox + Chrome + Firefox + Claude Code
+- CI/CD: GitHub Actions publishes to GHCR on push to `agent/` on main
+- Dashboard runtime selector: "modal" (default) / "docker" in deploy modal
+- One-time setup: `modal secret create ghcr-secret` for GHCR pull access
+- **Verify**: build image locally, deploy with runtime=docker, verify VNC + desktop. Push to GHCR, deploy with runtime=modal, verify tunnel URL works in dashboard iframe
 
 ### Step 8: Casebase + Polish
 - pgvector embeddings: embed full goal JSON on completion
@@ -1388,64 +1389,104 @@ Usage:    Django Channels layer only (WebSocket pub/sub)
 
 ### Modal Agent Runtime
 
-```python
-# modal_app.py
-import modal
+Uses Modal's Sandbox API with our unified agent image from GHCR. No `modal_app.py` needed — the Django backend creates sandboxes on-demand via the Python SDK.
 
-app = modal.App("agentobox")
-volume = modal.Volume.from_name("agentobox-workspace", create_if_missing=True)
-
-agent_image = (
-    modal.Image.from_registry("ghcr.io/anthropics/claude-code-base:latest")  # or custom image
-    .apt_install("git", "tmux", "curl", "jq", "xvfb", "x11vnc", "novnc", "websockify")
-    .run_commands("npm install -g @anthropic-ai/claude-code")
-)
-# Every agent gets full desktop. One image, one UX.
-
-@app.function(
-    image=agent_image,
-    volumes={"/root/projects": volume},
-    timeout=3600,
-)
-def run_agent(goal_id: str, context_path: str, goal_text: str, callback_url: str):
-    """Runs Claude Code in a container with structured output mode."""
-    # 1. Write CLAUDE.md + hooks to workspace
-    # 2. Launch Claude Code in tmux with --json-schema
-    # 3. Agent works, hooks POST back to callback_url
-    # 4. On completion, structured output captured
-    ...
-```
-
-**Invoking from Django:**
+**Architecture:** Django calls `modal.Sandbox.create()` with the pre-built agent image. Modal pulls from GHCR using a registry secret, creates an encrypted tunnel for port 6080 (noVNC), and returns a public URL. The agent runs the same entrypoint as Docker — Xvfb + AwesomeWM + noVNC.
 
 ```python
-# agents/services/lifecycle.py
-from modal import Function
-
-async def spawn_modal_agent(goal):
-    run_agent = Function.lookup("agentobox", "run_agent")
-    run_agent.spawn(
-        goal_id=str(goal.id),
-        context_path=goal.context_path,
-        goal_text=goal.text,
-        callback_url=settings.ABOX_CALLBACK_URL,
-    )
+# agents/runtimes/modal.py — create method
+app = await modal.App.lookup.aio("agentobox", create_if_missing=True)
+image = modal.Image.from_registry(
+    "ghcr.io/veyorokon/agentobox-agent:latest",
+    secret=modal.Secret.from_name("ghcr-secret"),
+)
+env_secret = modal.Secret.from_dict(env)  # per-agent env vars
+sb = await modal.Sandbox.create.aio(
+    app=app, image=image, secrets=[env_secret],
+    encrypted_ports=[6080], timeout=3600, cpu=2.0, memory=4096,
+)
+tunnels = await sb.tunnels.aio()
+vnc_url = tunnels[6080].url  # public HTTPS URL
 ```
 
-`Function.spawn()` is fire-and-forget. No Celery, no task queue. Modal handles the container lifecycle.
+**Key differences from Docker runtime:**
+- No port mapping — Modal provides encrypted tunnels with public URLs
+- No Docker network — Modal handles networking
+- Image pulled from GHCR (not local) — requires `ghcr-secret` Modal secret
+- Tags used for tracking instead of Docker labels
+
+**One-time Modal secret setup:**
+
+```bash
+# Create GHCR pull secret (requires GitHub PAT with read:packages scope)
+modal secret create ghcr-secret \
+  REGISTRY_USERNAME=veyorokon \
+  REGISTRY_PASSWORD=<github-pat-read-packages-scope>
+```
+
+**Settings:**
+
+```python
+# backend/config/settings.py
+MODAL_APP_NAME = env("MODAL_APP_NAME", default="agentobox")
+MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE", default="ghcr.io/veyorokon/agentobox-agent:latest")
+```
+
+### CI/CD: Agent Image Publishing
+
+The agent image is built and pushed to GHCR on every push to `main` that touches `agent/`. Uses GitHub's OIDC token — no PAT needed.
+
+```yaml
+# .github/workflows/agent-image.yml
+on:
+  push:
+    branches: [main]
+    paths: ['agent/**']
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: ${{ github.actor }}, password: ${{ secrets.GITHUB_TOKEN }} }
+      - uses: docker/build-push-action@v6
+        with:
+          context: agent
+          push: true
+          tags: |
+            ghcr.io/veyorokon/agentobox-agent:latest
+            ghcr.io/veyorokon/agentobox-agent:${{ github.sha }}
+```
+
+### Unified Agent Image
+
+Single Dockerfile for both Docker and Modal runtimes. Base is Ubuntu 22.04 with:
+
+- **Desktop:** Xvfb + x11vnc + noVNC + AwesomeWM (Rose Pine Moon theme)
+- **Browsers:** Firefox (with textfox + Rose Pine Moon CSS)
+- **Dev tools:** Node.js 20, GitHub CLI, Claude Code CLI, tmux, git
+- **Fonts:** JetBrains Mono
+
+The image entrypoint starts Xvfb, AwesomeWM, sets up the Firefox profile with textfox theming, then launches x11vnc + noVNC on port 6080. Same UX whether running locally via Docker or remotely via Modal.
 
 ### The Flow
 
 ```
-1. User → Dashboard (Railway) → GraphQL mutation: createAgent
-2. Django → modal.Function.spawn() → Modal boots container
-3. Modal container mounts volume, runs Claude Code
-4. Agent works → structured output on every response
-5. Hooks POST to Railway callback URL → Django processes webhook
-6. Django updates Postgres → broadcasts via Channels → dashboard subscription fires
-7. GDA loop worker reads Postgres → evaluates agent state → sends inbound if needed
-8. Agent completes → case retained → container terminated
+1. User → Dashboard (Railway) → GraphQL mutation: createAgent(runtime: "modal"|"docker")
+2. Django → runtime.create() → Modal Sandbox.create() or Docker containers.run()
+3. Container boots: Xvfb + AwesomeWM + noVNC on port 6080
+4. Django provisions workspace: CLAUDE.md, hooks, .claude.json → runtime.write_file()
+5. Django launches Claude Code in tmux → runtime.exec()
+6. Agent works → structured output on every response
+7. Hooks POST to Railway callback URL → Django processes webhook
+8. Django updates Postgres → broadcasts via Channels → dashboard subscription fires
+9. GDA loop worker reads Postgres → evaluates agent state → sends inbound if needed
+10. Agent completes → case retained → runtime.terminate()
 ```
+
+**Modal path:** VNC available via encrypted tunnel URL (HTTPS, no port mapping needed).
+**Docker path:** VNC available via localhost port mapping.
 
 ### Environment Variables (Railway)
 
@@ -1460,6 +1501,8 @@ ABOX_CALLBACK_URL=https://django-service.railway.app
 # Modal
 MODAL_TOKEN_ID=
 MODAL_TOKEN_SECRET=
+MODAL_APP_NAME=agentobox
+MODAL_AGENT_IMAGE=ghcr.io/veyorokon/agentobox-agent:latest
 
 # Agent defaults
 ANTHROPIC_API_KEY=

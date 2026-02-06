@@ -10,11 +10,12 @@ export function DeployModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onDeploy: (name: string, goalText: string, contextPath: string) => void;
+  onDeploy: (name: string, goalText: string, contextPath: string, runtime: string) => void;
 }) {
   const [name, setName] = useState('');
   const [goalText, setGoalText] = useState('');
   const [contextPath, setContextPath] = useState('');
+  const [runtime, setRuntime] = useState('modal');
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -22,6 +23,7 @@ export function DeployModal({
       setName('');
       setGoalText('');
       setContextPath('');
+      setRuntime('modal');
       setTimeout(() => nameRef.current?.focus(), 50);
     }
   }, [open]);
@@ -29,7 +31,7 @@ export function DeployModal({
   const handleSubmit = () => {
     const trimmed = name.trim().toLowerCase().replace(/\s+/g, '-');
     if (!trimmed || !goalText.trim()) return;
-    onDeploy(trimmed, goalText.trim(), contextPath.trim());
+    onDeploy(trimmed, goalText.trim(), contextPath.trim(), runtime);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -130,7 +132,7 @@ export function DeployModal({
           </div>
 
           {/* Context path field */}
-          <div className="mb-6">
+          <div className="mb-4">
             <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
               Context Path{' '}
               <span className="text-muted-foreground/30">(optional)</span>
@@ -151,6 +153,31 @@ export function DeployModal({
                 placeholder="/workspace/project"
                 className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
               />
+            </div>
+          </div>
+
+          {/* Runtime field */}
+          <div className="mb-6">
+            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
+              Runtime
+            </label>
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <select
+                value={runtime}
+                onChange={(e) => setRuntime(e.target.value)}
+                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 focus:outline-none appearance-none cursor-pointer"
+              >
+                <option value="modal">Modal</option>
+                <option value="docker">Docker</option>
+              </select>
             </div>
           </div>
 

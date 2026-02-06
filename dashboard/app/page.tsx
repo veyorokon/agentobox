@@ -89,7 +89,8 @@ export default function DashboardPage() {
   const handleDeploy = async (
     name: string,
     goalText: string,
-    contextPath: string
+    contextPath: string,
+    runtime: string
   ) => {
     if (!projectId) return;
     setShowDeployModal(false);
@@ -104,7 +105,7 @@ export default function DashboardPage() {
             name,
             goalText,
             contextPath,
-            runtime: 'modal',
+            runtime,
           },
         });
         if (error) throw error;
