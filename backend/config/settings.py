@@ -10,6 +10,10 @@ env = environ.Env(
     REDIS_URL=(str, "redis://localhost:6379/0"),
     OTEL_ENABLED=(bool, False),
     WEBHOOK_SECRET=(str, "dev-secret"),
+    AGENT_IMAGE=(str, "agentobox-agent:latest"),
+    ABOX_CALLBACK_URL=(str, "http://backend:8000"),
+    ANTHROPIC_API_KEY=(str, ""),
+    DOCKER_NETWORK=(str, "agentobox_default"),
 )
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 
@@ -112,6 +116,13 @@ STATIC_URL = "static/"
 # --- Webhook ---
 
 WEBHOOK_SECRET = env("WEBHOOK_SECRET")
+
+# --- Agent Runtime ---
+
+AGENT_IMAGE = env("AGENT_IMAGE")
+ABOX_CALLBACK_URL = env("ABOX_CALLBACK_URL")
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
+DOCKER_NETWORK = env("DOCKER_NETWORK")
 
 # --- Observability ---
 

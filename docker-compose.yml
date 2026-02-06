@@ -25,6 +25,10 @@ services:
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
       WEBHOOK_SECRET: dev-secret
+      AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
+      ABOX_CALLBACK_URL: http://backend:8000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DOCKER_NETWORK: agentobox_default
     ports:
       - "8000:8000"
     depends_on:
@@ -33,6 +37,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
 
   gda:
     build: ./backend

@@ -1,0 +1,27 @@
+{
+  "description": "Agentobox agent hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/computeruse/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/computeruse/hooks/post-tool.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
