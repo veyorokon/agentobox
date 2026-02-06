@@ -31,4 +31,23 @@ async def agent_event(request):
 
     await process_agent_event(payload)
 
-    return JsonResponse({"ok": True})
+    # Check for pending inbound messages to deliver back to the agent
+    response = {"ok": True}
+    agent_name = payload.get("agent_name", "")
+    project_id = payload.get("project_id", "")
+
+    if agent_name and project_id:
+        from agents.models import Agent
+        from agents.services.comms import get_pending_messages
+
+        try:
+            agent = await Agent.objects.aget(
+                project_id=project_id, name=agent_name
+            )
+            messages = await get_pending_messages(agent)
+            if messages:
+                response["message"] = " | ".join(messages)
+        except Agent.DoesNotExist:
+            pass
+
+    return JsonResponse(response)

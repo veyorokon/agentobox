@@ -3,6 +3,7 @@ from django.conf import settings
 
 from agents.models import Agent, AgentEvent, AgentStatus, Goal, GoalTrajectory
 from agents.runtimes import get_runtime
+from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
 from agents.services.provision import provision_workspace
 
 log = structlog.get_logger("agents.lifecycle")
@@ -68,12 +69,14 @@ async def create_agent(
         status=AgentStatus.WORKING,
     )
 
-    # 7. Emit creation event
-    await AgentEvent.objects.acreate(
+    # 7. Emit creation event + broadcast
+    event = await AgentEvent.objects.acreate(
         agent=agent,
         event_type="created",
         data={"goal": goal_text, "context": context_path},
     )
+    await broadcast_agent_update(agent)
+    await broadcast_agent_event(event)
 
     op_log.info("agent_created", agent_id=str(agent.id))
     return agent
@@ -96,11 +99,13 @@ async def kill_agent(project_id: str, name: str) -> bool:
     agent.status = AgentStatus.DEAD
     await agent.asave(update_fields=["status"])
 
-    await AgentEvent.objects.acreate(
+    event = await AgentEvent.objects.acreate(
         agent=agent,
         event_type="killed",
         data={},
     )
+    await broadcast_agent_update(agent)
+    await broadcast_agent_event(event)
 
     op_log.info("agent_killed")
     return True
@@ -123,12 +128,13 @@ async def process_agent_event(payload: dict) -> None:
         op_log.warning("agent_not_found_for_event")
         return
 
-    # Save event
-    await AgentEvent.objects.acreate(
+    # Save event + broadcast
+    event = await AgentEvent.objects.acreate(
         agent=agent,
         event_type=event_type,
         data=payload.get("data", {}),
     )
+    await broadcast_agent_event(event)
 
     # Update meta protocol fields if present
     meta_fields = ["status", "confidence", "sentiment", "summary", "reasoning", "output"]
@@ -147,6 +153,7 @@ async def process_agent_event(payload: dict) -> None:
 
     if update_fields:
         await agent.asave(update_fields=update_fields)
+        await broadcast_agent_update(agent)
         op_log.info("agent_updated", fields=update_fields)
 
 
