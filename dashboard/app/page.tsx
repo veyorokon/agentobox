@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useQuery, useSubscription } from 'urql';
 import { toast } from 'sonner';
 import { useProjectsStore } from '@/stores/projects';
@@ -15,31 +14,38 @@ import {
 import { CommandPanel } from '@/components/command-panel';
 import { AgentCard } from '@/components/agent-card';
 import { DeployModal } from '@/components/modals/deploy-modal';
+import { ProjectSelector } from '@/components/project-selector';
 import { CREATE_AGENT_MUTATION } from '@/lib/graphql/mutations';
 import { useMutation } from 'urql';
 import { logger } from '@/lib/observability';
 import type { Agent, AgentEvent } from '@/types';
 
+const EMPTY_AGENTS: Agent[] = [];
+const EMPTY_EVENTS: AgentEvent[] = [];
+
 export default function DashboardPage() {
   const projectId = useProjectsStore((s) => s.currentProjectId);
   const agents = useAgentsStore((s) =>
-    projectId ? (s.agents[projectId] ?? []) : []
+    projectId ? (s.agents[projectId] ?? EMPTY_AGENTS) : EMPTY_AGENTS
   );
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
   const events = useEventsStore((s) =>
-    projectId ? (s.events[projectId] ?? []) : []
+    projectId ? (s.events[projectId] ?? EMPTY_EVENTS) : EMPTY_EVENTS
   );
   const addEvent = useEventsStore((s) => s.addEvent);
 
   const [showDeployModal, setShowDeployModal] = useState(false);
   const [, createAgentMut] = useMutation(CREATE_AGENT_MUTATION);
 
+  const queryVars = useMemo(() => ({ projectId }), [projectId]);
+  const paused = !projectId;
+
   // Fetch agents for current project
   const [{ data }] = useQuery({
     query: AGENTS_QUERY,
-    variables: { projectId },
-    pause: !projectId,
+    variables: queryVars,
+    pause: paused,
   });
 
   useEffect(() => {
@@ -49,33 +55,35 @@ export default function DashboardPage() {
   }, [data, projectId, setAgents]);
 
   // Subscribe to agent updates
-  useSubscription(
-    {
-      query: AGENT_UPDATED_SUBSCRIPTION,
-      variables: { projectId },
-      pause: !projectId,
-    },
-    (_prev, data) => {
+  const handleAgentUpdate = useCallback(
+    (_prev: any, data: any) => {
       if (data?.agentUpdated && projectId) {
         upsertAgent(projectId, data.agentUpdated);
       }
       return data;
-    }
+    },
+    [projectId, upsertAgent]
+  );
+
+  useSubscription(
+    { query: AGENT_UPDATED_SUBSCRIPTION, variables: queryVars, pause: paused },
+    handleAgentUpdate
   );
 
   // Subscribe to new events
-  useSubscription(
-    {
-      query: NEW_EVENT_SUBSCRIPTION,
-      variables: { projectId },
-      pause: !projectId,
-    },
-    (_prev, data) => {
+  const handleNewEvent = useCallback(
+    (_prev: any, data: any) => {
       if (data?.newEvent && projectId) {
         addEvent(projectId, data.newEvent);
       }
       return data;
-    }
+    },
+    [projectId, addEvent]
+  );
+
+  useSubscription(
+    { query: NEW_EVENT_SUBSCRIPTION, variables: queryVars, pause: paused },
+    handleNewEvent
   );
 
   const handleDeploy = async (
@@ -109,9 +117,27 @@ export default function DashboardPage() {
   if (!projectId) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
-        <p className="text-muted-foreground text-sm font-mono">
-          Select or create a project to get started
-        </p>
+        <div className="text-center">
+          <div className="flex justify-center mb-6">
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-14 h-14 flex items-center justify-center"
+              style={{
+                '--aug-tl': '10px',
+                '--aug-br': '10px',
+                '--aug-border-all': '2px',
+                '--aug-border-bg': 'var(--accent)',
+              } as React.CSSProperties}
+            >
+              <span className="text-accent font-bold text-2xl">A</span>
+            </div>
+          </div>
+          <p className="text-foreground font-bold text-lg mb-2">agentobox</p>
+          <p className="text-muted-foreground text-sm font-mono mb-6">
+            Create a project to get started
+          </p>
+          <ProjectSelector />
+        </div>
       </div>
     );
   }
