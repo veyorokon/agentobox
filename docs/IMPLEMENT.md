@@ -914,12 +914,287 @@ dependencies = [
     "structlog>=24.4",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
     "opentelemetry-instrumentation-django>=0.48",
+    "opentelemetry-instrumentation-psycopg>=0.48",
+    "opentelemetry-instrumentation-httpx>=0.48",
 
     # Auth
     "pyjwt>=2.9",
 ]
 ```
+
+---
+
+## Observability & Logging
+
+Two layers: **structlog** for structured logging, **OpenTelemetry** for distributed tracing. They connect via a processor that injects trace/span IDs into every log line -- logs and traces are automatically correlated without any manual wiring.
+
+### Setup (config/telemetry.py)
+
+```python
+import structlog
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.instrumentation.django import DjangoInstrumentor
+from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+OTEL_ENABLED = True  # from settings
+
+
+def inject_trace_context(logger, method_name, event_dict):
+    """structlog processor: auto-inject trace_id and span_id from active OTEL context."""
+    span = trace.get_current_span()
+    if span and span.is_recording():
+        ctx = span.get_span_context()
+        event_dict["trace_id"] = format(ctx.trace_id, "032x")
+        event_dict["span_id"] = format(ctx.span_id, "016x")
+    return event_dict
+
+
+def setup():
+    """Call once at startup (settings.py or asgi.py)."""
+
+    # --- structlog ---
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,       # request-scoped context
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            inject_trace_context,                          # trace correlation
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),           # prod: JSON lines
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    if not OTEL_ENABLED:
+        return
+
+    # --- OpenTelemetry ---
+    resource = Resource.create({
+        "service.name": "agentobox",
+        "service.version": "0.1.0",
+    })
+
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(BatchSpanExporter(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+
+    # Auto-instrument: every Django request, DB query, and outbound HTTP call
+    # gets a span without touching application code
+    DjangoInstrumentor().instrument()
+    PsycopgInstrumentor().instrument()
+    HTTPXClientInstrumentor().instrument()
+```
+
+Auto-instrumentation means Django views, Postgres queries, and outbound HTTP calls (webhook callbacks, Modal API, LiteLLM) all get traced automatically. No manual wrapping needed at those layers.
+
+### Subsystem Loggers
+
+```python
+# Use structlog.get_logger() with bind() for subsystem context.
+# Unlike child loggers, bound context is immutable and composable.
+
+# agents/services/lifecycle.py
+import structlog
+log = structlog.get_logger("agents.lifecycle")
+
+async def create_agent(project_id, name, ...):
+    op_log = log.bind(project_id=str(project_id), agent=name)
+    op_log.info("creating_agent", runtime=runtime_name)
+    # ... do work ...
+    op_log.info("agent_created", sandbox_id=sandbox.id)
+
+# agents/services/gda.py
+log = structlog.get_logger("agents.gda")
+
+async def evaluate_agent(agent):
+    op_log = log.bind(agent=agent.name, project_id=str(agent.project_id))
+    op_log.info("evaluating", status=agent.status)
+
+# webhooks/views.py
+log = structlog.get_logger("webhooks")
+```
+
+Every log line automatically includes: timestamp, level, logger name, bound context fields, and trace_id/span_id (if inside a traced request). Example output:
+
+```json
+{"event": "creating_agent", "level": "info", "logger": "agents.lifecycle",
+ "project_id": "abc-123", "agent": "worker-1", "runtime": "modal",
+ "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "span_id": "00f067aa0ba902b7",
+ "timestamp": "2026-02-05T12:00:00Z"}
+```
+
+### Business Logic Spans
+
+For operations that need explicit timing and attributes beyond what auto-instrumentation captures:
+
+```python
+# agents/runtimes/modal.py
+from contextlib import asynccontextmanager
+from opentelemetry import trace
+
+tracer = trace.get_tracer("agentobox.agents")
+
+@asynccontextmanager
+async def traced(name: str, **attrs):
+    """Context manager for business logic spans. Auto-records errors."""
+    with tracer.start_as_current_span(name, attributes=attrs) as span:
+        try:
+            yield span
+        except Exception as e:
+            span.set_status(trace.StatusCode.ERROR, str(e))
+            span.record_exception(e)
+            raise
+
+# Usage:
+async def create(self, name: str, env: dict) -> SandboxInstance:
+    async with traced("runtime.create", agent=name, runtime="modal") as span:
+        sandbox = await self._modal_create(name, env)
+        span.set_attribute("sandbox_id", sandbox.id)
+        return sandbox
+
+async def wait_for_ready(self, sandbox_id: str, timeout_ms: int = 60000):
+    async with traced("runtime.wait_ready", sandbox_id=sandbox_id, timeout_ms=timeout_ms) as span:
+        attempts = 0
+        # ... polling loop ...
+        span.set_attribute("attempts", attempts)
+```
+
+Use `traced()` for: runtime operations (create, exec, terminate), casebase retrieval, LLM calls (if LiteLLM doesn't auto-trace), GDA evaluation cycles. Don't use it for: simple DB queries (auto-instrumented), webhook request handling (auto-instrumented by Django middleware).
+
+### LLM Observability
+
+LiteLLM has built-in OTEL support. When OTEL is configured, every `litellm.completion()` call emits spans with token counts, model, latency:
+
+```python
+# config/settings.py
+import litellm
+litellm.callbacks = ["otel"]  # auto-emit spans for every LLM call
+```
+
+This replaces the old Braintrust coupling. Every LLM call -- casebase embedding, GDA evaluation, AI chat layer -- gets traced with `llm.input_tokens`, `llm.output_tokens`, `llm.model` attributes without any manual instrumentation.
+
+### Frontend Observability (dashboard)
+
+No heavy OTEL SDK in the browser. Lightweight ring buffer for debugging, W3C traceparent for cross-boundary correlation:
+
+```typescript
+// lib/observability.ts
+type LogLevel = "debug" | "info" | "warn" | "error";
+
+interface LogEntry {
+  level: LogLevel;
+  context: string;
+  message: string;
+  ts: number;
+  attrs?: Record<string, unknown>;
+  durationMs?: number;
+}
+
+const RING_SIZE = 500;
+const ring: LogEntry[] = [];
+let idx = 0;
+
+function push(entry: LogEntry) {
+  ring[idx % RING_SIZE] = entry;
+  idx++;
+  // Also emit to console in dev
+  const msg = `[${entry.context}] ${entry.message}${entry.durationMs ? ` (${entry.durationMs}ms)` : ""}`;
+  console[entry.level](msg, entry.attrs ?? "");
+}
+
+export const logger = {
+  debug: (ctx: string, msg: string, attrs?: Record<string, unknown>) =>
+    push({ level: "debug", context: ctx, message: msg, ts: Date.now(), attrs }),
+  info: (ctx: string, msg: string, attrs?: Record<string, unknown>) =>
+    push({ level: "info", context: ctx, message: msg, ts: Date.now(), attrs }),
+  warn: (ctx: string, msg: string, attrs?: Record<string, unknown>) =>
+    push({ level: "warn", context: ctx, message: msg, ts: Date.now(), attrs }),
+  error: (ctx: string, msg: string, attrs?: Record<string, unknown>) =>
+    push({ level: "error", context: ctx, message: msg, ts: Date.now(), attrs }),
+
+  async timed<T>(context: string, fn: () => Promise<T>): Promise<T> {
+    const start = Date.now();
+    try {
+      const result = await fn();
+      push({ level: "info", context, message: "ok", ts: Date.now(), durationMs: Date.now() - start });
+      return result;
+    } catch (err) {
+      push({ level: "error", context, message: String(err), ts: Date.now(), durationMs: Date.now() - start });
+      throw err;
+    }
+  },
+
+  /** W3C traceparent header for correlating frontend requests to backend traces. */
+  traceHeaders(): Record<string, string> {
+    const hex = (n: number) => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
+    return { traceparent: `00-${hex(16)}-${hex(8)}-01` };
+  },
+
+  /** Most recent N entries for debug panel / error reporting. */
+  recent(n = 50): LogEntry[] {
+    const total = Math.min(idx, RING_SIZE);
+    const count = Math.min(n, total);
+    return Array.from({ length: count }, (_, i) => ring[(idx - 1 - i + RING_SIZE) % RING_SIZE]);
+  },
+};
+```
+
+Use `logger.traceHeaders()` when making GraphQL requests so the backend trace picks up the frontend's trace ID. Use `logger.recent()` to dump logs into error reports or a debug panel.
+
+### Request Context (Middleware)
+
+Bind request-scoped context (user, project) so every log line within a request includes it automatically:
+
+```python
+# config/middleware.py
+import structlog
+
+class RequestContextMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    async def __call__(self, request):
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request.META.get("HTTP_X_REQUEST_ID", ""),
+            user_id=str(request.user.id) if request.user.is_authenticated else "",
+        )
+        return await self.get_response(request)
+```
+
+### OTEL Dependencies
+
+```toml
+# additions to pyproject.toml [project.dependencies]
+"opentelemetry-exporter-otlp-proto-http>=1.27",
+"opentelemetry-instrumentation-django>=0.48",
+"opentelemetry-instrumentation-psycopg>=0.48",
+"opentelemetry-instrumentation-httpx>=0.48",
+```
+
+### What Gets Traced Automatically vs Manually
+
+| Layer | How | Notes |
+|---|---|---|
+| HTTP requests (Django) | Auto (DjangoInstrumentor) | Every view, middleware |
+| DB queries (Postgres) | Auto (PsycopgInstrumentor) | Query text, timing |
+| Outbound HTTP (httpx) | Auto (HTTPXClientInstrumentor) | Webhook callbacks, Modal API |
+| LLM calls (LiteLLM) | Auto (`litellm.callbacks = ["otel"]`) | Tokens, model, latency |
+| Runtime operations | Manual (`traced()`) | Create, exec, terminate, wait_ready |
+| GDA evaluation cycles | Manual (`traced()`) | Per-agent eval, casebase lookup |
+| Frontend | Manual (ring buffer) | No OTEL SDK, just structured console + traceparent |
 
 ---
 
@@ -970,6 +1245,7 @@ volumes:
 - Models and migrations
 - Strawberry schema wired up
 - Docker compose running (Postgres + Redis)
+- Observability from day one: structlog + OTEL setup (config/telemetry.py, middleware)
 - Admin UI for debugging
 
 ### Phase 2: Core
@@ -992,7 +1268,6 @@ volumes:
 - Inbound message delivery
 
 ### Phase 5: Polish
-- Observability (structlog + OTEL)
 - Auth hardening (JWT, API keys)
 - Usage tracking
 - Testing at boundaries
