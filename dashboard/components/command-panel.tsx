@@ -1,0 +1,251 @@
+'use client';
+
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { Send, Search } from 'lucide-react';
+import { useMutation } from 'urql';
+import { toast } from 'sonner';
+import { logger } from '@/lib/observability';
+import { useTheme } from '@/lib/theme';
+import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
+import { RosterBadge } from './roster-badge';
+import { PanelTabs, type PanelTab } from './panel-tabs';
+import { EventFeed } from './event-feed';
+import { ChatBubble } from './chat-bubble';
+import { ProjectSelector } from './project-selector';
+import type { Agent, AgentEvent } from '@/types';
+
+export function CommandPanel({
+  agents,
+  events,
+  projectId,
+}: {
+  agents: Agent[];
+  events: AgentEvent[];
+  projectId: string;
+}) {
+  const { theme, setTheme, themes } = useTheme();
+  const nextTheme = themes[(themes.indexOf(theme) + 1) % themes.length];
+
+  const [activeTab, setActiveTab] = useState<PanelTab>('agento');
+  const [input, setInput] = useState('');
+  const [feedFilter, setFeedFilter] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const [, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
+
+  const switchTab = useCallback((tab: PanelTab) => {
+    setActiveTab(tab);
+    setInput('');
+    setFeedFilter('');
+  }, []);
+
+  const isAgentTab = activeTab !== 'agento' && activeTab !== 'feed';
+  const selectedAgent = isAgentTab
+    ? agents.find((a) => a.name === activeTab)
+    : null;
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    try {
+      await logger.withSpan('sendMessage', () =>
+        sendMessageMut({
+          input: {
+            projectId,
+            agentName: activeTab === 'agento' ? '' : activeTab,
+            message: text,
+          },
+        }).then(({ error }) => {
+          if (error) throw error;
+        })
+      );
+    } catch (err) {
+      toast.error('Failed to send message');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (activeTab === 'feed') return;
+      handleSend();
+    }
+  };
+
+  const inputPrefix = activeTab === 'feed' ? '/' : '>';
+  const inputPlaceholder =
+    activeTab === 'feed'
+      ? 'Filter events...'
+      : activeTab === 'agento'
+        ? 'Message agento...'
+        : `Message ${activeTab}...`;
+
+  return (
+    <aside
+      className="w-[380px] flex-shrink-0 flex flex-col bg-surface"
+      style={{ borderRight: '1px solid var(--border)' }}
+    >
+      {/* Panel Header */}
+      <div className="px-5 pt-5 pb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-10 h-10 flex items-center justify-center"
+              style={{
+                '--aug-tl': '7px',
+                '--aug-br': '7px',
+                '--aug-border-all': '2px',
+                '--aug-border-bg': 'var(--accent)',
+              } as React.CSSProperties}
+            >
+              <span className="text-accent font-bold text-lg">A</span>
+            </div>
+            <h1 className="text-lg font-bold text-foreground tracking-tight">
+              agentobox
+            </h1>
+          </div>
+          <button
+            onClick={() => setTheme(nextTheme)}
+            data-augmented-ui="tl-clip br-clip border"
+            className="px-3 py-1.5 text-muted-foreground text-[10px] font-bold uppercase tracking-wider hover:text-foreground transition-colors"
+            style={{
+              '--aug-tl': '5px',
+              '--aug-br': '5px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': 'var(--border)',
+            } as React.CSSProperties}
+          >
+            {theme}
+          </button>
+        </div>
+        <ProjectSelector />
+      </div>
+
+      {/* Agent Roster */}
+      <div className="px-5 pb-3">
+        <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider mb-2">
+          Agents
+        </p>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {agents.map((agent) => (
+            <RosterBadge
+              key={agent.name}
+              agent={agent}
+              isSelected={activeTab === agent.name}
+              onClick={() => switchTab(agent.name)}
+            />
+          ))}
+          {agents.length === 0 && (
+            <p className="text-muted-foreground text-xs">No agents deployed</p>
+          )}
+        </div>
+      </div>
+
+      {/* Tab Bar */}
+      <PanelTabs
+        active={activeTab}
+        selectedAgent={selectedAgent}
+        onSelect={switchTab}
+      />
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {activeTab === 'agento' && (
+          <div className="px-5 py-4 space-y-4">
+            <div className="flex-1 flex items-center justify-center h-32">
+              <p className="text-muted-foreground text-xs text-center leading-relaxed">
+                Send a message to start
+                <br />
+                orchestrating your agents
+              </p>
+            </div>
+            <div ref={messagesEndRef} />
+          </div>
+        )}
+        {activeTab === 'feed' && (
+          <EventFeed
+            events={events}
+            filter={feedFilter}
+            onSelectAgent={switchTab}
+          />
+        )}
+        {isAgentTab && (
+          <div className="px-5 py-4">
+            <div className="flex-1 flex items-center justify-center h-32">
+              <p className="text-muted-foreground text-xs text-center leading-relaxed">
+                Direct messaging coming soon.
+                <br />
+                <span className="text-[10px]">Agent: {activeTab}</span>
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input Bar */}
+      <div className="px-5 pb-5 pt-2">
+        <div className="flex items-center gap-2">
+          <div
+            data-augmented-ui="tl-clip br-clip border"
+            className="flex-1"
+            style={{
+              '--aug-tl': '8px',
+              '--aug-br': '8px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': 'var(--border)',
+            } as React.CSSProperties}
+          >
+            <div className="flex items-center">
+              <span className="text-accent font-mono text-sm pl-3 select-none">
+                {inputPrefix}
+              </span>
+              <input
+                type="text"
+                value={activeTab === 'feed' ? feedFilter : input}
+                onChange={(e) =>
+                  activeTab === 'feed'
+                    ? setFeedFilter(e.target.value)
+                    : setInput(e.target.value)
+                }
+                onKeyDown={handleKeyDown}
+                placeholder={inputPlaceholder}
+                className="w-full bg-transparent text-foreground font-mono text-sm px-2 py-2.5 placeholder:text-muted-foreground focus:outline-none"
+              />
+            </div>
+          </div>
+          {activeTab !== 'feed' ? (
+            <button
+              onClick={handleSend}
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-accent transition-colors"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+              title="Send"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          ) : (
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-9 h-9 flex items-center justify-center text-muted-foreground"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <Search className="w-4 h-4" />
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}

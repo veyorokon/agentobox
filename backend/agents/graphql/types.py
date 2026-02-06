@@ -1,3 +1,4 @@
+import strawberry
 import strawberry_django
 from strawberry import auto
 
@@ -39,6 +40,7 @@ class AgentEventType:
     event_type: auto
     data: auto
     timestamp: auto
+    agent: AgentType
 
 
 @strawberry_django.type(models.Case)

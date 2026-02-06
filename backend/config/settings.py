@@ -25,6 +25,7 @@ ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 
 INSTALLED_APPS = [
     "daphne",
+    "corsheaders",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -45,6 +46,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -123,6 +125,12 @@ AGENT_IMAGE = env("AGENT_IMAGE")
 ABOX_CALLBACK_URL = env("ABOX_CALLBACK_URL")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
 DOCKER_NETWORK = env("DOCKER_NETWORK")
+
+# --- CORS ---
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]
 
 # --- Observability ---
 

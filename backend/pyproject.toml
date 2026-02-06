@@ -8,6 +8,7 @@ dependencies = [
     "channels-redis>=4.3.0",
     "daphne>=4.2.1",
     "django>=6.0.2",
+    "django-cors-headers>=4.7.0",
     "django-environ>=0.12.0",
     "django-structlog>=10.0.0",
     "docker>=7.1.0",

@@ -54,5 +54,19 @@ services:
       - ./backend:/app
       - /app/.venv
 
+  dashboard:
+    build: ./dashboard
+    environment:
+      NEXT_PUBLIC_GRAPHQL_HTTP: http://localhost:8000/graphql
+      NEXT_PUBLIC_GRAPHQL_WS: ws://localhost:8000/graphql
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+      - /app/.next
+
 volumes:
   pgdata:
