@@ -1,0 +1,8 @@
+secret:
+  ignored_matches:
+    - name: django_insecure_dev_key
+      match: "django-insecure-dev-only-change-me"
+    - name: dev_webhook_secret
+      match: "dev-secret"
+    - name: dev_placeholder_secret
+      match: "dev-only-change-in-production"
