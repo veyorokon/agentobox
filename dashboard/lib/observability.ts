@@ -1,6 +1,9 @@
 /**
  * Lightweight frontend observability — structured logging, timing, and trace propagation.
  * No heavy OTEL SDK. Ring buffer for debugging, W3C traceparent for correlation.
+ *
+ * Session trace_id is generated once at module load and used across all log entries
+ * and outgoing requests. Per-operation span_ids are generated fresh.
  */
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -12,7 +15,8 @@ interface LogEntry {
   ts: number;
   attributes?: Record<string, unknown>;
   durationMs?: number;
-  traceId?: string;
+  traceId: string;
+  spanId?: string;
 }
 
 const RING_SIZE = 1000;
@@ -25,11 +29,17 @@ function randomHex(bytes: number): string {
   return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Stable trace_id for the entire browser session. */
+const sessionTraceId = randomHex(16);
+
+/** Short prefix for console output (8 hex chars = visually scannable). */
+const tracePrefix = sessionTraceId.slice(0, 8);
+
 function push(entry: LogEntry) {
   ring[ringIndex % RING_SIZE] = entry;
   ringIndex++;
 
-  const prefix = `[${entry.context}]`;
+  const prefix = `[${tracePrefix}] [${entry.context}]`;
   const suffix = entry.durationMs != null ? ` (${entry.durationMs}ms)` : '';
   const msg = `${prefix} ${entry.message}${suffix}`;
 
@@ -50,17 +60,19 @@ function push(entry: LogEntry) {
 }
 
 function log(level: LogLevel, context: string, message: string, attributes?: Record<string, unknown>) {
-  push({level, context, message, ts: Date.now(), attributes});
+  push({level, context, message, ts: Date.now(), traceId: sessionTraceId, attributes});
 }
 
 /**
  * Time an async operation, auto-log start/end/error.
+ * Each span gets a unique span_id for fine-grained correlation.
  */
 async function withSpan<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  const spanId = randomHex(8);
   const start = Date.now();
   try {
     const result = await fn();
-    push({level: 'info', context: name, message: 'completed', ts: Date.now(), durationMs: Date.now() - start});
+    push({level: 'info', context: name, message: 'completed', ts: Date.now(), durationMs: Date.now() - start, traceId: sessionTraceId, spanId});
     return result;
   } catch (err) {
     push({
@@ -69,6 +81,8 @@ async function withSpan<T>(name: string, fn: () => Promise<T>): Promise<T> {
       message: err instanceof Error ? err.message : String(err),
       ts: Date.now(),
       durationMs: Date.now() - start,
+      traceId: sessionTraceId,
+      spanId,
     });
     throw err;
   }
@@ -76,12 +90,12 @@ async function withSpan<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 /**
  * Generate W3C traceparent header for cross-boundary correlation.
+ * Uses the stable session trace_id with a fresh span_id per call.
  * Format: 00-{traceId}-{spanId}-01
  */
 function getTraceHeaders(): Record<string, string> {
-  const traceId = randomHex(16);
   const spanId = randomHex(8);
-  return {traceparent: `00-${traceId}-${spanId}-01`};
+  return {traceparent: `00-${sessionTraceId}-${spanId}-01`};
 }
 
 /** Get the last N log entries (most recent first). */
@@ -90,7 +104,6 @@ function getRecentLogs(n = 50): LogEntry[] {
   const total = Math.min(ringIndex, RING_SIZE);
   const count = Math.min(n, total);
   for (let i = 0; i < count; i++) {
-    // Walk backwards from most recent entry; handle wrap-around
     let idx = ringIndex - 1 - i;
     while (idx < 0) idx += RING_SIZE;
     entries.push(ring[idx % RING_SIZE]);
@@ -106,4 +119,6 @@ export const logger = {
   withSpan,
   getTraceHeaders,
   getRecentLogs,
+  /** The session trace_id for external use (e.g. error reporting). */
+  sessionTraceId,
 };

@@ -55,6 +55,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_structlog.middlewares.RequestMiddleware",
+    "config.middleware.TraceContextMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -130,6 +131,16 @@ DOCKER_NETWORK = env("DOCKER_NETWORK")
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+]
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "authorization",
+    "content-type",
+    "origin",
+    "traceparent",
+    "tracestate",
+    "x-csrftoken",
+    "x-requested-with",
 ]
 
 # --- Observability ---

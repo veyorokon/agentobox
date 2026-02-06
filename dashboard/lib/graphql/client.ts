@@ -21,6 +21,7 @@ function getToken(): string | null {
 
 const wsClient = createWSClient({
   url: GRAPHQL_WS,
+  lazy: true,
   connectionParams: () => {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -41,10 +42,38 @@ export const client = new Client({
   },
   exchanges: [
     mapExchange({
-      onError(error) {
-        logger.error('graphql', error.message, {
-          graphQLErrors: error.graphQLErrors,
-          networkError: error.networkError,
+      onOperation(operation) {
+        const name = operation.query.definitions.find(
+          (d): d is import('graphql').OperationDefinitionNode => d.kind === 'OperationDefinition'
+        )?.name?.value ?? 'anonymous';
+        const type = operation.kind;
+        logger.debug('graphql', `${name} ${type}`, {operation: name, type, url: GRAPHQL_HTTP});
+      },
+      onResult(result) {
+        const errors = result.data ? undefined : result.error?.graphQLErrors;
+        if (errors?.length) {
+          const name = result.operation.query.definitions.find(
+            (d): d is import('graphql').OperationDefinitionNode => d.kind === 'OperationDefinition'
+          )?.name?.value ?? 'anonymous';
+          logger.warn('graphql.result', `${name} returned errors`, {
+            operation: name,
+            type: result.operation.kind,
+            errors: errors.map((e) => e.message),
+          });
+        }
+      },
+      onError(error, operation) {
+        const name = operation.query.definitions.find(
+          (d): d is import('graphql').OperationDefinitionNode => d.kind === 'OperationDefinition'
+        )?.name?.value ?? 'anonymous';
+        const type = operation.kind;
+        logger.error('graphql.error', `${name} ${type} failed`, {
+          operation: name,
+          type,
+          url: GRAPHQL_HTTP,
+          message: error.message,
+          networkError: error.networkError?.message,
+          graphQLErrors: error.graphQLErrors?.map((e) => e.message),
         });
       },
     }),
