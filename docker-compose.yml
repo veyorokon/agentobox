@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: agentobox
+      POSTGRES_USER: agentobox
+      POSTGRES_PASSWORD: agentobox
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    entrypoint: ["bash", "/app/entrypoint.sh"]
+    command: ["uv", "run", "daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+    environment:
+      DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "true"
+      ALLOWED_HOSTS: "*"
+      WEBHOOK_SECRET: dev-secret
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+
+  gda:
+    build: ./backend
+    entrypoint: ["bash", "/app/entrypoint.sh"]
+    command: ["uv", "run", "python", "manage.py", "gda_loop"]
+    environment:
+      DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
+      REDIS_URL: redis://redis:6379/0
+      WEBHOOK_SECRET: dev-secret
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+
+volumes:
+  pgdata:

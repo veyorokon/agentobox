@@ -1201,7 +1201,7 @@ class RequestContextMiddleware:
 ## Docker Compose (Local Dev)
 
 ```yaml
-# deploy/docker-compose.yml
+# docker-compose.yml (root)
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -1219,18 +1219,39 @@ services:
     ports:
       - "6379:6379"
 
-  control_plane:
-    build: ../control_plane
+  backend:
+    build: ./backend
     command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
       DEBUG: "true"
+      WEBHOOK_SECRET: dev-secret
     ports:
       - "8000:8000"
     depends_on:
       - postgres
       - redis
+    volumes:
+      - ./backend:/app  # live reload in dev
+
+  gda:
+    build: ./backend
+    command: python manage.py gda_loop
+    environment:
+      DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_GRAPHQL_URL: http://localhost:8000/graphql
+      NEXT_PUBLIC_GRAPHQL_WS_URL: ws://localhost:8000/graphql
 
 volumes:
   pgdata:
@@ -1240,42 +1261,65 @@ volumes:
 
 ## Build Phases
 
-### Phase 1: Scaffold
-- Django project with config, accounts, projects, agents apps
-- Models and migrations
-- Strawberry schema wired up
-- Docker compose running (Postgres + Redis)
-- Observability from day one: structlog + OTEL setup (config/telemetry.py, middleware)
-- Admin UI for debugging
+Each step produces something verifiable before moving on.
 
-### Phase 2: Core
-- Runtime protocol + Modal implementation
-- Agent lifecycle service (create, kill)
-- Workspace provisioning (CLAUDE.md, hooks)
-- GraphQL queries and mutations
-- Webhook endpoint
+### Step 1: Django Scaffold + Models + Docker Compose
+- `uv init` the backend project
+- Django project: config/, accounts/, projects/, agents/, webhooks/ apps
+- All models + migrations (User, Project, Agent, Goal, GoalTrajectory, AgentEvent, Case, AgentUsage)
+- docker-compose.yml: Postgres (pgvector) + Redis + Django (daphne)
+- structlog + OTEL setup (config/telemetry.py, request context middleware)
+- Admin UI registered for all models
+- **Verify**: `docker-compose up`, hit `/admin`, see empty tables
 
-### Phase 3: GDA
-- GDA loop (async task)
-- Meta protocol parsing (structured output → DB)
-- Escalation ladder
-- Casebase retention (goal satisfied → case)
-- Casebase retrieval (pgvector similarity)
+### Step 2: GraphQL API
+- Strawberry schema: types, queries, mutations for all models
+- Wire up ASGI (AuthGraphQLProtocolTypeRouter) + Django Channels
+- Auth: login, register, API key mutations
+- CRUD: projects, agents, goals, cases
+- **Verify**: open `/graphql` (GraphiQL), run queries and mutations, confirm data in admin
 
-### Phase 4: Real-time
-- GraphQL subscriptions (agent updates, events)
-- Dashboard integration (Apollo/urql client)
-- Inbound message delivery
+### Step 3: Docker Runtime + Agent Lifecycle
+- Runtime protocol (base.py) + Docker implementation (docker-py)
+- Lifecycle service: create container, provision workspace (CLAUDE.md, hooks, .claude.json), launch Claude Code in tmux
+- `createAgent` mutation wires through to lifecycle service
+- **Verify**: run mutation, get VNC URL back, open it, see Claude Code running
 
-### Phase 5: Polish
-- Auth hardening (JWT, API keys)
-- Usage tracking
-- Testing at boundaries
+### Step 4: Webhook + Events
+- REST endpoint: POST /webhook/event (HMAC-signed)
+- Agent hooks POST structured output back to control plane
+- Events written to AgentEvent, agent status/confidence/summary updated
+- Events visible in admin + queryable via GraphQL
+- **Verify**: agent does work, events appear in admin as they happen
 
-### Phase 6: Deploy
-- Railway deployment (Django + Postgres + Redis + Dashboard)
-- Modal app deployment (`modal deploy`)
-- DNS, SSL, monitoring
+### Step 5: GDA Loop
+- `python manage.py gda_loop` management command
+- Meta protocol parsing: structured output fields -> Agent model fields
+- Evaluate agent state: detect dead containers, completed goals, blocked agents
+- GoalTrajectory snapshots on state transitions
+- `select_for_update(skip_locked=True)` for concurrent safety
+- **Verify**: agent completes a task, GDA loop marks it done, trajectory recorded
+
+### Step 6: Subscriptions + Dashboard Shell
+- GraphQL subscriptions over WebSocket (Channels + Redis)
+- Minimal Next.js dashboard (pnpm): project list, agent cards, live status
+- GraphQL client (urql or Apollo) with subscription support
+- **Verify**: create agent via GraphiQL, dashboard updates live without refresh
+
+### Step 7: Modal Runtime
+- Modal Python SDK implementation of Runtime protocol
+- modal_app.py + agent Dockerfile (universal desktop image)
+- Swap runtime via `createAgent(runtime: "modal")`
+- VNC tunneling from Modal container
+- **Verify**: `createAgent` with modal runtime, VNC works, events flow back to Railway
+
+### Step 8: Casebase + Polish
+- pgvector embeddings: embed full goal JSON on completion
+- Retrieval: cosine similarity for similar past goals
+- Guidance injection into agent CLAUDE.md on creation
+- Auth hardening (JWT, API keys, permission checks)
+- Usage tracking (AgentUsage records from webhook token counts)
+- Testing at boundaries (API tests, runtime mocks)
 
 ---
 
