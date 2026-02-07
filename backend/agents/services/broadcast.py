@@ -31,10 +31,11 @@ async def broadcast_agent_update(agent: Agent) -> None:
     )
 
 
-async def broadcast_agent_event(event: AgentEvent) -> None:
+async def broadcast_agent_event(event: AgentEvent, agent: Agent | None = None) -> None:
     """Push new event to the project's new_event subscription."""
     channel_layer = get_channel_layer()
-    agent = await Agent.objects.aget(id=event.agent_id)
+    if agent is None:
+        agent = await Agent.objects.aget(id=event.agent_id)
     group = _group_name(str(agent.project_id), "events")
     await channel_layer.group_send(
         group,

@@ -28,6 +28,17 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 - **agent/**: Docker image with AwesomeWM, Firefox, noVNC, Claude Code hooks
 - **Runtimes**: Modal (serverless) or Docker (local)
 
+## Makefile
+
+- `make up` — Start all services. Auto-sets `AGENT_VERSION` from latest git tag so Modal pulls the correct image.
+- `make down` — Stop all services.
+- `make migrate` / `make makemigrations` — Django migrations (local).
+- `make createsuperuser` — Create Django superuser (local).
+- `make check` — Django system checks (local).
+- `make schema` — Export GraphQL schema to `dashboard/schema.graphql`.
+- `make agent-image` — Build agent Docker image locally.
+- `make dev` — Run backend locally with Daphne (outside Docker).
+
 ## Tooling
 
 - **Python**: `uv` for package management (`uv run`, `uv sync`, `uv pip`)

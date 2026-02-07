@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { useQuery, useSubscription } from 'urql';
+import { useQuery, useSubscription, useMutation } from 'urql';
 import { toast } from 'sonner';
+import { motion } from 'framer-motion';
+import { Plus, Folder, ArrowRight, X } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useEventsStore } from '@/stores/events';
-import { AGENTS_QUERY } from '@/lib/graphql/queries';
+import { AGENTS_QUERY, PROJECTS_QUERY } from '@/lib/graphql/queries';
 import {
   AGENT_UPDATED_SUBSCRIPTION,
   NEW_EVENT_SUBSCRIPTION,
@@ -16,10 +18,9 @@ import { AgentCard } from '@/components/agent-card';
 import { GridControl, type GridLayout, GRID_CLASSES } from '@/components/grid-control';
 import { DeployModal } from '@/components/modals/deploy-modal';
 import { ProjectSelector } from '@/components/project-selector';
-import { CREATE_AGENT_MUTATION } from '@/lib/graphql/mutations';
-import { useMutation } from 'urql';
+import { CREATE_AGENT_MUTATION, CREATE_PROJECT_MUTATION } from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
-import type { Agent, AgentEvent } from '@/types';
+import type { Agent, AgentEvent, Project } from '@/types';
 
 const EMPTY_AGENTS: Agent[] = [];
 const EMPTY_EVENTS: AgentEvent[] = [];
@@ -132,31 +133,7 @@ export default function DashboardPage() {
   };
 
   if (!projectId) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <div className="text-center">
-          <div className="flex justify-center mb-6">
-            <div
-              data-augmented-ui="tl-clip br-clip border"
-              className="w-14 h-14 flex items-center justify-center"
-              style={{
-                '--aug-tl': '10px',
-                '--aug-br': '10px',
-                '--aug-border-all': '2px',
-                '--aug-border-bg': 'var(--accent)',
-              } as React.CSSProperties}
-            >
-              <span className="text-accent font-bold text-2xl">A</span>
-            </div>
-          </div>
-          <p className="text-foreground font-bold text-lg mb-2">agentobox</p>
-          <p className="text-muted-foreground text-sm font-mono mb-6">
-            Create a project to get started
-          </p>
-          <ProjectSelector />
-        </div>
-      </div>
-    );
+    return <LandingPage />;
   }
 
   return (
@@ -223,6 +200,213 @@ export default function DashboardPage() {
         onClose={() => setShowDeployModal(false)}
         onDeploy={handleDeploy}
       />
+    </div>
+  );
+}
+
+/* ============================================
+   Landing Page — shown when no project selected
+   ============================================ */
+
+const stagger = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
+};
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] } },
+};
+
+function LandingPage() {
+  const setCurrentProject = useProjectsStore((s) => s.setCurrentProject);
+  const [{ data, fetching }] = useQuery({ query: PROJECTS_QUERY });
+  const [, createProject] = useMutation(CREATE_PROJECT_MUTATION);
+
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  const projects: Project[] = data?.projects ?? [];
+
+  // Auto-select if exactly one project exists
+  useEffect(() => {
+    if (projects.length === 1) {
+      setCurrentProject(projects[0].id);
+    }
+  }, [projects, setCurrentProject]);
+
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    const { data: result, error } = await createProject({ input: { name } });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    if (result?.createProject) {
+      setCurrentProject(result.createProject.id);
+      setNewName('');
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="h-screen flex items-center justify-center bg-background relative overflow-hidden">
+      {/* Dot grid background */}
+      <div className="landing-grid absolute inset-0" />
+
+      {/* Accent glow orb */}
+      <div className="landing-glow absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+
+      <motion.div
+        className="relative z-10 w-full max-w-xl px-6"
+        variants={stagger}
+        initial="hidden"
+        animate="show"
+      >
+        {/* Logo + Title */}
+        <motion.div variants={fadeUp} className="flex items-center gap-4 mb-10">
+          <div
+            data-augmented-ui="tl-clip br-clip border"
+            className="w-12 h-12 flex items-center justify-center shrink-0"
+            style={{
+              '--aug-tl': '8px',
+              '--aug-br': '8px',
+              '--aug-border-all': '2px',
+              '--aug-border-bg': 'var(--accent)',
+            } as React.CSSProperties}
+          >
+            <span className="text-accent font-bold text-xl">A</span>
+          </div>
+          <div>
+            <h1 className="text-foreground font-bold text-xl tracking-tight">
+              agentobox
+            </h1>
+            <p className="text-muted-foreground text-xs font-mono">
+              multi-agent orchestration
+            </p>
+          </div>
+        </motion.div>
+
+        {/* Section label */}
+        <motion.p
+          variants={fadeUp}
+          className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider mb-3"
+        >
+          {fetching ? 'Loading...' : projects.length > 0 ? 'Select project' : 'Get started'}
+        </motion.p>
+
+        {/* Project cards */}
+        <div className="space-y-2 mb-3">
+          {projects.map((project) => (
+            <motion.button
+              key={project.id}
+              variants={fadeUp}
+              onClick={() => setCurrentProject(project.id)}
+              data-augmented-ui="tl-clip br-clip border"
+              className="w-full text-left group"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <div className="px-4 py-3.5 flex items-center justify-between transition-colors group-hover:bg-accent/5">
+                <div className="flex items-center gap-3">
+                  <Folder className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
+                  <div>
+                    <p className="text-foreground text-sm font-medium">
+                      {project.name}
+                    </p>
+                    <p className="text-muted-foreground text-[10px] font-mono">
+                      {project.defaultRuntime}
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-muted-foreground/0 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
+              </div>
+            </motion.button>
+          ))}
+
+          {/* Create new project */}
+          <motion.div variants={fadeUp}>
+            {creating ? (
+              <div
+                data-augmented-ui="tl-clip br-clip border"
+                style={{
+                  '--aug-tl': '8px',
+                  '--aug-br': '8px',
+                  '--aug-border-all': '1px',
+                  '--aug-border-bg': 'var(--accent)',
+                } as React.CSSProperties}
+              >
+                <div className="px-4 py-3 flex items-center gap-3">
+                  <Plus className="w-4 h-4 text-accent shrink-0" />
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreate();
+                      if (e.key === 'Escape') {
+                        setCreating(false);
+                        setNewName('');
+                      }
+                    }}
+                    placeholder="project name"
+                    className="flex-1 bg-transparent text-foreground text-sm font-mono focus:outline-none placeholder:text-muted-foreground/30"
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCreate}
+                      disabled={!newName.trim()}
+                      className="text-accent text-[10px] font-bold uppercase tracking-wider hover:opacity-80 disabled:opacity-30 transition-opacity"
+                    >
+                      Create
+                    </button>
+                    <button
+                      onClick={() => { setCreating(false); setNewName(''); }}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setCreating(true)}
+                data-augmented-ui="tl-clip br-clip border"
+                className="w-full text-left group"
+                style={{
+                  '--aug-tl': '8px',
+                  '--aug-br': '8px',
+                  '--aug-border-all': '1px',
+                  '--aug-border-bg': 'var(--border)',
+                  borderStyle: 'dashed',
+                } as React.CSSProperties}
+              >
+                <div className="px-4 py-3.5 flex items-center gap-3 transition-colors group-hover:bg-accent/5">
+                  <Plus className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
+                  <p className="text-muted-foreground text-sm group-hover:text-foreground transition-colors">
+                    New project
+                  </p>
+                </div>
+              </button>
+            )}
+          </motion.div>
+        </div>
+
+        {/* Hint */}
+        <motion.p
+          variants={fadeUp}
+          className="text-muted-foreground/40 text-[10px] font-mono"
+        >
+          {projects.length > 0 ? 'select a project to view agents' : 'create your first project to begin'}
+        </motion.p>
+      </motion.div>
     </div>
   );
 }

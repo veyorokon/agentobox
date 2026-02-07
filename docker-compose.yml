@@ -31,6 +31,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent:${AGENT_VERSION:-latest}
       MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-dev}
       OTEL_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318

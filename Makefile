@@ -22,7 +22,7 @@ agent-image:
 	docker build -t agentobox-agent:latest ./agent
 
 up:
-	docker compose up --build
+	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build
 
 down:
 	docker compose down

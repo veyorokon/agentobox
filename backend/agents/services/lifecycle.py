@@ -146,7 +146,7 @@ async def _provision_agent(agent, project, goal, runtime_name, op_log):
         try:
             agent, event = await _save_failed(agent_id)
             await broadcast_agent_update(agent)
-            await broadcast_agent_event(event)
+            await broadcast_agent_event(event, agent=agent)
         except Exception:
             op_log.exception("provision_cleanup_db_failed", agent_id=agent_id)
 

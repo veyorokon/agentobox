@@ -3,6 +3,11 @@ set -e
 
 RESOLUTION="${RESOLUTION:-1920x1080}"
 
+# Modal runs as root but all config files live in /home/computeruse.
+# Set HOME early so AwesomeWM and Firefox find their configs.
+UHOME=/home/computeruse
+export HOME="$UHOME"
+
 # Start Xvfb
 Xvfb :1 -screen 0 "${RESOLUTION}x24" &
 sleep 1
@@ -15,9 +20,6 @@ sleep 1
 # Firefox 147+ uses XDG path (~/.config/mozilla/firefox/) and ignores pre-created
 # profiles.ini. Strategy: brief headless launch to trigger profile creation, then
 # inject textfox into the profile Firefox actually created.
-# Modal runs as root but all config files live in /home/computeruse.
-UHOME=/home/computeruse
-export HOME="$UHOME"
 FF_DIR="$UHOME/.config/mozilla/firefox"
 
 # Brief headless launch to create default profile
