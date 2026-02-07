@@ -6,12 +6,12 @@ from agents.services.broadcast import broadcast_agent_event
 log = structlog.get_logger("agents.comms")
 
 
-async def send_message(project_id: str, agent_name: str, message: str) -> bool:
+async def send_message(agent_id: str, message: str) -> bool:
     """Queue a message for delivery to an agent via the next post-tool hook."""
-    op_log = log.bind(project_id=project_id, agent=agent_name)
+    op_log = log.bind(agent_id=agent_id)
 
     try:
-        agent = await Agent.objects.aget(project_id=project_id, name=agent_name)
+        agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
         op_log.warning("agent_not_found")
         return False

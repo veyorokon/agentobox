@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery, useSubscription } from 'urql';
 import { toast } from 'sonner';
 import { useProjectsStore } from '@/stores/projects';
@@ -26,8 +26,12 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 
 export default function DashboardPage() {
   const projectId = useProjectsStore((s) => s.currentProjectId);
-  const agents = useAgentsStore((s) =>
+  const allAgents = useAgentsStore((s) =>
     projectId ? (s.agents[projectId] ?? EMPTY_AGENTS) : EMPTY_AGENTS
+  );
+  const agents = useMemo(
+    () => allAgents.filter((a) => a.status !== 'terminated'),
+    [allAgents]
   );
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
@@ -76,37 +80,27 @@ export default function DashboardPage() {
     }
   }, [data, projectId, setAgents]);
 
-  // Subscribe to agent updates
-  const handleAgentUpdate = useCallback(
-    (_prev: any, data: any) => {
-      if (data?.agentUpdated && projectId) {
-        upsertAgent(projectId, data.agentUpdated);
-      }
-      return data;
-    },
-    [projectId, upsertAgent]
+  // Subscribe to agent updates — sync to store via useEffect, not in the reducer
+  const [agentSubResult] = useSubscription(
+    { query: AGENT_UPDATED_SUBSCRIPTION, variables: queryVars, pause: paused },
   );
 
-  useSubscription(
-    { query: AGENT_UPDATED_SUBSCRIPTION, variables: queryVars, pause: paused },
-    handleAgentUpdate
-  );
+  useEffect(() => {
+    if (agentSubResult.data?.agentUpdated && projectId) {
+      upsertAgent(projectId, agentSubResult.data.agentUpdated);
+    }
+  }, [agentSubResult.data, projectId, upsertAgent]);
 
   // Subscribe to new events
-  const handleNewEvent = useCallback(
-    (_prev: any, data: any) => {
-      if (data?.newEvent && projectId) {
-        addEvent(projectId, data.newEvent);
-      }
-      return data;
-    },
-    [projectId, addEvent]
+  const [eventSubResult] = useSubscription(
+    { query: NEW_EVENT_SUBSCRIPTION, variables: queryVars, pause: paused },
   );
 
-  useSubscription(
-    { query: NEW_EVENT_SUBSCRIPTION, variables: queryVars, pause: paused },
-    handleNewEvent
-  );
+  useEffect(() => {
+    if (eventSubResult.data?.newEvent && projectId) {
+      addEvent(projectId, eventSubResult.data.newEvent);
+    }
+  }, [eventSubResult.data, projectId, addEvent]);
 
   const handleDeploy = async (
     name: string,
@@ -170,7 +164,6 @@ export default function DashboardPage() {
       <CommandPanel
         agents={agents}
         events={events}
-        projectId={projectId}
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((v) => !v)}
       />
@@ -218,7 +211,6 @@ export default function DashboardPage() {
                 <AgentCard
                   key={agent.id}
                   agent={agent}
-                  projectId={projectId}
                 />
               ))}
             </div>

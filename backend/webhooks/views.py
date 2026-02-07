@@ -33,17 +33,14 @@ async def agent_event(request):
 
     # Check for pending inbound messages to deliver back to the agent
     response = {"ok": True}
-    agent_name = payload.get("agent_name", "")
-    project_id = payload.get("project_id", "")
+    agent_id = payload.get("agent_id", "")
 
-    if agent_name and project_id:
+    if agent_id:
         from agents.models import Agent
         from agents.services.comms import get_pending_messages
 
         try:
-            agent = await Agent.objects.aget(
-                project_id=project_id, name=agent_name
-            )
+            agent = await Agent.objects.aget(id=agent_id)
             messages = await get_pending_messages(agent)
             if messages:
                 response["message"] = " | ".join(messages)

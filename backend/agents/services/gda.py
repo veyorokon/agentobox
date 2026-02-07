@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import timedelta
 
 import structlog
@@ -11,12 +12,21 @@ from agents.services.broadcast import broadcast_agent_event, broadcast_agent_upd
 log = structlog.get_logger("agents.gda")
 
 POLL_INTERVAL = 5  # seconds
+HEARTBEAT_EVERY = 60  # iterations (~5 min at 5s interval)
+
+# Runtimes that failed init — log once, then skip silently
+_unavailable_runtimes: set[str] = set()
 
 
 async def gda_loop() -> None:
     """Main GDA loop. Polls active agents and evaluates state mechanically."""
     log.info("gda_loop_started")
+    iteration = 0
     while True:
+        iteration += 1
+        t0 = time.monotonic()
+        agents_evaluated = 0
+
         try:
             active_statuses = [
                 AgentStatus.WORKING,
@@ -25,15 +35,26 @@ async def gda_loop() -> None:
                 AgentStatus.BLOCKED,
                 AgentStatus.GOAL_CHANGED,
             ]
+            # Note: DEPLOYING is intentionally excluded — those agents
+            # don't have a sandbox_id yet and are still provisioning.
             async for agent in Agent.objects.filter(
                 status__in=active_statuses
             ).select_related("goal", "project"):
                 try:
                     await evaluate_agent(agent)
+                    agents_evaluated += 1
                 except Exception:
                     log.exception("evaluate_agent_failed", agent=agent.name)
         except Exception:
             log.exception("gda_loop_error")
+
+        if iteration % HEARTBEAT_EVERY == 0:
+            log.info(
+                "gda_heartbeat",
+                iteration=iteration,
+                agents_evaluated=agents_evaluated,
+                cycle_s=round(time.monotonic() - t0, 2),
+            )
 
         await asyncio.sleep(POLL_INTERVAL)
 
@@ -43,7 +64,14 @@ async def evaluate_agent(agent: Agent) -> None:
     op_log = log.bind(agent=agent.name, project_id=str(agent.project_id))
 
     # Check container health
-    runtime = get_runtime(agent.runtime)
+    try:
+        runtime = get_runtime(agent.runtime)
+    except Exception:
+        if agent.runtime not in _unavailable_runtimes:
+            _unavailable_runtimes.add(agent.runtime)
+            op_log.warning("runtime_unavailable", runtime=agent.runtime)
+        return
+
     container_status = await runtime.get_status(agent.sandbox_id)
 
     if container_status != "running" and agent.status != AgentStatus.COMPLETED:

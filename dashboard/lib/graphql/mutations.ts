@@ -67,8 +67,8 @@ export const CREATE_AGENT_MUTATION = gql`
 `;
 
 export const KILL_AGENT_MUTATION = gql`
-  mutation KillAgent($projectId: ID!, $name: String!) {
-    killAgent(projectId: $projectId, name: $name)
+  mutation KillAgent($agentId: ID!) {
+    killAgent(agentId: $agentId)
   }
 `;
 
@@ -77,3 +77,5 @@ export const SEND_MESSAGE_MUTATION = gql`
     sendMessage(input: $input)
   }
 `;
+// SendMessageInput: { agentId: ID!, message: String! }
+

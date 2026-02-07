@@ -1,8 +1,11 @@
 """Broadcast agent updates and events to Channels groups for GraphQL subscriptions."""
 
+import structlog
 from channels.layers import get_channel_layer
 
 from agents.models import Agent, AgentEvent
+
+log = structlog.get_logger("agents.broadcast")
 
 
 def _group_name(project_id: str, suffix: str) -> str:
@@ -20,6 +23,12 @@ async def broadcast_agent_update(agent: Agent) -> None:
             "agent_id": str(agent.id),
         },
     )
+    log.info(
+        "broadcast_agent_update",
+        group=group,
+        agent_id=str(agent.id),
+        status=agent.status,
+    )
 
 
 async def broadcast_agent_event(event: AgentEvent) -> None:
@@ -33,4 +42,10 @@ async def broadcast_agent_event(event: AgentEvent) -> None:
             "type": "agent.event",
             "event_id": str(event.id),
         },
+    )
+    log.info(
+        "broadcast_agent_event",
+        group=group,
+        event_id=str(event.id),
+        event_type=event.event_type,
     )

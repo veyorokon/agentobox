@@ -1,6 +1,7 @@
 import type { AgentStatus } from '@/types';
 
 const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
+  deploying: 'var(--agent-deploying)',
   working: 'var(--agent-active)',
   conversing: 'var(--agent-conversing)',
   needs_info: 'var(--agent-needs-info)',
@@ -8,9 +9,11 @@ const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
   completed: 'var(--agent-completed)',
   goal_changed: 'var(--agent-goal-changed)',
   dead: 'var(--agent-dead)',
+  terminated: 'var(--agent-dead)',
 };
 
 const STATUS_LABELS: Record<AgentStatus, string> = {
+  deploying: 'Deploying',
   working: 'Working',
   conversing: 'Conversing',
   needs_info: 'Needs Info',
@@ -18,6 +21,7 @@ const STATUS_LABELS: Record<AgentStatus, string> = {
   completed: 'Completed',
   goal_changed: 'Goal Changed',
   dead: 'Dead',
+  terminated: 'Terminated',
 };
 
 export { STATUS_COLOR_VAR };

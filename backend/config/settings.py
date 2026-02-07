@@ -131,6 +131,32 @@ DOCKER_NETWORK = env("DOCKER_NETWORK")
 MODAL_APP_NAME = env("MODAL_APP_NAME")
 MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
 
+# --- Logging ---
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    # Keep noisy libraries quiet
+    "loggers": {
+        "django": {"level": "INFO"},
+        "django.server": {"level": "WARNING"},
+        "channels": {"level": "WARNING"},
+    },
+}
+
+# --- Session ---
+
+SESSION_COOKIE_NAME = "agentobox_sessionid"
+
 # --- CORS ---
 
 CORS_ALLOWED_ORIGINS = [

@@ -60,6 +60,14 @@ export const client = new Client({
             type: result.operation.kind,
             errors: errors.map((e) => e.message),
           });
+
+          const hasAuthError = errors.some(
+            (e) => e.message === 'Authentication required' || e.message === 'Invalid credentials'
+          );
+          if (hasAuthError && typeof window !== 'undefined') {
+            localStorage.removeItem('auth-token');
+            window.location.replace('/login');
+          }
         }
       },
       onError(error, operation) {
@@ -67,7 +75,7 @@ export const client = new Client({
           (d): d is import('graphql').OperationDefinitionNode => d.kind === 'OperationDefinition'
         )?.name?.value ?? 'anonymous';
         const type = operation.kind;
-        logger.error('graphql.error', `${name} ${type} failed`, {
+        logger.warn('graphql.error', `${name} ${type} failed`, {
           operation: name,
           type,
           url: GRAPHQL_HTTP,

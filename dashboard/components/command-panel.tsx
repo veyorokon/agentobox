@@ -18,13 +18,11 @@ import type { Agent, AgentEvent } from '@/types';
 export function CommandPanel({
   agents,
   events,
-  projectId,
   collapsed,
   onToggle,
 }: {
   agents: Agent[];
   events: AgentEvent[];
-  projectId: string;
   collapsed: boolean;
   onToggle: () => void;
 }) {
@@ -57,8 +55,7 @@ export function CommandPanel({
       await logger.withSpan('sendMessage', () =>
         sendMessageMut({
           input: {
-            projectId,
-            agentName: activeTab === 'agento' ? '' : activeTab,
+            agentId: selectedAgent?.id ?? '',
             message: text,
           },
         }).then(({ error }) => {

@@ -1,9 +1,12 @@
 from typing import AsyncGenerator
 
 import strawberry
+import structlog
 from strawberry import ID
 
 from agents.graphql.types import AgentEventType, AgentType
+
+log = structlog.get_logger("agents.subscriptions")
 
 
 @strawberry.type
@@ -20,11 +23,17 @@ class AgentSubscription:
         group = f"project_{project_id}_agents"
 
         await channel_layer.group_add(group, ws.channel_name)
+        log.info("subscription_connected", type="agent_updated", group=group)
 
         async with ws.listen_to_channel("agent.update", groups=[group]) as cm:
             async for message in cm:
                 agent = await Agent.objects.select_related("goal").aget(
                     id=message["agent_id"]
+                )
+                log.debug(
+                    "subscription_message",
+                    type="agent_updated",
+                    agent_id=message["agent_id"],
                 )
                 yield agent  # type: ignore[misc]
 
@@ -40,8 +49,14 @@ class AgentSubscription:
         group = f"project_{project_id}_events"
 
         await channel_layer.group_add(group, ws.channel_name)
+        log.info("subscription_connected", type="new_event", group=group)
 
         async with ws.listen_to_channel("agent.event", groups=[group]) as cm:
             async for message in cm:
                 event = await AgentEvent.objects.aget(id=message["event_id"])
+                log.debug(
+                    "subscription_message",
+                    type="new_event",
+                    event_id=message["event_id"],
+                )
                 yield event  # type: ignore[misc]

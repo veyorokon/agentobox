@@ -49,9 +49,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
         enableSystem={false}
         disableTransitionOnChange
       >
-        <ErrorBoundary>
-          <AuthGuard>{children}</AuthGuard>
-        </ErrorBoundary>
+        <AuthGuard>
+          <ErrorBoundary>{children}</ErrorBoundary>
+        </AuthGuard>
         <Toaster position="bottom-right" />
       </ThemeProvider>
     </UrqlProvider>

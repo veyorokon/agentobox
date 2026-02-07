@@ -15,8 +15,7 @@ class CreateAgentInput:
 
 @strawberry.input
 class SendMessageInput:
-    project_id: ID
-    agent_name: str
+    agent_id: ID
     message: str
 
 
@@ -35,15 +34,13 @@ class AgentMutation:
         )
 
     @strawberry.mutation
-    async def kill_agent(self, project_id: ID, name: str) -> bool:
+    async def kill_agent(self, agent_id: ID) -> bool:
         from agents.services.lifecycle import kill_agent
 
-        return await kill_agent(project_id, name)
+        return await kill_agent(agent_id)
 
     @strawberry.mutation
     async def send_message(self, input: SendMessageInput) -> bool:
         from agents.services.comms import send_message
 
-        return await send_message(
-            input.project_id, input.agent_name, input.message
-        )
+        return await send_message(input.agent_id, input.message)

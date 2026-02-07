@@ -42,6 +42,7 @@
   --ring: #a3a3a3;
 
   /* Agent status colors */
+  --agent-deploying: #facc15;
   --agent-active: #39ff14;
   --agent-conversing: #38bdf8;
   --agent-needs-info: #a78bfa;
@@ -90,6 +91,7 @@
   --input: rgba(255, 255, 255, 0.1);
   --ring: rgba(255, 255, 255, 0.2);
 
+  --agent-deploying: #facc15;
   --agent-active: #39ff14;
   --agent-conversing: #38bdf8;
   --agent-needs-info: #a78bfa;
@@ -135,6 +137,7 @@
   --input: rgba(232, 216, 201, 0.12);
   --ring: rgba(232, 216, 201, 0.2);
 
+  --agent-deploying: #DFA05D;
   --agent-active: #658761;
   --agent-conversing: #7ba5b5;
   --agent-needs-info: #967bb6;
@@ -181,6 +184,7 @@
   --input: rgba(224, 222, 244, 0.12);
   --ring: rgba(196, 167, 231, 0.3);
 
+  --agent-deploying: #f6c177;
   --agent-active: #9ccfd8;
   --agent-conversing: #3e8fb0;
   --agent-needs-info: #c4a7e7;
@@ -227,6 +231,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  --color-agent-deploying: var(--agent-deploying);
   --color-agent-active: var(--agent-active);
   --color-agent-conversing: var(--agent-conversing);
   --color-agent-needs-info: var(--agent-needs-info);

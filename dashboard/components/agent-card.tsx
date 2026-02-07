@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Monitor, RefreshCw, Pause, Square } from 'lucide-react';
+import { Monitor, RefreshCw, Pause, Square, Loader2 } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
@@ -13,11 +13,10 @@ import type { Agent } from '@/types';
 
 export function AgentCard({
   agent,
-  projectId,
 }: {
   agent: Agent;
-  projectId: string;
 }) {
+  const isDeploying = agent.status === 'deploying';
   const isWorking = agent.status === 'working';
   const statusColor = STATUS_COLOR_VAR[agent.status];
   const vncRefreshRef = useRef<(() => void) | null>(null);
@@ -30,8 +29,7 @@ export function AgentCard({
     try {
       await logger.withSpan('killAgent', async () => {
         const { error } = await killAgentMut({
-          projectId,
-          name: agent.name,
+          agentId: agent.id,
         });
         if (error) throw error;
       });
@@ -40,14 +38,16 @@ export function AgentCard({
     }
   };
 
-  const borderColor = isWorking
-    ? 'var(--agent-border-active)'
-    : 'var(--agent-border)';
+  const borderColor = isDeploying
+    ? 'var(--agent-deploying)'
+    : isWorking
+      ? 'var(--agent-border-active)'
+      : 'var(--agent-border)';
 
   return (
     <div
       data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-      className="bg-card backdrop-blur overflow-hidden"
+      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}`}
       style={{
         '--aug-tl': '20px',
         '--aug-tr': '20px',
@@ -123,7 +123,22 @@ export function AgentCard({
 
         {/* VNC Stream */}
         <div className="aspect-video bg-surface-inset overflow-hidden">
-          {agent.vncUrl && agent.status !== 'dead' ? (
+          {isDeploying ? (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="text-center">
+                <Loader2
+                  className="w-6 h-6 mx-auto mb-1.5 animate-spin"
+                  style={{ color: 'var(--agent-deploying)' }}
+                />
+                <span
+                  className="text-[10px] uppercase tracking-wider font-semibold"
+                  style={{ color: 'var(--agent-deploying)' }}
+                >
+                  Deploying...
+                </span>
+              </div>
+            </div>
+          ) : agent.vncUrl && agent.status !== 'dead' && agent.status !== 'terminated' ? (
             <VncFrame
               url={agent.vncUrl}
               onRefresh={(fn) => {
@@ -147,7 +162,7 @@ export function AgentCard({
         open={showKillConfirm}
         title="Terminate Agent"
         message={`This will stop the container and remove agent "${agent.name}". This action cannot be undone.`}
-        confirmLabel="Kill"
+        confirmLabel="Terminate"
         destructive
         onConfirm={handleKill}
         onCancel={() => setShowKillConfirm(false)}

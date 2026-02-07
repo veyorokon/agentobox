@@ -2,11 +2,10 @@
 # PostToolUse hook: send heartbeat to control plane, check for inbound messages
 
 CALLBACK_URL="${ABOX_CALLBACK_URL:-}"
-AGENT_NAME="${AGENT_NAME:-}"
-PROJECT_ID="${PROJECT_ID:-}"
+AGENT_ID="${AGENT_ID:-}"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
 
-if [ -z "$CALLBACK_URL" ] || [ -z "$AGENT_NAME" ]; then
+if [ -z "$CALLBACK_URL" ] || [ -z "$AGENT_ID" ]; then
     exit 0
 fi
 
@@ -17,11 +16,10 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 
 # Build heartbeat payload
 BODY=$(jq -nc \
-    --arg name "$AGENT_NAME" \
-    --arg project "$PROJECT_ID" \
+    --arg id "$AGENT_ID" \
     --arg type "heartbeat" \
     --arg tool "$TOOL_NAME" \
-    '{agent_name: $name, project_id: $project, event_type: $type, data: {tool_name: $tool}}')
+    '{agent_id: $id, event_type: $type, data: {tool_name: $tool}}')
 
 SIGNATURE=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')
 

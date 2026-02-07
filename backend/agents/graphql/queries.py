@@ -8,17 +8,22 @@ from agents.graphql.types import AgentType, CaseType, GoalType
 class AgentQuery:
     @strawberry.field
     async def agents(self, project_id: ID) -> list[AgentType]:
-        from agents.models import Agent
+        from agents.models import Agent, AgentStatus
 
-        return [a async for a in Agent.objects.filter(project_id=project_id)]
+        return [
+            a async for a in Agent.objects.filter(
+                project_id=project_id
+            ).exclude(status=AgentStatus.TERMINATED)
+        ]
 
     @strawberry.field
-    async def agent(self, project_id: ID, name: str) -> AgentType | None:
+    async def agent(self, agent_id: ID) -> AgentType | None:
         from agents.models import Agent
 
-        return await Agent.objects.filter(
-            project_id=project_id, name=name
-        ).afirst()
+        try:
+            return await Agent.objects.aget(id=agent_id)
+        except Agent.DoesNotExist:
+            return None
 
     @strawberry.field
     async def goals(self, project_id: ID) -> list[GoalType]:

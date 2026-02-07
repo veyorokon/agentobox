@@ -1,13 +1,15 @@
 // Types matching backend GraphQL schema
 
 export type AgentStatus =
+  | 'deploying'
   | 'working'
   | 'conversing'
   | 'needs_info'
   | 'blocked'
   | 'completed'
   | 'goal_changed'
-  | 'dead';
+  | 'dead'
+  | 'terminated';
 
 export type GoalStatus = 'active' | 'satisfied' | 'abandoned';
 

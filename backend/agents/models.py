@@ -5,6 +5,7 @@ from pgvector.django import HnswIndex, VectorField
 
 
 class AgentStatus(models.TextChoices):
+    DEPLOYING = "deploying"
     WORKING = "working"
     CONVERSING = "conversing"
     NEEDS_INFO = "needs_info"
@@ -12,6 +13,7 @@ class AgentStatus(models.TextChoices):
     COMPLETED = "completed"
     GOAL_CHANGED = "goal_changed"
     DEAD = "dead"
+    TERMINATED = "terminated"
 
 
 class GoalStatus(models.TextChoices):
@@ -68,7 +70,7 @@ class Agent(models.Model):
     vnc_url = models.URLField(blank=True)
 
     status = models.CharField(
-        max_length=20, choices=AgentStatus.choices, default=AgentStatus.WORKING
+        max_length=20, choices=AgentStatus.choices, default=AgentStatus.DEPLOYING
     )
     confidence = models.FloatField(default=0.5)
     sentiment = models.TextField(blank=True)
@@ -81,11 +83,6 @@ class Agent(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["project", "name"], name="unique_agent_per_project"
-            )
-        ]
 
     def __str__(self):
         return f"{self.name} ({self.status})"

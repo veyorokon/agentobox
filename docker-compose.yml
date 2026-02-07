@@ -18,7 +18,7 @@ services:
   backend:
     build: ./backend
     entrypoint: ["bash", "/app/entrypoint.sh"]
-    command: ["uv", "run", "daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+    command: ["uv", "run", "uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app"]
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
@@ -29,6 +29,11 @@ services:
       AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
       ABOX_CALLBACK_URL: http://backend:8000
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+      MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+      MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-dev}
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       DOCKER_NETWORK: agentobox_default
     ports:
       - "8000:8000"
@@ -49,12 +54,22 @@ services:
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-only-change-in-production}
+      MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+      MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+      MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-dev}
     depends_on:
       - postgres
       - redis
     volumes:
       - ./backend:/app
       - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  jaeger:
+    image: jaegertracing/jaeger:latest
+    ports:
+      - "16686:16686"
+      - "4318:4318"
 
   dashboard:
     build: ./dashboard

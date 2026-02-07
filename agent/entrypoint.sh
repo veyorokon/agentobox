@@ -15,7 +15,10 @@ sleep 1
 # Firefox 147+ uses XDG path (~/.config/mozilla/firefox/) and ignores pre-created
 # profiles.ini. Strategy: brief headless launch to trigger profile creation, then
 # inject textfox into the profile Firefox actually created.
-FF_DIR="$HOME/.config/mozilla/firefox"
+# Modal runs as root but all config files live in /home/computeruse.
+UHOME=/home/computeruse
+export HOME="$UHOME"
+FF_DIR="$UHOME/.config/mozilla/firefox"
 
 # Brief headless launch to create default profile
 firefox --headless &
@@ -34,8 +37,8 @@ if [ -n "$FF_ACTIVE" ]; then
     FF_TARGET=$(dirname "$FF_ACTIVE")
     cp -r /opt/textfox/chrome "$FF_TARGET/"
     cp /opt/textfox/user.js "$FF_TARGET/user.js"
-    cp ~/.firefox-config/config.css "$FF_TARGET/chrome/config.css"
-    cat ~/.firefox-config/user-overrides.js >> "$FF_TARGET/user.js"
+    cp "$UHOME/.firefox-config/config.css" "$FF_TARGET/chrome/config.css"
+    cat "$UHOME/.firefox-config/user-overrides.js" >> "$FF_TARGET/user.js"
     echo "[agentobox] textfox injected into $(basename "$FF_TARGET")"
 else
     echo "[agentobox] WARNING: Firefox profile not detected, textfox not applied"

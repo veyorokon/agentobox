@@ -40,13 +40,13 @@ def setup(otel_enabled: bool = False):
     from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanExporter
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     resource = Resource.create(
         {"service.name": "agentobox", "service.version": "0.1.0"}
     )
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(BatchSpanExporter(OTLPSpanExporter()))
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(provider)
 
     DjangoInstrumentor().instrument()
