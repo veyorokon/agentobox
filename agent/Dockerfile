@@ -1,94 +1,59 @@
-FROM ubuntu:22.04
+FROM alpine:3.21
 
-ENV DEBIAN_FRONTEND=noninteractive
+ARG S6_OVERLAY_VERSION=3.2.2.0
+ARG TARGETARCH
+
+# --- s6-overlay ---
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && rm /tmp/s6-overlay-noarch.tar.xz
+# Map Docker TARGETARCH to s6 naming: amd64->x86_64, arm64->aarch64
+RUN S6_ARCH=$(case "$TARGETARCH" in arm64) echo aarch64;; *) echo x86_64;; esac) \
+    && wget -qO /tmp/s6-overlay-arch.tar.xz \
+       "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
+    && tar -C / -Jxpf /tmp/s6-overlay-arch.tar.xz && rm /tmp/s6-overlay-arch.tar.xz
 
 # --- System packages ---
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb \
-    x11vnc \
-    xterm \
-    tmux \
-    curl \
-    jq \
-    git \
-    sudo \
-    net-tools \
-    ca-certificates \
-    gnupg \
-    openssl \
-    unzip \
-    fontconfig \
-    awesome \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache \
+    bash curl jq git sudo openssl ca-certificates fontconfig unzip tmux \
+    xvfb-run xorg-server x11vnc xterm \
+    awesome dbus \
+    py3-pip websockify \
+    nodejs npm \
+    github-cli \
+    font-jetbrains-mono \
+    && dbus-uuidgen > /etc/machine-id
 
-# --- Firefox (real binary, not snap shim) ---
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
-    && add-apt-repository -y ppa:mozillateam/ppa \
-    && printf 'Package: *\nPin: release o=LP-PPA-mozillateam\nPin-Priority: 1001\n' \
-       > /etc/apt/preferences.d/mozilla-firefox \
-    && apt-get update && apt-get install -y --no-install-recommends firefox \
-    && rm -rf /var/lib/apt/lists/*
+# --- Firefox (ESR from community) ---
+RUN apk add --no-cache firefox-esr
 
-# --- GitHub CLI ---
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
-       https://cli.github.com/packages stable main" \
-       > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
-
-# --- JetBrains Mono font ---
-RUN curl -fsSL -o /tmp/jbmono.zip \
-      https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip \
-    && mkdir -p /usr/share/fonts/jetbrains-mono \
-    && unzip -q /tmp/jbmono.zip -d /tmp/jbmono \
-    && cp /tmp/jbmono/fonts/ttf/*.ttf /usr/share/fonts/jetbrains-mono/ \
-    && fc-cache -f \
-    && rm -rf /tmp/jbmono.zip /tmp/jbmono
-
-# --- Node.js 20 LTS ---
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# --- noVNC + websockify ---
+# --- noVNC (web client only, websockify via apk) ---
 RUN git clone --depth 1 https://github.com/novnc/noVNC.git /opt/noVNC \
-    && git clone --depth 1 https://github.com/novnc/websockify.git /opt/noVNC/utils/websockify \
-    && ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
+    && ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html \
+    && rm -rf /opt/noVNC/.git
 
-# --- Custom noVNC viewer (no status bar, auto-scale) ---
-COPY novnc/viewer.html /opt/noVNC/viewer.html
-
-# --- textfox (upstream) ---
-RUN git clone --depth 1 https://github.com/adriankarlen/textfox.git /opt/textfox
+# --- textfox ---
+RUN git clone --depth 1 https://github.com/adriankarlen/textfox.git /opt/textfox \
+    && rm -rf /opt/textfox/.git
 
 # --- Claude Code CLI ---
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
-# --- User setup ---
-RUN useradd -m -s /bin/bash computeruse \
+# --- User ---
+RUN adduser -D -s /bin/bash computeruse \
     && echo "computeruse ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# --- AwesomeWM config ---
-COPY awesome/ /home/computeruse/.config/awesome/
-
-# --- Firefox config (Rose Pine Moon overrides) ---
-COPY firefox/ /home/computeruse/.firefox-config/
+# --- Filesystem overlay (configs + s6 services) ---
+COPY rootfs/ /
+RUN chmod +x /etc/s6-overlay/scripts/* \
+    && chmod +x /etc/s6-overlay/s6-rc.d/*/run 2>/dev/null || true \
+    && chmod +x /home/computeruse/hooks/*.sh \
+    && chown -R computeruse:computeruse /home/computeruse
 
 # --- Environment ---
 ENV DISPLAY=:1
 ENV RESOLUTION=1920x1080
-
-# --- Copy hooks and entrypoint ---
-COPY hooks/ /home/computeruse/hooks/
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /home/computeruse/hooks/*.sh \
-    && chown -R computeruse:computeruse /home/computeruse
+ENV S6_KEEP_ENV=1
 
 EXPOSE 6080
 
-USER computeruse
-WORKDIR /home/computeruse
-
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/init"]

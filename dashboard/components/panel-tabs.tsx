@@ -1,7 +1,7 @@
 import type { Agent, AgentStatus } from '@/types';
 import { STATUS_COLOR_VAR } from './status-badge';
 
-export type PanelTab = 'agento' | 'feed' | (string & {});
+export type PanelTab = 'feed' | (string & {});
 
 export function PanelTabs({
   active,
@@ -24,17 +24,6 @@ export function PanelTabs({
       className="flex items-center gap-0 mx-5"
       style={{ borderBottom: '1px solid var(--border)' }}
     >
-      <button className={tabClass('agento')} onClick={() => onSelect('agento')}>
-        <span
-          style={
-            active === 'agento'
-              ? { borderBottom: '2px solid var(--accent)', paddingBottom: '6px' }
-              : undefined
-          }
-        >
-          Agento
-        </span>
-      </button>
       <button className={tabClass('feed')} onClick={() => onSelect('feed')}>
         <span
           style={

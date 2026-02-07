@@ -115,15 +115,19 @@ async def _provision_agent(agent, project, goal, runtime_name, op_log):
 
         await provision_workspace(runtime, sandbox.id, project, goal)
 
-        claude_cmd = (
-            f"cd {goal.context_path} && "
-            f"claude --dangerously-skip-permissions -p '{goal.text}'"
-        )
+        claude_cmd = f"cd {goal.context_path} && claude --dangerously-skip-permissions"
         await runtime.exec(
             sandbox.id,
-            ["tmux", "new-session", "-d", "-s", "claude", claude_cmd],
+            ["tmux", "new-session", "-d", "-s", "claude", "bash", "-c", claude_cmd],
         )
         op_log.info("claude_code_launched")
+
+        # Send the goal as the first message
+        await runtime.exec(
+            sandbox.id,
+            ["tmux", "send-keys", "-t", "claude", goal.text, "Enter"],
+        )
+        op_log.info("goal_sent")
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
 

@@ -1,0 +1,2 @@
+#!/command/with-contenv bash
+exec Xvfb :1 -screen 0 "${RESOLUTION:-1920x1080}x24" -displayfd 3

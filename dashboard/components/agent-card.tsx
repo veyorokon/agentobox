@@ -16,9 +16,13 @@ export function AgentCard({
 }: {
   agent: Agent;
 }) {
-  const isDeploying = agent.status === 'deploying';
-  const isWorking = agent.status === 'working';
-  const statusColor = STATUS_COLOR_VAR[agent.status];
+  const [terminating, setTerminating] = useState(false);
+
+  const effectiveStatus = terminating ? 'terminated' as const : agent.status;
+  const isDeploying = effectiveStatus === 'deploying';
+  const isWorking = effectiveStatus === 'working';
+  const isTerminating = terminating && agent.status !== 'terminated';
+  const statusColor = STATUS_COLOR_VAR[effectiveStatus];
   const vncRefreshRef = useRef<(() => void) | null>(null);
   const [showKillConfirm, setShowKillConfirm] = useState(false);
 
@@ -26,6 +30,7 @@ export function AgentCard({
 
   const handleKill = async () => {
     setShowKillConfirm(false);
+    setTerminating(true);
     try {
       await logger.withSpan('killAgent', async () => {
         const { error } = await killAgentMut({
@@ -34,20 +39,23 @@ export function AgentCard({
         if (error) throw error;
       });
     } catch {
+      setTerminating(false);
       toast.error(`Failed to kill ${agent.name}`);
     }
   };
 
-  const borderColor = isDeploying
-    ? 'var(--agent-deploying)'
-    : isWorking
-      ? 'var(--agent-border-active)'
-      : 'var(--agent-border)';
+  const borderColor = isTerminating
+    ? 'var(--agent-dead)'
+    : isDeploying
+      ? 'var(--agent-deploying)'
+      : isWorking
+        ? 'var(--agent-border-active)'
+        : 'var(--agent-border)';
 
   return (
     <div
       data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}`}
+      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}${isTerminating ? ' opacity-60' : ''}`}
       style={{
         '--aug-tl': '20px',
         '--aug-tr': '20px',
@@ -55,6 +63,7 @@ export function AgentCard({
         '--aug-bl': '20px',
         '--aug-border-all': '1px',
         '--aug-border-bg': borderColor,
+        transition: 'opacity 0.3s ease',
       } as React.CSSProperties}
     >
       <div className="p-5">
@@ -84,7 +93,16 @@ export function AgentCard({
             <h3 className="font-bold text-card-foreground text-sm capitalize leading-tight">
               {agent.name}
             </h3>
-            <StatusBadge status={agent.status} />
+            {isTerminating ? (
+              <span
+                className="text-xs font-semibold uppercase tracking-wide"
+                style={{ color: 'var(--agent-dead)' }}
+              >
+                Terminating...
+              </span>
+            ) : (
+              <StatusBadge status={effectiveStatus} />
+            )}
           </div>
           <div className="flex-1 min-w-0 text-center">
             {agent.goal?.text && (
@@ -102,12 +120,14 @@ export function AgentCard({
               onClick={() => vncRefreshRef.current?.()}
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               title="Refresh VNC"
+              disabled={isTerminating}
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
             <button
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               title="Pause"
+              disabled={isTerminating}
             >
               <Pause className="w-3.5 h-3.5" />
             </button>
@@ -115,14 +135,19 @@ export function AgentCard({
               onClick={() => setShowKillConfirm(true)}
               className="w-7 h-7 flex items-center justify-center text-destructive/60 hover:text-destructive transition-colors"
               title="Kill agent"
+              disabled={isTerminating}
             >
-              <Square className="w-3 h-3" />
+              {isTerminating ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Square className="w-3 h-3" />
+              )}
             </button>
           </div>
         </div>
 
         {/* VNC Stream */}
-        <div className="aspect-video bg-surface-inset overflow-hidden">
+        <div className="aspect-video bg-surface-inset overflow-hidden vnc-scanline">
           {isDeploying ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="text-center">
@@ -138,7 +163,7 @@ export function AgentCard({
                 </span>
               </div>
             </div>
-          ) : agent.vncUrl && agent.status !== 'dead' && agent.status !== 'terminated' ? (
+          ) : agent.vncUrl && agent.status !== 'dead' && agent.status !== 'terminated' && !isTerminating ? (
             <VncFrame
               url={agent.vncUrl}
               onRefresh={(fn) => {

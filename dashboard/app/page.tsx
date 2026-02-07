@@ -3,8 +3,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery, useSubscription, useMutation } from 'urql';
 import { toast } from 'sonner';
-import { motion } from 'framer-motion';
-import { Plus, Folder, ArrowRight, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Plus, Folder, ArrowRight, X, Terminal } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useEventsStore } from '@/stores/events';
@@ -145,10 +145,19 @@ export default function DashboardPage() {
         onToggle={() => setSidebarCollapsed((v) => !v)}
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-6 pt-5 pb-4">
+      <main className="flex-1 flex flex-col overflow-hidden relative">
+        {/* Subtle grid background */}
+        <div className="dashboard-grid absolute inset-0 pointer-events-none" />
+
+        <motion.div
+          className="flex items-center justify-between px-6 pt-5 pb-4 relative z-10"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        >
           <div className="flex items-center gap-4">
             <p className="text-muted-foreground text-sm font-mono">
+              <span className="text-accent/60 mr-1">//</span>
               {agents.length} agent{agents.length !== 1 ? 's' : ''} deployed
             </p>
             {agents.length > 0 && (
@@ -158,7 +167,7 @@ export default function DashboardPage() {
           <button
             onClick={() => setShowDeployModal(true)}
             data-augmented-ui="tl-clip br-clip border"
-            className="px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
+            className="deploy-btn px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
             style={{
               '--aug-tl': '8px',
               '--aug-br': '8px',
@@ -168,28 +177,31 @@ export default function DashboardPage() {
           >
             + Deploy Agent
           </button>
-        </div>
+        </motion.div>
 
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-6 pb-6">
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-6 pb-6 relative z-10">
           {agents.length === 0 ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-center">
-                <p className="text-muted-foreground text-sm mb-2">
-                  No agents deployed yet
-                </p>
-                <p className="text-muted-foreground/60 text-xs">
-                  Click &quot;Deploy Agent&quot; to get started
-                </p>
-              </div>
-            </div>
+            <EmptyState />
           ) : (
             <div className={`grid gap-5 ${GRID_CLASSES[gridLayout]}`}>
-              {agents.map((agent) => (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                />
-              ))}
+              <AnimatePresence mode="popLayout">
+                {agents.map((agent, i) => (
+                  <motion.div
+                    key={agent.id}
+                    initial={{ opacity: 0, scale: 0.95, y: 12 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                    transition={{
+                      duration: 0.45,
+                      delay: i * 0.06,
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
+                    layout
+                  >
+                    <AgentCard agent={agent} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           )}
         </div>
@@ -201,6 +213,58 @@ export default function DashboardPage() {
         onDeploy={handleDeploy}
       />
     </div>
+  );
+}
+
+/* ============================================
+   Empty State — shown when no agents deployed
+   ============================================ */
+
+function EmptyState() {
+  return (
+    <motion.div
+      className="flex items-center justify-center h-full"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.6, delay: 0.2 }}
+    >
+      <div className="text-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <div
+            data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
+            className="w-16 h-16 flex items-center justify-center mx-auto mb-5"
+            style={{
+              '--aug-tl': '10px',
+              '--aug-tr': '10px',
+              '--aug-br': '10px',
+              '--aug-bl': '10px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': 'var(--border)',
+            } as React.CSSProperties}
+          >
+            <Terminal className="w-7 h-7 text-muted-foreground" />
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.45, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <p className="text-muted-foreground text-sm font-mono mb-1.5">
+            No agents deployed
+          </p>
+          <p className="text-muted-foreground/40 text-xs font-mono">
+            <span className="text-accent/50">$</span> deploy an agent to begin
+            <span className="empty-cursor" />
+          </p>
+        </motion.div>
+      </div>
+    </motion.div>
   );
 }
 
@@ -301,6 +365,8 @@ function LandingPage() {
           {projects.map((project) => (
             <motion.button
               key={project.id}
+              initial="hidden"
+              animate="show"
               variants={fadeUp}
               onClick={() => setCurrentProject(project.id)}
               data-augmented-ui="tl-clip br-clip border"

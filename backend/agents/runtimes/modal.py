@@ -26,7 +26,7 @@ class ModalRuntime:
         )
         env_secret = modal.Secret.from_dict(env)
         sb = await modal.Sandbox.create.aio(
-            "/entrypoint.sh",
+            "/init",
             app=app,
             image=image,
             secrets=[env_secret],

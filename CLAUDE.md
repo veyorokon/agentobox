@@ -8,6 +8,7 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 
 - Dashboard: http://localhost:3000
 - Backend GraphQL: http://localhost:8000/graphql
+- SigNoz (traces/logs/metrics): http://localhost:8085
 
 ### Test credentials
 
@@ -25,7 +26,8 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 
 - **backend/**: Django 6.0 + Strawberry GraphQL + uvicorn (dev) / Daphne (prod)
 - **dashboard/**: Next.js + urql + Zustand + augmented-ui
-- **agent/**: Docker image with AwesomeWM, Firefox, noVNC, Claude Code hooks
+- **agent/**: Alpine + s6-overlay image with AwesomeWM, Firefox, noVNC, Claude Code hooks. Uses `rootfs/` convention — all container files under `agent/rootfs/` at their actual filesystem paths.
+- **observability/**: SigNoz config files (ClickHouse, OTel collector, dashboards). Vendored from SigNoz deploy repo.
 - **Runtimes**: Modal (serverless) or Docker (local)
 
 ## Makefile

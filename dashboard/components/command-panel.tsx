@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Send, Search, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
@@ -10,7 +10,6 @@ import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
 import { RosterBadge } from './roster-badge';
 import { PanelTabs, type PanelTab } from './panel-tabs';
 import { EventFeed } from './event-feed';
-import { ChatBubble } from './chat-bubble';
 import { ProjectSelector } from './project-selector';
 import { STATUS_COLOR_VAR } from './status-badge';
 import type { Agent, AgentEvent } from '@/types';
@@ -29,11 +28,9 @@ export function CommandPanel({
   const { theme, setTheme, themes } = useTheme();
   const nextTheme = themes[(themes.indexOf(theme) + 1) % themes.length];
 
-  const [activeTab, setActiveTab] = useState<PanelTab>('agento');
+  const [activeTab, setActiveTab] = useState<PanelTab>('feed');
   const [input, setInput] = useState('');
   const [feedFilter, setFeedFilter] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
   const [, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
 
   const switchTab = useCallback((tab: PanelTab) => {
@@ -42,7 +39,7 @@ export function CommandPanel({
     setFeedFilter('');
   }, []);
 
-  const isAgentTab = activeTab !== 'agento' && activeTab !== 'feed';
+  const isAgentTab = activeTab !== 'feed';
   const selectedAgent = isAgentTab
     ? agents.find((a) => a.name === activeTab)
     : null;
@@ -79,9 +76,7 @@ export function CommandPanel({
   const inputPlaceholder =
     activeTab === 'feed'
       ? 'Filter events...'
-      : activeTab === 'agento'
-        ? 'Message agento...'
-        : `Message ${activeTab}...`;
+      : `Message ${activeTab}...`;
 
   if (collapsed) {
     return (
@@ -228,18 +223,6 @@ export function CommandPanel({
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {activeTab === 'agento' && (
-          <div className="px-5 py-4 space-y-4">
-            <div className="flex-1 flex items-center justify-center h-32">
-              <p className="text-muted-foreground text-xs text-center leading-relaxed">
-                Send a message to start
-                <br />
-                orchestrating your agents
-              </p>
-            </div>
-            <div ref={messagesEndRef} />
-          </div>
-        )}
         {activeTab === 'feed' && (
           <EventFeed
             events={events}
@@ -287,7 +270,7 @@ export function CommandPanel({
                 }
                 onKeyDown={handleKeyDown}
                 placeholder={inputPlaceholder}
-                className="w-full bg-transparent text-foreground font-mono text-sm px-2 py-2.5 placeholder:text-muted-foreground focus:outline-none"
+                className="w-full bg-transparent text-foreground font-mono text-sm px-2 py-2.5 placeholder:text-muted-foreground placeholder:select-none focus:outline-none selection:bg-accent/20 selection:text-foreground"
               />
             </div>
           </div>

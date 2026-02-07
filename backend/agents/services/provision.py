@@ -87,6 +87,7 @@ def _build_claude_md(project: Project, goal: Goal) -> str:
 
 def _build_settings_json() -> str:
     settings = {
+        "theme": "dark",
         "hooks": {
             "SessionStart": [
                 {

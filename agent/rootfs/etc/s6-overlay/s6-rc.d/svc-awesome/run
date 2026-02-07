@@ -1,0 +1,3 @@
+#!/command/with-contenv bash
+export HOME=/home/computeruse
+exec s6-setuidgid computeruse awesome

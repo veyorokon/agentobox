@@ -318,6 +318,63 @@
 }
 
 /* ============================================
+   Dashboard main area
+   ============================================ */
+
+.dashboard-grid {
+  background-image: radial-gradient(var(--muted-foreground) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.15;
+  mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
+}
+
+/* Deploy button hover glow */
+.deploy-btn {
+  position: relative;
+  transition: filter 0.2s ease;
+}
+.deploy-btn:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Scan-line overlay on VNC area */
+.vnc-scanline {
+  position: relative;
+}
+.vnc-scanline::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Empty state blinking cursor */
+.empty-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--accent);
+  opacity: 0.6;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 1s step-end infinite;
+}
+@keyframes cursor-blink {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0; }
+}
+
+/* ============================================
    Landing page
    ============================================ */
 

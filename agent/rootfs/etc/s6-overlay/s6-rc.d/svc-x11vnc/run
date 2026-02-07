@@ -1,0 +1,2 @@
+#!/command/with-contenv bash
+exec x11vnc -display :1 -nopw -listen localhost -forever -shared -rfbport 5900
