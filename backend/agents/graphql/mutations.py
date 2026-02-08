@@ -11,6 +11,8 @@ class CreateAgentInput:
     name: str
     runtime: str = "modal"
     mcp_servers: JSON | None = None
+    workspace_path: str = ""
+    instructions: str = ""
 
 
 @strawberry.input
@@ -47,6 +49,8 @@ class AgentMutation:
             name=input.name,
             runtime_name=input.runtime,
             mcp_servers=mcp_config,
+            workspace_path=input.workspace_path,
+            instructions=input.instructions,
         )
 
     @strawberry.mutation

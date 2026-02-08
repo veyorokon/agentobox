@@ -36,6 +36,8 @@ export const AGENTS_QUERY = gql`
       transcriptPath
       permissionMode
       mcpServers
+      workspacePath
+      instructions
       createdAt
     }
   }

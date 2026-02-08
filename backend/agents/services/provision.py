@@ -17,15 +17,17 @@ async def provision_workspace(
     agent_env: dict[str, str] | None = None,
     mcp_servers: dict | None = None,
     variant: str = "debian",
+    workspace_path: str = "",
+    instructions: str = "",
 ) -> None:
     """Write CLAUDE.md and .claude/settings.json into the agent container."""
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/computeruse"
-    op_log.info("provisioning_workspace", context_path=workspace, variant=variant)
+    op_log.info("provisioning_workspace", context_path=workspace, variant=variant, workspace_path=workspace_path)
 
     await runtime.exec(sandbox_id, ["mkdir", "-p", workspace])
 
-    claude_md = _build_claude_md(project, mcp_servers=mcp_servers, variant=variant)
+    claude_md = _build_claude_md(project, mcp_servers=mcp_servers, variant=variant, workspace_path=workspace_path, instructions=instructions)
     await runtime.write_file(
         sandbox_id,
         claude_md.encode("utf-8"),
@@ -90,31 +92,50 @@ def _build_claude_md(
     project: Project,
     mcp_servers: dict | None = None,
     variant: str = "debian",
+    workspace_path: str = "",
+    instructions: str = "",
 ) -> str:
     os_desc = IMAGE_VARIANTS.get(variant, IMAGE_VARIANTS["debian"])
-    base = textwrap.dedent(f"""\
-        # {project.name}
 
-        You are an agentobox agent working on the {project.name} project.
+    if workspace_path:
+        workspace_section = (
+            "## Workspace\n"
+            "\n"
+            "You are working in `/home/computeruse/workspace` (mounted from host).\n"
+            "This is a shared volume — changes you make are visible on the host and\n"
+            "to other agents. Stay within this directory for project work.\n"
+        )
+    else:
+        workspace_section = (
+            "## Workspace\n"
+            "\n"
+            "You are working in `/home/computeruse`. Stay within this directory.\n"
+        )
 
-        ## Workspace
+    base = (
+        f"# {project.name}\n"
+        f"\n"
+        f"You are an agentobox agent working on the {project.name} project.\n"
+        f"\n"
+        f"{workspace_section}"
+        f"\n"
+        f"## Environment\n"
+        f"\n"
+        f"- OS: {os_desc}\n"
+        f"- Display: X11 on `:1` (AwesomeWM window manager)\n"
+        f"- Browser: Firefox ESR (pre-installed)\n"
+    )
 
-        You are working in `/home/computeruse`. Stay within this directory.
-
-        ## Environment
-
-        - OS: {os_desc}
-        - Display: X11 on `:1` (AwesomeWM window manager)
-        - Browser: Firefox ESR (pre-installed)
-    """)
+    if instructions:
+        base += f"\n## Responsibilities\n\n{instructions.strip()}\n"
 
     # Append instructions from attached MCP servers
     if mcp_servers:
         for name in mcp_servers:
             entry = MCP_REGISTRY.get(name, {})
-            instructions = entry.get("instructions")
-            if instructions:
-                base += "\n" + textwrap.dedent(instructions).strip() + "\n"
+            mcp_instructions = entry.get("instructions")
+            if mcp_instructions:
+                base += "\n" + textwrap.dedent(mcp_instructions).strip() + "\n"
 
     return base
 
@@ -166,6 +187,31 @@ IMAGE_VARIANTS = {
 #   compat: list of image variants where this server works
 #   instructions: behavioral guidance injected into CLAUDE.md when attached
 MCP_REGISTRY = {
+    "playwright": {
+        "command": "npx",
+        "args": ["@playwright/mcp@latest"],
+        "compat": ["debian"],
+        "instructions": """
+            ## Playwright
+
+            You have Playwright MCP for browser automation and testing.
+            Use it to navigate pages, click elements, fill forms, take
+            screenshots, and assert page state.
+
+            ### Usage
+
+            - Use `browser_navigate` to open URLs
+            - Use `browser_snapshot` to get the accessibility tree (preferred over screenshots)
+            - Use `browser_click`, `browser_type`, `browser_fill_form` for interactions
+            - Use `browser_take_screenshot` for visual verification
+
+            ### Rules
+
+            - Always take a snapshot or screenshot after navigation to see the page state
+            - Use accessibility snapshots over screenshots when possible — they're faster and actionable
+            - Close the browser when done with `browser_close`
+        """,
+    },
     "computer-use": {
         "command": "node",
         "args": ["/opt/mcp-servers/computer-use/dist/main.js"],

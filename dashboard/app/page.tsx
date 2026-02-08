@@ -118,7 +118,9 @@ export default function DashboardPage() {
   const handleDeploy = async (
     name: string,
     runtime: string,
-    mcpServers: string[] = []
+    mcpServers: string[] = [],
+    workspacePath: string = '',
+    instructions: string = '',
   ) => {
     if (!projectId) return;
     setShowDeployModal(false);
@@ -133,6 +135,8 @@ export default function DashboardPage() {
             name,
             runtime,
             ...(mcpServers.length > 0 && { mcpServers }),
+            ...(workspacePath && { workspacePath }),
+            ...(instructions && { instructions }),
           },
         });
         if (error) throw error;

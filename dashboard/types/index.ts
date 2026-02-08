@@ -22,6 +22,8 @@ export interface Agent {
   transcriptPath: string;
   permissionMode: string;
   mcpServers: Record<string, unknown>;
+  workspacePath: string;
+  instructions: string;
   createdAt: string;
 }
 

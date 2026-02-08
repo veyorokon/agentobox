@@ -52,6 +52,8 @@ export const CREATE_AGENT_MUTATION = gql`
       transcriptPath
       permissionMode
       mcpServers
+      workspacePath
+      instructions
       createdAt
     }
   }

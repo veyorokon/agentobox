@@ -23,14 +23,23 @@ class DockerRuntime:
         loop = asyncio.get_event_loop()
         return loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
-    async def create(self, name: str, env: dict[str, str]) -> SandboxInstance:
+    async def create(
+        self, name: str, env: dict[str, str],
+        volumes: dict[str, str] | None = None,
+    ) -> SandboxInstance:
         container_name = f"agentobox-agent-{name}"
         image = getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest")
         network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
 
         op = log.bind(op="create", agent=name, image=image)
-        op.info("creating_container")
+        op.info("creating_container", volumes=volumes)
         t0 = time.monotonic()
+
+        # Convert {host_path: container_path} to docker-py format
+        docker_volumes = {}
+        if volumes:
+            for host_path, container_path in volumes.items():
+                docker_volumes[host_path] = {"bind": container_path, "mode": "rw"}
 
         def _create():
             # Remove stale container with the same name (e.g. from a previous failed deploy)
@@ -52,6 +61,7 @@ class DockerRuntime:
                     "agentobox.agent": name,
                 },
                 network=network,
+                volumes=docker_volumes or None,
             )
             # Reload to get port mappings
             container.reload()

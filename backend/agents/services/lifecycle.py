@@ -17,12 +17,14 @@ async def create_agent(
     name: str,
     runtime_name: str = "modal",
     mcp_servers: dict | None = None,
+    workspace_path: str = "",
+    instructions: str = "",
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from projects.models import Project
 
     op_log = log.bind(project_id=str(project_id), agent=name)
-    op_log.info("creating_agent", runtime=runtime_name)
+    op_log.info("creating_agent", runtime=runtime_name, workspace_path=workspace_path)
 
     project = await Project.objects.aget(id=project_id)
 
@@ -37,6 +39,8 @@ async def create_agent(
         vnc_url="",
         status=AgentStatus.DEPLOYING,
         mcp_servers=resolved_mcps,
+        workspace_path=workspace_path,
+        instructions=instructions,
     )
 
     await broadcast_agent_update(agent)
@@ -84,7 +88,14 @@ async def _provision_agent(agent, project, runtime_name, op_log):
     try:
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
-        sandbox = await runtime.create(agent.name, env)
+
+        # Build volume mounts when workspace_path is set
+        CONTAINER_WORKSPACE = "/home/computeruse/workspace"
+        volumes = None
+        if agent.workspace_path:
+            volumes = {agent.workspace_path: CONTAINER_WORKSPACE}
+
+        sandbox = await runtime.create(agent.name, env, volumes=volumes)
         sandbox_id = sandbox.id
         op_log.info("container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
@@ -97,13 +108,16 @@ async def _provision_agent(agent, project, runtime_name, op_log):
             runtime, sandbox.id, project,
             api_key=api_key, agent_env=hook_env,
             mcp_servers=agent.mcp_servers or None,
+            workspace_path=agent.workspace_path,
+            instructions=agent.instructions,
         )
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
 
+        work_dir = CONTAINER_WORKSPACE if agent.workspace_path else "/home/computeruse"
         claude_cmd = (
-            f"cd /home/computeruse && claude"
+            f"cd {work_dir} && claude"
             f" --agent-id {agent.name}@{team_name}"
             f" --agent-name {agent.name}"
             f" --team-name {team_name}"

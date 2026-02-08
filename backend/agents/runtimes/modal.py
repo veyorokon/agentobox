@@ -12,9 +12,12 @@ log = structlog.get_logger("agents.runtime.modal")
 class ModalRuntime:
     """Modal Python SDK runtime. Implements Runtime protocol."""
 
-    async def create(self, name: str, env: dict[str, str]) -> SandboxInstance:
+    async def create(
+        self, name: str, env: dict[str, str],
+        volumes: dict[str, str] | None = None,
+    ) -> SandboxInstance:
         op = log.bind(op="create", agent=name)
-        op.info("creating_sandbox")
+        op.info("creating_sandbox", volumes=volumes)
         t0 = time.monotonic()
 
         app = await modal.App.lookup.aio(
@@ -25,6 +28,17 @@ class ModalRuntime:
             secret=modal.Secret.from_name("ghcr-secret"),
         )
         env_secret = modal.Secret.from_dict(env)
+
+        # Map {host_path: container_path} to Modal volumes.
+        # Each unique workspace gets a named volume keyed by a slug of the path.
+        modal_volumes = {}
+        if volumes:
+            for host_path, container_path in volumes.items():
+                vol_label = "agentobox-ws-" + host_path.strip("/").replace("/", "-")[-60:]
+                vol = modal.Volume.from_name(vol_label, create_if_missing=True)
+                modal_volumes[container_path] = vol
+            op.info("modal_volumes_attached", labels=list(modal_volumes.keys()))
+
         sb = await modal.Sandbox.create.aio(
             "/init",
             app=app,
@@ -34,6 +48,7 @@ class ModalRuntime:
             timeout=3600,
             cpu=2.0,
             memory=4096,
+            volumes=modal_volumes or None,
         )
         await sb.set_tags.aio(
             {"agentobox.managed": "true", "agentobox.agent": name}

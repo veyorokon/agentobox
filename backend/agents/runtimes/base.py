@@ -9,7 +9,10 @@ class SandboxInstance:
 
 
 class Runtime(Protocol):
-    async def create(self, name: str, env: dict[str, str]) -> SandboxInstance: ...
+    async def create(
+        self, name: str, env: dict[str, str],
+        volumes: dict[str, str] | None = None,
+    ) -> SandboxInstance: ...
 
     async def exec(
         self, sandbox_id: str, cmd: list[str], user: str = "computeruse"

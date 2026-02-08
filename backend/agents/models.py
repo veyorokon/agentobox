@@ -39,6 +39,12 @@ class Agent(models.Model):
     # MCP server config: {"server-name": {"command": "...", "args": [...]}}
     mcp_servers = models.JSONField(default=dict, blank=True)
 
+    # Host path to bind-mount into the container as /home/computeruse/workspace
+    workspace_path = models.CharField(max_length=500, blank=True)
+
+    # Role instructions injected into CLAUDE.md
+    instructions = models.TextField(blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

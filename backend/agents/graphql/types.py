@@ -30,6 +30,8 @@ class AgentType:
     transcript_path: auto
     permission_mode: auto
     mcp_servers: auto
+    workspace_path: auto
+    instructions: auto
     created_at: auto
 
     @strawberry_django.field

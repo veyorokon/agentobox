@@ -15,6 +15,8 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
       cwd
       transcriptPath
       permissionMode
+      workspacePath
+      instructions
       createdAt
     }
   }
