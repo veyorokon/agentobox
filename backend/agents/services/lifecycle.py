@@ -247,6 +247,39 @@ async def process_hook_event(payload: dict) -> None:
             agent.model = model
             update_fields.append("model")
 
+    # Capture inter-agent SendMessage as AgentMessage records
+    if event_type == "PostToolUse":
+        tool_name = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input", {})
+        if tool_name == "SendMessage" and isinstance(tool_input, dict):
+            msg_type = tool_input.get("type", "")
+            # Skip internal protocol messages
+            if msg_type not in ("shutdown_request", "shutdown_response"):
+                content = tool_input.get("content", "") or tool_input.get("message", "")
+                recipient_name = tool_input.get("recipient", "")
+                if content:
+                    # Record outbound on sender
+                    await AgentMessage.objects.acreate(
+                        agent=agent, direction="outbound", content=content
+                    )
+                    await broadcast_agent_event(
+                        agent, "outbound_message", {"message": content, "recipient": recipient_name}
+                    )
+                    # Record inbound on recipient (if found in same project)
+                    if recipient_name:
+                        try:
+                            recipient = await Agent.objects.aget(
+                                name=recipient_name, project=agent.project
+                            )
+                            await AgentMessage.objects.acreate(
+                                agent=recipient, direction="inbound", content=content
+                            )
+                            await broadcast_agent_event(
+                                recipient, "inbound_message", {"message": content, "sender": agent.name}
+                            )
+                        except Agent.DoesNotExist:
+                            op_log.warning("sendmessage_recipient_not_found", recipient=recipient_name)
+
     # Capture agent response on Stop (turn finished)
     if event_type == "Stop":
         # Claude Code Stop hook payload includes stop_hook_active_response_text

@@ -1,3 +1,5 @@
+import shlex
+
 import structlog
 
 from agents.models import Agent, AgentMessage, AgentStatus
@@ -5,6 +7,11 @@ from agents.runtimes import get_runtime
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
 
 log = structlog.get_logger("agents.comms")
+
+
+def _shell_quote(s: str) -> str:
+    """Shell-quote a string for safe embedding in bash -c commands."""
+    return shlex.quote(s)
 
 
 async def send_message(agent_id: str, message: str) -> bool:
@@ -28,12 +35,26 @@ async def send_message(agent_id: str, message: str) -> bool:
     if agent.sandbox_id:
         try:
             runtime = get_runtime(agent.runtime)
-            # -l sends the message as literal text (no key interpretation)
-            # Enter is sent separately as a key name
-            await runtime.exec(
-                agent.sandbox_id,
-                ["tmux", "send-keys", "-t", "claude", "-l", message],
-            )
+
+            # Write message to a temp file, then send a single-line
+            # instruction to read it. Direct send-keys -l for multiline
+            # text triggers bracketed paste mode, causing Claude Code to
+            # show "[Pasted text +N lines]" without submitting.
+            if "\n" in message:
+                await runtime.exec(
+                    agent.sandbox_id,
+                    ["bash", "-c", f"printf '%s' {_shell_quote(message)} > /tmp/.abox-msg"],
+                )
+                await runtime.exec(
+                    agent.sandbox_id,
+                    ["tmux", "send-keys", "-t", "claude", "-l",
+                     "Read and follow the instructions in /tmp/.abox-msg verbatim."],
+                )
+            else:
+                await runtime.exec(
+                    agent.sandbox_id,
+                    ["tmux", "send-keys", "-t", "claude", "-l", message],
+                )
             await runtime.exec(
                 agent.sandbox_id,
                 ["tmux", "send-keys", "-t", "claude", "Enter"],
