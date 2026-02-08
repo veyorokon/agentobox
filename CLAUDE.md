@@ -39,7 +39,19 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 - `make agent-image` — Build agent Docker image locally.
 - `make dev` — Run backend locally with Daphne (outside Docker).
 
-## Standing Up an Agent Team (Dev)
+## Dogfooding vs Production
+
+**Dogfooding** = using agentobox to build agentobox. The team lead is Claude Code on the host, agents work on this repo, and the dashboard being tested IS agentobox's own dashboard. This is Vahid's specific dev workflow — not the general product.
+
+**Production** = customers use agentobox to build their own projects. Agents work on the customer's codebase. The agentobox dashboard is just the control plane — agents never interact with it. Agents only need to reach: (1) each other (team comms), (2) the agentobox backend (hook callbacks).
+
+Key implications:
+- **Networking**: Don't design agent networking around reaching "the dashboard." In prod, agents have no reason to talk to agentobox's dashboard. Agent-to-agent and agent-to-backend are the real requirements.
+- **QA testing**: In dogfooding, QA tests `localhost:3000` (our dashboard). In prod, QA tests the customer's app — which could need any stack. QA either runs unit tests (no infra needed), the customer provides a preview URL, or the platform provides ephemeral environments (future PaaS-like feature).
+- **Workspace mounts**: In dogfooding, agents mount this repo. In prod, agents mount the customer's project (Docker bind mount or Modal named volume).
+- **Don't let dogfooding specifics leak into the product.** If a feature only makes sense because we're building agentobox with agentobox, it doesn't belong in the platform.
+
+## Standing Up an Agent Team (Dev / Dogfooding)
 
 The team lead is Claude Code on the host. Agents are Docker containers visible in the dashboard.
 
@@ -53,7 +65,7 @@ The team lead is Claude Code on the host. Agents are Docker containers visible i
 6. Hook events flow from containers back to the backend — dashboard shows status, events, and VNC streams
 7. All agents share the same mounted codebase — one agent's file edits are immediately visible to others
 
-### Agent roles (dogfooding)
+### Agent roles (dogfooding only)
 
 | Agent | Responsibilities |
 |-------|-----------------|

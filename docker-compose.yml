@@ -27,6 +27,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
       AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
       ABOX_CALLBACK_URL: http://backend:8000
+      ABOX_DASHBOARD_URL: http://dashboard:3000
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}

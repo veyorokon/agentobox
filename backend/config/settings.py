@@ -10,6 +10,7 @@ env = environ.Env(
     REDIS_URL=(str, "redis://localhost:6379/0"),
     AGENT_IMAGE=(str, "agentobox-agent:latest"),
     ABOX_CALLBACK_URL=(str, "http://backend:8000"),
+    ABOX_DASHBOARD_URL=(str, ""),
     ANTHROPIC_API_KEY=(str, ""),
     DOCKER_NETWORK=(str, "agentobox_default"),
     MODAL_APP_NAME=(str, "agentobox"),
@@ -119,6 +120,7 @@ STATIC_URL = "static/"
 
 AGENT_IMAGE = env("AGENT_IMAGE")
 ABOX_CALLBACK_URL = env("ABOX_CALLBACK_URL")
+ABOX_DASHBOARD_URL = env("ABOX_DASHBOARD_URL")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
 DOCKER_NETWORK = env("DOCKER_NETWORK")
 MODAL_APP_NAME = env("MODAL_APP_NAME")

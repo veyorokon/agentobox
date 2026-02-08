@@ -60,7 +60,6 @@ export function CommandPanel({
     : null;
 
   const handleSend = async () => {
-    // Use the correct input source based on active tab
     const text = (activeTab === 'feed' ? feedFilter : input).trim();
     if (!text) return;
 
@@ -79,7 +78,6 @@ export function CommandPanel({
               if (error) throw error;
             })
           );
-          // Switch to that agent's tab
           switchTab(targetAgent.name);
         } catch {
           toast.error('Failed to send message');
@@ -121,6 +119,16 @@ export function CommandPanel({
       ? 'Filter or @agent message...'
       : `Message ${activeTab}...`;
 
+  const inputBorderColor =
+    isAgentTab && selectedAgent
+      ? STATUS_COLOR_VAR[selectedAgent.status]
+      : 'var(--border)';
+
+  const inputAccentColor =
+    isAgentTab && selectedAgent
+      ? STATUS_COLOR_VAR[selectedAgent.status]
+      : 'var(--accent)';
+
   if (collapsed) {
     return (
       <aside
@@ -153,6 +161,10 @@ export function CommandPanel({
               <button
                 key={agent.name}
                 title={`${agent.name} — ${agent.status}`}
+                onClick={() => {
+                  onToggle();
+                  switchTab(agent.name);
+                }}
                 data-augmented-ui="tl-clip br-clip border"
                 className="w-9 h-9 flex items-center justify-center flex-shrink-0"
                 style={{
@@ -242,7 +254,7 @@ export function CommandPanel({
         <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider mb-2">
           Agents
         </p>
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
+        <div className="flex flex-wrap gap-2">
           {agents.map((agent) => (
             <RosterBadge
               key={agent.name}
@@ -252,7 +264,9 @@ export function CommandPanel({
             />
           ))}
           {agents.length === 0 && (
-            <p className="text-muted-foreground text-xs">No agents deployed</p>
+            <p className="text-muted-foreground text-xs font-mono">
+              No agents deployed
+            </p>
           )}
         </div>
       </div>
@@ -265,7 +279,11 @@ export function CommandPanel({
       />
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
+      <div
+        key={activeTab}
+        className="flex-1 overflow-y-auto scrollbar-thin"
+        style={{ animation: 'panel-fade 0.15s ease-out' }}
+      >
         {activeTab === 'feed' && (
           <EventFeed
             filter={feedFilter}
@@ -279,6 +297,28 @@ export function CommandPanel({
 
       {/* Input Bar */}
       <div className="px-5 pb-5 pt-2">
+        {/* Context label for agent tab */}
+        {isAgentTab && selectedAgent && (
+          <div className="flex items-center gap-2 mb-1.5 px-1">
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{
+                background: STATUS_COLOR_VAR[selectedAgent.status],
+                boxShadow:
+                  selectedAgent.status === 'running'
+                    ? `0 0 4px ${STATUS_COLOR_VAR[selectedAgent.status]}`
+                    : 'none',
+              }}
+            />
+            <span
+              className="text-[9px] font-mono font-bold uppercase tracking-wider"
+              style={{ color: STATUS_COLOR_VAR[selectedAgent.status] }}
+            >
+              {selectedAgent.name} — {selectedAgent.status}
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           <div
             data-augmented-ui="tl-clip br-clip border"
@@ -287,11 +327,14 @@ export function CommandPanel({
               '--aug-tl': '8px',
               '--aug-br': '8px',
               '--aug-border-all': '1px',
-              '--aug-border-bg': 'var(--border)',
+              '--aug-border-bg': inputBorderColor,
             } as React.CSSProperties}
           >
             <div className="flex items-center">
-              <span className="text-accent font-mono text-sm pl-3 select-none">
+              <span
+                className="font-mono text-sm pl-3 select-none font-bold"
+                style={{ color: inputAccentColor }}
+              >
                 {inputPrefix}
               </span>
               <input
@@ -312,12 +355,13 @@ export function CommandPanel({
             <button
               onClick={handleSend}
               data-augmented-ui="tl-clip br-clip border"
-              className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-accent transition-colors"
+              className="w-9 h-9 flex items-center justify-center transition-colors"
               style={{
                 '--aug-tl': '6px',
                 '--aug-br': '6px',
                 '--aug-border-all': '1px',
-                '--aug-border-bg': 'var(--border)',
+                '--aug-border-bg': inputBorderColor,
+                color: inputAccentColor,
               } as React.CSSProperties}
               title="Send"
             >
@@ -347,46 +391,60 @@ export function CommandPanel({
 function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const processedRef = useRef<Set<number | string>>(new Set());
 
-  // Fetch initial messages
+  // Fetch messages from backend
   const [{ data }] = useQuery({
     query: AGENT_MESSAGES_QUERY,
     variables: { agentId: agent.id },
   });
 
-  // Sync fetched messages
+  // Sync query results
   useEffect(() => {
     if (data?.agent?.messages) {
       setMessages(data.agent.messages);
     }
   }, [data]);
 
-  // Pick up new messages from event stream
+  // Pick up new messages from event stream.
+  // FIX: Scan ALL new events instead of only checking events[events.length - 1].
+  // The old approach missed outbound_message events whenever a subsequent event
+  // (e.g. a Stop or PostToolUse) arrived before React re-rendered.
   useEffect(() => {
-    const latest = events[events.length - 1];
-    if (!latest || latest.agentId !== agent.id) return;
+    const newMsgs: AgentMessage[] = [];
 
-    if (
-      latest.eventType === 'inbound_message' ||
-      latest.eventType === 'outbound_message'
-    ) {
-      const msg = latest.data as { message?: string };
-      if (!msg.message) return;
+    for (const evt of events) {
+      if (processedRef.current.has(evt.id)) continue;
+      processedRef.current.add(evt.id);
 
-      const newMsg: AgentMessage = {
-        id: `evt-${Date.now()}`,
-        direction: latest.eventType === 'inbound_message' ? 'inbound' : 'outbound',
+      if (evt.agentId !== agent.id) continue;
+      if (
+        evt.eventType !== 'inbound_message' &&
+        evt.eventType !== 'outbound_message'
+      )
+        continue;
+
+      const msg = evt.data as { message?: string };
+      if (!msg.message) continue;
+
+      newMsgs.push({
+        id: `evt-${evt.id}`,
+        direction:
+          evt.eventType === 'inbound_message' ? 'inbound' : 'outbound',
         content: msg.message,
-        createdAt: new Date().toISOString(),
-      };
+        createdAt: evt.createdAt || new Date().toISOString(),
+      });
+    }
 
+    if (newMsgs.length > 0) {
       setMessages((prev) => {
-        // Dedupe: skip if content matches the last message
-        const last = prev[prev.length - 1];
-        if (last && last.content === newMsg.content && last.direction === newMsg.direction) {
-          return prev;
-        }
-        return [...prev, newMsg];
+        const seen = new Set(
+          prev.map((m) => `${m.direction}:${m.content}`)
+        );
+        const unique = newMsgs.filter(
+          (m) => !seen.has(`${m.direction}:${m.content}`)
+        );
+        return unique.length > 0 ? [...prev, ...unique] : prev;
       });
     }
   }, [events, agent.id]);
@@ -399,14 +457,39 @@ function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
     });
   }, [messages]);
 
+  const statusColor = STATUS_COLOR_VAR[agent.status];
+  const isWaiting =
+    messages.length > 0 &&
+    messages[messages.length - 1].direction === 'inbound' &&
+    (agent.status === 'running' || agent.status === 'deploying');
+
   if (messages.length === 0) {
     return (
-      <div className="px-5 py-4">
-        <div className="flex-1 flex items-center justify-center h-32">
-          <p className="text-muted-foreground text-xs text-center leading-relaxed">
-            No messages yet. Send a message below.
-            <br />
-            <span className="text-[10px]">Agent: {agent.name}</span>
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 py-12">
+        <div
+          data-augmented-ui="tl-clip br-clip border"
+          className="w-14 h-14 flex items-center justify-center"
+          style={{
+            '--aug-tl': '9px',
+            '--aug-br': '9px',
+            '--aug-border-all': '1.5px',
+            '--aug-border-bg': statusColor,
+          } as React.CSSProperties}
+        >
+          <span
+            className="text-base font-bold font-mono uppercase"
+            style={{ color: statusColor }}
+          >
+            {agent.name.slice(0, 2)}
+          </span>
+        </div>
+        <div className="text-center">
+          <p className="text-muted-foreground text-xs font-mono">
+            {agent.name}
+            <span className="empty-cursor" />
+          </p>
+          <p className="text-muted-foreground/50 text-[10px] font-mono mt-1.5">
+            Send a task to begin
           </p>
         </div>
       </div>
@@ -414,40 +497,113 @@ function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
   }
 
   return (
-    <div ref={scrollRef} className="px-3 py-3 space-y-2">
-      {messages.map((msg) => (
-        <div
-          key={msg.id}
-          className={`flex ${msg.direction === 'inbound' ? 'justify-end' : 'justify-start'}`}
-        >
+    <div ref={scrollRef} className="px-4 py-3 space-y-3">
+      {messages.map((msg) => {
+        const isInbound = msg.direction === 'inbound';
+        const time = new Date(msg.createdAt).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
+        return (
           <div
-            data-augmented-ui="tl-clip br-clip border"
-            className={`max-w-[85%] px-3 py-2 ${
-              msg.direction === 'inbound'
-                ? 'bg-accent/10'
-                : 'bg-card'
-            }`}
+            key={msg.id}
+            className={`flex ${isInbound ? 'justify-end' : 'justify-start'}`}
             style={{
-              '--aug-tl': '6px',
-              '--aug-br': '6px',
-              '--aug-border-all': '1px',
-              '--aug-border-bg': msg.direction === 'inbound'
-                ? 'var(--accent)'
-                : 'var(--border)',
-            } as React.CSSProperties}
+              animation:
+                'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+            }}
           >
-            <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words">
-              {msg.content}
-            </p>
-            <p className="text-muted-foreground text-[9px] mt-1">
-              {new Date(msg.createdAt).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </p>
+            <div className="max-w-[88%]">
+              {/* Header: sender + time */}
+              <div
+                className={`flex items-center gap-2 mb-1 ${
+                  isInbound ? 'justify-end' : 'justify-start'
+                }`}
+              >
+                <span
+                  className="text-[9px] font-mono font-bold uppercase tracking-wider"
+                  style={{
+                    color: isInbound ? 'var(--accent)' : statusColor,
+                  }}
+                >
+                  {isInbound ? 'you' : agent.name}
+                </span>
+                <span className="text-muted-foreground/40 text-[9px] font-mono tabular-nums">
+                  {time}
+                </span>
+              </div>
+
+              {/* Message bubble */}
+              <div
+                data-augmented-ui="tl-clip br-clip border"
+                className={`px-3 py-2.5 ${
+                  isInbound ? 'bg-accent/10' : 'bg-card'
+                }`}
+                style={{
+                  '--aug-tl': '6px',
+                  '--aug-br': '6px',
+                  '--aug-border-all': '1px',
+                  '--aug-border-bg': isInbound
+                    ? 'var(--accent)'
+                    : statusColor,
+                } as React.CSSProperties}
+              >
+                <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+                  {msg.content}
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Waiting indicator — shown when agent is processing */}
+      {isWaiting && (
+        <div
+          className="flex justify-start"
+          style={{
+            animation:
+              'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+          }}
+        >
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className="text-[9px] font-mono font-bold uppercase tracking-wider"
+                style={{ color: statusColor }}
+              >
+                {agent.name}
+              </span>
+            </div>
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              className="px-4 py-3 bg-card"
+              style={{
+                '--aug-tl': '6px',
+                '--aug-br': '6px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': statusColor,
+              } as React.CSSProperties}
+            >
+              <div className="flex gap-1.5">
+                {[0, 1, 2].map((dotIdx) => (
+                  <span
+                    key={dotIdx}
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{
+                      background: statusColor,
+                      animation:
+                        'waiting-blink 1.4s ease-in-out infinite',
+                      animationDelay: `${dotIdx * 0.2}s`,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
-      ))}
+      )}
     </div>
   );
 }

@@ -20,6 +20,7 @@ dist/
 # Claude Code
 .claude/
 .mcp.json
+.playwright-mcp/
 
 # OS
 .DS_Store

@@ -9,14 +9,14 @@ const EMPTY_EVENTS: AgentEvent[] = [];
 
 /** Stable hue derived from agent name so each agent gets a consistent color. */
 const AGENT_COLORS = [
-  'hsl(190, 80%, 65%)',  // cyan
-  'hsl(280, 70%, 70%)',  // purple
-  'hsl(45, 90%, 65%)',   // gold
-  'hsl(140, 60%, 60%)',  // green
-  'hsl(350, 70%, 65%)',  // rose
-  'hsl(220, 70%, 70%)',  // blue
-  'hsl(25, 80%, 65%)',   // orange
-  'hsl(170, 60%, 55%)',  // teal
+  'hsl(190, 80%, 65%)', // cyan
+  'hsl(280, 70%, 70%)', // purple
+  'hsl(45, 90%, 65%)', // gold
+  'hsl(140, 60%, 60%)', // green
+  'hsl(350, 70%, 65%)', // rose
+  'hsl(220, 70%, 70%)', // blue
+  'hsl(25, 80%, 65%)', // orange
+  'hsl(170, 60%, 55%)', // teal
 ];
 
 function agentColor(name: string): string {
@@ -25,6 +25,41 @@ function agentColor(name: string): string {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
   return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
+}
+
+const EVENT_META: Record<string, { label: string; dim: boolean }> = {
+  SessionStart: { label: 'START', dim: false },
+  SessionEnd: { label: 'END', dim: false },
+  Stop: { label: 'STOP', dim: false },
+  PostToolUse: { label: 'TOOL', dim: true },
+  TaskCompleted: { label: 'DONE', dim: false },
+  SubagentStart: { label: 'SPAWN', dim: false },
+  SubagentStop: { label: 'EXIT', dim: false },
+  TeammateIdle: { label: 'IDLE', dim: true },
+  Notification: { label: 'NOTE', dim: false },
+  inbound_message: { label: 'MSG\u25B8', dim: false },
+  outbound_message: { label: 'MSG\u25C2', dim: false },
+  status_change: { label: 'STATUS', dim: false },
+};
+
+function formatEventContent(event: AgentEvent): string {
+  const { data, eventType } = event;
+
+  // Message events — show message content
+  if (typeof data?.message === 'string') return data.message;
+
+  // Tool events — show tool name
+  if (
+    eventType === 'PostToolUse' &&
+    typeof data?.tool_name === 'string'
+  ) {
+    return data.tool_name as string;
+  }
+
+  // Status events
+  if (typeof data?.status === 'string') return data.status as string;
+
+  return eventType;
 }
 
 export function EventFeed({
@@ -66,10 +101,11 @@ export function EventFeed({
 
   if (filtered.length === 0) {
     return (
-      <div className="flex items-center justify-center h-32">
-        <p className="text-muted-foreground text-xs text-center">
-          {filter ? 'No matching events' : 'No events yet'}
-        </p>
+      <div className="flex flex-col items-center justify-center h-32 gap-2">
+        <span className="text-muted-foreground text-[10px] font-mono uppercase tracking-wider">
+          {filter ? 'No matching events' : 'Awaiting events'}
+        </span>
+        {!filter && <span className="empty-cursor" />}
       </div>
     );
   }
@@ -78,14 +114,21 @@ export function EventFeed({
     <div
       ref={feedRef}
       onScroll={handleScroll}
-      className="h-full overflow-y-auto scrollbar-thin"
+      className="h-full overflow-y-auto scrollbar-thin py-1"
     >
       {filtered.map((event, i) => {
         const color = agentColor(event.agentName);
-        const message =
-          typeof event.data?.message === 'string'
-            ? event.data.message
-            : event.eventType;
+        const meta = EVENT_META[event.eventType] || {
+          label: event.eventType.slice(0, 6).toUpperCase(),
+          dim: false,
+        };
+        const content = formatEventContent(event);
+        const isMessage =
+          event.eventType === 'inbound_message' ||
+          event.eventType === 'outbound_message';
+        const prevAgent = i > 0 ? filtered[i - 1].agentName : null;
+        const isNewGroup = event.agentName !== prevAgent;
+
         const time = event.createdAt
           ? new Date(event.createdAt).toLocaleTimeString([], {
               hour: '2-digit',
@@ -97,21 +140,59 @@ export function EventFeed({
         return (
           <div
             key={event.id}
-            className="flex items-start gap-2 px-5 py-1.5 hover:bg-surface-inset/50 transition-colors group"
+            style={{
+              borderLeft: `3px solid ${color}`,
+              marginLeft: '12px',
+              marginTop: isNewGroup && i > 0 ? '6px' : '0',
+              opacity: meta.dim ? 0.5 : 1,
+            }}
           >
-            <span className="text-muted-foreground/50 text-[10px] font-mono w-[62px] flex-shrink-0 pt-px">
-              {time}
-            </span>
-            <button
-              onClick={() => onSelectAgent(event.agentName)}
-              className="text-[11px] font-mono font-bold w-16 flex-shrink-0 truncate text-left hover:underline pt-px"
-              style={{ color }}
+            {/* Agent name header on group start */}
+            {isNewGroup && (
+              <div className="flex items-center gap-2 pl-3 pt-1 pb-0.5">
+                <button
+                  onClick={() => onSelectAgent(event.agentName)}
+                  className="text-[10px] font-mono font-bold uppercase tracking-wider hover:underline transition-colors"
+                  style={{ color }}
+                >
+                  {event.agentName}
+                </button>
+                <div
+                  className="flex-1 h-px"
+                  style={{
+                    background: `color-mix(in srgb, ${color} 15%, transparent)`,
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Event content row */}
+            <div
+              className={`flex items-start gap-2 pl-3 pr-4 py-0.5 hover:bg-surface-inset/30 transition-colors ${
+                isMessage ? 'bg-surface-inset/10' : ''
+              }`}
             >
-              {event.agentName}
-            </button>
-            <span className="text-foreground text-xs font-mono truncate pt-px">
-              {message}
-            </span>
+              <span className="text-muted-foreground/40 text-[9px] font-mono w-[56px] flex-shrink-0 pt-px tabular-nums">
+                {time}
+              </span>
+              <span
+                className="text-[8px] font-mono font-bold uppercase tracking-wider w-10 flex-shrink-0 pt-px"
+                style={{
+                  color: isMessage ? color : 'var(--muted-foreground)',
+                }}
+              >
+                {meta.label}
+              </span>
+              <span
+                className={`text-xs font-mono truncate flex-1 pt-px ${
+                  isMessage
+                    ? 'text-foreground'
+                    : 'text-muted-foreground'
+                }`}
+              >
+                {content}
+              </span>
+            </div>
           </div>
         );
       })}

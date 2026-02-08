@@ -56,11 +56,11 @@ async def create_agent(
 
 
 def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id=""):
-    """Sync helper: mark agent as running with sandbox details."""
+    """Sync helper: mark agent as provisioned with sandbox details."""
     agent = Agent.objects.get(id=agent_id)
     agent.sandbox_id = sandbox_id
     agent.vnc_url = vnc_url
-    agent.status = AgentStatus.RUNNING
+    agent.status = AgentStatus.IDLE
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
     agent.save(update_fields=["sandbox_id", "vnc_url", "status", "team_name", "parent_session_id"])
@@ -302,6 +302,7 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
         "ABOX_CALLBACK_URL": getattr(settings, "ABOX_CALLBACK_URL", ""),
+        "ABOX_DASHBOARD_URL": getattr(settings, "ABOX_DASHBOARD_URL", ""),
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         "CLAUDECODE": "1",
     }

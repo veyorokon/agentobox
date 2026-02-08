@@ -124,6 +124,11 @@ def _build_claude_md(
         f"- OS: {os_desc}\n"
         f"- Display: X11 on `:1` (AwesomeWM window manager)\n"
         f"- Browser: Firefox ESR (pre-installed)\n"
+        f"\n"
+        f"## Services\n"
+        f"\n"
+        f"- Backend API: available at env var `ABOX_CALLBACK_URL`\n"
+        f"- Dashboard: available at env var `ABOX_DASHBOARD_URL`\n"
     )
 
     if instructions:
