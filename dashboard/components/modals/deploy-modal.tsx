@@ -10,19 +10,15 @@ export function DeployModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onDeploy: (name: string, goalText: string, contextPath: string, runtime: string) => void;
+  onDeploy: (name: string, runtime: string) => void;
 }) {
   const [name, setName] = useState('');
-  const [goalText, setGoalText] = useState('');
-  const [contextPath, setContextPath] = useState('');
   const [runtime, setRuntime] = useState('modal');
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
       setName('');
-      setGoalText('');
-      setContextPath('');
       setRuntime('modal');
       setTimeout(() => nameRef.current?.focus(), 50);
     }
@@ -30,8 +26,8 @@ export function DeployModal({
 
   const handleSubmit = () => {
     const trimmed = name.trim().toLowerCase().replace(/\s+/g, '-');
-    if (!trimmed || !goalText.trim()) return;
-    onDeploy(trimmed, goalText.trim(), contextPath.trim(), runtime);
+    if (!trimmed) return;
+    onDeploy(trimmed, runtime);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -107,55 +103,6 @@ export function DeployModal({
             </p>
           </div>
 
-          {/* Goal field */}
-          <div className="mb-4">
-            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
-              Goal
-            </label>
-            <div
-              data-augmented-ui="tl-clip br-clip border"
-              style={{
-                '--aug-tl': '8px',
-                '--aug-br': '8px',
-                '--aug-border-all': '1px',
-                '--aug-border-bg': 'var(--border)',
-              } as React.CSSProperties}
-            >
-              <input
-                type="text"
-                value={goalText}
-                onChange={(e) => setGoalText(e.target.value)}
-                placeholder="Investigate the auth module..."
-                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {/* Context path field */}
-          <div className="mb-4">
-            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
-              Context Path{' '}
-              <span className="text-muted-foreground/30">(optional)</span>
-            </label>
-            <div
-              data-augmented-ui="tl-clip br-clip border"
-              style={{
-                '--aug-tl': '8px',
-                '--aug-br': '8px',
-                '--aug-border-all': '1px',
-                '--aug-border-bg': 'var(--border)',
-              } as React.CSSProperties}
-            >
-              <input
-                type="text"
-                value={contextPath}
-                onChange={(e) => setContextPath(e.target.value)}
-                placeholder="/workspace/project"
-                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
-              />
-            </div>
-          </div>
-
           {/* Runtime field */}
           <div className="mb-6">
             <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
@@ -198,7 +145,7 @@ export function DeployModal({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={!name.trim() || !goalText.trim()}
+              disabled={!name.trim()}
               data-augmented-ui="tl-clip br-clip border"
               className="px-5 py-2 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
               style={{

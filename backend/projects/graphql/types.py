@@ -8,5 +8,4 @@ from projects import models
 class ProjectType:
     id: auto
     name: auto
-    default_runtime: auto
     created_at: auto

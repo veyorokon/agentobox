@@ -8,8 +8,6 @@ from agents.graphql.types import AgentType
 class CreateAgentInput:
     project_id: ID
     name: str
-    goal_text: str
-    context_path: str
     runtime: str = "modal"
 
 
@@ -28,8 +26,6 @@ class AgentMutation:
         return await create_agent(
             project_id=input.project_id,
             name=input.name,
-            goal_text=input.goal_text,
-            context_path=input.context_path,
             runtime_name=input.runtime,
         )
 

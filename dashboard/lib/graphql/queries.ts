@@ -15,7 +15,6 @@ export const PROJECTS_QUERY = gql`
     projects {
       id
       name
-      defaultRuntime
       createdAt
     }
   }
@@ -30,36 +29,13 @@ export const AGENTS_QUERY = gql`
       sandboxId
       vncUrl
       status
-      confidence
-      sentiment
-      summary
-      reasoning
-      output
+      teamName
+      sessionId
+      model
+      cwd
+      transcriptPath
+      permissionMode
       createdAt
-      completedAt
-      goal {
-        id
-        text
-        contextPath
-        plan
-        status
-        createdAt
-        satisfiedAt
-      }
-    }
-  }
-`;
-
-export const GOALS_QUERY = gql`
-  query Goals($projectId: ID!) {
-    goals(projectId: $projectId) {
-      id
-      text
-      contextPath
-      plan
-      status
-      createdAt
-      satisfiedAt
     }
   }
 `;

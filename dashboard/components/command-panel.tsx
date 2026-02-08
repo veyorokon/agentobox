@@ -1,12 +1,15 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Send, Search, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
 import { useTheme } from '@/lib/theme';
 import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
+import { useProjectsStore } from '@/stores/projects';
+import { useAgentsStore } from '@/stores/agents';
+import { useEventsStore } from '@/stores/events';
 import { RosterBadge } from './roster-badge';
 import { PanelTabs, type PanelTab } from './panel-tabs';
 import { EventFeed } from './event-feed';
@@ -14,19 +17,30 @@ import { ProjectSelector } from './project-selector';
 import { STATUS_COLOR_VAR } from './status-badge';
 import type { Agent, AgentEvent } from '@/types';
 
+const EMPTY_AGENTS: Agent[] = [];
+const EMPTY_EVENTS: AgentEvent[] = [];
+
 export function CommandPanel({
-  agents,
-  events,
   collapsed,
   onToggle,
 }: {
-  agents: Agent[];
-  events: AgentEvent[];
   collapsed: boolean;
   onToggle: () => void;
 }) {
   const { theme, setTheme, themes } = useTheme();
   const nextTheme = themes[(themes.indexOf(theme) + 1) % themes.length];
+
+  const projectId = useProjectsStore((s) => s.currentProjectId);
+  const allAgents = useAgentsStore((s) =>
+    projectId ? (s.agents[projectId] ?? EMPTY_AGENTS) : EMPTY_AGENTS
+  );
+  const agents = useMemo(
+    () => allAgents.filter((a) => a.status !== 'stopped'),
+    [allAgents]
+  );
+  const events = useEventsStore((s) =>
+    projectId ? (s.events[projectId] ?? EMPTY_EVENTS) : EMPTY_EVENTS
+  );
 
   const [activeTab, setActiveTab] = useState<PanelTab>('feed');
   const [input, setInput] = useState('');
@@ -105,7 +119,7 @@ export function CommandPanel({
         <div className="flex-1 flex flex-col items-center gap-2 overflow-y-auto scrollbar-thin">
           {agents.map((agent) => {
             const color = STATUS_COLOR_VAR[agent.status];
-            const isWorking = agent.status === 'working';
+            const isWorking = agent.status === 'running';
             return (
               <button
                 key={agent.name}
@@ -225,7 +239,6 @@ export function CommandPanel({
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {activeTab === 'feed' && (
           <EventFeed
-            events={events}
             filter={feedFilter}
             onSelectAgent={switchTab}
           />

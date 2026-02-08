@@ -20,10 +20,9 @@ import { DeployModal } from '@/components/modals/deploy-modal';
 import { ProjectSelector } from '@/components/project-selector';
 import { CREATE_AGENT_MUTATION, CREATE_PROJECT_MUTATION } from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
-import type { Agent, AgentEvent, Project } from '@/types';
+import type { Agent, Project } from '@/types';
 
 const EMPTY_AGENTS: Agent[] = [];
-const EMPTY_EVENTS: AgentEvent[] = [];
 
 export default function DashboardPage() {
   const projectId = useProjectsStore((s) => s.currentProjectId);
@@ -31,14 +30,11 @@ export default function DashboardPage() {
     projectId ? (s.agents[projectId] ?? EMPTY_AGENTS) : EMPTY_AGENTS
   );
   const agents = useMemo(
-    () => allAgents.filter((a) => a.status !== 'terminated'),
+    () => allAgents.filter((a) => a.status !== 'stopped'),
     [allAgents]
   );
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
-  const events = useEventsStore((s) =>
-    projectId ? (s.events[projectId] ?? EMPTY_EVENTS) : EMPTY_EVENTS
-  );
   const addEvent = useEventsStore((s) => s.addEvent);
 
   const [showDeployModal, setShowDeployModal] = useState(false);
@@ -105,8 +101,6 @@ export default function DashboardPage() {
 
   const handleDeploy = async (
     name: string,
-    goalText: string,
-    contextPath: string,
     runtime: string
   ) => {
     if (!projectId) return;
@@ -120,8 +114,6 @@ export default function DashboardPage() {
           input: {
             projectId,
             name,
-            goalText,
-            contextPath,
             runtime,
           },
         });
@@ -139,8 +131,6 @@ export default function DashboardPage() {
   return (
     <div className="h-screen flex overflow-hidden bg-background">
       <CommandPanel
-        agents={agents}
-        events={events}
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((v) => !v)}
       />
@@ -381,14 +371,9 @@ function LandingPage() {
               <div className="px-4 py-3.5 flex items-center justify-between transition-colors group-hover:bg-accent/5">
                 <div className="flex items-center gap-3">
                   <Folder className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
-                  <div>
-                    <p className="text-foreground text-sm font-medium">
-                      {project.name}
-                    </p>
-                    <p className="text-muted-foreground text-[10px] font-mono">
-                      {project.defaultRuntime}
-                    </p>
-                  </div>
+                  <p className="text-foreground text-sm font-medium">
+                    {project.name}
+                  </p>
                 </div>
                 <ArrowRight className="w-4 h-4 text-muted-foreground/0 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
               </div>

@@ -8,7 +8,6 @@ from projects.graphql.types import ProjectType
 @strawberry.input
 class CreateProjectInput:
     name: str
-    default_runtime: str = "modal"
 
 
 @strawberry.type
@@ -26,7 +25,6 @@ class ProjectMutation:
         project = await Project.objects.acreate(
             name=input.name,
             owner=user,
-            default_runtime=input.default_runtime,
         )
         return project
 

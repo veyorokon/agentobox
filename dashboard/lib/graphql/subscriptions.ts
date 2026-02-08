@@ -9,22 +9,13 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
       sandboxId
       vncUrl
       status
-      confidence
-      sentiment
-      summary
-      reasoning
-      output
+      teamName
+      sessionId
+      model
+      cwd
+      transcriptPath
+      permissionMode
       createdAt
-      completedAt
-      goal {
-        id
-        text
-        contextPath
-        plan
-        status
-        createdAt
-        satisfiedAt
-      }
     }
   }
 `;
@@ -32,14 +23,10 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
 export const NEW_EVENT_SUBSCRIPTION = gql`
   subscription NewEvent($projectId: ID!) {
     newEvent(projectId: $projectId) {
-      id
       eventType
       data
-      timestamp
-      agent {
-        id
-        name
-      }
+      agentId
+      agentName
     }
   }
 `;

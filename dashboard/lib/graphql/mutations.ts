@@ -31,7 +31,6 @@ export const CREATE_PROJECT_MUTATION = gql`
     createProject(input: $input) {
       id
       name
-      defaultRuntime
       createdAt
     }
   }
@@ -46,22 +45,13 @@ export const CREATE_AGENT_MUTATION = gql`
       sandboxId
       vncUrl
       status
-      confidence
-      sentiment
-      summary
-      reasoning
-      output
+      teamName
+      sessionId
+      model
+      cwd
+      transcriptPath
+      permissionMode
       createdAt
-      completedAt
-      goal {
-        id
-        text
-        contextPath
-        plan
-        status
-        createdAt
-        satisfiedAt
-      }
     }
   }
 `;
@@ -77,5 +67,3 @@ export const SEND_MESSAGE_MUTATION = gql`
     sendMessage(input: $input)
   }
 `;
-// SendMessageInput: { agentId: ID!, message: String! }
-

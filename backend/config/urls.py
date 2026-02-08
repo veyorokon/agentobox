@@ -10,5 +10,5 @@ urlpatterns = [
     path("health", health),
     path("admin/", admin.site.urls),
     path("graphql", csrf_exempt(AsyncGraphQLView.as_view(schema=schema))),
-    path("webhook/", include("webhooks.urls")),
+    path("hooks/", include("agents.urls")),
 ]

@@ -16,12 +16,12 @@ export function AgentCard({
 }: {
   agent: Agent;
 }) {
-  const [terminating, setTerminating] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
-  const effectiveStatus = terminating ? 'terminated' as const : agent.status;
+  const effectiveStatus = stopping ? 'stopped' as const : agent.status;
   const isDeploying = effectiveStatus === 'deploying';
-  const isWorking = effectiveStatus === 'working';
-  const isTerminating = terminating && agent.status !== 'terminated';
+  const isRunning = effectiveStatus === 'running';
+  const isStopping = stopping && agent.status !== 'stopped';
   const statusColor = STATUS_COLOR_VAR[effectiveStatus];
   const vncRefreshRef = useRef<(() => void) | null>(null);
   const [showKillConfirm, setShowKillConfirm] = useState(false);
@@ -30,7 +30,7 @@ export function AgentCard({
 
   const handleKill = async () => {
     setShowKillConfirm(false);
-    setTerminating(true);
+    setStopping(true);
     try {
       await logger.withSpan('killAgent', async () => {
         const { error } = await killAgentMut({
@@ -39,23 +39,23 @@ export function AgentCard({
         if (error) throw error;
       });
     } catch {
-      setTerminating(false);
+      setStopping(false);
       toast.error(`Failed to kill ${agent.name}`);
     }
   };
 
-  const borderColor = isTerminating
+  const borderColor = isStopping
     ? 'var(--agent-dead)'
     : isDeploying
       ? 'var(--agent-deploying)'
-      : isWorking
+      : isRunning
         ? 'var(--agent-border-active)'
         : 'var(--agent-border)';
 
   return (
     <div
       data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}${isTerminating ? ' opacity-60' : ''}`}
+      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}${isStopping ? ' opacity-60' : ''}`}
       style={{
         '--aug-tl': '20px',
         '--aug-tr': '20px',
@@ -67,7 +67,7 @@ export function AgentCard({
       } as React.CSSProperties}
     >
       <div className="p-5">
-        {/* Header: avatar + name/status + goal + controls */}
+        {/* Header: avatar + name/status + controls */}
         <div className="flex items-center gap-3 mb-3">
           <div
             data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
@@ -79,7 +79,7 @@ export function AgentCard({
               '--aug-bl': '7px',
               '--aug-border-all': '2px',
               '--aug-border-bg': statusColor,
-              background: isWorking ? 'var(--agent-glow)' : 'transparent',
+              background: isRunning ? 'var(--agent-glow)' : 'transparent',
             } as React.CSSProperties}
           >
             <span
@@ -89,45 +89,34 @@ export function AgentCard({
               {agent.name.slice(0, 2)}
             </span>
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="font-bold text-card-foreground text-sm capitalize leading-tight">
               {agent.name}
             </h3>
-            {isTerminating ? (
+            {isStopping ? (
               <span
                 className="text-xs font-semibold uppercase tracking-wide"
                 style={{ color: 'var(--agent-dead)' }}
               >
-                Terminating...
+                Stopping...
               </span>
             ) : (
               <StatusBadge status={effectiveStatus} />
             )}
-          </div>
-          <div className="flex-1 min-w-0 text-center">
-            {agent.goal?.text && (
-              <p className="text-card-foreground text-xs truncate">
-                {agent.goal.text}
-              </p>
-            )}
-            <p className="text-muted-foreground text-[10px] truncate">
-              {agent.summary ||
-                (agent.goal?.text ? '' : 'Waiting for instructions...')}
-            </p>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               onClick={() => vncRefreshRef.current?.()}
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               title="Refresh VNC"
-              disabled={isTerminating}
+              disabled={isStopping}
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
             <button
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               title="Pause"
-              disabled={isTerminating}
+              disabled={isStopping}
             >
               <Pause className="w-3.5 h-3.5" />
             </button>
@@ -135,9 +124,9 @@ export function AgentCard({
               onClick={() => setShowKillConfirm(true)}
               className="w-7 h-7 flex items-center justify-center text-destructive/60 hover:text-destructive transition-colors"
               title="Kill agent"
-              disabled={isTerminating}
+              disabled={isStopping}
             >
-              {isTerminating ? (
+              {isStopping ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
               ) : (
                 <Square className="w-3 h-3" />
@@ -163,7 +152,7 @@ export function AgentCard({
                 </span>
               </div>
             </div>
-          ) : agent.vncUrl && agent.status !== 'dead' && agent.status !== 'terminated' && !isTerminating ? (
+          ) : agent.vncUrl && agent.status !== 'stopped' && agent.status !== 'error' && !isStopping ? (
             <VncFrame
               url={agent.vncUrl}
               onRefresh={(fn) => {

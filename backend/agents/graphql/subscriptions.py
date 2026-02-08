@@ -27,9 +27,7 @@ class AgentSubscription:
 
         async with ws.listen_to_channel("agent.update", groups=[group]) as cm:
             async for message in cm:
-                agent = await Agent.objects.select_related("goal").aget(
-                    id=message["agent_id"]
-                )
+                agent = await Agent.objects.aget(id=message["agent_id"])
                 log.debug(
                     "subscription_message",
                     type="agent_updated",
@@ -42,8 +40,6 @@ class AgentSubscription:
         self, info: strawberry.Info, project_id: ID
     ) -> AsyncGenerator[AgentEventType, None]:
         """Subscribe to new agent events for a project."""
-        from agents.models import AgentEvent
-
         ws = info.context["ws"]
         channel_layer = ws.channel_layer
         group = f"project_{project_id}_events"
@@ -53,10 +49,15 @@ class AgentSubscription:
 
         async with ws.listen_to_channel("agent.event", groups=[group]) as cm:
             async for message in cm:
-                event = await AgentEvent.objects.aget(id=message["event_id"])
                 log.debug(
                     "subscription_message",
                     type="new_event",
-                    event_id=message["event_id"],
+                    event_type=message["event_type"],
+                    agent_id=message["agent_id"],
                 )
-                yield event  # type: ignore[misc]
+                yield AgentEventType(
+                    event_type=message["event_type"],
+                    data=message["data"],
+                    agent_id=message["agent_id"],
+                    agent_name=message["agent_name"],
+                )

@@ -8,8 +8,6 @@ env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     REDIS_URL=(str, "redis://localhost:6379/0"),
-    OTEL_ENABLED=(bool, False),
-    WEBHOOK_SECRET=(str, "dev-secret"),
     AGENT_IMAGE=(str, "agentobox-agent:latest"),
     ABOX_CALLBACK_URL=(str, "http://backend:8000"),
     ANTHROPIC_API_KEY=(str, ""),
@@ -41,7 +39,6 @@ INSTALLED_APPS = [
     "accounts",
     "projects",
     "agents",
-    "webhooks",
 ]
 
 # --- Middleware ---
@@ -118,10 +115,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
-# --- Webhook ---
-
-WEBHOOK_SECRET = env("WEBHOOK_SECRET")
-
 # --- Agent Runtime ---
 
 AGENT_IMAGE = env("AGENT_IMAGE")
@@ -168,7 +161,6 @@ CORS_ALLOW_HEADERS = [
     "content-type",
     "origin",
     "traceparent",
-    "tracestate",
     "x-csrftoken",
     "x-requested-with",
 ]
@@ -177,4 +169,4 @@ CORS_ALLOW_HEADERS = [
 
 from config.telemetry import setup as setup_telemetry  # noqa: E402
 
-setup_telemetry(otel_enabled=env("OTEL_ENABLED"))
+setup_telemetry()

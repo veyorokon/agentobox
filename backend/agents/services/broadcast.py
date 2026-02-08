@@ -3,7 +3,7 @@
 import structlog
 from channels.layers import get_channel_layer
 
-from agents.models import Agent, AgentEvent
+from agents.models import Agent
 
 log = structlog.get_logger("agents.broadcast")
 
@@ -31,22 +31,25 @@ async def broadcast_agent_update(agent: Agent) -> None:
     )
 
 
-async def broadcast_agent_event(event: AgentEvent, agent: Agent | None = None) -> None:
-    """Push new event to the project's new_event subscription."""
+async def broadcast_agent_event(
+    agent: Agent, event_type: str, data: dict
+) -> None:
+    """Push event payload to the project's new_event subscription."""
     channel_layer = get_channel_layer()
-    if agent is None:
-        agent = await Agent.objects.aget(id=event.agent_id)
     group = _group_name(str(agent.project_id), "events")
     await channel_layer.group_send(
         group,
         {
             "type": "agent.event",
-            "event_id": str(event.id),
+            "event_type": event_type,
+            "data": data,
+            "agent_id": str(agent.id),
+            "agent_name": agent.name,
         },
     )
     log.info(
         "broadcast_agent_event",
         group=group,
-        event_id=str(event.id),
-        event_type=event.event_type,
+        event_type=event_type,
+        agent_id=str(agent.id),
     )
