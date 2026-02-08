@@ -15,6 +15,10 @@ export const useEventsStore = create<EventsState>((set) => ({
   addEvent: (projectId, event) =>
     set((state) => {
       const current = state.events[projectId] ?? [];
+      // Dedupe by id — subscription may arrive after initial query
+      if (event.id && current.some((e) => e.id === event.id)) {
+        return state;
+      }
       const updated = [...current, event].slice(-MAX_EVENTS);
       return { events: { ...state.events, [projectId]: updated } };
     }),

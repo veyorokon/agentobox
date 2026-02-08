@@ -33,6 +33,14 @@ class DockerRuntime:
         t0 = time.monotonic()
 
         def _create():
+            # Remove stale container with the same name (e.g. from a previous failed deploy)
+            try:
+                stale = self._client.containers.get(container_name)
+                stale.remove(force=True)
+                op.info("removed_stale_container", container_name=container_name)
+            except docker.errors.NotFound:
+                pass
+
             container = self._client.containers.run(
                 image,
                 detach=True,

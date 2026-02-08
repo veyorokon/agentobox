@@ -15,15 +15,17 @@ async def provision_workspace(
     project: Project,
     api_key: str = "",
     agent_env: dict[str, str] | None = None,
+    mcp_servers: dict | None = None,
+    variant: str = "debian",
 ) -> None:
     """Write CLAUDE.md and .claude/settings.json into the agent container."""
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/computeruse"
-    op_log.info("provisioning_workspace", context_path=workspace)
+    op_log.info("provisioning_workspace", context_path=workspace, variant=variant)
 
     await runtime.exec(sandbox_id, ["mkdir", "-p", workspace])
 
-    claude_md = _build_claude_md(project)
+    claude_md = _build_claude_md(project, mcp_servers=mcp_servers, variant=variant)
     await runtime.write_file(
         sandbox_id,
         claude_md.encode("utf-8"),
@@ -39,6 +41,15 @@ async def provision_workspace(
         settings_json.encode("utf-8"),
         f"{claude_dir}/settings.json",
     )
+
+    # MCP servers go in .mcp.json (not settings.json)
+    if mcp_servers:
+        mcp_json = json.dumps({"mcpServers": mcp_servers}, indent=2)
+        await runtime.write_file(
+            sandbox_id,
+            mcp_json.encode("utf-8"),
+            f"{workspace}/.mcp.json",
+        )
 
     # Mark onboarding complete and pre-approve the API key so Claude Code
     # starts without interactive prompts
@@ -75,8 +86,13 @@ async def provision_workspace(
     op_log.info("workspace_provisioned")
 
 
-def _build_claude_md(project: Project) -> str:
-    return textwrap.dedent(f"""\
+def _build_claude_md(
+    project: Project,
+    mcp_servers: dict | None = None,
+    variant: str = "debian",
+) -> str:
+    os_desc = IMAGE_VARIANTS.get(variant, IMAGE_VARIANTS["debian"])
+    base = textwrap.dedent(f"""\
         # {project.name}
 
         You are an agentobox agent working on the {project.name} project.
@@ -84,7 +100,23 @@ def _build_claude_md(project: Project) -> str:
         ## Workspace
 
         You are working in `/home/computeruse`. Stay within this directory.
+
+        ## Environment
+
+        - OS: {os_desc}
+        - Display: X11 on `:1` (AwesomeWM window manager)
+        - Browser: Firefox ESR (pre-installed)
     """)
+
+    # Append instructions from attached MCP servers
+    if mcp_servers:
+        for name in mcp_servers:
+            entry = MCP_REGISTRY.get(name, {})
+            instructions = entry.get("instructions")
+            if instructions:
+                base += "\n" + textwrap.dedent(instructions).strip() + "\n"
+
+    return base
 
 
 _HOOK_EVENT_SH = r"""#!/bin/bash
@@ -121,12 +153,104 @@ _HOOK_EVENTS = [
 ]
 _HOOK_CMD = "bash /home/computeruse/hooks/hook-event.sh"
 
+# Image variants and their OS descriptions for CLAUDE.md
+IMAGE_VARIANTS = {
+    "alpine": "Alpine Linux (use `apk` not `apt`)",
+    "debian": "Debian Linux (use `apt` not `apk`)",
+}
+
+# Known MCP servers bundled into the agent image.
+# Keys match checkbox values in the deploy modal.
+# Each entry has:
+#   command/args: how to start the server
+#   compat: list of image variants where this server works
+#   instructions: behavioral guidance injected into CLAUDE.md when attached
+MCP_REGISTRY = {
+    "computer-use": {
+        "command": "node",
+        "args": ["/opt/mcp-servers/computer-use/dist/main.js"],
+        "compat": ["debian"],
+        "instructions": """
+            ## Computer Use
+
+            You have a desktop environment with a display, mouse, and keyboard
+            accessible through the `computer` MCP tool. **Use the computer
+            tool for GUI interactions** — clicking, typing, scrolling, and
+            taking screenshots.
+
+            ### Desktop
+
+            There is a dock bar at the bottom of the screen with app launchers
+            (Firefox, Terminal). To open an app, click its icon in the dock.
+            If the app you need is not in the dock, you may launch it from
+            bash — this is the only acceptable reason to use bash for GUI apps.
+
+            ### How to interact
+
+            1. **Screenshot first** — before every action, take a screenshot
+               to see the current screen state.
+            2. **Click, type, scroll** — interact with what you see, like a
+               human sitting at the computer. Click buttons, type into fields,
+               scroll to find content.
+            3. **Screenshot after** — verify your action had the expected
+               effect before proceeding.
+
+            ### Browser
+
+            - Firefox is in the dock. Click its icon to open it.
+            - To navigate: click the address bar, type the URL, press Enter.
+            - To follow a link: click it. To go back: click the back button.
+            - To search: click the search/address bar, type your query, press
+              Enter.
+
+            ### Rules
+
+            - **Use the dock to launch apps.** Click the app icon in the
+              bottom dock bar. Only use bash to launch apps not in the dock.
+            - **Never use bash to type into GUI apps.** Use the computer tool's
+              `type` and `key` actions instead.
+            - **Always verify with screenshots.** After clicking or typing,
+              take a screenshot to confirm the result before your next action.
+            - **Be patient.** Pages and apps take time to load. If a click
+              doesn't seem to work, take another screenshot after a moment —
+              don't immediately retry.
+        """,
+    },
+}
+
+
+def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
+    """Resolve a list of MCP names to their full config from the registry.
+
+    Skips servers incompatible with the given image variant.
+    """
+    resolved = {}
+    for name in names:
+        entry = MCP_REGISTRY.get(name)
+        if not entry:
+            continue
+        compat = entry.get("compat")
+        if compat and variant not in compat:
+            log.warning(
+                "mcp_server_incompatible",
+                server=name,
+                variant=variant,
+                compat=compat,
+            )
+            continue
+        resolved[name] = {
+            "command": entry["command"],
+            "args": entry["args"],
+        }
+    return resolved
+
 
 def _build_settings_json() -> str:
     hook_entry = [{"matcher": "*", "hooks": [{"type": "command", "command": _HOOK_CMD}]}]
     settings = {
         "theme": "dark",
         "defaultMode": "bypassPermissions",
+        "enableAllProjectMcpServers": True,
         "hooks": {e: hook_entry for e in _HOOK_EVENTS},
     }
     return json.dumps(settings, indent=2)

@@ -3,6 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
+const AVAILABLE_MCPS = [
+  { id: 'computer-use', label: 'Computer Use', description: 'Mouse, keyboard, and screenshot control' },
+] as const;
+
 export function DeployModal({
   open,
   onClose,
@@ -10,24 +14,32 @@ export function DeployModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onDeploy: (name: string, runtime: string) => void;
+  onDeploy: (name: string, runtime: string, mcpServers: string[]) => void;
 }) {
   const [name, setName] = useState('');
   const [runtime, setRuntime] = useState('modal');
+  const [selectedMcps, setSelectedMcps] = useState<string[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
       setName('');
       setRuntime('modal');
+      setSelectedMcps([]);
       setTimeout(() => nameRef.current?.focus(), 50);
     }
   }, [open]);
 
+  const toggleMcp = (id: string) => {
+    setSelectedMcps((prev) =>
+      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
+    );
+  };
+
   const handleSubmit = () => {
     const trimmed = name.trim().toLowerCase().replace(/\s+/g, '-');
     if (!trimmed) return;
-    onDeploy(trimmed, runtime);
+    onDeploy(trimmed, runtime, selectedMcps);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -104,7 +116,7 @@ export function DeployModal({
           </div>
 
           {/* Runtime field */}
-          <div className="mb-6">
+          <div className="mb-4">
             <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
               Runtime
             </label>
@@ -125,6 +137,52 @@ export function DeployModal({
                 <option value="modal">Modal</option>
                 <option value="docker">Docker</option>
               </select>
+            </div>
+          </div>
+
+          {/* MCP Servers */}
+          <div className="mb-6">
+            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
+              MCP Servers
+            </label>
+            <div className="space-y-2">
+              {AVAILABLE_MCPS.map((mcp) => (
+                <label
+                  key={mcp.id}
+                  className="flex items-start gap-3 cursor-pointer group"
+                >
+                  <div
+                    data-augmented-ui="tl-clip br-clip border"
+                    className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"
+                    style={{
+                      '--aug-tl': '4px',
+                      '--aug-br': '4px',
+                      '--aug-border-all': '1px',
+                      '--aug-border-bg': selectedMcps.includes(mcp.id)
+                        ? 'var(--accent)'
+                        : 'var(--border)',
+                      background: selectedMcps.includes(mcp.id)
+                        ? 'var(--accent)'
+                        : 'transparent',
+                    } as React.CSSProperties}
+                    onClick={() => toggleMcp(mcp.id)}
+                  >
+                    {selectedMcps.includes(mcp.id) && (
+                      <span className="text-accent-foreground text-[10px] font-bold">
+                        &#10003;
+                      </span>
+                    )}
+                  </div>
+                  <div onClick={() => toggleMcp(mcp.id)}>
+                    <span className="text-foreground font-mono text-sm block">
+                      {mcp.label}
+                    </span>
+                    <span className="text-muted-foreground text-[10px]">
+                      {mcp.description}
+                    </span>
+                  </div>
+                </label>
+              ))}
             </div>
           </div>
 

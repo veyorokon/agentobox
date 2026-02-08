@@ -51,6 +51,7 @@ export const CREATE_AGENT_MUTATION = gql`
       cwd
       transcriptPath
       permissionMode
+      mcpServers
       createdAt
     }
   }
@@ -65,5 +66,11 @@ export const KILL_AGENT_MUTATION = gql`
 export const SEND_MESSAGE_MUTATION = gql`
   mutation SendMessage($input: SendMessageInput!) {
     sendMessage(input: $input)
+  }
+`;
+
+export const ATTACH_MCP_MUTATION = gql`
+  mutation AttachMcp($input: AttachMcpInput!) {
+    attachMcp(input: $input)
   }
 `;

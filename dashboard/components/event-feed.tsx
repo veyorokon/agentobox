@@ -3,10 +3,29 @@
 import { useRef, useState, useEffect } from 'react';
 import { useProjectsStore } from '@/stores/projects';
 import { useEventsStore } from '@/stores/events';
-import { STATUS_COLOR_VAR } from './status-badge';
-import type { AgentEvent, AgentStatus } from '@/types';
+import type { AgentEvent } from '@/types';
 
 const EMPTY_EVENTS: AgentEvent[] = [];
+
+/** Stable hue derived from agent name so each agent gets a consistent color. */
+const AGENT_COLORS = [
+  'hsl(190, 80%, 65%)',  // cyan
+  'hsl(280, 70%, 70%)',  // purple
+  'hsl(45, 90%, 65%)',   // gold
+  'hsl(140, 60%, 60%)',  // green
+  'hsl(350, 70%, 65%)',  // rose
+  'hsl(220, 70%, 70%)',  // blue
+  'hsl(25, 80%, 65%)',   // orange
+  'hsl(170, 60%, 55%)',  // teal
+];
+
+function agentColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
+}
 
 export function EventFeed({
   filter,
@@ -62,18 +81,27 @@ export function EventFeed({
       className="h-full overflow-y-auto scrollbar-thin"
     >
       {filtered.map((event, i) => {
-        const eventStatus = (event.data?.status as AgentStatus) ?? 'running';
-        const color = STATUS_COLOR_VAR[eventStatus] ?? 'var(--muted-foreground)';
+        const color = agentColor(event.agentName);
         const message =
           typeof event.data?.message === 'string'
             ? event.data.message
             : event.eventType;
+        const time = event.createdAt
+          ? new Date(event.createdAt).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })
+          : '';
 
         return (
           <div
-            key={i}
+            key={event.id}
             className="flex items-start gap-2 px-5 py-1.5 hover:bg-surface-inset/50 transition-colors group"
           >
+            <span className="text-muted-foreground/50 text-[10px] font-mono w-[62px] flex-shrink-0 pt-px">
+              {time}
+            </span>
             <button
               onClick={() => onSelectAgent(event.agentName)}
               className="text-[11px] font-mono font-bold w-16 flex-shrink-0 truncate text-left hover:underline pt-px"

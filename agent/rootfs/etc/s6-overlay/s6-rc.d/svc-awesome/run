@@ -1,3 +1,6 @@
 #!/command/with-contenv bash
+exec 2>&1
 export HOME=/home/computeruse
+[ -f /run/dbus-session ] && . /run/dbus-session && export DBUS_SESSION_BUS_ADDRESS
+xsetroot -cursor_name left_ptr
 exec s6-setuidgid computeruse awesome

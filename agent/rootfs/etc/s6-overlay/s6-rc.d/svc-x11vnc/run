@@ -1,2 +1,4 @@
 #!/command/with-contenv bash
-exec x11vnc -display :1 -nopw -listen localhost -forever -shared -rfbport 5900
+exec 2>&1
+exec x11vnc -display :1 -nopw -listen localhost -forever -shared -rfbport 5900 \
+    -noxdamage -xfixes

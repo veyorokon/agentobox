@@ -34,17 +34,25 @@ async def broadcast_agent_update(agent: Agent) -> None:
 async def broadcast_agent_event(
     agent: Agent, event_type: str, data: dict
 ) -> None:
-    """Push event payload to the project's new_event subscription."""
+    """Persist event to DB, then push to the project's new_event subscription."""
+    from agents.models import AgentEvent
+
+    event = await AgentEvent.objects.acreate(
+        agent=agent, event_type=event_type, data=data
+    )
+
     channel_layer = get_channel_layer()
     group = _group_name(str(agent.project_id), "events")
     await channel_layer.group_send(
         group,
         {
             "type": "agent.event",
+            "event_id": event.id,
             "event_type": event_type,
             "data": data,
             "agent_id": str(agent.id),
             "agent_name": agent.name,
+            "created_at": event.created_at.isoformat(),
         },
     )
     log.info(

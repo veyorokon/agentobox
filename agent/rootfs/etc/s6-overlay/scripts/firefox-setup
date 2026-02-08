@@ -2,12 +2,13 @@
 # Firefox profile setup — create default profile, inject textfox + Rose Pine Moon
 UHOME=/home/computeruse
 export HOME="$UHOME"
+[ -f /run/dbus-session ] && . /run/dbus-session && export DBUS_SESSION_BUS_ADDRESS
 
 # Firefox-ESR uses ~/.mozilla/firefox/ (not XDG ~/.config/mozilla/firefox/)
 FF_DIR="$UHOME/.mozilla/firefox"
 
 # Brief headless launch as computeruse to create default profile
-s6-setuidgid computeruse firefox-esr --headless &
+s6-setuidgid computeruse /usr/bin/firefox-esr --headless &
 FF_PID=$!
 for i in $(seq 1 30); do
     FF_ACTIVE=$(find "$FF_DIR" -maxdepth 2 -name 'prefs.js' 2>/dev/null | head -1)

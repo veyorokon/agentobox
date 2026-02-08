@@ -3,6 +3,7 @@
 export type AgentStatus =
   | 'deploying'
   | 'running'
+  | 'idle'
   | 'stopped'
   | 'error';
 
@@ -20,6 +21,14 @@ export interface Agent {
   cwd: string;
   transcriptPath: string;
   permissionMode: string;
+  mcpServers: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AgentMessage {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  content: string;
   createdAt: string;
 }
 
@@ -30,10 +39,12 @@ export interface Project {
 }
 
 export interface AgentEvent {
+  id: number;
   eventType: string;
   data: Record<string, unknown>;
   agentId: string;
   agentName: string;
+  createdAt: string;
 }
 
 export interface User {

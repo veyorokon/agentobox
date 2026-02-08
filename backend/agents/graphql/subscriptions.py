@@ -4,7 +4,7 @@ import strawberry
 import structlog
 from strawberry import ID
 
-from agents.graphql.types import AgentEventType, AgentType
+from agents.graphql.types import AgentEventSubType, AgentType
 
 log = structlog.get_logger("agents.subscriptions")
 
@@ -38,7 +38,7 @@ class AgentSubscription:
     @strawberry.subscription
     async def new_event(
         self, info: strawberry.Info, project_id: ID
-    ) -> AsyncGenerator[AgentEventType, None]:
+    ) -> AsyncGenerator[AgentEventSubType, None]:
         """Subscribe to new agent events for a project."""
         ws = info.context["ws"]
         channel_layer = ws.channel_layer
@@ -55,9 +55,11 @@ class AgentSubscription:
                     event_type=message["event_type"],
                     agent_id=message["agent_id"],
                 )
-                yield AgentEventType(
+                yield AgentEventSubType(
+                    id=message["event_id"],
                     event_type=message["event_type"],
                     data=message["data"],
                     agent_id=message["agent_id"],
                     agent_name=message["agent_name"],
+                    created_at=message["created_at"],
                 )

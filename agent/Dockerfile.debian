@@ -1,0 +1,96 @@
+FROM debian:bookworm-slim
+
+ARG S6_OVERLAY_VERSION=3.2.2.0
+ARG TARGETARCH
+
+# --- s6-overlay ---
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
+RUN apt-get update && apt-get install -y --no-install-recommends wget xz-utils ca-certificates \
+    && tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && rm /tmp/s6-overlay-noarch.tar.xz \
+    && S6_ARCH=$(case "$TARGETARCH" in arm64) echo aarch64;; *) echo x86_64;; esac) \
+    && wget -qO /tmp/s6-overlay-arch.tar.xz \
+       "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
+    && tar -C / -Jxpf /tmp/s6-overlay-arch.tar.xz && rm /tmp/s6-overlay-arch.tar.xz \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- System packages ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash curl jq git sudo openssl fontconfig unzip tmux procps \
+    xvfb x11vnc xterm xdotool \
+    awesome dbus dbus-x11 \
+    python3-websockify \
+    dmz-cursor-theme \
+    && dbus-uuidgen > /etc/machine-id \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Node.js ---
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- GitHub CLI ---
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Firefox ESR ---
+RUN apt-get update && apt-get install -y --no-install-recommends firefox-esr \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- JetBrains Mono (not in bookworm repos) ---
+RUN mkdir -p /usr/share/fonts/truetype/jetbrains-mono \
+    && curl -fsSL https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip \
+       -o /tmp/jbmono.zip \
+    && unzip -q /tmp/jbmono.zip -d /tmp/jbmono \
+    && cp /tmp/jbmono/fonts/ttf/*.ttf /usr/share/fonts/truetype/jetbrains-mono/ \
+    && fc-cache -f \
+    && rm -rf /tmp/jbmono /tmp/jbmono.zip
+
+# --- noVNC (web client only, websockify via apt) ---
+RUN git clone --depth 1 https://github.com/novnc/noVNC.git /opt/noVNC \
+    && ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html \
+    && rm -rf /opt/noVNC/.git
+
+# --- textfox ---
+RUN git clone --depth 1 https://github.com/adriankarlen/textfox.git /opt/textfox \
+    && rm -rf /opt/textfox/.git
+
+# --- Claude Code CLI ---
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+
+# --- Computer Use MCP server ---
+COPY mcp-servers/computer-use/package.json mcp-servers/computer-use/package-lock.json /opt/mcp-servers/computer-use/
+COPY mcp-servers/computer-use/dist/ /opt/mcp-servers/computer-use/dist/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 make g++ libx11-dev libxtst-dev libxinerama-dev libpng-dev libvips-dev \
+    && cd /opt/mcp-servers/computer-use \
+    && (npm ci --omit=dev 2>/dev/null || npm install --omit=dev) \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- User ---
+RUN useradd -m -s /bin/bash computeruse \
+    && echo "computeruse ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# --- Filesystem overlay (configs + s6 services) ---
+COPY rootfs/ /
+RUN chmod +x /etc/s6-overlay/scripts/* \
+    && chmod +x /etc/s6-overlay/s6-rc.d/*/run 2>/dev/null || true \
+    && chmod +x /home/computeruse/hooks/*.sh \
+    && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
+    && chown -R computeruse:computeruse /home/computeruse
+
+# --- Environment ---
+ENV DISPLAY=:1
+ENV RESOLUTION=1920x1080
+ENV S6_KEEP_ENV=1
+ENV S6_LOGGING=1
+ENV XCURSOR_THEME=DMZ-White
+ENV XCURSOR_SIZE=24
+
+EXPOSE 6080
+
+ENTRYPOINT ["/init"]

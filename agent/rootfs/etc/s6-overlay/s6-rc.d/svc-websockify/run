@@ -1,2 +1,3 @@
 #!/command/with-contenv bash
+exec 2>&1
 exec websockify --web /opt/noVNC 6080 localhost:5900

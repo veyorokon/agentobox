@@ -15,7 +15,7 @@ RUN S6_ARCH=$(case "$TARGETARCH" in arm64) echo aarch64;; *) echo x86_64;; esac)
 # --- System packages ---
 RUN apk add --no-cache \
     bash curl jq git sudo openssl ca-certificates fontconfig unzip tmux \
-    xvfb-run xorg-server x11vnc xterm \
+    xvfb-run xorg-server x11vnc xterm xdotool \
     awesome dbus \
     py3-pip websockify \
     nodejs npm \
@@ -38,6 +38,16 @@ RUN git clone --depth 1 https://github.com/adriankarlen/textfox.git /opt/textfox
 # --- Claude Code CLI ---
 RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
+# --- Computer Use MCP server ---
+COPY mcp-servers/computer-use/package.json mcp-servers/computer-use/package-lock.json /opt/mcp-servers/computer-use/
+COPY mcp-servers/computer-use/dist/ /opt/mcp-servers/computer-use/dist/
+RUN apk add --no-cache --virtual .build-deps python3 make g++ libx11-dev libxtst-dev libxinerama-dev libpng-dev \
+    && apk add --no-cache vips-dev icu-data-full \
+    && cd /opt/mcp-servers/computer-use \
+    && npm ci --omit=dev 2>/dev/null || npm install --omit=dev \
+    && apk del .build-deps \
+    && npm cache clean --force
+
 # --- User ---
 RUN adduser -D -s /bin/bash computeruse \
     && echo "computeruse ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
@@ -47,6 +57,7 @@ COPY rootfs/ /
 RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run 2>/dev/null || true \
     && chmod +x /home/computeruse/hooks/*.sh \
+    && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
     && chown -R computeruse:computeruse /home/computeruse
 
 # --- Environment ---

@@ -3,6 +3,7 @@ import type { AgentStatus } from '@/types';
 const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
   deploying: 'var(--agent-deploying)',
   running: 'var(--agent-active)',
+  idle: 'var(--agent-active)',
   stopped: 'var(--agent-dead)',
   error: 'var(--agent-blocked)',
 };
@@ -10,6 +11,7 @@ const STATUS_COLOR_VAR: Record<AgentStatus, string> = {
 const STATUS_LABELS: Record<AgentStatus, string> = {
   deploying: 'Deploying',
   running: 'Running',
+  idle: 'Idle',
   stopped: 'Stopped',
   error: 'Error',
 };

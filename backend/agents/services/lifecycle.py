@@ -4,10 +4,10 @@ import structlog
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentMessage, AgentStatus
 from agents.runtimes import get_runtime
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
-from agents.services.provision import provision_workspace
+from agents.services.provision import provision_workspace, resolve_mcp_servers
 
 log = structlog.get_logger("agents.lifecycle")
 
@@ -16,6 +16,7 @@ async def create_agent(
     project_id: str,
     name: str,
     runtime_name: str = "modal",
+    mcp_servers: dict | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from projects.models import Project
@@ -25,6 +26,9 @@ async def create_agent(
 
     project = await Project.objects.aget(id=project_id)
 
+    # Resolve MCP names to full config
+    resolved_mcps = mcp_servers or {}
+
     agent = await Agent.objects.acreate(
         name=name,
         project=project,
@@ -32,6 +36,7 @@ async def create_agent(
         sandbox_id="",
         vnc_url="",
         status=AgentStatus.DEPLOYING,
+        mcp_servers=resolved_mcps,
     )
 
     await broadcast_agent_update(agent)
@@ -88,7 +93,11 @@ async def _provision_agent(agent, project, runtime_name, op_log):
             "AGENT_ID": str(agent.id),
             "ABOX_CALLBACK_URL": env.get("ABOX_CALLBACK_URL", ""),
         }
-        await provision_workspace(runtime, sandbox.id, project, api_key=api_key, agent_env=hook_env)
+        await provision_workspace(
+            runtime, sandbox.id, project,
+            api_key=api_key, agent_env=hook_env,
+            mcp_servers=agent.mcp_servers or None,
+        )
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
@@ -224,12 +233,25 @@ async def process_hook_event(payload: dict) -> None:
             agent.model = model
             update_fields.append("model")
 
-    # Status transitions — ProcessExit means claude process died (may never
-    # have started a session), so treat as STOPPED.
+    # Capture agent response on Stop (turn finished)
+    if event_type == "Stop":
+        # Claude Code Stop hook payload includes stop_hook_active_response_text
+        response_text = payload.get("stop_hook_active_response_text", "")
+        if response_text:
+            await AgentMessage.objects.acreate(
+                agent=agent, direction="outbound", content=response_text
+            )
+            await broadcast_agent_event(
+                agent, "outbound_message", {"message": response_text}
+            )
+
+    # Status transitions:
+    #   Stop = turn finished, agent is idle and waiting for input
+    #   SessionEnd / ProcessExit = agent process exited
     _STATUS_MAP = {
         "SessionStart": AgentStatus.RUNNING,
+        "Stop": AgentStatus.IDLE,
         "SessionEnd": AgentStatus.STOPPED,
-        "Stop": AgentStatus.STOPPED,
         "ProcessExit": AgentStatus.STOPPED,
     }
 

@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Send, Search, ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { useMutation } from 'urql';
+import { useMutation, useQuery } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
 import { useTheme } from '@/lib/theme';
 import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
+import { AGENT_MESSAGES_QUERY } from '@/lib/graphql/queries';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useEventsStore } from '@/stores/events';
@@ -15,7 +16,7 @@ import { PanelTabs, type PanelTab } from './panel-tabs';
 import { EventFeed } from './event-feed';
 import { ProjectSelector } from './project-selector';
 import { STATUS_COLOR_VAR } from './status-badge';
-import type { Agent, AgentEvent } from '@/types';
+import type { Agent, AgentEvent, AgentMessage } from '@/types';
 
 const EMPTY_AGENTS: Agent[] = [];
 const EMPTY_EVENTS: AgentEvent[] = [];
@@ -59,21 +60,49 @@ export function CommandPanel({
     : null;
 
   const handleSend = async () => {
-    const text = input.trim();
+    // Use the correct input source based on active tab
+    const text = (activeTab === 'feed' ? feedFilter : input).trim();
     if (!text) return;
+
+    // Check for @agent routing from any tab
+    const atMatch = text.match(/^@(\S+)\s+([\s\S]+)/);
+    if (atMatch) {
+      const targetAgent = agents.find((a) => a.name === atMatch[1]);
+      if (targetAgent) {
+        setFeedFilter('');
+        setInput('');
+        try {
+          await logger.withSpan('sendMessage', () =>
+            sendMessageMut({
+              input: { agentId: targetAgent.id, message: atMatch[2] },
+            }).then(({ error }) => {
+              if (error) throw error;
+            })
+          );
+          // Switch to that agent's tab
+          switchTab(targetAgent.name);
+        } catch {
+          toast.error('Failed to send message');
+        }
+        return;
+      }
+    }
+
+    // Normal send to current agent tab
+    if (!selectedAgent) return;
     setInput('');
     try {
       await logger.withSpan('sendMessage', () =>
         sendMessageMut({
           input: {
-            agentId: selectedAgent?.id ?? '',
+            agentId: selectedAgent.id,
             message: text,
           },
         }).then(({ error }) => {
           if (error) throw error;
         })
       );
-    } catch (err) {
+    } catch {
       toast.error('Failed to send message');
     }
   };
@@ -81,7 +110,7 @@ export function CommandPanel({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (activeTab === 'feed') return;
+      if (activeTab === 'feed' && !feedFilter.trim().startsWith('@')) return;
       handleSend();
     }
   };
@@ -89,7 +118,7 @@ export function CommandPanel({
   const inputPrefix = activeTab === 'feed' ? '/' : '>';
   const inputPlaceholder =
     activeTab === 'feed'
-      ? 'Filter events...'
+      ? 'Filter or @agent message...'
       : `Message ${activeTab}...`;
 
   if (collapsed) {
@@ -243,16 +272,8 @@ export function CommandPanel({
             onSelectAgent={switchTab}
           />
         )}
-        {isAgentTab && (
-          <div className="px-5 py-4">
-            <div className="flex-1 flex items-center justify-center h-32">
-              <p className="text-muted-foreground text-xs text-center leading-relaxed">
-                Direct messaging coming soon.
-                <br />
-                <span className="text-[10px]">Agent: {activeTab}</span>
-              </p>
-            </div>
-          </div>
+        {isAgentTab && selectedAgent && (
+          <ChatView agent={selectedAgent} events={events} />
         )}
       </div>
 
@@ -287,7 +308,7 @@ export function CommandPanel({
               />
             </div>
           </div>
-          {activeTab !== 'feed' ? (
+          {activeTab !== 'feed' || feedFilter.trim().startsWith('@') ? (
             <button
               onClick={handleSend}
               data-augmented-ui="tl-clip br-clip border"
@@ -319,5 +340,114 @@ export function CommandPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+
+function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
+
+  // Fetch initial messages
+  const [{ data }] = useQuery({
+    query: AGENT_MESSAGES_QUERY,
+    variables: { agentId: agent.id },
+  });
+
+  // Sync fetched messages
+  useEffect(() => {
+    if (data?.agent?.messages) {
+      setMessages(data.agent.messages);
+    }
+  }, [data]);
+
+  // Pick up new messages from event stream
+  useEffect(() => {
+    const latest = events[events.length - 1];
+    if (!latest || latest.agentId !== agent.id) return;
+
+    if (
+      latest.eventType === 'inbound_message' ||
+      latest.eventType === 'outbound_message'
+    ) {
+      const msg = latest.data as { message?: string };
+      if (!msg.message) return;
+
+      const newMsg: AgentMessage = {
+        id: `evt-${Date.now()}`,
+        direction: latest.eventType === 'inbound_message' ? 'inbound' : 'outbound',
+        content: msg.message,
+        createdAt: new Date().toISOString(),
+      };
+
+      setMessages((prev) => {
+        // Dedupe: skip if content matches the last message
+        const last = prev[prev.length - 1];
+        if (last && last.content === newMsg.content && last.direction === newMsg.direction) {
+          return prev;
+        }
+        return [...prev, newMsg];
+      });
+    }
+  }, [events, agent.id]);
+
+  // Auto-scroll
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: 'smooth',
+    });
+  }, [messages]);
+
+  if (messages.length === 0) {
+    return (
+      <div className="px-5 py-4">
+        <div className="flex-1 flex items-center justify-center h-32">
+          <p className="text-muted-foreground text-xs text-center leading-relaxed">
+            No messages yet. Send a message below.
+            <br />
+            <span className="text-[10px]">Agent: {agent.name}</span>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={scrollRef} className="px-3 py-3 space-y-2">
+      {messages.map((msg) => (
+        <div
+          key={msg.id}
+          className={`flex ${msg.direction === 'inbound' ? 'justify-end' : 'justify-start'}`}
+        >
+          <div
+            data-augmented-ui="tl-clip br-clip border"
+            className={`max-w-[85%] px-3 py-2 ${
+              msg.direction === 'inbound'
+                ? 'bg-accent/10'
+                : 'bg-card'
+            }`}
+            style={{
+              '--aug-tl': '6px',
+              '--aug-br': '6px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': msg.direction === 'inbound'
+                ? 'var(--accent)'
+                : 'var(--border)',
+            } as React.CSSProperties}
+          >
+            <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words">
+              {msg.content}
+            </p>
+            <p className="text-muted-foreground text-[9px] mt-1">
+              {new Date(msg.createdAt).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

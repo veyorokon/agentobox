@@ -1,6 +1,7 @@
--- agentobox AwesomeWM config — neo-brutalism, zero chrome
+-- agentobox AwesomeWM config
 local awful     = require("awful")
 local gears     = require("gears")
+local wibox     = require("wibox")
 local beautiful = require("beautiful")
 
 -- Theme
@@ -16,9 +17,39 @@ for s in screen do
     gears.wallpaper.set(beautiful.wallpaper or "#232136")
 end
 
--- Single tag, max layout
+-- App launchers
+local launcher_firefox = awful.widget.launcher({
+    image   = "/usr/share/icons/hicolor/48x48/apps/firefox-esr.png",
+    command = "firefox-esr",
+})
+local launcher_terminal = awful.widget.launcher({
+    image   = "/usr/share/icons/hicolor/48x48/apps/xterm.png",
+    command = "xterm",
+})
+
+-- Single tag, max layout + dock
 awful.screen.connect_for_each_screen(function(s)
     awful.tag({ "1" }, s, awful.layout.suit.max)
+
+    -- Bottom dock bar (bg matches dashboard card color)
+    s.dock = awful.wibar({
+        position = "bottom",
+        screen   = s,
+        height   = 48,
+        bg       = "#2a273f",
+    })
+    s.dock:setup({
+        layout = wibox.layout.align.horizontal,
+        expand = "none",
+        nil,
+        { -- centered launchers
+            layout  = wibox.layout.fixed.horizontal,
+            spacing = 10,
+            wibox.container.margin(launcher_firefox,  4, 4, 8, 8),
+            wibox.container.margin(launcher_terminal, 4, 4, 8, 8),
+        },
+        nil,
+    })
 end)
 
 -- No titlebar ever

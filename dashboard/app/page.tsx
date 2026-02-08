@@ -8,7 +8,7 @@ import { Plus, Folder, ArrowRight, X, Terminal } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useEventsStore } from '@/stores/events';
-import { AGENTS_QUERY, PROJECTS_QUERY } from '@/lib/graphql/queries';
+import { AGENTS_QUERY, EVENTS_QUERY, PROJECTS_QUERY } from '@/lib/graphql/queries';
 import {
   AGENT_UPDATED_SUBSCRIPTION,
   NEW_EVENT_SUBSCRIPTION,
@@ -36,6 +36,7 @@ export default function DashboardPage() {
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
   const addEvent = useEventsStore((s) => s.addEvent);
+  const setEvents = useEventsStore((s) => s.setEvents);
 
   const [showDeployModal, setShowDeployModal] = useState(false);
   const [gridLayout, setGridLayout] = useState<GridLayout>(() => {
@@ -77,6 +78,21 @@ export default function DashboardPage() {
     }
   }, [data, projectId, setAgents]);
 
+  // Fetch historical events for current project
+  const [{ data: eventsData }] = useQuery({
+    query: EVENTS_QUERY,
+    variables: queryVars,
+    pause: paused,
+  });
+
+  useEffect(() => {
+    if (eventsData?.events && projectId) {
+      // Query returns newest-first; reverse so the store has chronological order
+      const chronological = [...eventsData.events].reverse();
+      setEvents(projectId, chronological);
+    }
+  }, [eventsData, projectId, setEvents]);
+
   // Subscribe to agent updates — sync to store via useEffect, not in the reducer
   const [agentSubResult] = useSubscription(
     { query: AGENT_UPDATED_SUBSCRIPTION, variables: queryVars, pause: paused },
@@ -101,7 +117,8 @@ export default function DashboardPage() {
 
   const handleDeploy = async (
     name: string,
-    runtime: string
+    runtime: string,
+    mcpServers: string[] = []
   ) => {
     if (!projectId) return;
     setShowDeployModal(false);
@@ -115,6 +132,7 @@ export default function DashboardPage() {
             projectId,
             name,
             runtime,
+            ...(mcpServers.length > 0 && { mcpServers }),
           },
         });
         if (error) throw error;

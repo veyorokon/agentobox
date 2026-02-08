@@ -18,8 +18,11 @@ check:
 schema:
 	cd backend && uv run python -c "from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
 
+VARIANT ?= debian
+PLATFORM ?= linux/amd64
+
 agent-image:
-	docker build -t agentobox-agent:latest ./agent
+	docker build --platform $(PLATFORM) -f agent/Dockerfile.$(VARIANT) -t agentobox-agent:$(VARIANT) ./agent
 
 up:
 	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build

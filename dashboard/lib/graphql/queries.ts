@@ -35,7 +35,35 @@ export const AGENTS_QUERY = gql`
       cwd
       transcriptPath
       permissionMode
+      mcpServers
       createdAt
+    }
+  }
+`;
+
+export const EVENTS_QUERY = gql`
+  query Events($projectId: ID!) {
+    events(projectId: $projectId) {
+      id
+      eventType
+      data
+      agentId
+      agentName
+      createdAt
+    }
+  }
+`;
+
+export const AGENT_MESSAGES_QUERY = gql`
+  query AgentMessages($agentId: ID!) {
+    agent(agentId: $agentId) {
+      id
+      messages {
+        id
+        direction
+        content
+        createdAt
+      }
     }
   }
 `;

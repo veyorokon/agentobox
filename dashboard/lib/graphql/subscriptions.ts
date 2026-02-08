@@ -23,10 +23,12 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
 export const NEW_EVENT_SUBSCRIPTION = gql`
   subscription NewEvent($projectId: ID!) {
     newEvent(projectId: $projectId) {
+      id
       eventType
       data
       agentId
       agentName
+      createdAt
     }
   }
 `;
