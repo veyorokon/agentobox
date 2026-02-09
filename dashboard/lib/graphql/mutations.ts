@@ -77,11 +77,3 @@ export const INTERRUPT_AGENT_MUTATION = gql`
   }
 `;
 
-export const RATE_AGENT_MUTATION = gql`
-  mutation RateAgent($input: RateFeedbackInput!) {
-    rateAgent(input: $input) {
-      id
-      rating
-    }
-  }
-`;

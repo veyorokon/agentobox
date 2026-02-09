@@ -26,7 +26,6 @@ export interface Agent {
   sandboxId: string;
   runtime: string;
   teamName: string;
-  parentSessionId: string;
   sessionId: string;
   model: string;
   cwd: string;
@@ -159,16 +158,6 @@ export type MessageItem =
   | { type: 'tool'; message: Message; toolUse: Extract<ContentPart, { type: 'tool_use' }>; toolResult?: Extract<ContentPart, { type: 'tool_result' }>; status: ToolStatus };
 
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | null;
-
-// ── Legacy (kept temporarily for AgentFeedback FK) ──
-
-/** @deprecated Will be removed once AgentFeedback FK is migrated */
-export interface AgentMessage {
-  id: string;
-  direction: 'inbound' | 'outbound';
-  content: string;
-  createdAt: string;
-}
 
 // ── Other ──
 

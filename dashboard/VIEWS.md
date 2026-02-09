@@ -6,11 +6,9 @@ Design brief for the agentobox dashboard. Single-page app with two routes: `/log
 
 Agentobox is a multi-agent orchestration system. Users create **projects**, each containing multiple **agents**. Each agent is a Claude Code instance in an isolated Linux desktop container with browser access and VNC streaming.
 
-**Agent statuses:** `working`, `conversing`, `needs_info`, `blocked`, `completed`, `goal_changed`, `dead`
+**Agent statuses:** `deploying`, `running`, `idle`, `stopped`, `error`
 
-**Goal statuses:** `active`, `satisfied`, `abandoned`
-
-Each agent has a goal (text + context path + plan) and reports status with confidence, sentiment, summary, and reasoning fields.
+Each agent streams structured messages (text, tool_use, tool_result) via the stream-json relay and reports session cost.
 
 ---
 
@@ -44,17 +42,12 @@ Full-height flex layout: `CommandPanel` (left sidebar) + main agent grid (right)
 
 #### CommandPanel (Left Sidebar)
 
-Persistent sidebar with two tabs:
+Persistent sidebar with chat interface:
 
-1. **Chat Tab** — Send messages to agents
-   - Agent selector dropdown
-   - Message input
-   - Chat history with `ChatBubble` components
-
-2. **Events Tab** — Real-time event feed
-   - `EventFeed` component showing agent state changes
-   - Each event: timestamp, agent name badge, status, message
-   - Auto-scrolls on new events
+- Agent selector dropdown
+- Message input with send button
+- Chat history with `ChatView` component (stream-json messages)
+- Messages rendered as typed content parts: text, tool_use, tool_result
 
 **Top of sidebar:** `ProjectSelector` for switching/creating projects.
 
@@ -77,21 +70,19 @@ Persistent sidebar with two tabs:
 ### AgentCard
 
 Displays a single agent with:
-- Agent name + status badge (`StatusBadge`)
+- Agent name + status dot (color-coded)
+- Animated spinner word when running
+- Session cost badge
 - VNC stream thumbnail (live desktop view via `vncUrl`)
-- Goal text and plan
-- Confidence/sentiment indicators
-- Summary and reasoning text
-- Action buttons: send message, kill agent
+- Action buttons: refresh VNC, pause/resume, kill agent
+- Kill confirmation modal
 
 **Status colors (CSS custom properties):**
-- `working` → `--agent-active`
-- `conversing` → `--agent-conversing`
-- `needs_info` → `--agent-needs-info`
-- `blocked` → `--agent-blocked`
-- `completed` → `--agent-completed`
-- `goal_changed` → `--agent-goal-changed`
-- `dead` → `--agent-dead`
+- `deploying` → `--agent-deploying`
+- `running` → `--agent-active`
+- `idle` → `--agent-idle`
+- `stopped` → `--agent-dead`
+- `error` → `--agent-error`
 
 ### StatusBadge
 
@@ -105,19 +96,24 @@ Dropdown for selecting existing projects or creating new ones. Uses `useProjects
 
 Form for deploying a new agent:
 - Name (text input)
-- Goal text (textarea)
-- Context path (text input)
-- Runtime: currently hardcoded to "modal"
+- Instructions (textarea)
+- Workspace path (text input)
+- MCP servers (JSON input)
+- Runtime selector
 
 On submit: calls `CREATE_AGENT_MUTATION`, shows toast with deploy progress.
 
-### EventFeed
+### VncFrame
 
-Scrollable list of `AgentEvent` entries for the current project. Events arrive via `NEW_EVENT_SUBSCRIPTION`.
+Iframe wrapper for noVNC stream. Exposes refresh callback via ref.
 
-### ChatBubble
+### ChatView
 
-Individual message in the chat panel. Shows sender, message text, timestamp.
+Renders stream-json messages as typed content parts. User messages show as outbound bubbles, assistant messages as inbound with text/tool blocks.
+
+### ConfirmModal
+
+Reusable confirmation dialog with destructive variant for kill operations.
 
 ---
 
@@ -129,7 +125,7 @@ Individual message in the chat panel. Shows sender, message text, timestamp.
 - `ME_QUERY` — current user
 - `PROJECTS_QUERY` — user's projects
 - `AGENTS_QUERY` — agents for a project
-- `GOALS_QUERY` — goals for a project
+- `AGENT_MESSAGES_QUERY` — stream messages + session result for an agent
 
 **Mutations:**
 - `LOGIN_MUTATION`, `REGISTER_MUTATION` — auth
@@ -137,17 +133,17 @@ Individual message in the chat panel. Shows sender, message text, timestamp.
 - `CREATE_AGENT_MUTATION` — deploy agent
 - `KILL_AGENT_MUTATION` — terminate agent
 - `SEND_MESSAGE_MUTATION` — message an agent
+- `INTERRUPT_AGENT_MUTATION` — pause an agent
 
 **Subscriptions:**
 - `AGENT_UPDATED_SUBSCRIPTION` — real-time agent state changes
-- `NEW_EVENT_SUBSCRIPTION` — real-time event feed
+- `MESSAGE_RECEIVED_SUBSCRIPTION` — real-time stream messages
 
 ### State Management (Zustand)
 
 - `useAuthStore` — token, user, login/logout
 - `useProjectsStore` — projects list, current project ID
 - `useAgentsStore` — agents indexed by project ID, upsert on subscription
-- `useEventsStore` — events indexed by project ID, append on subscription
 
 ---
 

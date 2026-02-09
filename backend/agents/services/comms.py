@@ -1,11 +1,27 @@
 import uuid
 
 import structlog
+from asgiref.sync import sync_to_async
+from django.db import transaction
 
 from agents.models import Agent, AgentStatus, Message
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update, broadcast_stream_message
 
 log = structlog.get_logger("agents.comms")
+
+
+@sync_to_async
+def _atomic_enqueue(agent_id: str, input_msg: dict) -> Agent:
+    """Append to pending_input under a row lock to prevent concurrent clobber."""
+    with transaction.atomic():
+        agent = Agent.objects.select_for_update().get(id=agent_id)
+        pending = agent.pending_input or []
+        pending.append(input_msg)
+        agent.pending_input = pending
+        if agent.status != AgentStatus.RUNNING:
+            agent.status = AgentStatus.RUNNING
+        agent.save(update_fields=["pending_input", "status"])
+    return agent
 
 
 async def send_message(agent_id: str, message: str) -> bool:
@@ -15,6 +31,9 @@ async def send_message(agent_id: str, message: str) -> bool:
     Instead of tmux send-keys, this enqueues the message as a stream-json
     input object in agent.pending_input (a list). The relay picks it up
     via the piggyback pattern in the next POST response cycle.
+
+    Uses select_for_update() to prevent concurrent appends from losing
+    messages (read-modify-write on JSONField without a lock is racy).
 
     Input format (stream-json stdin):
         {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}
@@ -52,16 +71,9 @@ async def send_message(agent_id: str, message: str) -> bool:
         },
     }
 
-    # Append to pending_input list — relay picks up via piggyback
-    pending = agent.pending_input or []
-    pending.append(input_msg)
-    agent.pending_input = pending
-
-    # Mark agent as running
-    if agent.status != AgentStatus.RUNNING:
-        agent.status = AgentStatus.RUNNING
-
-    await agent.asave(update_fields=["pending_input", "status"])
+    # Atomic append — lock the row to prevent concurrent writes from
+    # clobbering each other's pending_input entries.
+    agent = await _atomic_enqueue(agent_id, input_msg)
     await broadcast_agent_update(agent)
 
     op_log.info("message_enqueued")

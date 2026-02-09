@@ -14,7 +14,7 @@ RUN S6_ARCH=$(case "$TARGETARCH" in arm64) echo aarch64;; *) echo x86_64;; esac)
 
 # --- System packages ---
 RUN apk add --no-cache \
-    bash curl jq git sudo openssl ca-certificates fontconfig unzip tmux \
+    bash curl jq git sudo openssl ca-certificates fontconfig unzip \
     xvfb-run xorg-server x11vnc xterm xdotool \
     awesome dbus \
     py3-pip websockify \

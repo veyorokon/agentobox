@@ -1,7 +1,13 @@
+from datetime import timedelta
+
 import strawberry
+from django.utils import timezone
 from strawberry import ID
 
 from agents.graphql.types import AgentEventType, AgentType
+
+# Agents with no heartbeat for this long are marked as error
+STALE_HEARTBEAT_SECONDS = 30
 
 
 @strawberry.type
@@ -9,6 +15,14 @@ class AgentQuery:
     @strawberry.field
     async def agents(self, project_id: ID) -> list[AgentType]:
         from agents.models import Agent, AgentStatus
+
+        # Lazy reap: mark agents with stale heartbeats as error
+        stale = timezone.now() - timedelta(seconds=STALE_HEARTBEAT_SECONDS)
+        await Agent.objects.filter(
+            project_id=project_id,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+            last_heartbeat_at__lt=stale,
+        ).aupdate(status=AgentStatus.ERROR)
 
         return [
             a async for a in Agent.objects.filter(

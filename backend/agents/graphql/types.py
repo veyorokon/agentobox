@@ -6,14 +6,6 @@ from strawberry.scalars import JSON
 from agents import models
 
 
-@strawberry_django.type(models.AgentMessage)
-class AgentMessageType:
-    id: auto
-    direction: auto
-    content: auto
-    created_at: auto
-
-
 @strawberry_django.type(models.AgentFeedback)
 class AgentFeedbackType:
     id: auto
@@ -92,7 +84,6 @@ class AgentType:
     session_id: auto
     model: auto
     cwd: auto
-    transcript_path: auto
     permission_mode: auto
     mcp_servers: auto
     workspace_path: auto
@@ -100,10 +91,6 @@ class AgentType:
     session_cost_usd: auto
     capabilities: auto
     created_at: auto
-
-    @strawberry_django.field
-    def messages(self, limit: int = 50, offset: int = 0) -> list[AgentMessageType]:
-        return models.AgentMessage.objects.filter(agent_id=self.id).order_by("created_at")[offset:offset + limit]
 
     @strawberry_django.field
     def stream_messages(self, limit: int = 100, offset: int = 0) -> list[MessageType]:

@@ -29,14 +29,6 @@ class RateFeedbackInput:
     comment: str = ""
 
 
-@strawberry.input
-class AttachMcpInput:
-    agent_id: ID
-    server_name: str
-    command: str
-    args: list[str]
-
-
 @strawberry.type
 class AgentMutation:
     @strawberry.mutation
@@ -119,10 +111,3 @@ class AgentMutation:
             comment=input.comment,
         )
 
-    @strawberry.mutation
-    async def attach_mcp(self, input: AttachMcpInput) -> bool:
-        from agents.services.comms import attach_mcp
-
-        return await attach_mcp(
-            input.agent_id, input.server_name, input.command, input.args
-        )
