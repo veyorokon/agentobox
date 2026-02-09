@@ -1,15 +1,49 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Monitor, RefreshCw, Pause, Play, Square, Loader2 } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
 import { KILL_AGENT_MUTATION, INTERRUPT_AGENT_MUTATION, SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
-import { StatusBadge, STATUS_COLOR_VAR } from './status-badge';
+import { useProjectsStore } from '@/stores/projects';
+import { useEventsStore } from '@/stores/events';
+import { STATUS_COLOR_VAR } from './status-badge';
 import { VncFrame } from './vnc-frame';
 import { ConfirmModal } from './modals/confirm-modal';
-import type { Agent } from '@/types';
+import type { Agent, AgentEvent } from '@/types';
+
+/* ── Spinner words (shared with command-panel) ── */
+const SPINNER_WORDS = [
+  'Moseying', 'Tinkering', 'Spelunking', 'Pondering', 'Cogitating',
+  'Ruminating', 'Noodling', 'Percolating', 'Brainstorming', 'Contemplating',
+  'Mulling', 'Analyzing', 'Investigating', 'Exploring', 'Researching',
+  'Parsing', 'Decoding', 'Assembling', 'Crafting', 'Forging',
+  'Polishing', 'Refining', 'Calibrating', 'Tweaking', 'Wiring',
+  'Weaving', 'Connecting', 'Patching', 'Debugging', 'Diagnosing',
+  'Sorting', 'Mapping', 'Composing', 'Orchestrating', 'Synthesizing',
+  'Compiling', 'Processing', 'Distilling', 'Brewing', 'Conjuring',
+  'Focusing', 'Scanning', 'Surveying', 'Excavating', 'Navigating',
+  'Traversing', 'Adventuring', 'Questing',
+];
+
+function toolLabel(toolName: string, toolInput?: Record<string, unknown>): string {
+  const filePath = typeof toolInput?.file_path === 'string' ? toolInput.file_path : '';
+  const filename = filePath ? filePath.split('/').pop() : '';
+  switch (toolName) {
+    case 'Read': return filename ? `Reading ${filename}` : 'Reading...';
+    case 'Write': return filename ? `Writing ${filename}` : 'Writing...';
+    case 'Edit': return filename ? `Editing ${filename}` : 'Editing...';
+    case 'Bash': return 'Running command...';
+    case 'Glob': return 'Searching files...';
+    case 'Grep': return 'Searching code...';
+    case 'Task': return 'Sub-task...';
+    case 'SendMessage': return 'Messaging...';
+    default: return toolName ? `${toolName}...` : 'Working...';
+  }
+}
+
+const EMPTY_EVENTS: AgentEvent[] = [];
 
 export function AgentCard({
   agent,
@@ -17,6 +51,41 @@ export function AgentCard({
   agent: Agent;
 }) {
   const [stopping, setStopping] = useState(false);
+
+  // Live activity from events store
+  const projectId = useProjectsStore((s) => s.currentProjectId);
+  const events = useEventsStore((s) =>
+    projectId ? (s.events[projectId] ?? EMPTY_EVENTS) : EMPTY_EVENTS
+  );
+
+  const [spinnerWord, setSpinnerWord] = useState(() =>
+    SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
+  );
+
+  const latestTool = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const evt = events[i];
+      if (evt.agentId === agent.id && evt.eventType === 'PostToolUse') {
+        const data = evt.data as { tool_name?: string; tool_input?: Record<string, unknown> };
+        return toolLabel(data.tool_name || '', data.tool_input);
+      }
+    }
+    return null;
+  }, [events, agent.id]);
+
+  // Rotate spinner word periodically + on new tool events
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSpinnerWord(SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (latestTool) {
+      setSpinnerWord(SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]);
+    }
+  }, [latestTool]);
 
   const effectiveStatus = stopping ? 'stopped' as const : agent.status;
   const isDeploying = effectiveStatus === 'deploying';
@@ -97,43 +166,43 @@ export function AgentCard({
       } as React.CSSProperties}
     >
       <div className="p-5">
-        {/* Header: avatar + name/status + controls */}
-        <div className="flex items-center gap-3 mb-3">
-          <div
-            data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-            className="w-10 h-10 flex items-center justify-center flex-shrink-0"
+        {/* Header: name + status inline + controls */}
+        <div className="flex items-center gap-2 mb-3">
+          <span
+            className="w-2 h-2 rounded-full flex-shrink-0"
             style={{
-              '--aug-tl': '7px',
-              '--aug-tr': '7px',
-              '--aug-br': '7px',
-              '--aug-bl': '7px',
-              '--aug-border-all': '2px',
-              '--aug-border-bg': statusColor,
-              background: isRunning ? 'var(--agent-glow)' : 'transparent',
-            } as React.CSSProperties}
-          >
+              background: statusColor,
+              boxShadow: isRunning ? `0 0 6px ${statusColor}` : 'none',
+              animation: isRunning ? 'border-pulse 2s ease-in-out infinite' : 'none',
+            }}
+          />
+          <h3 className="font-bold text-card-foreground text-sm capitalize leading-tight">
+            {agent.name}
+          </h3>
+          {isStopping ? (
             <span
-              className="text-sm font-bold uppercase"
-              style={{ color: statusColor }}
+              className="text-[10px] font-mono font-bold uppercase tracking-wider"
+              style={{ color: 'var(--agent-dead)' }}
             >
-              {agent.name.slice(0, 2)}
+              Stopping...
             </span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="font-bold text-card-foreground text-sm capitalize leading-tight">
-              {agent.name}
-            </h3>
-            {isStopping ? (
-              <span
-                className="text-xs font-semibold uppercase tracking-wide"
-                style={{ color: 'var(--agent-dead)' }}
-              >
-                Stopping...
+          ) : isRunning && latestTool ? (
+            <span className="text-[10px] font-mono text-muted-foreground truncate min-w-0">
+              <span className="font-bold tracking-wider" style={{ color: statusColor }}>
+                {spinnerWord}...
               </span>
-            ) : (
-              <StatusBadge status={effectiveStatus} />
-            )}
-          </div>
+              <span className="text-muted-foreground/30 mx-1.5">|</span>
+              {latestTool}
+            </span>
+          ) : (
+            <span
+              className="text-[10px] font-mono font-bold uppercase tracking-wider"
+              style={{ color: statusColor, opacity: 0.7 }}
+            >
+              {effectiveStatus}
+            </span>
+          )}
+          <div className="flex-1" />
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               onClick={() => vncRefreshRef.current?.()}
@@ -206,6 +275,7 @@ export function AgentCard({
               </div>
             </div>
           )}
+
         </div>
       </div>
 

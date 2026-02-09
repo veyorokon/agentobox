@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import structlog
 from asgiref.sync import sync_to_async
@@ -282,15 +283,18 @@ async def process_hook_event(payload: dict) -> None:
 
     # Capture agent response on Stop (turn finished)
     if event_type == "Stop":
-        # Claude Code Stop hook payload includes stop_hook_active_response_text
-        response_text = payload.get("stop_hook_active_response_text", "")
-        if response_text:
-            await AgentMessage.objects.acreate(
-                agent=agent, direction="outbound", content=response_text
+        transcript_path = payload.get("transcript_path", "") or agent.transcript_path
+        if transcript_path and agent.sandbox_id:
+            response_text = await _extract_last_response(
+                agent.runtime, agent.sandbox_id, transcript_path, op_log
             )
-            await broadcast_agent_event(
-                agent, "outbound_message", {"message": response_text}
-            )
+            if response_text:
+                await AgentMessage.objects.acreate(
+                    agent=agent, direction="outbound", content=response_text
+                )
+                await broadcast_agent_event(
+                    agent, "outbound_message", {"message": response_text}
+                )
 
     # Status transitions:
     #   Stop = turn finished, agent is idle and waiting for input
@@ -311,6 +315,56 @@ async def process_hook_event(payload: dict) -> None:
         await agent.asave(update_fields=update_fields)
         await broadcast_agent_update(agent)
         op_log.info("agent_updated", fields=update_fields)
+
+
+async def _extract_last_response(
+    runtime_name: str, sandbox_id: str, transcript_path: str, op_log
+) -> str:
+    """Read the last assistant response text from a Claude Code transcript.
+
+    Transcript is JSONL inside the agent container. Each line is a JSON object.
+    Assistant entries have type="assistant" with message.content = [{type:"text", text:"..."}].
+    We walk backwards from the end, collecting text blocks until we hit the preceding user message.
+    """
+    try:
+        runtime = get_runtime(runtime_name)
+        output = await runtime.exec(
+            sandbox_id,
+            ["bash", "-c", f"tail -80 '{transcript_path}'"],
+        )
+        if not output or not output.strip():
+            return ""
+
+        lines = output.strip().split("\n")
+        text_parts = []
+
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            entry_type = entry.get("type", "")
+
+            if entry_type == "user":
+                break  # Hit the user message that started this turn
+
+            if entry_type == "assistant":
+                content = entry.get("message", {}).get("content", [])
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block["text"])
+
+        # Reverse since we walked backwards
+        text_parts.reverse()
+        result = "\n".join(text_parts).strip()
+        if result:
+            op_log.info("transcript_response_extracted", length=len(result))
+        return result
+
+    except Exception:
+        op_log.warning("transcript_read_failed", transcript_path=transcript_path)
+        return ""
 
 
 async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:

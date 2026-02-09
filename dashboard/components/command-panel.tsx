@@ -499,10 +499,10 @@ export function CommandPanel({
         onSelect={switchTab}
       />
 
-      {/* Content Area */}
+      {/* Content Area — column-reverse on chat so scroll starts at bottom */}
       <div
         key={activeTab}
-        className="flex-1 overflow-y-auto scrollbar-thin"
+        className={`flex-1 overflow-y-auto scrollbar-thin${isAgentTab ? ' flex flex-col-reverse' : ''}`}
         style={{ animation: 'panel-fade 0.15s ease-out' }}
       >
         {activeTab === 'feed' && (
@@ -823,12 +823,11 @@ function attachmentLabel(path: string): string {
 /* ── Chat view ── */
 
 function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const processedRef = useRef<Set<number | string>>(new Set());
 
-  // Fetch messages from backend (refetch on every mount + when agent goes idle)
-  const [{ data }] = useQuery({
+  // Fetch messages from backend
+  const [{ data, fetching }] = useQuery({
     query: AGENT_MESSAGES_QUERY,
     variables: { agentId: agent.id },
     requestPolicy: 'network-only',
@@ -883,12 +882,12 @@ function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
     }
   }, [events, agent.id]);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
   const statusColor = STATUS_COLOR_VAR[agent.status];
+
+  // Still loading — render nothing (parent column-reverse keeps layout stable)
+  if (fetching && messages.length === 0) {
+    return <div />;
+  }
 
   if (messages.length === 0) {
     return (
@@ -1007,7 +1006,6 @@ function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
           </div>
         );
       })}
-      <div ref={bottomRef} />
     </div>
   );
 }
