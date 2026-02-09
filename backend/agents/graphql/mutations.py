@@ -2,7 +2,7 @@ import strawberry
 from strawberry import ID
 from strawberry.scalars import JSON
 
-from agents.graphql.types import AgentType
+from agents.graphql.types import AgentFeedbackType, AgentType
 
 
 @strawberry.input
@@ -19,6 +19,14 @@ class CreateAgentInput:
 class SendMessageInput:
     agent_id: ID
     message: str
+
+
+@strawberry.input
+class RateFeedbackInput:
+    agent_id: ID
+    message_id: ID | None = None
+    rating: int
+    comment: str = ""
 
 
 @strawberry.input
@@ -70,6 +78,46 @@ class AgentMutation:
         from agents.services.comms import send_message
 
         return await send_message(input.agent_id, input.message)
+
+    @strawberry.mutation
+    async def rate_agent(self, input: RateFeedbackInput) -> AgentFeedbackType | None:
+        from agents.models import Agent, AgentFeedback, AgentMessage
+
+        if input.rating not in (1, 2, 3):
+            raise ValueError("rating must be 1, 2, or 3")
+
+        agent = await Agent.objects.aget(id=input.agent_id)
+
+        # Resolve message FK — skip if synthetic ID (e.g. "evt-123" from event stream)
+        message = None
+        message_id_int = None
+        if input.message_id:
+            try:
+                message_id_int = int(input.message_id)
+                message = await AgentMessage.objects.aget(id=message_id_int)
+            except (ValueError, AgentMessage.DoesNotExist):
+                pass  # Synthetic or missing ID — proceed without message FK
+
+        # Toggle: if same agent+message+rating exists, delete it (undo)
+        lookup = {"agent": agent, "message": message}
+        existing = await AgentFeedback.objects.filter(**lookup).afirst()
+        if existing:
+            if existing.rating == input.rating:
+                await existing.adelete()
+                return None  # Toggled off
+            # Different rating — update in place
+            existing.rating = input.rating
+            existing.comment = input.comment
+            await existing.asave(update_fields=["rating", "comment"])
+            return existing
+
+        return await AgentFeedback.objects.acreate(
+            agent=agent,
+            message=message,
+            session_id=agent.session_id,
+            rating=input.rating,
+            comment=input.comment,
+        )
 
     @strawberry.mutation
     async def attach_mcp(self, input: AttachMcpInput) -> bool:

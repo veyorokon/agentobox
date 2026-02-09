@@ -33,24 +33,12 @@ export const AGENTS_QUERY = gql`
       sessionId
       model
       cwd
-      transcriptPath
       permissionMode
       mcpServers
       workspacePath
       instructions
-      createdAt
-    }
-  }
-`;
-
-export const EVENTS_QUERY = gql`
-  query Events($projectId: ID!) {
-    events(projectId: $projectId) {
-      id
-      eventType
-      data
-      agentId
-      agentName
+      sessionCostUsd
+      capabilities
       createdAt
     }
   }
@@ -60,11 +48,30 @@ export const AGENT_MESSAGES_QUERY = gql`
   query AgentMessages($agentId: ID!) {
     agent(agentId: $agentId) {
       id
-      messages {
+      streamMessages {
         id
-        direction
-        content
+        messageId
+        agentId
+        sessionId
+        role
+        model
+        parts
+        usage
+        parentToolUseId
+        stopReason
+        turnNumber
         createdAt
+      }
+      sessionResult {
+        id
+        sessionId
+        isError
+        totalCostUsd
+        durationMs
+        durationApiMs
+        numTurns
+        modelUsage
+        permissionDenials
       }
     }
   }

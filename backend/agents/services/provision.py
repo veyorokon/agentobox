@@ -14,7 +14,6 @@ async def provision_workspace(
     sandbox_id: str,
     project: Project,
     api_key: str = "",
-    agent_env: dict[str, str] | None = None,
     mcp_servers: dict | None = None,
     variant: str = "debian",
     workspace_path: str = "",
@@ -67,23 +66,6 @@ async def provision_workspace(
         claude_json.encode("utf-8"),
         f"{workspace}/.claude.json",
     )
-
-    # Write hook-event.sh (may not exist in older images)
-    hooks_dir = f"{workspace}/hooks"
-    await runtime.exec(sandbox_id, ["mkdir", "-p", hooks_dir])
-    await runtime.write_file(
-        sandbox_id,
-        _HOOK_EVENT_SH.encode("utf-8"),
-        f"{hooks_dir}/hook-event.sh",
-    )
-    await runtime.exec(sandbox_id, ["chmod", "+x", f"{hooks_dir}/hook-event.sh"])
-
-    # Write agent env vars so hooks (running as computeruse) can access them
-    if agent_env:
-        env_lines = [f'export {k}="{v}"' for k, v in agent_env.items()]
-        env_content = "\n".join(env_lines) + "\n"
-        env_path = f"{workspace}/.agent_env"
-        await runtime.write_file(sandbox_id, env_content.encode("utf-8"), env_path)
 
     op_log.info("workspace_provisioned")
 
@@ -144,40 +126,6 @@ def _build_claude_md(
 
     return base
 
-
-_HOOK_EVENT_SH = r"""#!/bin/bash
-# Forward Claude Code hook events to agentobox control plane
-[ -f "$HOME/.agent_env" ] && . "$HOME/.agent_env"
-CALLBACK_URL="${ABOX_CALLBACK_URL:-}"
-AGENT_ID="${AGENT_ID:-}"
-[ -z "$CALLBACK_URL" ] || [ -z "$AGENT_ID" ] && exit 0
-
-INPUT=$(cat)
-BODY=$(echo "$INPUT" | jq -c --arg id "$AGENT_ID" '. + {agent_id: $id}')
-
-RESPONSE=$(curl -sf -X POST "${CALLBACK_URL}/hooks/event" \
-    -H "Content-Type: application/json" \
-    -d "$BODY" 2>/dev/null) || exit 0
-
-# SessionStart: persist env for subsequent hooks
-EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // empty')
-if [ "$EVENT_NAME" = "SessionStart" ] && [ -n "$CLAUDE_ENV_FILE" ]; then
-    echo "export AGENT_ID=\"$AGENT_ID\"" >> "$CLAUDE_ENV_FILE"
-    echo "export ABOX_CALLBACK_URL=\"$CALLBACK_URL\"" >> "$CLAUDE_ENV_FILE"
-fi
-
-# Control plane feedback
-MESSAGE=$(echo "$RESPONSE" | jq -r '.message // empty')
-[ -n "$MESSAGE" ] && echo "{\"systemMessage\": \"$MESSAGE\"}"
-exit 0
-"""
-
-_HOOK_EVENTS = [
-    "SessionStart", "SessionEnd", "PostToolUse", "Stop",
-    "TaskCompleted", "SubagentStart", "SubagentStop",
-    "TeammateIdle", "Notification",
-]
-_HOOK_CMD = "bash /home/computeruse/hooks/hook-event.sh"
 
 # Image variants and their OS descriptions for CLAUDE.md
 IMAGE_VARIANTS = {
@@ -297,11 +245,9 @@ def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
 
 
 def _build_settings_json() -> str:
-    hook_entry = [{"matcher": "*", "hooks": [{"type": "command", "command": _HOOK_CMD}]}]
     settings = {
         "theme": "dark",
         "defaultMode": "bypassPermissions",
         "enableAllProjectMcpServers": True,
-        "hooks": {e: hook_entry for e in _HOOK_EVENTS},
     }
     return json.dumps(settings, indent=2)

@@ -3,7 +3,7 @@
 import structlog
 from channels.layers import get_channel_layer
 
-from agents.models import Agent
+from agents.models import Agent, Message
 
 log = structlog.get_logger("agents.broadcast")
 
@@ -60,4 +60,29 @@ async def broadcast_agent_event(
         group=group,
         event_type=event_type,
         agent_id=str(agent.id),
+    )
+
+
+async def broadcast_stream_message(agent: Agent, message: Message) -> None:
+    """Push a new/updated stream Message to the project's message_received subscription.
+
+    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "messageReceived subscription"
+    """
+    channel_layer = get_channel_layer()
+    group = _group_name(str(agent.project_id), "messages")
+    await channel_layer.group_send(
+        group,
+        {
+            "type": "stream.message",
+            "message_id": message.id,
+            "agent_id": str(agent.id),
+            "agent_name": agent.name,
+        },
+    )
+    log.debug(
+        "broadcast_stream_message",
+        group=group,
+        message_id=message.id,
+        agent_id=str(agent.id),
+        role=message.role,
     )

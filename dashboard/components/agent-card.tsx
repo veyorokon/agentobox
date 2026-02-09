@@ -1,19 +1,17 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Monitor, RefreshCw, Pause, Play, Square, Loader2 } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
 import { KILL_AGENT_MUTATION, INTERRUPT_AGENT_MUTATION, SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
-import { useProjectsStore } from '@/stores/projects';
-import { useEventsStore } from '@/stores/events';
 import { STATUS_COLOR_VAR } from './status-badge';
 import { VncFrame } from './vnc-frame';
 import { ConfirmModal } from './modals/confirm-modal';
-import type { Agent, AgentEvent } from '@/types';
+import type { Agent } from '@/types';
 
-/* ── Spinner words (shared with command-panel) ── */
+/* Spinner words (shared with command-panel) */
 const SPINNER_WORDS = [
   'Moseying', 'Tinkering', 'Spelunking', 'Pondering', 'Cogitating',
   'Ruminating', 'Noodling', 'Percolating', 'Brainstorming', 'Contemplating',
@@ -27,24 +25,6 @@ const SPINNER_WORDS = [
   'Traversing', 'Adventuring', 'Questing',
 ];
 
-function toolLabel(toolName: string, toolInput?: Record<string, unknown>): string {
-  const filePath = typeof toolInput?.file_path === 'string' ? toolInput.file_path : '';
-  const filename = filePath ? filePath.split('/').pop() : '';
-  switch (toolName) {
-    case 'Read': return filename ? `Reading ${filename}` : 'Reading...';
-    case 'Write': return filename ? `Writing ${filename}` : 'Writing...';
-    case 'Edit': return filename ? `Editing ${filename}` : 'Editing...';
-    case 'Bash': return 'Running command...';
-    case 'Glob': return 'Searching files...';
-    case 'Grep': return 'Searching code...';
-    case 'Task': return 'Sub-task...';
-    case 'SendMessage': return 'Messaging...';
-    default: return toolName ? `${toolName}...` : 'Working...';
-  }
-}
-
-const EMPTY_EVENTS: AgentEvent[] = [];
-
 export function AgentCard({
   agent,
 }: {
@@ -52,40 +32,26 @@ export function AgentCard({
 }) {
   const [stopping, setStopping] = useState(false);
 
-  // Live activity from events store
-  const projectId = useProjectsStore((s) => s.currentProjectId);
-  const events = useEventsStore((s) =>
-    projectId ? (s.events[projectId] ?? EMPTY_EVENTS) : EMPTY_EVENTS
-  );
-
   const [spinnerWord, setSpinnerWord] = useState(() =>
     SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
   );
 
-  const latestTool = useMemo(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const evt = events[i];
-      if (evt.agentId === agent.id && evt.eventType === 'PostToolUse') {
-        const data = evt.data as { tool_name?: string; tool_input?: Record<string, unknown> };
-        return toolLabel(data.tool_name || '', data.tool_input);
-      }
-    }
-    return null;
-  }, [events, agent.id]);
-
-  // Rotate spinner word periodically + on new tool events
+  // Rotate spinner word with staggered timing per card
+  const spinnerIntervalRef = useRef(3500 + Math.random() * 1000);
+  const spinnerDelayRef = useRef(Math.random() * 3000);
   useEffect(() => {
-    const interval = setInterval(() => {
+    let interval: ReturnType<typeof setInterval>;
+    const timeout = setTimeout(() => {
       setSpinnerWord(SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]);
-    }, 4000);
-    return () => clearInterval(interval);
+      interval = setInterval(() => {
+        setSpinnerWord(SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]);
+      }, spinnerIntervalRef.current);
+    }, spinnerDelayRef.current);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
   }, []);
-
-  useEffect(() => {
-    if (latestTool) {
-      setSpinnerWord(SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]);
-    }
-  }, [latestTool]);
 
   const effectiveStatus = stopping ? 'stopped' as const : agent.status;
   const isDeploying = effectiveStatus === 'deploying';
@@ -143,6 +109,13 @@ export function AgentCard({
     effectiveStatus === 'error' ||
     effectiveStatus === 'deploying';
 
+  // Stagger card glow animation phase
+  const pulseDelayRef = useRef(`-${(Math.random() * 3).toFixed(2)}s`);
+
+  // Cost badge
+  const cost = agent.sessionCostUsd != null ? Number(agent.sessionCostUsd) : null;
+  const costLabel = cost != null && cost > 0 ? `$${cost.toFixed(2)}` : null;
+
   const borderColor = isStopping
     ? 'var(--agent-dead)'
     : isDeploying
@@ -163,6 +136,7 @@ export function AgentCard({
         '--aug-border-all': '1px',
         '--aug-border-bg': borderColor,
         transition: 'opacity 0.3s ease',
+        animationDelay: isRunning ? pulseDelayRef.current : undefined,
       } as React.CSSProperties}
     >
       <div className="p-5">
@@ -186,13 +160,11 @@ export function AgentCard({
             >
               Stopping...
             </span>
-          ) : isRunning && latestTool ? (
+          ) : isRunning ? (
             <span className="text-[10px] font-mono text-muted-foreground truncate min-w-0">
               <span className="font-bold tracking-wider" style={{ color: statusColor }}>
                 {spinnerWord}...
               </span>
-              <span className="text-muted-foreground/30 mx-1.5">|</span>
-              {latestTool}
             </span>
           ) : (
             <span
@@ -200,6 +172,11 @@ export function AgentCard({
               style={{ color: statusColor, opacity: 0.7 }}
             >
               {effectiveStatus}
+            </span>
+          )}
+          {costLabel && (
+            <span className="text-[9px] font-mono text-muted-foreground/50 ml-auto mr-1">
+              {costLabel}
             </span>
           )}
           <div className="flex-1" />

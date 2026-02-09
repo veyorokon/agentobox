@@ -7,17 +7,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Folder, ArrowRight, X, Terminal } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
-import { useEventsStore } from '@/stores/events';
-import { AGENTS_QUERY, EVENTS_QUERY, PROJECTS_QUERY } from '@/lib/graphql/queries';
+import { useMessagesStore } from '@/stores/messages';
+import { AGENTS_QUERY, PROJECTS_QUERY } from '@/lib/graphql/queries';
 import {
   AGENT_UPDATED_SUBSCRIPTION,
-  NEW_EVENT_SUBSCRIPTION,
+  MESSAGE_RECEIVED_SUBSCRIPTION,
 } from '@/lib/graphql/subscriptions';
 import { CommandPanel } from '@/components/command-panel';
 import { AgentCard } from '@/components/agent-card';
 import { GridControl, type GridLayout, GRID_CLASSES } from '@/components/grid-control';
 import { DeployModal } from '@/components/modals/deploy-modal';
-import { ProjectSelector } from '@/components/project-selector';
 import { CREATE_AGENT_MUTATION, CREATE_PROJECT_MUTATION } from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
 import type { Agent, Project } from '@/types';
@@ -35,8 +34,7 @@ export default function DashboardPage() {
   );
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
-  const addEvent = useEventsStore((s) => s.addEvent);
-  const setEvents = useEventsStore((s) => s.setEvents);
+  const upsertMessage = useMessagesStore((s) => s.upsert);
 
   const [showDeployModal, setShowDeployModal] = useState(false);
   const [gridLayout, setGridLayout] = useState<GridLayout>(() => {
@@ -78,22 +76,7 @@ export default function DashboardPage() {
     }
   }, [data, projectId, setAgents]);
 
-  // Fetch historical events for current project
-  const [{ data: eventsData }] = useQuery({
-    query: EVENTS_QUERY,
-    variables: queryVars,
-    pause: paused,
-  });
-
-  useEffect(() => {
-    if (eventsData?.events && projectId) {
-      // Query returns newest-first; reverse so the store has chronological order
-      const chronological = [...eventsData.events].reverse();
-      setEvents(projectId, chronological);
-    }
-  }, [eventsData, projectId, setEvents]);
-
-  // Subscribe to agent updates — sync to store via useEffect, not in the reducer
+  // Subscribe to agent updates
   const [agentSubResult] = useSubscription(
     { query: AGENT_UPDATED_SUBSCRIPTION, variables: queryVars, pause: paused },
   );
@@ -104,16 +87,20 @@ export default function DashboardPage() {
     }
   }, [agentSubResult.data, projectId, upsertAgent]);
 
-  // Subscribe to new events
-  const [eventSubResult] = useSubscription(
-    { query: NEW_EVENT_SUBSCRIPTION, variables: queryVars, pause: paused },
+  // Subscribe to stream messages
+  const [messageSubResult] = useSubscription(
+    { query: MESSAGE_RECEIVED_SUBSCRIPTION, variables: queryVars, pause: paused },
   );
 
   useEffect(() => {
-    if (eventSubResult.data?.newEvent && projectId) {
-      addEvent(projectId, eventSubResult.data.newEvent);
+    if (messageSubResult.data?.messageReceived) {
+      const msg = messageSubResult.data.messageReceived;
+      upsertMessage({
+        ...msg,
+        parts: msg.parts ?? [],
+      });
     }
-  }, [eventSubResult.data, projectId, addEvent]);
+  }, [messageSubResult.data, upsertMessage]);
 
   const handleDeploy = async (
     name: string,

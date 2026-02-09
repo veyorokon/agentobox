@@ -1,11 +1,11 @@
 import asyncio
-import json
+import secrets
 
 import structlog
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
-from agents.models import Agent, AgentMessage, AgentStatus
+from agents.models import Agent, AgentStatus
 from agents.runtimes import get_runtime
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
 from agents.services.provision import provision_workspace, resolve_mcp_servers
@@ -56,7 +56,7 @@ async def create_agent(
     return agent
 
 
-def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id=""):
+def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id="", relay_token=""):
     """Sync helper: mark agent as provisioned with sandbox details."""
     agent = Agent.objects.get(id=agent_id)
     agent.sandbox_id = sandbox_id
@@ -64,7 +64,8 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
     agent.status = AgentStatus.IDLE
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
-    agent.save(update_fields=["sandbox_id", "vnc_url", "status", "team_name", "parent_session_id"])
+    agent.relay_token = relay_token
+    agent.save(update_fields=["sandbox_id", "vnc_url", "status", "team_name", "parent_session_id", "relay_token"])
     return agent
 
 
@@ -81,7 +82,15 @@ _save_failed = sync_to_async(_save_agent_failed, thread_sensitive=False)
 
 
 async def _provision_agent(agent, project, runtime_name, op_log):
-    """Background task: create container, provision workspace, launch Claude."""
+    """
+    Background task: create container, provision workspace, launch relay.
+
+    The relay process (abox-relay) spawns Claude with stream-json flags,
+    reads stdout events, and POSTs them to the backend. This replaces
+    the previous tmux launch + hook system.
+
+    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Relay Process"
+    """
     runtime = None
     sandbox_id = None
     agent_id = str(agent.id)
@@ -89,6 +98,9 @@ async def _provision_agent(agent, project, runtime_name, op_log):
     try:
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
+
+        # Generate relay auth token for this agent
+        relay_token = secrets.token_urlsafe(32)
 
         # Build volume mounts when workspace_path is set
         CONTAINER_WORKSPACE = "/home/computeruse/workspace"
@@ -101,13 +113,9 @@ async def _provision_agent(agent, project, runtime_name, op_log):
         op_log.info("container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
         api_key = env.get("ANTHROPIC_API_KEY", "")
-        hook_env = {
-            "AGENT_ID": str(agent.id),
-            "ABOX_CALLBACK_URL": env.get("ABOX_CALLBACK_URL", ""),
-        }
         await provision_workspace(
             runtime, sandbox.id, project,
-            api_key=api_key, agent_env=hook_env,
+            api_key=api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
             instructions=agent.instructions,
@@ -115,38 +123,52 @@ async def _provision_agent(agent, project, runtime_name, op_log):
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
-
         work_dir = CONTAINER_WORKSPACE if agent.workspace_path else "/home/computeruse"
-        claude_cmd = (
-            f"cd {work_dir} && claude"
-            f" --agent-id {agent.name}@{team_name}"
-            f" --agent-name {agent.name}"
-            f" --team-name {team_name}"
-            f" --parent-session-id {parent_session_id}"
-            f" --agent-type general-purpose"
-            f" --model claude-opus-4-6"
-            f" --dangerously-skip-permissions"
-        )
-        # Wrap so that when claude exits (for any reason), we notify the backend
-        exit_payload = (
-            f'{{"hook_event_name":"ProcessExit","agent_id":"{agent_id}"}}'
-        )
         callback_url = env.get("ABOX_CALLBACK_URL", "")
-        wrapped_cmd = (
-            f'{claude_cmd}; '
-            f"curl -sf -X POST '{callback_url}/hooks/event' "
-            f"-H 'Content-Type: application/json' "
-            f"-d '{exit_payload}' >/dev/null 2>&1 || true"
+
+        # Build relay environment variables
+        # The relay reads these to spawn Claude with correct flags and POST events
+        relay_env_lines = [
+            f'export AGENT_ID="{agent_id}"',
+            f'export AGENT_NAME="{agent.name}"',
+            f'export TEAM_NAME="{team_name}"',
+            f'export PARENT_SESSION_ID="{parent_session_id}"',
+            f'export ABOX_CALLBACK_URL="{callback_url}"',
+            f'export RELAY_AUTH_TOKEN="{relay_token}"',
+            f'export ANTHROPIC_API_KEY="{api_key}"',
+            f'export CLAUDE_MODEL="claude-opus-4-6"',
+        ]
+
+        # Add MCP config path if agent has MCP servers
+        if agent.mcp_servers:
+            relay_env_lines.append(f'export MCP_CONFIG="{work_dir}/.mcp.json"')
+
+        relay_env_content = "\n".join(relay_env_lines) + "\n"
+        await runtime.write_file(
+            sandbox.id,
+            relay_env_content.encode("utf-8"),
+            "/home/computeruse/.relay_env",
+        )
+
+        # Launch relay process via tmux (so it's visible in VNC)
+        relay_cmd = (
+            f"cd {work_dir} && source /home/computeruse/.relay_env"
+            f" && python3 /opt/abox/relay.py"
         )
         await runtime.exec(
             sandbox.id,
-            ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50", "bash", "-c", wrapped_cmd],
+            ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50",
+             "bash", "-c", relay_cmd],
         )
-        op_log.info("claude_code_launched", team_name=team_name, parent_session_id=parent_session_id)
+        op_log.info("relay_launched", team_name=team_name, parent_session_id=parent_session_id)
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
 
-        agent = await _save_provisioned(agent_id, sandbox.id, sandbox.vnc_url, team_name, parent_session_id)
+        # Save relay_token on agent for stream endpoint auth
+        agent = await _save_provisioned(
+            agent_id, sandbox.id, sandbox.vnc_url,
+            team_name, parent_session_id, relay_token,
+        )
         await broadcast_agent_update(agent)
 
         op_log.info("agent_provisioned", agent_id=agent_id)
@@ -197,174 +219,6 @@ async def kill_agent(agent_id: str) -> bool:
 
     op_log.info("agent_killed")
     return True
-
-
-async def process_hook_event(payload: dict) -> None:
-    """Process an inbound hook event from an agent container.
-
-    Expects Claude Code's native stdin JSON with `agent_id` injected by hook-event.sh.
-    """
-    agent_id = payload.pop("agent_id", "")
-    event_type = payload.get("hook_event_name", "")
-
-    op_log = log.bind(agent_id=agent_id, event_type=event_type)
-    op_log.info("processing_hook_event")
-
-    try:
-        agent = await Agent.objects.aget(id=agent_id)
-    except Agent.DoesNotExist:
-        op_log.warning("agent_not_found_for_event")
-        return
-
-    await broadcast_agent_event(agent, event_type, payload)
-
-    # Update agent common fields from Claude Code's native schema
-    update_fields = []
-
-    session_id = payload.get("session_id", "")
-    if session_id and session_id != agent.session_id:
-        agent.session_id = session_id
-        update_fields.append("session_id")
-
-    cwd = payload.get("cwd", "")
-    if cwd and cwd != agent.cwd:
-        agent.cwd = cwd
-        update_fields.append("cwd")
-
-    transcript_path = payload.get("transcript_path", "")
-    if transcript_path and transcript_path != agent.transcript_path:
-        agent.transcript_path = transcript_path
-        update_fields.append("transcript_path")
-
-    permission_mode = payload.get("permission_mode", "")
-    if permission_mode and permission_mode != agent.permission_mode:
-        agent.permission_mode = permission_mode
-        update_fields.append("permission_mode")
-
-    # Extract model on SessionStart (it's in the top-level payload)
-    if event_type == "SessionStart":
-        model = payload.get("model", "")
-        if model and model != agent.model:
-            agent.model = model
-            update_fields.append("model")
-
-    # Capture inter-agent SendMessage as AgentMessage records
-    if event_type == "PostToolUse":
-        tool_name = payload.get("tool_name", "")
-        tool_input = payload.get("tool_input", {})
-        if tool_name == "SendMessage" and isinstance(tool_input, dict):
-            msg_type = tool_input.get("type", "")
-            # Skip internal protocol messages
-            if msg_type not in ("shutdown_request", "shutdown_response"):
-                content = tool_input.get("content", "") or tool_input.get("message", "")
-                recipient_name = tool_input.get("recipient", "")
-                if content:
-                    # Record outbound on sender
-                    await AgentMessage.objects.acreate(
-                        agent=agent, direction="outbound", content=content
-                    )
-                    await broadcast_agent_event(
-                        agent, "outbound_message", {"message": content, "recipient": recipient_name}
-                    )
-                    # Record inbound on recipient (if found in same project)
-                    if recipient_name:
-                        try:
-                            recipient = await Agent.objects.aget(
-                                name=recipient_name, project_id=agent.project_id
-                            )
-                            await AgentMessage.objects.acreate(
-                                agent=recipient, direction="inbound", content=content
-                            )
-                            await broadcast_agent_event(
-                                recipient, "inbound_message", {"message": content, "sender": agent.name}
-                            )
-                        except Agent.DoesNotExist:
-                            op_log.warning("sendmessage_recipient_not_found", recipient=recipient_name)
-
-    # Capture agent response on Stop (turn finished)
-    if event_type == "Stop":
-        transcript_path = payload.get("transcript_path", "") or agent.transcript_path
-        if transcript_path and agent.sandbox_id:
-            response_text = await _extract_last_response(
-                agent.runtime, agent.sandbox_id, transcript_path, op_log
-            )
-            if response_text:
-                await AgentMessage.objects.acreate(
-                    agent=agent, direction="outbound", content=response_text
-                )
-                await broadcast_agent_event(
-                    agent, "outbound_message", {"message": response_text}
-                )
-
-    # Status transitions:
-    #   Stop = turn finished, agent is idle and waiting for input
-    #   SessionEnd / ProcessExit = agent process exited
-    _STATUS_MAP = {
-        "SessionStart": AgentStatus.RUNNING,
-        "Stop": AgentStatus.IDLE,
-        "SessionEnd": AgentStatus.STOPPED,
-        "ProcessExit": AgentStatus.STOPPED,
-    }
-
-    new_status = _STATUS_MAP.get(event_type)
-    if new_status and agent.status != new_status:
-        agent.status = new_status
-        update_fields.append("status")
-
-    if update_fields:
-        await agent.asave(update_fields=update_fields)
-        await broadcast_agent_update(agent)
-        op_log.info("agent_updated", fields=update_fields)
-
-
-async def _extract_last_response(
-    runtime_name: str, sandbox_id: str, transcript_path: str, op_log
-) -> str:
-    """Read the last assistant response text from a Claude Code transcript.
-
-    Transcript is JSONL inside the agent container. Each line is a JSON object.
-    Assistant entries have type="assistant" with message.content = [{type:"text", text:"..."}].
-    We walk backwards from the end, collecting text blocks until we hit the preceding user message.
-    """
-    try:
-        runtime = get_runtime(runtime_name)
-        output = await runtime.exec(
-            sandbox_id,
-            ["bash", "-c", f"tail -80 '{transcript_path}'"],
-        )
-        if not output or not output.strip():
-            return ""
-
-        lines = output.strip().split("\n")
-        text_parts = []
-
-        for line in reversed(lines):
-            try:
-                entry = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-            entry_type = entry.get("type", "")
-
-            if entry_type == "user":
-                break  # Hit the user message that started this turn
-
-            if entry_type == "assistant":
-                content = entry.get("message", {}).get("content", [])
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block["text"])
-
-        # Reverse since we walked backwards
-        text_parts.reverse()
-        result = "\n".join(text_parts).strip()
-        if result:
-            op_log.info("transcript_response_extracted", length=len(result))
-        return result
-
-    except Exception:
-        op_log.warning("transcript_read_failed", transcript_path=transcript_path)
-        return ""
 
 
 async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:

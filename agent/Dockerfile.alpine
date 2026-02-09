@@ -56,7 +56,7 @@ RUN adduser -D -s /bin/bash computeruse \
 COPY rootfs/ /
 RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run 2>/dev/null || true \
-    && chmod +x /home/computeruse/hooks/*.sh \
+    && chmod +x /opt/abox/relay.py \
     && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
     && chown -R computeruse:computeruse /home/computeruse
 

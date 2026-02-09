@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Send, Search, ChevronsLeft, ChevronsRight, Paperclip, X, ImageIcon } from 'lucide-react';
+import { Send, Search, ChevronsLeft, ChevronsRight, Paperclip, X } from 'lucide-react';
 import { useMutation, useQuery } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
@@ -10,16 +10,16 @@ import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
 import { AGENT_MESSAGES_QUERY } from '@/lib/graphql/queries';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
-import { useEventsStore } from '@/stores/events';
+import { useMessagesStore } from '@/stores/messages';
+import { extractMessageItems } from '@/lib/messages';
 import { RosterBadge } from './roster-badge';
 import { PanelTabs, type PanelTab } from './panel-tabs';
-import { EventFeed } from './event-feed';
 import { ProjectSelector } from './project-selector';
 import { STATUS_COLOR_VAR } from './status-badge';
-import type { Agent, AgentEvent, AgentMessage } from '@/types';
+import type { Agent, Message, MessageItem, ContentPart } from '@/types';
 
 const EMPTY_AGENTS: Agent[] = [];
-const EMPTY_EVENTS: AgentEvent[] = [];
+const EMPTY_MESSAGES: Record<string, Message> = {};
 
 /* ── Spinner words (from Claude Code) ── */
 const SPINNER_WORDS = [
@@ -44,9 +44,15 @@ const SPINNER_WORDS = [
 ];
 
 /** Map PostToolUse tool_name to a human-readable activity label. */
+/** Internal files that should show friendly labels instead of raw filenames. */
+const INTERNAL_FILES: Record<string, string> = {
+  '.abox-msg': 'message',
+};
+
 function toolLabel(toolName: string, toolInput?: Record<string, unknown>): string {
   const filePath = typeof toolInput?.file_path === 'string' ? toolInput.file_path : '';
-  const filename = filePath ? filePath.split('/').pop() : '';
+  const rawName = filePath ? filePath.split('/').pop() || '' : '';
+  const filename = INTERNAL_FILES[rawName] || rawName;
   const pattern = typeof toolInput?.pattern === 'string' ? toolInput.pattern : '';
 
   switch (toolName) {
@@ -87,9 +93,7 @@ export function CommandPanel({
     () => allAgents.filter((a) => a.status !== 'stopped'),
     [allAgents]
   );
-  const events = useEventsStore((s) =>
-    projectId ? (s.events[projectId] ?? EMPTY_EVENTS) : EMPTY_EVENTS
-  );
+  const agentMessages = useMessagesStore((s) => s.byAgent);
 
   const [activeTab, setActiveTab] = useState<PanelTab>('feed');
   const [input, setInput] = useState('');
@@ -506,13 +510,14 @@ export function CommandPanel({
         style={{ animation: 'panel-fade 0.15s ease-out' }}
       >
         {activeTab === 'feed' && (
-          <EventFeed
-            filter={feedFilter}
-            onSelectAgent={switchTab}
-          />
+          <div className="px-4 py-8 text-center">
+            <p className="text-muted-foreground/40 text-xs font-mono">
+              Select an agent to view messages
+            </p>
+          </div>
         )}
         {isAgentTab && selectedAgent && (
-          <ChatView agent={selectedAgent} events={events} />
+          <ChatView agent={selectedAgent} messages={agentMessages[selectedAgent.id] ?? EMPTY_MESSAGES} />
         )}
       </div>
 
@@ -548,7 +553,7 @@ export function CommandPanel({
         {/* Live status line (running) or static context label (idle) */}
         {isAgentTab && selectedAgent && (
           selectedAgent.status === 'running' ? (
-            <AgentStatusLine agent={selectedAgent} events={events} />
+            <AgentStatusLine agent={selectedAgent} />
           ) : (
             <div className="flex items-center gap-2 mb-1.5 px-1">
               <span
@@ -718,44 +723,20 @@ export function CommandPanel({
 
 /* ── Live status line ── */
 
-function AgentStatusLine({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
+function AgentStatusLine({ agent }: { agent: Agent }) {
   const [spinnerWord, setSpinnerWord] = useState(() =>
     SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
   );
 
-  // Rotate spinner word every 4 seconds
+  const spinnerIntervalRef = useRef(3500 + Math.random() * 1000);
   useEffect(() => {
     const interval = setInterval(() => {
       setSpinnerWord(
         SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
       );
-    }, 4000);
+    }, spinnerIntervalRef.current);
     return () => clearInterval(interval);
   }, []);
-
-  // Also rotate on new tool events
-  const toolActivity = useMemo(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const evt = events[i];
-      if (evt.agentId === agent.id && evt.eventType === 'PostToolUse') {
-        const data = evt.data as {
-          tool_name?: string;
-          tool_input?: Record<string, unknown>;
-        };
-        return toolLabel(data.tool_name || '', data.tool_input);
-      }
-    }
-    return null;
-  }, [events, agent.id]);
-
-  // Pick a new spinner word when tool activity changes
-  useEffect(() => {
-    if (toolActivity) {
-      setSpinnerWord(
-        SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
-      );
-    }
-  }, [toolActivity]);
 
   const statusColor = STATUS_COLOR_VAR[agent.status];
 
@@ -778,118 +759,52 @@ function AgentStatusLine({ agent, events }: { agent: Agent; events: AgentEvent[]
       >
         {spinnerWord}...
       </span>
-      {toolActivity && (
-        <>
-          <span className="text-muted-foreground/30 text-[9px] flex-shrink-0">|</span>
-          <span className="text-[9px] font-mono text-muted-foreground truncate">
-            {toolActivity}
-          </span>
-        </>
-      )}
     </div>
   );
 }
 
 
-/** Parse message content, separating text from image attachment paths. */
-function parseMessageContent(content: string): {
-  text: string;
-  attachments: string[];
-} {
-  const marker = '[Attached images';
-  const idx = content.indexOf(marker);
-  if (idx === -1) return { text: content, attachments: [] };
+/**
+ * Chat view — renders typed Message content parts.
+ *
+ * Uses extractMessageItems() to separate data model from render model,
+ * then dispatches to tool-specific renderers by tool name.
+ *
+ * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Patterns to Implement"
+ * @see docs/CRUSH-ARCHITECTURE.md, "ExtractMessageItems"
+ */
+function ChatView({ agent, messages }: { agent: Agent; messages: Record<string, Message> }) {
+  const setMessages = useMessagesStore((s) => s.setMessages);
 
-  const text = content.slice(0, idx).trimEnd();
-  const attachBlock = content.slice(idx);
-  const lines = attachBlock.split('\n').filter((l) => l.trim());
-  // Skip the header line(s), collect file paths
-  const attachments = lines
-    .filter((l) => !l.startsWith('['))
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  return { text, attachments };
-}
-
-/** Extract a short display name from a file path. */
-function attachmentLabel(path: string): string {
-  const name = path.split('/').pop() || path;
-  // Truncate long filenames
-  return name.length > 28 ? name.slice(0, 25) + '...' : name;
-}
-
-
-/* ── Chat view ── */
-
-function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
-  const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const processedRef = useRef<Set<number | string>>(new Set());
-
-  // Fetch messages from backend
+  // Fetch messages from backend on mount
   const [{ data, fetching }] = useQuery({
     query: AGENT_MESSAGES_QUERY,
     variables: { agentId: agent.id },
     requestPolicy: 'network-only',
   });
 
-  // Sync query results
+  // Hydrate store from query
   useEffect(() => {
-    if (data?.agent?.messages) {
-      setMessages(data.agent.messages);
+    if (data?.agent?.streamMessages) {
+      setMessages(agent.id, data.agent.streamMessages);
     }
-  }, [data]);
+  }, [data, agent.id, setMessages]);
 
-  // Pick up new messages from event stream.
-  // Scans ALL new events (not just the latest) to avoid missing outbound_message
-  // events that arrive alongside other events in the same render batch.
-  useEffect(() => {
-    const newMsgs: AgentMessage[] = [];
-
-    for (const evt of events) {
-      if (processedRef.current.has(evt.id)) continue;
-      processedRef.current.add(evt.id);
-
-      if (evt.agentId !== agent.id) continue;
-      if (
-        evt.eventType !== 'inbound_message' &&
-        evt.eventType !== 'outbound_message'
-      )
-        continue;
-
-      const msg = evt.data as { message?: string };
-      if (!msg.message) continue;
-
-      newMsgs.push({
-        id: `evt-${evt.id}`,
-        direction:
-          evt.eventType === 'inbound_message' ? 'inbound' : 'outbound',
-        content: msg.message,
-        createdAt: evt.createdAt || new Date().toISOString(),
-      });
-    }
-
-    if (newMsgs.length > 0) {
-      setMessages((prev) => {
-        const seen = new Set(
-          prev.map((m) => `${m.direction}:${m.content}`)
-        );
-        const unique = newMsgs.filter(
-          (m) => !seen.has(`${m.direction}:${m.content}`)
-        );
-        return unique.length > 0 ? [...prev, ...unique] : prev;
-      });
-    }
-  }, [events, agent.id]);
+  // Convert store map to sorted array and extract render items
+  const items = useMemo(() => {
+    const sorted = Object.values(messages).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    return extractMessageItems(sorted);
+  }, [messages]);
 
   const statusColor = STATUS_COLOR_VAR[agent.status];
 
-  // Still loading — render nothing (parent column-reverse keeps layout stable)
-  if (fetching && messages.length === 0) {
+  if (fetching && items.length === 0) {
     return <div />;
   }
 
-  if (messages.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 px-5 py-12">
         <div className="flex items-center gap-2">
@@ -919,93 +834,151 @@ function ChatView({ agent, events }: { agent: Agent; events: AgentEvent[] }) {
 
   return (
     <div className="px-4 py-3 space-y-3">
-      {messages.map((msg) => {
-        const isInbound = msg.direction === 'inbound';
-        const time = new Date(msg.createdAt).toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-
-        return (
-          <div
-            key={msg.id}
-            className={`flex ${isInbound ? 'justify-end' : 'justify-start'}`}
-            style={{
-              animation:
-                'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-            }}
-          >
-            <div className="max-w-[88%]">
-              {/* Header: sender + time */}
-              <div
-                className={`flex items-center gap-2 mb-1 ${
-                  isInbound ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                <span
-                  className="text-[9px] font-mono font-bold uppercase tracking-wider"
-                  style={{
-                    color: isInbound ? 'var(--accent)' : statusColor,
-                  }}
-                >
-                  {isInbound ? 'you' : agent.name}
-                </span>
-                <span className="text-muted-foreground/40 text-[9px] font-mono tabular-nums">
-                  {time}
-                </span>
-              </div>
-
-              {/* Message bubble */}
-              {(() => {
-                const { text, attachments: imgPaths } = parseMessageContent(msg.content);
-                const bubbleColor = isInbound ? 'var(--accent)' : statusColor;
-                return (
-                  <div
-                    data-augmented-ui="tl-clip br-clip border"
-                    className={`px-3 py-2.5 ${
-                      isInbound ? 'bg-accent/10' : 'bg-card'
-                    }`}
-                    style={{
-                      '--aug-tl': '6px',
-                      '--aug-br': '6px',
-                      '--aug-border-all': '1px',
-                      '--aug-border-bg': bubbleColor,
-                    } as React.CSSProperties}
-                  >
-                    {text && (
-                      <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
-                        {text}
-                      </p>
-                    )}
-                    {imgPaths.length > 0 && (
-                      <div className={`flex flex-wrap gap-1.5 ${text ? 'mt-2' : ''}`}>
-                        {imgPaths.map((path, j) => (
-                          <div
-                            key={j}
-                            className="flex items-center gap-1.5 px-2 py-1 rounded"
-                            style={{
-                              background: `color-mix(in srgb, ${bubbleColor} 10%, transparent)`,
-                              border: `1px solid color-mix(in srgb, ${bubbleColor} 25%, transparent)`,
-                            }}
-                          >
-                            <ImageIcon
-                              className="w-3 h-3 flex-shrink-0"
-                              style={{ color: bubbleColor }}
-                            />
-                            <span className="text-[10px] font-mono text-muted-foreground">
-                              {attachmentLabel(path)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-        );
+      {items.map((item, i) => {
+        if (item.type === 'user') {
+          return <UserBubble key={`u-${i}`} text={item.text} />;
+        }
+        if (item.type === 'assistant') {
+          return <AssistantBubble key={`a-${i}`} agent={agent} text={item.text} statusColor={statusColor} />;
+        }
+        // tool
+        return <ToolBubble key={`t-${i}`} item={item} statusColor={statusColor} />;
       })}
+    </div>
+  );
+}
+
+
+/* ── Message bubbles ── */
+
+function UserBubble({ text }: { text: string }) {
+  return (
+    <div
+      className="flex justify-end"
+      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
+    >
+      <div className="max-w-[88%]">
+        <div className="flex items-center gap-2 mb-1 justify-end">
+          <span className="text-[9px] font-mono font-bold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>
+            you
+          </span>
+        </div>
+        <div
+          data-augmented-ui="tl-clip br-clip border"
+          className="px-3 py-2.5 bg-accent/10"
+          style={{
+            '--aug-tl': '6px',
+            '--aug-br': '6px',
+            '--aug-border-all': '1px',
+            '--aug-border-bg': 'var(--accent)',
+          } as React.CSSProperties}
+        >
+          <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+            {text}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssistantBubble({ agent, text, statusColor }: { agent: Agent; text: string; statusColor: string }) {
+  return (
+    <div
+      className="flex justify-start"
+      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
+    >
+      <div className="max-w-[88%]">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[9px] font-mono font-bold uppercase tracking-wider" style={{ color: statusColor }}>
+            {agent.name}
+          </span>
+        </div>
+        <div
+          data-augmented-ui="tl-clip br-clip border"
+          className="px-3 py-2.5 bg-card"
+          style={{
+            '--aug-tl': '6px',
+            '--aug-br': '6px',
+            '--aug-border-all': '1px',
+            '--aug-border-bg': statusColor,
+          } as React.CSSProperties}
+        >
+          <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+            {text}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Tool renderer dispatch — renders tool_use + tool_result pairs.
+ * Each tool type gets a specialized display.
+ *
+ * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Tool Renderer Dispatch"
+ */
+function ToolBubble({ item, statusColor }: { item: Extract<MessageItem, { type: 'tool' }>; statusColor: string }) {
+  const { toolUse, toolResult, status } = item;
+  const name = toolUse.name;
+
+  // Status indicator color
+  const indicatorColor =
+    status === 'running' ? 'var(--agent-running)' :
+    status === 'success' ? 'var(--agent-idle)' :
+    status === 'error' ? 'var(--agent-dead)' :
+    'var(--muted-foreground)';
+
+  // Tool-specific label
+  const label = toolLabel(name, toolUse.input);
+
+  // Tool result content (truncated for display)
+  const resultContent = toolResult?.content ?? '';
+  const resultTruncated = resultContent.length > 500
+    ? resultContent.slice(0, 500) + '...'
+    : resultContent;
+
+  return (
+    <div
+      className="flex justify-start"
+      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
+    >
+      <div className="max-w-[88%] w-full">
+        <div
+          className="px-3 py-2 rounded-sm"
+          style={{
+            background: 'var(--surface-inset)',
+            borderLeft: `2px solid ${indicatorColor}`,
+          }}
+        >
+          {/* Tool header */}
+          <div className="flex items-center gap-2">
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{
+                background: indicatorColor,
+                animation: status === 'running' ? 'border-pulse 2s ease-in-out infinite' : 'none',
+              }}
+            />
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {label}
+            </span>
+            {status === 'error' && (
+              <span className="text-[9px] font-mono font-bold uppercase" style={{ color: 'var(--agent-dead)' }}>
+                error
+              </span>
+            )}
+          </div>
+
+          {/* Tool result */}
+          {toolResult && resultTruncated && (
+            <pre className="text-[10px] font-mono text-muted-foreground/70 mt-1.5 whitespace-pre-wrap break-words leading-relaxed max-h-32 overflow-y-auto">
+              {resultTruncated}
+            </pre>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

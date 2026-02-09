@@ -49,11 +49,11 @@ export const CREATE_AGENT_MUTATION = gql`
       sessionId
       model
       cwd
-      transcriptPath
       permissionMode
       mcpServers
       workspacePath
       instructions
+      sessionCostUsd
       createdAt
     }
   }
@@ -77,8 +77,11 @@ export const INTERRUPT_AGENT_MUTATION = gql`
   }
 `;
 
-export const ATTACH_MCP_MUTATION = gql`
-  mutation AttachMcp($input: AttachMcpInput!) {
-    attachMcp(input: $input)
+export const RATE_AGENT_MUTATION = gql`
+  mutation RateAgent($input: RateFeedbackInput!) {
+    rateAgent(input: $input) {
+      id
+      rating
+    }
   }
 `;

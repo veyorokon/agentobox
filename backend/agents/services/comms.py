@@ -1,21 +1,27 @@
-import shlex
+import uuid
 
 import structlog
 
-from agents.models import Agent, AgentMessage, AgentStatus
-from agents.runtimes import get_runtime
-from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
+from agents.models import Agent, AgentStatus, Message
+from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update, broadcast_stream_message
 
 log = structlog.get_logger("agents.comms")
 
 
-def _shell_quote(s: str) -> str:
-    """Shell-quote a string for safe embedding in bash -c commands."""
-    return shlex.quote(s)
-
-
 async def send_message(agent_id: str, message: str) -> bool:
-    """Send a message to an agent's Claude Code session via tmux."""
+    """
+    Enqueue a message for delivery to an agent's Claude Code session.
+
+    Instead of tmux send-keys, this enqueues the message as a stream-json
+    input object in agent.pending_input (a list). The relay picks it up
+    via the piggyback pattern in the next POST response cycle.
+
+    Input format (stream-json stdin):
+        {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}
+
+    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Piggyback Pattern"
+    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Input Format"
+    """
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -24,60 +30,54 @@ async def send_message(agent_id: str, message: str) -> bool:
         op_log.warning("agent_not_found")
         return False
 
-    # Persist inbound message
-    await AgentMessage.objects.acreate(
-        agent=agent, direction="inbound", content=message
-    )
-
     await broadcast_agent_event(agent, "inbound_message", {"message": message})
 
-    # Deliver immediately via tmux send-keys
-    if agent.sandbox_id:
-        try:
-            runtime = get_runtime(agent.runtime)
+    # Store user message in stream Message model so the frontend sees it
+    msg_record = await Message.objects.acreate(
+        agent=agent,
+        message_id=f"user_{uuid.uuid4().hex[:16]}",
+        session_id=agent.session_id or "",
+        role="user",
+        parts=[{"type": "text", "text": message}],
+        turn_number=0,
+    )
+    await broadcast_stream_message(agent, msg_record)
 
-            # Write message to a temp file, then send a single-line
-            # instruction to read it. Direct send-keys -l for multiline
-            # text triggers bracketed paste mode, causing Claude Code to
-            # show "[Pasted text +N lines]" without submitting.
-            if "\n" in message:
-                await runtime.exec(
-                    agent.sandbox_id,
-                    ["bash", "-c", f"printf '%s' {_shell_quote(message)} > /tmp/.abox-msg"],
-                )
-                await runtime.exec(
-                    agent.sandbox_id,
-                    ["tmux", "send-keys", "-t", "claude", "-l",
-                     "Read and follow the instructions in /tmp/.abox-msg verbatim."],
-                )
-            else:
-                await runtime.exec(
-                    agent.sandbox_id,
-                    ["tmux", "send-keys", "-t", "claude", "-l", message],
-                )
-            await runtime.exec(
-                agent.sandbox_id,
-                ["tmux", "send-keys", "-t", "claude", "Enter"],
-            )
-            op_log.info("message_delivered")
+    # Build stream-json input object
+    input_msg = {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": message}],
+        },
+    }
 
-            # Mark agent as running now that it has work
-            if agent.status != AgentStatus.RUNNING:
-                agent.status = AgentStatus.RUNNING
-                await agent.asave(update_fields=["status"])
-                await broadcast_agent_update(agent)
-        except Exception:
-            op_log.exception("message_delivery_failed")
-            return False
-    else:
-        op_log.warning("no_sandbox_for_delivery")
-        return False
+    # Append to pending_input list — relay picks up via piggyback
+    pending = agent.pending_input or []
+    pending.append(input_msg)
+    agent.pending_input = pending
 
+    # Mark agent as running
+    if agent.status != AgentStatus.RUNNING:
+        agent.status = AgentStatus.RUNNING
+
+    await agent.asave(update_fields=["pending_input", "status"])
+    await broadcast_agent_update(agent)
+
+    op_log.info("message_enqueued")
     return True
 
 
 async def interrupt_agent(agent_id: str) -> bool:
-    """Send Ctrl+C to an agent's Claude Code session via tmux."""
+    """
+    Queue a SIGINT signal for an agent's Claude Code session.
+
+    Instead of tmux C-c, this sets agent.pending_signal = "SIGINT".
+    The relay picks it up via the piggyback pattern in the next
+    heartbeat or POST response.
+
+    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Piggyback Pattern"
+    """
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -86,65 +86,9 @@ async def interrupt_agent(agent_id: str) -> bool:
         op_log.warning("agent_not_found")
         return False
 
-    if not agent.sandbox_id:
-        op_log.warning("no_sandbox_for_interrupt")
-        return False
+    agent.pending_signal = "SIGINT"
+    await agent.asave(update_fields=["pending_signal"])
 
-    try:
-        runtime = get_runtime(agent.runtime)
-        await runtime.exec(
-            agent.sandbox_id,
-            ["tmux", "send-keys", "-t", "claude", "C-c"],
-        )
-        await broadcast_agent_event(agent, "interrupted", {})
-
-        if agent.status != AgentStatus.IDLE:
-            agent.status = AgentStatus.IDLE
-            await agent.asave(update_fields=["status"])
-            await broadcast_agent_update(agent)
-
-        op_log.info("agent_interrupted")
-        return True
-    except Exception:
-        op_log.exception("interrupt_failed")
-        return False
-
-
-async def attach_mcp(agent_id: str, server_name: str, command: str, args: list[str]) -> bool:
-    """Attach an MCP server to a running agent via Claude Code's /mcp command."""
-    op_log = log.bind(agent_id=agent_id, mcp=server_name)
-
-    try:
-        agent = await Agent.objects.aget(id=agent_id)
-    except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
-        return False
-
-    if not agent.sandbox_id:
-        op_log.warning("no_sandbox_for_mcp")
-        return False
-
-    try:
-        runtime = get_runtime(agent.runtime)
-        cmd_parts = [command] + args
-        mcp_cmd = f"/mcp add {server_name} -- {' '.join(cmd_parts)}"
-        await runtime.exec(
-            agent.sandbox_id,
-            ["tmux", "send-keys", "-t", "claude", "-l", mcp_cmd],
-        )
-        await runtime.exec(
-            agent.sandbox_id,
-            ["tmux", "send-keys", "-t", "claude", "Enter"],
-        )
-        op_log.info("mcp_attached")
-
-        # Update the agent's mcp_servers field
-        mcp_servers = agent.mcp_servers or {}
-        mcp_servers[server_name] = {"command": command, "args": args}
-        agent.mcp_servers = mcp_servers
-        await agent.asave(update_fields=["mcp_servers"])
-
-        return True
-    except Exception:
-        op_log.exception("mcp_attach_failed")
-        return False
+    await broadcast_agent_event(agent, "interrupted", {})
+    op_log.info("interrupt_enqueued")
+    return True

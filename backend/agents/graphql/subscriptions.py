@@ -4,7 +4,7 @@ import strawberry
 import structlog
 from strawberry import ID
 
-from agents.graphql.types import AgentEventSubType, AgentType
+from agents.graphql.types import AgentEventSubType, AgentType, MessageSubType
 
 log = structlog.get_logger("agents.subscriptions")
 
@@ -63,3 +63,51 @@ class AgentSubscription:
                     agent_name=message["agent_name"],
                     created_at=message["created_at"],
                 )
+
+    @strawberry.subscription
+    async def message_received(
+        self, info: strawberry.Info, project_id: ID
+    ) -> AsyncGenerator[MessageSubType, None]:
+        """
+        Subscribe to new/updated stream Messages for a project.
+
+        Pushes typed Message payloads (with content parts) when the
+        backend processes assistant/user events from the relay.
+
+        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "messageReceived subscription"
+        """
+        from agents.models import Message
+
+        ws = info.context["ws"]
+        channel_layer = ws.channel_layer
+        group = f"project_{project_id}_messages"
+
+        await channel_layer.group_add(group, ws.channel_name)
+        log.info("subscription_connected", type="message_received", group=group)
+
+        async with ws.listen_to_channel("stream.message", groups=[group]) as cm:
+            async for msg in cm:
+                try:
+                    message = await Message.objects.aget(id=msg["message_id"])
+                    log.debug(
+                        "subscription_message",
+                        type="message_received",
+                        message_id=msg["message_id"],
+                        agent_id=msg["agent_id"],
+                    )
+                    yield MessageSubType(
+                        id=message.id,
+                        message_id=message.message_id,
+                        agent_id=msg["agent_id"],
+                        agent_name=msg["agent_name"],
+                        role=message.role,
+                        parts=message.parts,
+                        session_id=message.session_id,
+                        turn_number=message.turn_number,
+                        created_at=message.created_at.isoformat(),
+                    )
+                except Message.DoesNotExist:
+                    log.warning(
+                        "message_not_found_for_subscription",
+                        message_id=msg["message_id"],
+                    )

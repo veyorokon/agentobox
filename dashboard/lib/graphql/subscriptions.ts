@@ -13,23 +13,27 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
       sessionId
       model
       cwd
-      transcriptPath
       permissionMode
       workspacePath
       instructions
+      sessionCostUsd
+      capabilities
       createdAt
     }
   }
 `;
 
-export const NEW_EVENT_SUBSCRIPTION = gql`
-  subscription NewEvent($projectId: ID!) {
-    newEvent(projectId: $projectId) {
+export const MESSAGE_RECEIVED_SUBSCRIPTION = gql`
+  subscription MessageReceived($projectId: ID!) {
+    messageReceived(projectId: $projectId) {
       id
-      eventType
-      data
+      messageId
       agentId
       agentName
+      role
+      parts
+      sessionId
+      turnNumber
       createdAt
     }
   }
