@@ -76,6 +76,40 @@ async def send_message(agent_id: str, message: str) -> bool:
     return True
 
 
+async def interrupt_agent(agent_id: str) -> bool:
+    """Send Ctrl+C to an agent's Claude Code session via tmux."""
+    op_log = log.bind(agent_id=agent_id)
+
+    try:
+        agent = await Agent.objects.aget(id=agent_id)
+    except Agent.DoesNotExist:
+        op_log.warning("agent_not_found")
+        return False
+
+    if not agent.sandbox_id:
+        op_log.warning("no_sandbox_for_interrupt")
+        return False
+
+    try:
+        runtime = get_runtime(agent.runtime)
+        await runtime.exec(
+            agent.sandbox_id,
+            ["tmux", "send-keys", "-t", "claude", "C-c"],
+        )
+        await broadcast_agent_event(agent, "interrupted", {})
+
+        if agent.status != AgentStatus.IDLE:
+            agent.status = AgentStatus.IDLE
+            await agent.asave(update_fields=["status"])
+            await broadcast_agent_update(agent)
+
+        op_log.info("agent_interrupted")
+        return True
+    except Exception:
+        op_log.exception("interrupt_failed")
+        return False
+
+
 async def attach_mcp(agent_id: str, server_name: str, command: str, args: list[str]) -> bool:
     """Attach an MCP server to a running agent via Claude Code's /mcp command."""
     op_log = log.bind(agent_id=agent_id, mcp=server_name)

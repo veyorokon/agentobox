@@ -269,7 +269,7 @@ async def process_hook_event(payload: dict) -> None:
                     if recipient_name:
                         try:
                             recipient = await Agent.objects.aget(
-                                name=recipient_name, project=agent.project
+                                name=recipient_name, project_id=agent.project_id
                             )
                             await AgentMessage.objects.acreate(
                                 agent=recipient, direction="inbound", content=content

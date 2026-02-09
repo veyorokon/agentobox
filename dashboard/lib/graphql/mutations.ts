@@ -71,6 +71,12 @@ export const SEND_MESSAGE_MUTATION = gql`
   }
 `;
 
+export const INTERRUPT_AGENT_MUTATION = gql`
+  mutation InterruptAgent($agentId: ID!) {
+    interruptAgent(agentId: $agentId)
+  }
+`;
+
 export const ATTACH_MCP_MUTATION = gql`
   mutation AttachMcp($input: AttachMcpInput!) {
     attachMcp(input: $input)

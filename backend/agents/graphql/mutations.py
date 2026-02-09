@@ -60,6 +60,12 @@ class AgentMutation:
         return await kill_agent(agent_id)
 
     @strawberry.mutation
+    async def interrupt_agent(self, agent_id: ID) -> bool:
+        from agents.services.comms import interrupt_agent
+
+        return await interrupt_agent(agent_id)
+
+    @strawberry.mutation
     async def send_message(self, input: SendMessageInput) -> bool:
         from agents.services.comms import send_message
 

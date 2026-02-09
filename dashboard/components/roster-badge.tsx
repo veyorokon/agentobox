@@ -24,20 +24,15 @@ export function RosterBadge({
   return (
     <button
       onClick={onClick}
-      data-augmented-ui="tl-clip br-clip border"
-      className="flex items-center gap-2 px-2.5 py-1 transition-all duration-200 group"
+      className="flex items-center gap-1.5 px-2 py-1 rounded transition-all duration-200"
       style={{
-        '--aug-tl': '5px',
-        '--aug-br': '5px',
-        '--aug-border-all': isSelected ? '1.5px' : '1px',
-        '--aug-border-bg': isSelected ? color : 'var(--border)',
         background: isSelected
-          ? `color-mix(in srgb, ${color} 8%, transparent)`
+          ? `color-mix(in srgb, ${color} 10%, transparent)`
           : 'transparent',
-      } as React.CSSProperties}
+      }}
     >
       <span
-        className="w-2 h-2 rounded-full flex-shrink-0"
+        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
         style={{
           background: color,
           boxShadow: isActive ? `0 0 6px ${color}` : 'none',
@@ -52,7 +47,7 @@ export function RosterBadge({
       </span>
       <span
         className="text-[8px] font-mono font-bold uppercase tracking-wider"
-        style={{ color, opacity: 0.7 }}
+        style={{ color, opacity: 0.6 }}
       >
         {STATUS_SHORT[agent.status] || agent.status.toUpperCase()}
       </span>

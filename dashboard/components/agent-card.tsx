@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Monitor, RefreshCw, Pause, Square, Loader2 } from 'lucide-react';
+import { Monitor, RefreshCw, Pause, Play, Square, Loader2 } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
-import { KILL_AGENT_MUTATION } from '@/lib/graphql/mutations';
+import { KILL_AGENT_MUTATION, INTERRUPT_AGENT_MUTATION, SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
 import { StatusBadge, STATUS_COLOR_VAR } from './status-badge';
 import { VncFrame } from './vnc-frame';
 import { ConfirmModal } from './modals/confirm-modal';
@@ -27,6 +27,9 @@ export function AgentCard({
   const [showKillConfirm, setShowKillConfirm] = useState(false);
 
   const [, killAgentMut] = useMutation(KILL_AGENT_MUTATION);
+  const [{ fetching: interrupting }, interruptAgentMut] = useMutation(INTERRUPT_AGENT_MUTATION);
+  const [{ fetching: resuming }, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
+  const pausePlayLoading = interrupting || resuming;
 
   const handleKill = async () => {
     setShowKillConfirm(false);
@@ -44,6 +47,33 @@ export function AgentCard({
     }
   };
 
+  const handlePausePlay = async () => {
+    try {
+      if (isRunning) {
+        await logger.withSpan('interruptAgent', async () => {
+          const { error } = await interruptAgentMut({ agentId: agent.id });
+          if (error) throw error;
+        });
+      } else if (effectiveStatus === 'idle') {
+        await logger.withSpan('resumeAgent', async () => {
+          const { error } = await sendMessageMut({
+            input: { agentId: agent.id, message: 'continue' },
+          });
+          if (error) throw error;
+        });
+      }
+    } catch {
+      toast.error(`Failed to ${isRunning ? 'pause' : 'resume'} ${agent.name}`);
+    }
+  };
+
+  const pausePlayDisabled =
+    isStopping ||
+    pausePlayLoading ||
+    effectiveStatus === 'stopped' ||
+    effectiveStatus === 'error' ||
+    effectiveStatus === 'deploying';
+
   const borderColor = isStopping
     ? 'var(--agent-dead)'
     : isDeploying
@@ -55,7 +85,7 @@ export function AgentCard({
   return (
     <div
       data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}${isStopping ? ' opacity-60' : ''}`}
+      className={`bg-card backdrop-blur overflow-hidden${isDeploying ? ' deploying-card' : ''}${isRunning ? ' running-card' : ''}${isStopping ? ' opacity-60' : ''}`}
       style={{
         '--aug-tl': '20px',
         '--aug-tr': '20px',
@@ -114,11 +144,18 @@ export function AgentCard({
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
             <button
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-              title="Pause"
-              disabled={isStopping}
+              onClick={handlePausePlay}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              title={isRunning ? 'Pause agent' : 'Resume agent'}
+              disabled={pausePlayDisabled}
             >
-              <Pause className="w-3.5 h-3.5" />
+              {pausePlayLoading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : isRunning ? (
+                <Pause className="w-3.5 h-3.5" />
+              ) : (
+                <Play className="w-3.5 h-3.5" />
+              )}
             </button>
             <button
               onClick={() => setShowKillConfirm(true)}

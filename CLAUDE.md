@@ -21,6 +21,10 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 - Release builds: push `v*` tag -> `:latest` + `:v1.2.3`
 - Image: `ghcr.io/veyorokon/agentobox-agent` (private, Modal pulls via `ghcr-secret`)
 
+## Foundations
+
+`docs/FOUNDATIONS.md` is the source of truth for product axioms, design principles, research findings, and experiment results. Read it before making architectural decisions, adding new hook integrations, changing agent lifecycle logic, or designing features that touch the control plane. It documents how Claude Code's teaming, hooks, mailbox, and task system actually work (validated by experiments), and what Agentobox's role is relative to Claude's native capabilities.
+
 ## Architecture
 
 - **backend/**: Django 6.0 + Strawberry GraphQL + uvicorn (dev) / Daphne (prod)

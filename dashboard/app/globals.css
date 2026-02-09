@@ -317,6 +317,19 @@
   animation: border-pulse 2s ease-in-out infinite !important;
 }
 
+.running-card::after {
+  animation: running-border-pulse 3s ease-in-out infinite !important;
+}
+
+@keyframes running-border-pulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* Message entry animation */
 @keyframes msg-enter {
   from {

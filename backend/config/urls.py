@@ -3,6 +3,7 @@ from django.urls import include, path
 from django.views.decorators.csrf import csrf_exempt
 from strawberry.django.views import AsyncGraphQLView
 
+from agents.views import upload_file
 from config.health import health
 from schema import schema
 
@@ -11,4 +12,5 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("graphql", csrf_exempt(AsyncGraphQLView.as_view(schema=schema))),
     path("hooks/", include("agents.urls")),
+    path("agents/<uuid:agent_id>/upload", upload_file, name="agent-upload"),
 ]
