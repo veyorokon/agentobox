@@ -2,14 +2,10 @@
 
 import { ArrowLeft, RotateCw, Trash2 } from 'lucide-react';
 import { useAgentsStore, type DetailTab } from '@/stores/agents';
-import { useMessagesStore } from '@/stores/messages';
 import { STATUS_COLOR_VAR } from './status-badge';
 import { VncFrame } from './vnc-frame';
-import { ChatView } from './chat-view';
 import { ConfigView } from './config-view';
-import type { Agent, Message } from '@/types';
-
-const EMPTY_MESSAGES: Record<string, Message> = {};
+import type { Agent } from '@/types';
 
 interface AgentDetailPanelProps {
   agent: Agent;
@@ -26,9 +22,6 @@ export function AgentDetailPanel({
 }: AgentDetailPanelProps) {
   const detailTab = useAgentsStore((s) => s.detailTab);
   const setDetailTab = useAgentsStore((s) => s.setDetailTab);
-  const agentMessages = useMessagesStore((s) => s.byAgent);
-  const messages = agentMessages[agent.id] ?? EMPTY_MESSAGES;
-
   const statusColor = STATUS_COLOR_VAR[agent.status];
 
   return (
@@ -167,7 +160,7 @@ export function AgentDetailPanel({
         {detailTab === 'desktop' && <VncFrame url={agent.vncUrl} />}
         {detailTab === 'chat' && (
           <div className="h-full overflow-y-auto overflow-x-hidden scrollbar-thin flex flex-col-reverse">
-            <ChatView agent={agent} messages={messages} />
+            {/* ChatView moved to unified feed in page.tsx */}
           </div>
         )}
         {detailTab === 'config' && <ConfigView agent={agent} />}

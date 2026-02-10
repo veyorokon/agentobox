@@ -3,24 +3,29 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery, useSubscription, useMutation } from 'urql';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Folder, ArrowRight, X, Terminal } from 'lucide-react';
-import html2canvas from 'html2canvas';
+import { motion } from 'framer-motion';
+import { Plus, Folder, ArrowRight, X } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useMessagesStore } from '@/stores/messages';
-import { AGENTS_QUERY, PROJECTS_QUERY } from '@/lib/graphql/queries';
+import {
+  AGENTS_QUERY,
+  AGENT_MESSAGES_QUERY,
+  PROJECTS_QUERY,
+} from '@/lib/graphql/queries';
 import {
   AGENT_UPDATED_SUBSCRIPTION,
   MESSAGE_RECEIVED_SUBSCRIPTION,
 } from '@/lib/graphql/subscriptions';
+import { StatusBar } from '@/components/status-bar';
 import { CommandPanel } from '@/components/command-panel';
-import { AgentCard } from '@/components/agent-card';
-import { AgentDetailPanel } from '@/components/agent-detail-panel';
-import { ScreenshotModal } from '@/components/screenshot-modal';
-import { GridControl, type GridLayout, GRID_CLASSES } from '@/components/grid-control';
+import { ChatView } from '@/components/chat-view';
+import { MessageComposer } from '@/components/message-composer';
 import { DeployModal } from '@/components/modals/deploy-modal';
-import { CREATE_AGENT_MUTATION, CREATE_PROJECT_MUTATION, SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
+import {
+  CREATE_AGENT_MUTATION,
+  CREATE_PROJECT_MUTATION,
+} from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
 import type { Agent, Project } from '@/types';
 
@@ -38,51 +43,29 @@ export default function DashboardPage() {
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
   const upsertMessage = useMessagesStore((s) => s.upsert);
+  const allMessages = useMessagesStore((s) => s.byAgent);
   const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
   const setSelectedAgent = useAgentsStore((s) => s.setSelectedAgent);
 
-  const selectedAgent = useMemo(
-    () => agents.find((a) => a.id === selectedAgentId) ?? null,
-    [agents, selectedAgentId]
-  );
+  // Build agent lookup map for ChatView
+  const agentsMap = useMemo(() => {
+    const map: Record<string, Agent> = {};
+    for (const agent of agents) {
+      map[agent.id] = agent;
+    }
+    return map;
+  }, [agents]);
 
   const [showDeployModal, setShowDeployModal] = useState(false);
-  const [gridLayout, setGridLayout] = useState<GridLayout>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('agentobox-grid') as GridLayout | null;
-      if (saved) return saved;
-      return window.innerWidth >= 768 ? '2' : '1';
-    }
-    return '1';
-  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [screenshotBlob, setScreenshotBlob] = useState<Blob | null>(null);
   const [, createAgentMut] = useMutation(CREATE_AGENT_MUTATION);
-  const [, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
 
-  // Cmd+B to toggle sidebar, Cmd+Shift+S to screenshot
+  // Cmd+B to toggle sidebar
   useEffect(() => {
-    const handler = async (e: KeyboardEvent) => {
+    const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
         e.preventDefault();
         setSidebarCollapsed((v) => !v);
-      }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'S') {
-        e.preventDefault();
-        try {
-          const canvas = await html2canvas(document.body, {
-            backgroundColor: null,
-            scale: window.devicePixelRatio || 1,
-          });
-          canvas.toBlob((blob) => {
-            if (blob) {
-              setScreenshotBlob(blob);
-            }
-          }, 'image/png');
-        } catch (error) {
-          toast.error('Failed to capture screenshot');
-          console.error('Screenshot error:', error);
-        }
       }
     };
     window.addEventListener('keydown', handler);
@@ -106,9 +89,11 @@ export default function DashboardPage() {
   }, [data, projectId, setAgents]);
 
   // Subscribe to agent updates
-  const [agentSubResult] = useSubscription(
-    { query: AGENT_UPDATED_SUBSCRIPTION, variables: queryVars, pause: paused },
-  );
+  const [agentSubResult] = useSubscription({
+    query: AGENT_UPDATED_SUBSCRIPTION,
+    variables: queryVars,
+    pause: paused,
+  });
 
   useEffect(() => {
     if (agentSubResult.data?.agentUpdated && projectId) {
@@ -117,9 +102,11 @@ export default function DashboardPage() {
   }, [agentSubResult.data, projectId, upsertAgent]);
 
   // Subscribe to stream messages
-  const [messageSubResult] = useSubscription(
-    { query: MESSAGE_RECEIVED_SUBSCRIPTION, variables: queryVars, pause: paused },
-  );
+  const [messageSubResult] = useSubscription({
+    query: MESSAGE_RECEIVED_SUBSCRIPTION,
+    variables: queryVars,
+    pause: paused,
+  });
 
   useEffect(() => {
     if (messageSubResult.data?.messageReceived) {
@@ -166,138 +153,41 @@ export default function DashboardPage() {
     }
   };
 
-  const handleScreenshotSend = async (blob: Blob, caption: string) => {
-    if (!selectedAgent) {
-      toast.error('No agent selected');
-      return;
-    }
-
-    try {
-      // 1. Upload screenshot to agent container
-      const token = localStorage.getItem('auth-token');
-      const backendUrl = (process.env.NEXT_PUBLIC_GRAPHQL_HTTP ?? 'http://localhost:8000/graphql').replace('/graphql', '');
-
-      const form = new FormData();
-      form.append('file', blob, 'screenshot.png');
-
-      const res = await fetch(`${backendUrl}/agents/${selectedAgent.id}/upload`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      });
-
-      if (!res.ok) {
-        throw new Error('Upload failed');
-      }
-
-      const data = await res.json();
-      const imagePath = data.path;
-
-      // 2. Send message with caption + image path
-      const message = caption
-        ? `${caption}\n\n[Screenshot]\n${imagePath}`
-        : `[Screenshot]\n${imagePath}`;
-
-      await logger.withSpan('sendScreenshot', () =>
-        sendMessageMut({
-          input: {
-            agentId: selectedAgent.id,
-            message,
-          },
-        }).then(({ error }) => {
-          if (error) throw error;
-        })
-      );
-
-      toast.success('Screenshot sent');
-      setScreenshotBlob(null);
-    } catch (error) {
-      toast.error('Failed to send screenshot');
-      console.error('Screenshot send error:', error);
-    }
-  };
-
   if (!projectId) {
     return <LandingPage />;
   }
 
   return (
-    <div className="h-screen flex overflow-hidden bg-background">
-      <CommandPanel
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((v) => !v)}
-      />
+    <div className="h-screen flex flex-col overflow-hidden bg-background">
+      <StatusBar agents={agents} />
 
-      <main className="flex-1 flex flex-col overflow-hidden relative">
-        {/* Subtle grid background */}
-        <div className="dashboard-grid absolute inset-0 pointer-events-none" />
+      <div className="flex-1 flex overflow-hidden">
+        <CommandPanel
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={setSelectedAgent}
+          onDeploy={() => setShowDeployModal(true)}
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((v) => !v)}
+        />
 
-        {selectedAgent ? (
-          <AgentDetailPanel
-            agent={selectedAgent}
-            onBack={() => setSelectedAgent(null)}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <ChatView
+            allMessages={allMessages}
+            agentsMap={agentsMap}
+            selectedAgentId={selectedAgentId}
           />
-        ) : (
-          <>
-            <motion.div
-              className="flex items-center justify-between px-6 pt-5 pb-4 relative z-10"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="flex items-center gap-4">
-                <p className="text-muted-foreground text-sm font-mono">
-                  <span className="text-accent/60 mr-1">//</span>
-                  {agents.length} agent{agents.length !== 1 ? 's' : ''} deployed
-                </p>
-                {agents.length > 0 && (
-                  <GridControl value={gridLayout} onChange={setGridLayout} />
-                )}
-              </div>
-              <button
-                onClick={() => setShowDeployModal(true)}
-                data-augmented-ui="tl-clip br-clip border"
-                className="deploy-btn px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
-                style={{
-                  '--aug-tl': '8px',
-                  '--aug-br': '8px',
-                  '--aug-border-all': '2px',
-                  '--aug-border-bg': 'var(--accent)',
-                } as React.CSSProperties}
-              >
-                + Deploy Agent
-              </button>
-            </motion.div>
+          <MessageComposer
+            agents={agents}
+            selectedAgentId={selectedAgentId}
+          />
+        </main>
+      </div>
 
-            <div className="flex-1 overflow-y-auto scrollbar-thin px-6 pb-6 relative z-10">
-              {agents.length === 0 ? (
-                <EmptyState />
-              ) : (
-                <div className={`grid gap-5 ${GRID_CLASSES[gridLayout]}`}>
-                  <AnimatePresence mode="popLayout">
-                    {agents.map((agent, i) => (
-                      <motion.div
-                        key={agent.id}
-                        initial={{ opacity: 0, scale: 0.95, y: 12 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: -8 }}
-                        transition={{
-                          duration: 0.45,
-                          delay: i * 0.06,
-                          ease: [0.16, 1, 0.3, 1],
-                        }}
-                        layout
-                      >
-                        <AgentCard agent={agent} />
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </main>
+      {/* Invisible message loaders — hydrate store per agent */}
+      {agents.map((agent) => (
+        <MessageLoader key={agent.id} agentId={agent.id} />
+      ))}
 
       <DeployModal
         open={showDeployModal}
@@ -305,71 +195,31 @@ export default function DashboardPage() {
         onDeploy={handleDeploy}
         projectId={projectId}
       />
-
-      <ScreenshotModal
-        blob={screenshotBlob}
-        onClose={() => setScreenshotBlob(null)}
-        onSend={handleScreenshotSend}
-      />
     </div>
   );
 }
 
-/* ============================================
-   Empty State — shown when no agents deployed
-   ============================================ */
+// ── Invisible message loader ──
+// Fetches historical messages for an agent on mount, populates Zustand store.
+// Real-time updates come via MESSAGE_RECEIVED_SUBSCRIPTION in the parent.
 
-function EmptyState() {
-  return (
-    <motion.div
-      className="flex items-center justify-center h-full"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.6, delay: 0.2 }}
-    >
-      <div className="text-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div
-            data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-            className="w-16 h-16 flex items-center justify-center mx-auto mb-5"
-            style={{
-              '--aug-tl': '10px',
-              '--aug-tr': '10px',
-              '--aug-br': '10px',
-              '--aug-bl': '10px',
-              '--aug-border-all': '1px',
-              '--aug-border-bg': 'var(--border)',
-            } as React.CSSProperties}
-          >
-            <Terminal className="w-7 h-7 text-muted-foreground" />
-          </div>
-        </motion.div>
+function MessageLoader({ agentId }: { agentId: string }) {
+  const setMessages = useMessagesStore((s) => s.setMessages);
+  const [{ data }] = useQuery({
+    query: AGENT_MESSAGES_QUERY,
+    variables: { agentId },
+  });
 
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.45, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <p className="text-muted-foreground text-sm font-mono mb-1.5">
-            No agents deployed
-          </p>
-          <p className="text-muted-foreground/40 text-xs font-mono">
-            <span className="text-accent/50">$</span> deploy an agent to begin
-            <span className="empty-cursor" />
-          </p>
-        </motion.div>
-      </div>
-    </motion.div>
-  );
+  useEffect(() => {
+    if (data?.agent?.streamMessages) {
+      setMessages(agentId, data.agent.streamMessages);
+    }
+  }, [data, agentId, setMessages]);
+
+  return null;
 }
 
-/* ============================================
-   Landing Page — shown when no project selected
-   ============================================ */
+// ── Landing page — shown when no project selected ──
 
 const stagger = {
   hidden: {},
@@ -378,7 +228,11 @@ const stagger = {
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] } },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] },
+  },
 };
 
 function LandingPage() {
@@ -415,10 +269,7 @@ function LandingPage() {
 
   return (
     <div className="h-screen flex items-center justify-center bg-background relative overflow-hidden">
-      {/* Dot grid background */}
       <div className="landing-grid absolute inset-0" />
-
-      {/* Accent glow orb */}
       <div className="landing-glow absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2" />
 
       <motion.div
@@ -432,12 +283,14 @@ function LandingPage() {
           <div
             data-augmented-ui="tl-clip br-clip border"
             className="w-12 h-12 flex items-center justify-center shrink-0"
-            style={{
-              '--aug-tl': '8px',
-              '--aug-br': '8px',
-              '--aug-border-all': '2px',
-              '--aug-border-bg': 'var(--accent)',
-            } as React.CSSProperties}
+            style={
+              {
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '2px',
+                '--aug-border-bg': 'var(--accent)',
+              } as React.CSSProperties
+            }
           >
             <span className="text-accent font-bold text-xl">A</span>
           </div>
@@ -456,7 +309,11 @@ function LandingPage() {
           variants={fadeUp}
           className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider mb-3"
         >
-          {fetching ? 'Loading...' : projects.length > 0 ? 'Select project' : 'Get started'}
+          {fetching
+            ? 'Loading...'
+            : projects.length > 0
+              ? 'Select project'
+              : 'Get started'}
         </motion.p>
 
         {/* Project cards */}
@@ -470,12 +327,14 @@ function LandingPage() {
               onClick={() => setCurrentProject(project.id)}
               data-augmented-ui="tl-clip br-clip border"
               className="w-full text-left group"
-              style={{
-                '--aug-tl': '8px',
-                '--aug-br': '8px',
-                '--aug-border-all': '1px',
-                '--aug-border-bg': 'var(--border)',
-              } as React.CSSProperties}
+              style={
+                {
+                  '--aug-tl': '8px',
+                  '--aug-br': '8px',
+                  '--aug-border-all': '1px',
+                  '--aug-border-bg': 'var(--border)',
+                } as React.CSSProperties
+              }
             >
               <div className="px-4 py-3.5 flex items-center justify-between transition-colors group-hover:bg-accent/5">
                 <div className="flex items-center gap-3">
@@ -494,12 +353,14 @@ function LandingPage() {
             {creating ? (
               <div
                 data-augmented-ui="tl-clip br-clip border"
-                style={{
-                  '--aug-tl': '8px',
-                  '--aug-br': '8px',
-                  '--aug-border-all': '1px',
-                  '--aug-border-bg': 'var(--accent)',
-                } as React.CSSProperties}
+                style={
+                  {
+                    '--aug-tl': '8px',
+                    '--aug-br': '8px',
+                    '--aug-border-all': '1px',
+                    '--aug-border-bg': 'var(--accent)',
+                  } as React.CSSProperties
+                }
               >
                 <div className="px-4 py-3 flex items-center gap-3">
                   <Plus className="w-4 h-4 text-accent shrink-0" />
@@ -527,7 +388,10 @@ function LandingPage() {
                       Create
                     </button>
                     <button
-                      onClick={() => { setCreating(false); setNewName(''); }}
+                      onClick={() => {
+                        setCreating(false);
+                        setNewName('');
+                      }}
                       className="text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -540,13 +404,15 @@ function LandingPage() {
                 onClick={() => setCreating(true)}
                 data-augmented-ui="tl-clip br-clip border"
                 className="w-full text-left group"
-                style={{
-                  '--aug-tl': '8px',
-                  '--aug-br': '8px',
-                  '--aug-border-all': '1px',
-                  '--aug-border-bg': 'var(--border)',
-                  borderStyle: 'dashed',
-                } as React.CSSProperties}
+                style={
+                  {
+                    '--aug-tl': '8px',
+                    '--aug-br': '8px',
+                    '--aug-border-all': '1px',
+                    '--aug-border-bg': 'var(--border)',
+                    borderStyle: 'dashed',
+                  } as React.CSSProperties
+                }
               >
                 <div className="px-4 py-3.5 flex items-center gap-3 transition-colors group-hover:bg-accent/5">
                   <Plus className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
@@ -564,7 +430,9 @@ function LandingPage() {
           variants={fadeUp}
           className="text-muted-foreground/40 text-[10px] font-mono"
         >
-          {projects.length > 0 ? 'select a project to view agents' : 'create your first project to begin'}
+          {projects.length > 0
+            ? 'select a project to view agents'
+            : 'create your first project to begin'}
         </motion.p>
       </motion.div>
     </div>

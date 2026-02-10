@@ -56,6 +56,14 @@
   --agent-border-active: #39ff14;
   --agent-glow: rgba(57, 255, 20, 0.1);
 
+  /* Agent identity colors (per-agent, not per-status) */
+  --agent-color-0: #0284c7;
+  --agent-color-1: #db2777;
+  --agent-color-2: #ca8a04;
+  --agent-color-3: #7c3aed;
+  --agent-color-4: #059669;
+  --agent-color-5: #ea580c;
+
   /* Misc */
   --radius: 0.625rem;
 }
@@ -103,6 +111,14 @@
   --agent-border: rgba(255, 255, 255, 0.2);
   --agent-border-active: #39ff14;
   --agent-glow: rgba(57, 255, 20, 0.1);
+
+  /* Agent identity */
+  --agent-color-0: #38bdf8;
+  --agent-color-1: #f472b6;
+  --agent-color-2: #facc15;
+  --agent-color-3: #a78bfa;
+  --agent-color-4: #34d399;
+  --agent-color-5: #fb923c;
 }
 
 /* ============================================
@@ -149,6 +165,14 @@
   --agent-border: rgba(232, 216, 201, 0.2);
   --agent-border-active: #658761;
   --agent-glow: rgba(101, 135, 97, 0.12);
+
+  /* Agent identity */
+  --agent-color-0: #7ba5b5;
+  --agent-color-1: #c77986;
+  --agent-color-2: #DFA05D;
+  --agent-color-3: #967bb6;
+  --agent-color-4: #658761;
+  --agent-color-5: #b87c4c;
 }
 
 /* ============================================
@@ -196,6 +220,14 @@
   --agent-border: rgba(224, 222, 244, 0.2);
   --agent-border-active: #c4a7e7;
   --agent-glow: rgba(196, 167, 231, 0.12);
+
+  /* Agent identity */
+  --agent-color-0: #9ccfd8;
+  --agent-color-1: #eb6f92;
+  --agent-color-2: #f6c177;
+  --agent-color-3: #c4a7e7;
+  --agent-color-4: #3e8fb0;
+  --agent-color-5: #ea9a97;
 }
 
 /* ============================================
@@ -242,6 +274,13 @@
   --color-agent-border: var(--agent-border);
   --color-agent-border-active: var(--agent-border-active);
   --color-agent-glow: var(--agent-glow);
+
+  --color-agent-color-0: var(--agent-color-0);
+  --color-agent-color-1: var(--agent-color-1);
+  --color-agent-color-2: var(--agent-color-2);
+  --color-agent-color-3: var(--agent-color-3);
+  --color-agent-color-4: var(--agent-color-4);
+  --color-agent-color-5: var(--agent-color-5);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -340,6 +379,20 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Activity line shimmer */
+@keyframes activity-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.activity-shimmer {
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: activity-shimmer 3s ease-in-out infinite;
 }
 
 /* Waiting dots animation */

@@ -1,5 +1,87 @@
 # Dashboard UX Spec
 
+## What This Is
+
+Agentobox is a GUI for Claude Code agent teams. Claude Code already has native teaming — `--team-name`, parent sessions, mailbox communication, shared task lists. Agentobox doesn't replace any of that. It provides the visual layer: deploy agents, watch them work, talk to them, intervene when needed.
+
+The primary interaction model mirrors how CC teams already work:
+- **You talk to the team lead.** The lead delegates to workers, coordinates, reports back.
+- **You can talk to any agent directly.** The lead is the default, not the only channel.
+- **You observe the team working.** Real-time visibility into what each agent is perceiving, thinking, saying, and doing.
+
+The dashboard is not a monitoring tool bolted onto agents. It IS the way you interact with your agent team — the same way Slack is how you interact with a human team.
+
+## The Agento Box: Agents as Cognitive Architectures
+
+Each agent is a cognitive system with observable dimensions. The "agento box" (bento box) is the visual container that reveals these dimensions:
+
+| Dimension | What it shows | Signal type | Examples |
+|-----------|---------------|-------------|----------|
+| **Perceiving** | What the agent is looking at / taking in | Sensory input | VNC screen, file contents, web page, API response, screenshot |
+| **Thinking** | Internal reasoning and planning | Cognitive process | Chain of thought, planning text, decision rationale |
+| **Saying** | Communication with humans and other agents | Language output | Messages to user, messages to teammates, status updates |
+| **Doing** | Actions being executed on the world | Motor output | Tool calls, file edits, commands, deployments |
+
+**Research validation:** This four-dimension decomposition is well-established across cognitive science and adjacent domains. ACT-R uses buffer-based modules (visual, motor, declarative, goal) — each a separate panel showing current state. SOAR splits perception (scene graph), reasoning (production rules), and action (trace). CoALA (Stanford, 2023) maps LLM agents to the same structure. Game AI (The Sims, behavior trees) and robotics (Foxglove, RViz) independently arrive at the same decomposition. This isn't an arbitrary UI choice — it's how cognitive systems are actually understood.
+
+**Why this matters:**
+- VNC is not a special top-level concept — it's one possible **perception** renderer. An agent reading code has a different perception than one browsing a website.
+- An agent's observable surfaces are dynamic, determined by its capabilities (tools, MCPs). An agent with `computer-use` has a visual perception channel. A pure-code agent doesn't.
+- The four dimensions give a principled answer to "what goes in each compartment?" that doesn't depend on any specific tool or capability.
+- At L1 (scan), you see a compressed summary of all four. At L2 (focus), you see the full streams. At L3 (deep dive), you're immersed in one dimension (e.g., VNC fullscreen).
+
+**The bento box principle:** Every compartment serves a purpose. No wasted space, no confusion about what goes where. The dashboard should feel like opening a well-organized bento box, not like looking at a server monitoring panel. The Sims, not Grafana.
+
+### Progressive Disclosure Across Dimensions (The Sims Pattern)
+
+The Sims is the strongest analogue for this problem — one human managing 8+ autonomous entities with internal cognitive states. Its visualization patterns map directly:
+
+| Level | The Sims | Agento Box |
+|-------|----------|------------|
+| L0 | Plumbob color (green/yellow/red) | Status dot encoding multi-dimensional health |
+| L1 | Thought bubble icon (current desire) | Cognitive mode icon (eye/brain/speech/wrench) + activity preview |
+| L2 | Needs bars + moodlets (why they feel that way) | Four-dimension panels: perceiving/thinking/saying/doing |
+| L3 | Full personality + action queue | Session replay, synchronized panels, VNC immersive |
+
+### Dynamic Views: Capability-Based View Registry
+
+An agent's available views are determined by its capabilities — not configured by the user, discovered from what tools/MCPs the agent has. The pattern (validated by VS Code's `when` clauses, Grafana's conditional panels, Google A2UI's widget catalog):
+
+```
+Agent capabilities (MCPs/tools)  →  View Registry  →  Available panels
+
+computer-use    →  VncPanel (Screen tab)
+playwright      →  BrowserPanel (Browser tab)
+file editing    →  DiffViewer (Files tab)
+terminal        →  TerminalPanel (Terminal tab)
+ChatThread      →  always present (baseline)
+```
+
+At L2, per-agent tabs are auto-populated from capabilities:
+- Agent with `computer-use`: [Chat | Screen | Actions | Thinking]
+- Pure code agent: [Chat | Actions | Thinking]
+- Agent with `playwright`: [Chat | Browser | Actions | Thinking]
+
+At L1 (fleet level), global view toggles select which dimension to view across all agents:
+- **Feed** — "saying" across all agents (Slack pattern)
+- **Screens** — "perceiving" across all agents (war room)
+- **Activity** — "doing" across all agents (CI/CD pipeline feel)
+
+Empty tabs never appear. If no agents have `computer-use`, the "Screens" global toggle doesn't render.
+
+### Agent Needs System
+
+Agents have needs beyond running/error/idle. These are currently invisible until they become errors:
+
+| Need | Signal | Example |
+|------|--------|---------|
+| Approval | Waiting for human decision | Permission prompt, AskUserQuestion |
+| Information | Stuck, needs clarification | Ambiguous task, missing context |
+| Resources | Rate-limited or waiting | API quota, blocked by another agent |
+| Coordination | Depends on another agent's output | Waiting for backend to finish before QA can test |
+
+A subtle needs indicator at L1 — like The Sims showing a toilet icon before the Sim has an accident — surfaces upcoming problems before they become errors. The spec's "permission denial badge" at L2 is one instance. Generalizing: any unmet agent need gets a tiny indicator visible at L1.
+
 ## Core Problem
 
 Humans are the bottleneck in human-agent systems. A human can deploy N agents but cannot attend to N agents. The UI is the interface between a cognitively limited human and an arbitrarily scalable agent fleet.
@@ -47,29 +129,64 @@ Based on Shneiderman's Mantra: overview first, zoom and filter, then details on 
 
 ## Layout Architecture
 
+### 2-Column with Unified Feed + View Toggle
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ [project ▾]  [3 running] [1 error] [1 idle 12m]  $4.82  $1.20/hr  │  ← L0 StatusBar
-│                                                    [broadcast] [👤] │
-├──────────────────────┬──────────────────────────────────────────────┤
-│ [+ Deploy]           │                                              │
-│ [search agents...]   │  Agent Header: name, status, model, cost     │  ← L2 DetailPane
-│                      │  [interrupt] [kill] [restart] [⚙ config]     │
-│ ● frontend   $1.23  │                                              │
-│   Edit auth.ts  3s   │  ┌─ Activity Feed ─────────────────────┐    │
-│ ! backend    $0.89  │  │ ● Edit src/auth.ts            3s ago │    │
-│   npm test fail 12s  │  │ ● Read package.json           8s ago │    │
-│ ● qa         $0.45  │  │ ● Run npm test [error]       12s ago │    │
-│   idle 2m            │  │ ● "I'll fix the failing..."  15s ago │    │
-│                      │  └─────────────────────────────────────┘    │
-│                      │  [Show VNC]                                  │
-│  L1 AgentListPanel   │  [Message frontend...]                       │
-├──────────────────────┴──────────────────────────────────────────────┤
-│                        Cmd+K: command palette                       │
-└─────────────────────────────────────────────────────────────────────┘
+│ [project ▾]  ● 3 running  ⚠ 1 error  ○ 1 idle    $4.82    [👤]   │  ← L0 StatusBar
+├──────────────┬──────────────────────────────────────────────────────┤
+│ [+ Deploy]   │  [Feed ● | Screens ○ | Activity ○]    All agents ▾  │
+│ [search...]  │                                                      │
+│              │  ┌─ system ────────────────────────────────────────┐ │
+│ ● lead       │  │ backend joined the team                        │ │
+│  🧠 Planning │  └────────────────────────────────────────────────┘ │
+│ ● backend    │  ┌─ lead ─────────────────────────────────────────┐ │
+│  🔧 Testing  │  │ I'll delegate the auth fix to backend and     │ │
+│ ● frontend   │  │ have frontend update the login form.           │ │
+│  👁 Reading   │  └────────────────────────────────────────────────┘ │
+│ ● qa         │  ┌─ backend ──────────────────────────────────────┐ │
+│  ⏳ Waiting   │  │ Editing auth.ts, running tests (+3 tools)     │ │
+│              │  └────────────────────────────────────────────────┘ │
+│              │  ┌─ ⚠ backend ────────────────────────────────────┐ │
+│              │  │ npm test failed: expected 200, got 401         │ │
+│              │  │ [Restart]                                      │ │
+│              │  └────────────────────────────────────────────────┘ │
+│              │                                                      │
+│              │  ───────────────────────────────────────────────────  │
+│ L1 AgentList │  [@lead ▾] Message your team...              [→]    │
+├──────────────┴──────────────────────────────────────────────────────┤
 ```
 
-**Split pane:** Agent list (L1) on left, detail pane (L2) on right. Same pattern as Datadog, Grafana, kubectl. The operator sees the fleet while drilling into one agent.
+**2-column, not 3:** Feed and VNC panels compete for pixels — showing both simultaneously means neither is good. The view toggle (Feed | Screens | Activity) switches the right pane between dimensions. Feed gets full width when active, VNC panels get full width when active.
+
+**The unified feed (L1.5):** This is where operators live 80% of the time. It's between L1 (scan list) and L2 (per-agent deep dive). The feed is lead-mediated — primarily one conversation with the team lead, punctuated by system events when workers need attention.
+
+### Lead-Mediated Feed
+
+The feed mirrors CC's team communication model. At 9 agents, you don't see 9 parallel streams. You see:
+
+| What shows in the feed | Why |
+|------------------------|-----|
+| Lead messages | Your primary conversation partner — the lead delegates to workers |
+| Your messages | What you said, with @agent targeting |
+| Worker errors | Needs your attention immediately |
+| Status transitions | "backend joined", "frontend errored", "qa completed" |
+| Worker direct messages to you | Only when they @mention you or need a decision |
+| Worker activity | Collapsed to activity lines: "backend: Editing auth.ts (+3 tools)" |
+
+Workers doing their thing quietly? Hidden behind activity lines. The lead summarizes their progress. Click a worker in L1 → feed scopes to that agent's full conversation.
+
+### Filter-in-Place Navigation
+
+Click an agent in L1 → feed filters to that agent's messages. Compose bar updates from `@all` to `@frontend`. L0 and L1 stay visible — the operator never loses fleet context.
+
+Back action: click agent again (deselect) or click "All agents" in the content header → returns to unified feed.
+
+For deep debugging (L3): double-click or "Expand" button → FullscreenView (VNC + chat side-by-side). Escape returns.
+
+Flow: `Team Feed → Click agent → Filtered Feed → Double-click → Fullscreen → Escape → Filtered → Click "All" → Team Feed`
+
+**Split pane:** Agent list (L1, ~240px) on left, content pane on right. The content pane shows the unified feed by default, or per-agent filtered view, or VNC panels grid, depending on view toggle and agent selection.
 
 ## L0: StatusBar
 
@@ -100,8 +217,8 @@ Default view. 0 clicks. Chat-list style (like iOS Messages / Slack channels). Fi
 
 ```
 ┌──────────────────────────────────────────┐
-│ ◉ frontend        3s ago                 │  ← breathing pulse animation
-│   Editing src/auth.ts...          $1.23  │
+│ ◉ frontend   👁    3s ago                │  ← breathing pulse + cognitive mode icon
+│   Reading auth module...          $1.23  │
 └──────────────────────────────────────────┘
 ```
 
@@ -110,9 +227,25 @@ Default view. 0 clicks. Chat-list style (like iOS Messages / Slack channels). Fi
 | Activity pulse | Breathing animation = agent is actively working (CSS, ~0 pixel cost) |
 | Agent avatar | Colored circle with initial — visual identity without reading |
 | Agent name | Primary text |
-| Activity preview | Secondary text: current action, like a chat preview |
+| Cognitive mode icon | Preattentive signal of WHAT KIND of thing the agent is doing (see below) |
+| Activity preview | Secondary text: human-readable intent, not raw tool names |
 | Time badge | "3s ago" — right-aligned, muted. Staleness detector |
 | Cost badge | Only if above threshold |
+| Needs indicator | Subtle badge when agent is waiting for user input (see Agent Needs System) |
+
+### Cognitive Mode Icons
+
+A tiny icon on the agent card showing the current cognitive dimension — preattentive signal that doesn't require reading text:
+
+| Icon | Mode | Meaning | Triggered by |
+|------|------|---------|-------------|
+| 👁 | Perceiving | Reading / browsing / looking at something | Read, WebFetch, VNC interaction |
+| 🧠 | Thinking | Planning / reasoning | Text output, chain of thought |
+| 💬 | Saying | Communicating with humans or agents | SendMessage, AskUserQuestion |
+| 🔧 | Doing | Executing actions on the world | Edit, Write, Bash, tool calls |
+| ⏳ | Waiting | Blocked — needs something | Waiting for user input, rate limited |
+
+At a glance across 9 agents, you see a mix of icons and instantly know: "3 are doing, 2 are thinking, 1 is reading, 1 is waiting for me, 2 are idle." No text reading required.
 
 ### Visual State Encoding (the chimp test)
 
@@ -196,9 +329,27 @@ Press Space while hovering over a card → ephemeral L2 popover showing last 3-4
 - Errors auto-surface with restart affordance at point of failure — no menu hunting.
 - New bubbles append in real-time (live streaming from agent).
 
+### Interactive Cards (Existing CC Pattern — Phase 1)
+
+Claude Code already has `AskUserQuestion` — a tool that presents structured options to the user. The data is already flowing through the backend as `tool_use` content parts with structured `questions` containing options (label + description, single or multi-select). The current chat view renders these as plain tool bubbles saying "Asking question..." — useless.
+
+**Phase 1 (dogfooding essential):** Render `AskUserQuestion` tool_use parts as interactive cards with clickable buttons. User clicks an option → sends the response via `sendMessage` mutation. This is not new generative UI — it's rendering existing structured data as interactive elements instead of plain text.
+
+```
+┌─ ● backend ──────────────────────────┐
+│  Which database should we use?       │
+│                                      │
+│  [PostgreSQL]  [SQLite]              │
+│                                      │
+│  or type a custom response...        │
+└──────────────────────────────────────┘
+```
+
+At 9 agents, being able to tap a button instead of typing a response is the difference between manageable and painful. Multiple pending requests queue with priority (errors > permissions > questions) and surface in the feed as interactive cards that stay highlighted until resolved.
+
 ### Generative UI Bubbles (Phase 3)
 
-Agents can present dynamic interactive elements within the ChatThread using a constrained component catalog. The agent selects from pre-built components and fills with data — it never generates raw UI. Industry consensus (Vercel AI SDK, Google A2UI, Slack/Discord, MCP Apps): structured intent → pre-approved components.
+Beyond the existing CC pattern, agents can present richer interactive elements using a constrained component catalog. The agent selects from pre-built components and fills with data — it never generates raw UI. Industry consensus (Vercel AI SDK, Google A2UI, Slack/Discord, MCP Apps): structured intent → pre-approved components.
 
 | Bubble type | When | Visual | Interaction |
 |-------------|------|--------|-------------|
@@ -214,18 +365,19 @@ Agents can present dynamic interactive elements within the ChatThread using a co
 - The component catalog is fixed. Agents fill templates, they don't create new ones. Consistent behavior builds operator trust.
 - High-stakes decisions (delete, deploy, config change) require the operator to engage — not just a single tap. Show confidence level, flag low-confidence.
 
-### Observation Modes: "Faces of the Agent"
+### Observation Modes: Cognitive Dimensions in the ChatThread
 
-An agent has multiple observable dimensions — like faces of a die. The ChatThread merges the two most common (activity + conversation) into one timeline, but the others are distinct:
+The ChatThread is the universal baseline — it merges Saying (conversation) and Doing (tool calls) into one temporal stream because they're naturally interleaved. The other dimensions are accessed via capability-gated tabs (see Dynamic Views above):
 
-| Face | What it shows | Where it lives |
-|------|---------------|----------------|
-| **Activity** | Tool calls, file edits, test runs — structured machine-readable events | ChatThread (ActionBubbles, interleaved with conversation) |
-| **Conversation** | Human-agent natural language exchange | ChatThread (UserBubbles + TextBubbles) |
-| **Visual output** | VNC desktop, screenshots, ASCII art, generated images | VncSlide (swipe/toggle), or special bubbles in ChatThread |
-| **Configuration** | Model, MCP servers, secrets, instructions | ConfigCollapsible (MoreMenu → gear) |
+| Dimension | In ChatThread | As separate tab | Gated by capability? |
+|-----------|---------------|-----------------|---------------------|
+| **Doing** | ActionBubbles — tool calls interleaved with conversation | Activity tab (filterable, sortable) | No — every agent does things |
+| **Saying** | UserBubbles + TextBubbles — the conversation | Chat tab (default, always present) | No — every agent communicates |
+| **Perceiving** | Inline thumbnails when agent takes screenshots | Screen tab (VNC), Browser tab (Playwright) | Yes — only if computer-use/playwright MCP |
+| **Thinking** | TextBubbles showing reasoning | Thinking tab (chain of thought, separated from conversation) | No — but only useful when verbose |
+| **Configuration** | — | Config tab (MoreMenu → gear) | No — always in MoreMenu |
 
-Activity and conversation merge naturally because they're temporally interleaved — the agent acts, the human responds, the agent acts again. Visual output and config are orthogonal dimensions accessed on demand.
+At L1.5 (unified feed), Doing collapses to activity lines and Saying shows in full. At L2 (filtered to one agent), all dimensions expand. At L3, dimensions break apart into synchronized side-by-side panels (like Foxglove for robotics) for deep debugging.
 
 Future: agents could use an MCP tool (`display_to_user`) to render rich visual content (ASCII diagrams, data tables, charts) as special bubbles in the ChatThread, making the conversation thread richer without requiring VNC.
 

@@ -1,341 +1,417 @@
 'use client';
 
-import { useMemo, useEffect } from 'react';
-import { useQuery } from 'urql';
-import { AGENT_MESSAGES_QUERY } from '@/lib/graphql/queries';
-import { useMessagesStore } from '@/stores/messages';
+import { useMemo, useRef, useEffect } from 'react';
+import { RotateCw } from 'lucide-react';
+import { getAgentColor } from '@/lib/agent-colors';
 import { extractMessageItems } from '@/lib/messages';
-import { STATUS_COLOR_VAR } from './status-badge';
 import type { Agent, Message, MessageItem } from '@/types';
 
-/** Internal files that should show friendly labels instead of raw filenames. */
-const INTERNAL_FILES: Record<string, string> = {
-  '.abox-msg': 'message',
-};
+// ── Feed item types (grouped for display) ──
 
-function toolLabel(toolName: string, toolInput?: Record<string, unknown>): string {
-  const filePath = typeof toolInput?.file_path === 'string' ? toolInput.file_path : '';
+type FeedGroup =
+  | { kind: 'user'; item: Extract<MessageItem, { type: 'user' }>; agentId: string }
+  | { kind: 'text'; item: Extract<MessageItem, { type: 'assistant' }>; agentId: string }
+  | { kind: 'activity'; agentId: string; tools: Extract<MessageItem, { type: 'tool' }>[] }
+  | { kind: 'error'; item: Extract<MessageItem, { type: 'tool' }>; agentId: string };
+
+// ── Tool labels (human-readable summaries) ──
+
+function toolLabel(name: string, input?: Record<string, unknown>): string {
+  const filePath = typeof input?.file_path === 'string' ? input.file_path : '';
   const rawName = filePath ? filePath.split('/').pop() || '' : '';
-  const filename = INTERNAL_FILES[rawName] || rawName;
-  const pattern = typeof toolInput?.pattern === 'string' ? toolInput.pattern : '';
+  const filename = rawName === '.abox-msg' ? 'message' : rawName;
+  const pattern = typeof input?.pattern === 'string' ? input.pattern : '';
 
-  switch (toolName) {
-    case 'Read': return filename ? `Reading ${filename}` : 'Reading file...';
-    case 'Write': return filename ? `Writing ${filename}` : 'Writing file...';
-    case 'Edit': return filename ? `Editing ${filename}` : 'Editing file...';
-    case 'Bash': return 'Running command...';
-    case 'Glob': return pattern ? `Searching for ${pattern}` : 'Searching files...';
-    case 'Grep': return 'Searching code...';
-    case 'WebFetch': return 'Fetching URL...';
-    case 'WebSearch': return 'Searching web...';
-    case 'Task': return 'Running sub-task...';
-    case 'SendMessage': return 'Sending message...';
-    case 'AskUserQuestion': return 'Asking question...';
-    case 'NotebookEdit': return 'Editing notebook...';
-    case 'TodoWrite': return 'Updating tasks...';
-    case 'EnterPlanMode': return 'Planning...';
-    default: return toolName ? `Using ${toolName}...` : 'Working...';
+  switch (name) {
+    case 'Read': return filename ? `Read ${filename}` : 'Reading';
+    case 'Write': return filename ? `Write ${filename}` : 'Writing';
+    case 'Edit': return filename ? `Edit ${filename}` : 'Editing';
+    case 'Bash': return 'Run command';
+    case 'Glob': return pattern ? `Search ${pattern}` : 'Search files';
+    case 'Grep': return 'Search code';
+    case 'WebFetch': return 'Fetch URL';
+    case 'WebSearch': return 'Search web';
+    case 'Task': return 'Sub-task';
+    case 'SendMessage': return 'Message teammate';
+    default: return name || 'Working';
   }
 }
 
-/**
- * Chat view — renders typed Message content parts.
- *
- * Uses extractMessageItems() to separate data model from render model,
- * then dispatches to tool-specific renderers by tool name.
- *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Patterns to Implement"
- * @see docs/CRUSH-ARCHITECTURE.md, "ExtractMessageItems"
- */
-export function ChatView({ agent, messages }: { agent: Agent; messages: Record<string, Message> }) {
-  const setMessages = useMessagesStore((s) => s.setMessages);
+// ── Group consecutive tool calls from the same agent ──
 
-  // Fetch messages from backend on mount
-  const [{ data, fetching }] = useQuery({
-    query: AGENT_MESSAGES_QUERY,
-    variables: { agentId: agent.id },
-    requestPolicy: 'network-only',
-  });
+function groupFeedItems(items: MessageItem[]): FeedGroup[] {
+  const result: FeedGroup[] = [];
+  let toolBatch: Extract<MessageItem, { type: 'tool' }>[] = [];
+  let batchAgentId: string | null = null;
 
-  // Hydrate store from query
-  useEffect(() => {
-    if (data?.agent?.streamMessages) {
-      setMessages(agent.id, data.agent.streamMessages);
+  function flush() {
+    if (toolBatch.length > 0 && batchAgentId) {
+      result.push({ kind: 'activity', agentId: batchAgentId, tools: [...toolBatch] });
+      toolBatch = [];
+      batchAgentId = null;
     }
-  }, [data, agent.id, setMessages]);
-
-  // Convert store map to sorted array and extract render items
-  const items = useMemo(() => {
-    const sorted = Object.values(messages).sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-    return extractMessageItems(sorted);
-  }, [messages]);
-
-  const statusColor = STATUS_COLOR_VAR[agent.status];
-
-  if (fetching && items.length === 0) {
-    return <div />;
   }
 
-  if (items.length === 0) {
+  for (const item of items) {
+    if (item.type === 'tool') {
+      // Errors always show individually
+      if (item.status === 'error') {
+        flush();
+        result.push({ kind: 'error', item, agentId: item.message.agentId });
+        continue;
+      }
+
+      const aid = item.message.agentId;
+      if (batchAgentId === aid) {
+        toolBatch.push(item);
+      } else {
+        flush();
+        batchAgentId = aid;
+        toolBatch.push(item);
+      }
+    } else if (item.type === 'user') {
+      flush();
+      result.push({ kind: 'user', item, agentId: item.message.agentId });
+    } else {
+      flush();
+      result.push({ kind: 'text', item, agentId: item.message.agentId });
+    }
+  }
+  flush();
+
+  return result;
+}
+
+// ── Main feed component ──
+
+interface ChatViewProps {
+  /** All messages keyed by agentId -> messageId */
+  allMessages: Record<string, Record<string, Message>>;
+  /** Agent lookup map by ID */
+  agentsMap: Record<string, Agent>;
+  /** When set, filters feed to this agent */
+  selectedAgentId: string | null;
+}
+
+export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Merge, sort, extract, group
+  const groups = useMemo(() => {
+    const allMsgs: Message[] = [];
+    const agentIds = selectedAgentId ? [selectedAgentId] : Object.keys(allMessages);
+
+    for (const aid of agentIds) {
+      const msgs = allMessages[aid];
+      if (msgs) {
+        for (const msg of Object.values(msgs)) {
+          allMsgs.push(msg);
+        }
+      }
+    }
+
+    allMsgs.sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+
+    const items = extractMessageItems(allMsgs);
+    return groupFeedItems(items);
+  }, [allMessages, selectedAgentId]);
+
+  // Auto-scroll on new content
+  const prevGroupCount = useRef(groups.length);
+  useEffect(() => {
+    if (groups.length > prevGroupCount.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+    prevGroupCount.current = groups.length;
+  }, [groups.length]);
+
+  if (groups.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-2 px-5 py-12">
-        <div className="flex items-center gap-2">
-          <span
-            className="text-sm font-mono font-bold"
-            style={{ color: statusColor }}
-          >
-            {agent.name}
-          </span>
-          <span
-            className="text-[9px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-            style={{
-              color: statusColor,
-              background: `color-mix(in srgb, ${statusColor} 12%, transparent)`,
-            }}
-          >
-            {agent.status}
-          </span>
-        </div>
-        <p className="text-muted-foreground/50 text-[10px] font-mono">
-          Send a task to begin
+      <div className="flex-1 flex items-center justify-center px-6">
+        <div className="text-center">
+          <p className="text-muted-foreground/50 text-xs font-mono">
+            {selectedAgentId
+              ? `No messages from ${agentsMap[selectedAgentId]?.name ?? 'agent'} yet`
+              : 'Deploy an agent and send a message to begin'}
+          </p>
           <span className="empty-cursor" />
-        </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-3 space-y-3">
-      {items.map((item, i) => {
-        if (item.type === 'user') {
-          return <UserBubble key={`u-${i}`} text={item.text} />;
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto scrollbar-thin px-5 py-4 space-y-2"
+    >
+      {groups.map((group, i) => {
+        const agent = agentsMap[group.agentId];
+        const agentName = agent?.name ?? 'unknown';
+        const agentColor = agent
+          ? getAgentColor(agent.name, agent.role)
+          : 'var(--muted-foreground)';
+        const isLead = agent?.role === 'lead';
+
+        switch (group.kind) {
+          case 'user':
+            return (
+              <UserBubble
+                key={`u-${i}`}
+                text={group.item.text}
+                targetName={agentName}
+                agentColor={agentColor}
+              />
+            );
+          case 'text':
+            return (
+              <AgentTextBubble
+                key={`t-${i}`}
+                text={group.item.text}
+                agentName={agentName}
+                agentColor={agentColor}
+                isLead={isLead}
+              />
+            );
+          case 'activity':
+            return (
+              <ActivityLine
+                key={`a-${i}`}
+                tools={group.tools}
+                agentName={agentName}
+                agentColor={agentColor}
+              />
+            );
+          case 'error':
+            return (
+              <ErrorBubble
+                key={`e-${i}`}
+                item={group.item}
+                agentName={agentName}
+                agentColor={agentColor}
+              />
+            );
         }
-        if (item.type === 'assistant') {
-          return <AssistantBubble key={`a-${i}`} agent={agent} text={item.text} statusColor={statusColor} />;
-        }
-        // tool
-        return <ToolBubble key={`t-${i}`} item={item} statusColor={statusColor} />;
       })}
     </div>
   );
 }
 
-/* ── Message bubbles ── */
+// ── Bubble components ──
 
-/**
- * Parse message text and extract image paths.
- * Detects paths like /tmp/screenshot.png or /home/user/image.jpg
- */
-function parseMessageContent(text: string): { type: 'text' | 'image'; content: string }[] {
-  // Match common image paths (absolute paths with image extensions)
-  const imagePathRegex = /(?:^|\s)(\/[^\s]+\.(?:png|jpg|jpeg|gif|webp|svg))(?:\s|$)/gi;
-  const parts: { type: 'text' | 'image'; content: string }[] = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = imagePathRegex.exec(text)) !== null) {
-    // Add text before the image
-    if (match.index > lastIndex) {
-      const textBefore = text.substring(lastIndex, match.index);
-      if (textBefore.trim()) {
-        parts.push({ type: 'text', content: textBefore });
-      }
-    }
-
-    // Add the image
-    const imagePath = match[1].trim();
-    parts.push({ type: 'image', content: imagePath });
-
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Add remaining text
-  if (lastIndex < text.length) {
-    const remainingText = text.substring(lastIndex);
-    if (remainingText.trim()) {
-      parts.push({ type: 'text', content: remainingText });
-    }
-  }
-
-  // If no images found, return the whole text
-  if (parts.length === 0) {
-    parts.push({ type: 'text', content: text });
-  }
-
-  return parts;
-}
-
-function UserBubble({ text }: { text: string }) {
-  const parts = parseMessageContent(text);
+function UserBubble({
+  text,
+  targetName,
+  agentColor,
+}: {
+  text: string;
+  targetName: string;
+  agentColor: string;
+}) {
   return (
     <div
       className="flex justify-end"
       style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
     >
-      <div className="max-w-[88%]">
-        <div className="flex items-center gap-2 mb-1 justify-end">
-          <span className="text-[9px] font-mono font-bold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>
+      <div className="max-w-[75%]">
+        <div className="flex items-center gap-1.5 mb-1 justify-end">
+          <span className="text-[9px] font-mono text-muted-foreground/60">
             you
           </span>
-        </div>
-        <div
-          data-augmented-ui="tl-clip br-clip border"
-          className="px-3 py-2.5 bg-accent/10"
-          style={{
-            '--aug-tl': '6px',
-            '--aug-br': '6px',
-            '--aug-border-all': '1px',
-            '--aug-border-bg': 'var(--accent)',
-          } as React.CSSProperties}
-        >
-          <div className="space-y-2">
-            {parts.map((part, i) =>
-              part.type === 'text' ? (
-                <p
-                  key={i}
-                  className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed"
-                >
-                  {part.content}
-                </p>
-              ) : (
-                <img
-                  key={i}
-                  src={part.content}
-                  alt="Attached image"
-                  className="max-w-full rounded-sm"
-                  style={{ maxHeight: '200px' }}
-                />
-              )
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AssistantBubble({ agent, text, statusColor }: { agent: Agent; text: string; statusColor: string }) {
-  const parts = parseMessageContent(text);
-
-  return (
-    <div
-      className="flex justify-start"
-      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
-    >
-      <div className="max-w-[88%]">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[9px] font-mono font-bold uppercase tracking-wider" style={{ color: statusColor }}>
-            {agent.name}
+          <span className="text-[9px] font-mono text-muted-foreground/40">→</span>
+          <span
+            className="text-[9px] font-mono font-bold"
+            style={{ color: agentColor }}
+          >
+            {targetName}
           </span>
         </div>
-        <div
-          data-augmented-ui="tl-clip br-clip border"
-          className="px-3 py-2.5 bg-card"
-          style={{
-            '--aug-tl': '6px',
-            '--aug-br': '6px',
-            '--aug-border-all': '1px',
-            '--aug-border-bg': statusColor,
-          } as React.CSSProperties}
-        >
-          <div className="space-y-2">
-            {parts.map((part, i) =>
-              part.type === 'text' ? (
-                <p
-                  key={i}
-                  className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed"
-                >
-                  {part.content}
-                </p>
-              ) : (
-                <img
-                  key={i}
-                  src={part.content}
-                  alt="Attached image"
-                  className="max-w-full rounded-sm"
-                  style={{ maxHeight: '200px' }}
-                />
-              )
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Tool renderer dispatch — renders tool_use + tool_result pairs.
- * Each tool type gets a specialized display.
- *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Tool Renderer Dispatch"
- */
-function ToolBubble({ item, statusColor }: { item: Extract<MessageItem, { type: 'tool' }>; statusColor: string }) {
-  const { toolUse, toolResult, status } = item;
-  const name = toolUse.name;
-
-  // Status indicator color
-  const indicatorColor =
-    status === 'running' ? 'var(--agent-running)' :
-    status === 'success' ? 'var(--agent-idle)' :
-    status === 'error' ? 'var(--agent-dead)' :
-    'var(--muted-foreground)';
-
-  // Tool-specific label
-  const label = toolLabel(name, toolUse.input);
-
-  // Tool result content (truncated for display)
-  // Backend normalizes content to string; defensive fallback for pre-existing data
-  const rawContent = toolResult?.content;
-  const resultContent = typeof rawContent === 'string'
-    ? rawContent
-    : Array.isArray(rawContent)
-      ? (rawContent as { text?: string }[]).map((c) => c.text ?? '').join('\n')
-      : rawContent ? String(rawContent) : '';
-  const resultTruncated = resultContent.length > 500
-    ? resultContent.slice(0, 500) + '...'
-    : resultContent;
-
-  return (
-    <div
-      className="flex justify-start"
-      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
-    >
-      <div className="max-w-[88%] w-full">
         <div
           className="px-3 py-2 rounded-sm"
           style={{
-            background: 'var(--surface-inset)',
-            borderLeft: `2px solid ${indicatorColor}`,
+            background: 'color-mix(in srgb, var(--accent) 6%, var(--surface))',
+            borderRight: '2px solid var(--accent)',
           }}
         >
-          {/* Tool header */}
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-              style={{
-                background: indicatorColor,
-                animation: status === 'running' ? 'border-pulse 2s ease-in-out infinite' : 'none',
-              }}
-            />
-            <span className="text-[10px] font-mono text-muted-foreground truncate min-w-0">
-              {label}
-            </span>
-            {status === 'error' && (
-              <span className="text-[9px] font-mono font-bold uppercase flex-shrink-0" style={{ color: 'var(--agent-dead)' }}>
-                error
-              </span>
-            )}
-          </div>
+          <p className="text-foreground text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+            {text}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-          {/* Tool result */}
-          {toolResult && resultTruncated && (
-            <pre className="text-[10px] font-mono text-muted-foreground/70 mt-1.5 whitespace-pre-wrap break-all leading-relaxed max-h-32 overflow-y-auto overflow-x-hidden">
-              {resultTruncated}
+function AgentTextBubble({
+  text,
+  agentName,
+  agentColor,
+  isLead,
+}: {
+  text: string;
+  agentName: string;
+  agentColor: string;
+  isLead: boolean;
+}) {
+  return (
+    <div
+      className="flex justify-start"
+      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
+    >
+      <div className={isLead ? 'max-w-[85%]' : 'max-w-[75%]'}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <span
+            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+            style={{ background: agentColor }}
+          />
+          <span
+            className="text-[9px] font-mono font-bold uppercase tracking-wider"
+            style={{ color: agentColor }}
+          >
+            {agentName}
+          </span>
+        </div>
+        <div
+          className="px-3 py-2 rounded-sm"
+          style={{
+            background: isLead
+              ? 'color-mix(in srgb, var(--accent) 4%, var(--card))'
+              : 'var(--card)',
+            borderLeft: `2px solid ${agentColor}`,
+          }}
+        >
+          <p
+            className={`text-foreground font-mono whitespace-pre-wrap break-words leading-relaxed ${
+              isLead ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            {text}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActivityLine({
+  tools,
+  agentName,
+  agentColor,
+}: {
+  tools: Extract<MessageItem, { type: 'tool' }>[];
+  agentName: string;
+  agentColor: string;
+}) {
+  // Build summary: first 2 tools named, rest as "+N more"
+  const labels = tools.map((t) => toolLabel(t.toolUse.name, t.toolUse.input));
+  const shown = labels.slice(0, 2).join(', ');
+  const rest = labels.length > 2 ? ` +${labels.length - 2} more` : '';
+  const anyRunning = tools.some((t) => t.status === 'running');
+
+  return (
+    <div
+      className="flex items-center gap-2 py-0.5 px-1"
+      style={{ animation: 'msg-enter 0.2s ease-out forwards' }}
+    >
+      <span
+        className="w-1 h-1 rounded-full flex-shrink-0"
+        style={{
+          background: agentColor,
+          opacity: 0.5,
+          animation: anyRunning ? 'border-pulse 2s ease-in-out infinite' : 'none',
+        }}
+      />
+      <span
+        className="text-[9px] font-mono font-bold flex-shrink-0"
+        style={{ color: agentColor, opacity: 0.7 }}
+      >
+        {agentName}
+      </span>
+      <span className="text-[9px] font-mono text-muted-foreground/50 truncate">
+        {shown}{rest}
+      </span>
+      {anyRunning && (
+        <span
+          className="text-[8px] font-mono uppercase tracking-wider flex-shrink-0"
+          style={{ color: agentColor, opacity: 0.6 }}
+        >
+          running
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ErrorBubble({
+  item,
+  agentName,
+  agentColor,
+}: {
+  item: Extract<MessageItem, { type: 'tool' }>;
+  agentName: string;
+  agentColor: string;
+}) {
+  const rawContent = item.toolResult?.content;
+  const errorText = typeof rawContent === 'string'
+    ? rawContent
+    : Array.isArray(rawContent)
+      ? (rawContent as { text?: string }[]).map((c) => c.text ?? '').join('\n')
+      : rawContent ? String(rawContent) : 'Unknown error';
+
+  const truncated = errorText.length > 300 ? errorText.slice(0, 300) + '...' : errorText;
+
+  return (
+    <div
+      className="flex justify-start"
+      style={{ animation: 'msg-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
+    >
+      <div className="max-w-[85%] w-full">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span
+            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+            style={{ background: 'var(--agent-dead)' }}
+          />
+          <span
+            className="text-[9px] font-mono font-bold uppercase tracking-wider"
+            style={{ color: agentColor }}
+          >
+            {agentName}
+          </span>
+          <span
+            className="text-[9px] font-mono font-bold uppercase tracking-wider"
+            style={{ color: 'var(--agent-dead)' }}
+          >
+            error
+          </span>
+        </div>
+        <div
+          className="px-3 py-2 rounded-sm"
+          style={{
+            background: 'color-mix(in srgb, var(--agent-dead) 6%, var(--card))',
+            borderLeft: '2px solid var(--agent-dead)',
+          }}
+        >
+          <p className="text-[10px] font-mono text-muted-foreground whitespace-pre-wrap break-all leading-relaxed">
+            {toolLabel(item.toolUse.name, item.toolUse.input)}
+          </p>
+          {truncated && (
+            <pre className="text-[10px] font-mono text-muted-foreground/60 mt-1 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+              {truncated}
             </pre>
           )}
+          {/* Inline restart affordance */}
+          <button
+            className="mt-2 flex items-center gap-1.5 text-[9px] font-mono font-bold uppercase tracking-wider transition-colors hover:opacity-80"
+            style={{ color: 'var(--agent-dead)' }}
+            onClick={() => {
+              // TODO: wire restart mutation
+            }}
+          >
+            <RotateCw className="w-3 h-3" />
+            Restart
+          </button>
         </div>
       </div>
     </div>

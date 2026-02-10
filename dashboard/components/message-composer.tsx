@@ -1,40 +1,22 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Send, Paperclip, X } from 'lucide-react';
+import { Send, Paperclip, X, ChevronDown } from 'lucide-react';
 import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
+import { getAgentColor } from '@/lib/agent-colors';
 import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
-import { STATUS_COLOR_VAR } from './status-badge';
 import type { Agent } from '@/types';
 
-const SPINNER_WORDS = [
-  'Moseying', 'Tinkering', 'Spelunking', 'Pondering', 'Cogitating',
-  'Ruminating', 'Deliberating', 'Noodling', 'Percolating', 'Marinating',
-  'Brainstorming', 'Daydreaming', 'Contemplating', 'Meditating', 'Reflecting',
-  'Mulling', 'Considering', 'Analyzing', 'Investigating', 'Exploring',
-  'Researching', 'Examining', 'Sifting', 'Parsing', 'Decoding',
-  'Unraveling', 'Assembling', 'Crafting', 'Constructing', 'Forging',
-  'Shaping', 'Sculpting', 'Polishing', 'Refining', 'Honing',
-  'Calibrating', 'Tuning', 'Tweaking', 'Configuring', 'Wiring',
-  'Plumbing', 'Weaving', 'Stitching', 'Connecting', 'Bridging',
-  'Patching', 'Debugging', 'Diagnosing', 'Dissecting', 'Restructuring',
-  'Sorting', 'Mapping', 'Charting', 'Sketching', 'Composing',
-  'Orchestrating', 'Synthesizing', 'Harmonizing', 'Plotting', 'Drafting',
-  'Compiling', 'Computing', 'Processing', 'Crunching', 'Distilling',
-  'Fermenting', 'Brewing', 'Concocting', 'Conjuring', 'Summoning',
-  'Channeling', 'Focusing', 'Concentrating', 'Zooming', 'Scanning',
-  'Sweeping', 'Scouting', 'Surveying', 'Prospecting', 'Excavating',
-  'Mining', 'Digging', 'Burrowing', 'Tunneling', 'Navigating',
-  'Traversing', 'Wandering', 'Meandering', 'Adventuring', 'Questing',
-];
-
 interface MessageComposerProps {
-  agent: Agent;
+  agents: Agent[];
+  selectedAgentId: string | null;
 }
 
-export function MessageComposer({ agent }: MessageComposerProps) {
+export function MessageComposer({ agents, selectedAgentId }: MessageComposerProps) {
+  const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
+  const [showTargetPicker, setShowTargetPicker] = useState(false);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<
     { id: string; file: File; url: string }[]
@@ -44,9 +26,32 @@ export function MessageComposer({ agent }: MessageComposerProps) {
   const chipRowRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const nextAttachId = useRef(0);
 
   const [, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
+
+  // Sync target when sidebar selection changes
+  useEffect(() => {
+    setTargetAgentId(selectedAgentId);
+  }, [selectedAgentId]);
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showTargetPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowTargetPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showTargetPicker]);
+
+  const targetAgent = agents.find((a) => a.id === targetAgentId) ?? null;
+  const targetColor = targetAgent
+    ? getAgentColor(targetAgent.name, targetAgent.role)
+    : 'var(--accent)';
 
   const addImages = useCallback((files: FileList | File[]) => {
     const imgs = Array.from(files).filter((f) => f.type.startsWith('image/'));
@@ -142,36 +147,46 @@ export function MessageComposer({ agent }: MessageComposerProps) {
     [addImages]
   );
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text) return;
+  const buildFullMessage = async (text: string): Promise<string> => {
+    if (attachments.length === 0) return text;
 
-    let fullMessage = text;
-    if (attachments.length > 0) {
-      const token = localStorage.getItem('auth-token');
-      const backendUrl = (process.env.NEXT_PUBLIC_GRAPHQL_HTTP ?? 'http://localhost:8000/graphql').replace('/graphql', '');
-      const uploadedPaths: string[] = [];
-      for (const att of attachments) {
-        try {
-          const form = new FormData();
-          form.append('file', att.file);
-          const res = await fetch(`${backendUrl}/agents/${agent.id}/upload`, {
-            method: 'POST',
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-            body: form,
-          });
-          if (res.ok) {
-            const data = await res.json();
-            uploadedPaths.push(data.path);
-          }
-        } catch {
-          // Skip failed uploads
+    const token = localStorage.getItem('auth-token');
+    const backendUrl = (
+      process.env.NEXT_PUBLIC_GRAPHQL_HTTP ?? 'http://localhost:8000/graphql'
+    ).replace('/graphql', '');
+    const uploadTargetId = targetAgentId ?? agents[0]?.id;
+    if (!uploadTargetId) return text;
+
+    const uploadedPaths: string[] = [];
+    for (const att of attachments) {
+      try {
+        const form = new FormData();
+        form.append('file', att.file);
+        const res = await fetch(`${backendUrl}/agents/${uploadTargetId}/upload`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          uploadedPaths.push(data.path);
         }
-      }
-      if (uploadedPaths.length > 0) {
-        fullMessage = `${text}\n\n[Attached images — file paths on container]\n${uploadedPaths.join('\n')}`;
+      } catch {
+        // skip failed uploads
       }
     }
+
+    if (uploadedPaths.length > 0) {
+      return `${text}\n\n[Attached images — file paths on container]\n${uploadedPaths.join('\n')}`;
+    }
+    return text;
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || agents.length === 0) return;
+
+    const fullMessage = await buildFullMessage(text);
 
     setInput('');
     setAttachments((prev) => {
@@ -180,17 +195,20 @@ export function MessageComposer({ agent }: MessageComposerProps) {
     });
     setSelectedChip(-1);
 
+    // Send to specific agent, or broadcast to all
+    const targets = targetAgentId
+      ? [targetAgentId]
+      : agents.map((a) => a.id);
+
     try {
-      await logger.withSpan('sendMessage', () =>
-        sendMessageMut({
-          input: {
-            agentId: agent.id,
-            message: fullMessage,
-          },
-        }).then(({ error }) => {
+      await logger.withSpan('sendMessage', async () => {
+        for (const agentId of targets) {
+          const { error } = await sendMessageMut({
+            input: { agentId, message: fullMessage },
+          });
           if (error) throw error;
-        })
-      );
+        }
+      });
     } catch {
       toast.error('Failed to send message');
     }
@@ -223,13 +241,11 @@ export function MessageComposer({ agent }: MessageComposerProps) {
     }
   };
 
-  const statusColor = STATUS_COLOR_VAR[agent.status];
-  const inputBorderColor = statusColor;
-  const inputAccentColor = statusColor;
+  if (agents.length === 0) return null;
 
   return (
     <div
-      className="px-5 pb-5 pt-2"
+      className="px-5 pb-4 pt-2 flex-shrink-0"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -240,42 +256,25 @@ export function MessageComposer({ agent }: MessageComposerProps) {
           className="absolute inset-0 z-10 flex items-center justify-center rounded"
           style={{
             background: 'rgba(0,0,0,0.6)',
-            border: `2px dashed ${inputAccentColor}`,
+            border: `2px dashed ${targetColor}`,
             margin: '4px',
           }}
         >
           <span
             className="text-xs font-mono font-bold uppercase tracking-wider"
-            style={{ color: inputAccentColor }}
+            style={{ color: targetColor }}
           >
             Drop images here
           </span>
         </div>
       )}
 
-      {agent.status === 'running' ? (
-        <AgentStatusLine agent={agent} />
-      ) : (
-        <div className="flex items-center gap-2 mb-1.5 px-1">
-          <span
-            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-            style={{ background: statusColor }}
-          />
-          <span
-            className="text-[9px] font-mono font-bold uppercase tracking-wider"
-            style={{ color: statusColor }}
-          >
-            {agent.name} — {agent.status}
-          </span>
-        </div>
-      )}
-
+      {/* Attachment chips */}
       {attachments.length > 0 && (
         <div className="mb-1.5">
           <div
             ref={chipRowRef}
             className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin pb-1"
-            style={{ scrollbarWidth: 'thin' }}
           >
             {attachments.map((att, i) => {
               const isSelected = selectedChip === i;
@@ -289,13 +288,10 @@ export function MessageComposer({ agent }: MessageComposerProps) {
                   className="flex items-center gap-1.5 px-1.5 py-1 rounded flex-shrink-0 cursor-pointer transition-all"
                   style={{
                     background: isSelected
-                      ? `color-mix(in srgb, ${inputAccentColor} 15%, transparent)`
+                      ? `color-mix(in srgb, ${targetColor} 15%, transparent)`
                       : 'var(--surface-inset)',
-                    border: `1.5px solid ${isSelected ? inputAccentColor : 'var(--border)'}`,
+                    border: `1.5px solid ${isSelected ? targetColor : 'var(--border)'}`,
                     outline: 'none',
-                    boxShadow: isSelected
-                      ? `0 0 8px color-mix(in srgb, ${inputAccentColor} 30%, transparent)`
-                      : 'none',
                   }}
                 >
                   <img
@@ -305,7 +301,7 @@ export function MessageComposer({ agent }: MessageComposerProps) {
                     style={{ width: 28, height: 28 }}
                   />
                   <span className="text-[10px] font-mono text-muted-foreground whitespace-nowrap">
-                    Image #{i + 1}
+                    #{i + 1}
                   </span>
                   <button
                     onClick={(e) => {
@@ -313,7 +309,6 @@ export function MessageComposer({ agent }: MessageComposerProps) {
                       removeAttachment(att.id);
                     }}
                     className="w-4 h-4 flex items-center justify-center text-muted-foreground/50 hover:text-foreground transition-colors flex-shrink-0"
-                    title="Remove"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -321,9 +316,6 @@ export function MessageComposer({ agent }: MessageComposerProps) {
               );
             })}
           </div>
-          <p className="text-[8px] font-mono text-muted-foreground/40 px-0.5 mt-0.5">
-            up to select &middot; left/right to navigate &middot; Delete to remove
-          </p>
         </div>
       )}
 
@@ -339,16 +331,112 @@ export function MessageComposer({ agent }: MessageComposerProps) {
         }}
       />
 
+      {/* Input row: @target selector + text input + send */}
       <div className="flex items-center gap-2">
+        {/* Target agent picker */}
+        <div className="relative flex-shrink-0" ref={pickerRef}>
+          <button
+            onClick={() => setShowTargetPicker((v) => !v)}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-sm transition-colors"
+            style={{
+              border: '1px solid var(--border)',
+              background: showTargetPicker
+                ? 'color-mix(in srgb, var(--accent) 5%, transparent)'
+                : 'transparent',
+            }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{ background: targetColor }}
+            />
+            <span
+              className="text-[10px] font-mono font-bold truncate max-w-[80px]"
+              style={{ color: targetColor }}
+            >
+              @{targetAgent ? targetAgent.name : 'all'}
+            </span>
+            <ChevronDown className="w-3 h-3 text-muted-foreground/50" />
+          </button>
+
+          {showTargetPicker && (
+            <div
+              className="absolute bottom-full left-0 mb-1 w-44 rounded-sm overflow-hidden z-20"
+              style={{
+                background: 'var(--card)',
+                border: '1px solid var(--border)',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              }}
+            >
+              {/* All agents option */}
+              <button
+                onClick={() => {
+                  setTargetAgentId(null);
+                  setShowTargetPicker(false);
+                }}
+                className="w-full px-3 py-2 flex items-center gap-2 text-left transition-colors"
+                style={{
+                  background:
+                    targetAgentId === null
+                      ? 'color-mix(in srgb, var(--accent) 8%, transparent)'
+                      : 'transparent',
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{ background: 'var(--accent)' }}
+                />
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  All agents
+                </span>
+              </button>
+
+              {/* Per-agent options */}
+              {agents.map((agent) => {
+                const color = getAgentColor(agent.name, agent.role);
+                const isTarget = targetAgentId === agent.id;
+                return (
+                  <button
+                    key={agent.id}
+                    onClick={() => {
+                      setTargetAgentId(agent.id);
+                      setShowTargetPicker(false);
+                    }}
+                    className="w-full px-3 py-2 flex items-center gap-2 text-left transition-colors"
+                    style={{
+                      background: isTarget
+                        ? `color-mix(in srgb, ${color} 10%, transparent)`
+                        : 'transparent',
+                    }}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                      style={{ background: color }}
+                    />
+                    <span
+                      className="text-[10px] font-mono font-bold"
+                      style={{ color }}
+                    >
+                      {agent.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Text input */}
         <div
           data-augmented-ui="tl-clip br-clip border"
           className="flex-1"
-          style={{
-            '--aug-tl': '8px',
-            '--aug-br': '8px',
-            '--aug-border-all': '1px',
-            '--aug-border-bg': inputBorderColor,
-          } as React.CSSProperties}
+          style={
+            {
+              '--aug-tl': '8px',
+              '--aug-br': '8px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': targetColor,
+            } as React.CSSProperties
+          }
         >
           <div className="flex items-center">
             <button
@@ -360,7 +448,7 @@ export function MessageComposer({ agent }: MessageComposerProps) {
             </button>
             <span
               className="font-mono text-sm pl-3 select-none font-bold"
-              style={{ color: inputAccentColor }}
+              style={{ color: targetColor }}
             >
               &gt;
             </span>
@@ -370,67 +458,35 @@ export function MessageComposer({ agent }: MessageComposerProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Message ${agent.name}...`}
+              placeholder={
+                targetAgent
+                  ? `Message ${targetAgent.name}...`
+                  : 'Message all agents...'
+              }
               className="w-full bg-transparent text-foreground font-mono text-sm px-2 py-2.5 placeholder:text-muted-foreground placeholder:select-none focus:outline-none selection:bg-accent/20 selection:text-foreground"
             />
           </div>
         </div>
+
+        {/* Send button */}
         <button
           onClick={handleSend}
           data-augmented-ui="tl-clip br-clip border"
-          className="w-9 h-9 flex items-center justify-center transition-colors"
-          style={{
-            '--aug-tl': '6px',
-            '--aug-br': '6px',
-            '--aug-border-all': '1px',
-            '--aug-border-bg': inputBorderColor,
-            color: inputAccentColor,
-          } as React.CSSProperties}
+          className="w-9 h-9 flex items-center justify-center transition-colors flex-shrink-0"
+          style={
+            {
+              '--aug-tl': '6px',
+              '--aug-br': '6px',
+              '--aug-border-all': '1px',
+              '--aug-border-bg': targetColor,
+              color: targetColor,
+            } as React.CSSProperties
+          }
           title="Send"
         >
           <Send className="w-4 h-4" />
         </button>
       </div>
-    </div>
-  );
-}
-
-function AgentStatusLine({ agent }: { agent: Agent }) {
-  const [spinnerWord, setSpinnerWord] = useState(() =>
-    SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
-  );
-
-  const spinnerIntervalRef = useRef(3500 + Math.random() * 1000);
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSpinnerWord(
-        SPINNER_WORDS[Math.floor(Math.random() * SPINNER_WORDS.length)]
-      );
-    }, spinnerIntervalRef.current);
-    return () => clearInterval(interval);
-  }, []);
-
-  const statusColor = STATUS_COLOR_VAR[agent.status];
-
-  return (
-    <div
-      className="flex items-center gap-2 mb-1.5 px-1 overflow-hidden"
-      style={{ animation: 'msg-enter 0.2s ease-out forwards' }}
-    >
-      <span
-        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-        style={{
-          background: statusColor,
-          boxShadow: `0 0 6px ${statusColor}`,
-          animation: 'border-pulse 2s ease-in-out infinite',
-        }}
-      />
-      <span
-        className="text-[9px] font-mono font-bold tracking-wider flex-shrink-0"
-        style={{ color: statusColor }}
-      >
-        {spinnerWord}...
-      </span>
     </div>
   );
 }

@@ -16,7 +16,7 @@ interface AgentsState {
 export const useAgentsStore = create<AgentsState>((set) => ({
   agents: {},
   selectedAgentId: null,
-  detailTab: 'desktop',
+  detailTab: 'chat',
 
   setAgents: (projectId, agents) =>
     set((state) => ({
