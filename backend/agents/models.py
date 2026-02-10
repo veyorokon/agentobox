@@ -11,6 +11,37 @@ class AgentStatus(models.TextChoices):
     ERROR = "error"
 
 
+class SecretGroup(models.Model):
+    """
+    Named collection of encrypted key-value pairs, scoped to a project.
+
+    Secrets are Fernet-encrypted at rest. Decrypted only during agent
+    provisioning to inject into MCP server env blocks or tmpfs.
+
+    Pattern inspired by Modal's secret groups:
+        modal.Secret.from_dict({"KEY": "value"})
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="secret_groups"
+    )
+    name = models.CharField(max_length=100)
+    encrypted_data = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="unique_project_secret_group"
+            ),
+        ]
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} → {self.project.name}"
+
+
 class Agent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     name = models.CharField(max_length=100)
@@ -44,6 +75,17 @@ class Agent(models.Model):
 
     # Role instructions injected into CLAUDE.md
     instructions = models.TextField(blank=True)
+
+    # Secret groups attached to this agent (decrypted at provisioning time)
+    secret_groups = models.ManyToManyField(SecretGroup, blank=True, related_name="agents")
+
+    # Team configuration
+    role = models.CharField(
+        max_length=10,
+        choices=[("lead", "Lead"), ("worker", "Worker")],
+        default="worker"
+    )
+    config_snapshot = models.JSONField(default=dict, blank=True)
 
     # Stream-JSON relay fields
     # Running session cost from SessionResult.total_cost_usd

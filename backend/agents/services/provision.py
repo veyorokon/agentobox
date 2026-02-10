@@ -8,6 +8,11 @@ from projects.models import Project
 
 log = structlog.get_logger("agents.provision")
 
+# Path where the API key helper script lives in the container
+API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
+# tmpfs path for the API key (root:root 0400)
+API_KEY_TMPFS_PATH = "/run/secrets/anthropic_key"
+
 
 async def provision_workspace(
     runtime: Runtime,
@@ -18,15 +23,35 @@ async def provision_workspace(
     variant: str = "debian",
     workspace_path: str = "",
     instructions: str = "",
+    secret_envs: dict[str, dict[str, str]] | None = None,
 ) -> None:
-    """Write CLAUDE.md and .claude/settings.json into the agent container."""
+    """
+    Write CLAUDE.md, .claude/settings.json, .mcp.json, and security
+    hardening files into the agent container.
+
+    Args:
+        secret_envs: Mapping of MCP server name -> {env_key: env_value}.
+            Already-decrypted secrets resolved by lifecycle from SecretGroups.
+            Injected into MCP server env blocks in .mcp.json.
+    """
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/computeruse"
-    op_log.info("provisioning_workspace", context_path=workspace, variant=variant, workspace_path=workspace_path)
+    op_log.info(
+        "provisioning_workspace",
+        context_path=workspace,
+        variant=variant,
+        workspace_path=workspace_path,
+    )
 
     await runtime.exec(sandbox_id, ["mkdir", "-p", workspace])
 
-    claude_md = _build_claude_md(project, mcp_servers=mcp_servers, variant=variant, workspace_path=workspace_path, instructions=instructions)
+    claude_md = _build_claude_md(
+        project,
+        mcp_servers=mcp_servers,
+        variant=variant,
+        workspace_path=workspace_path,
+        instructions=instructions,
+    )
     await runtime.write_file(
         sandbox_id,
         claude_md.encode("utf-8"),
@@ -36,25 +61,28 @@ async def provision_workspace(
     claude_dir = f"{workspace}/.claude"
     await runtime.exec(sandbox_id, ["mkdir", "-p", claude_dir])
 
-    settings_json = _build_settings_json()
+    settings_json = _build_settings_json(api_key=api_key)
     await runtime.write_file(
         sandbox_id,
         settings_json.encode("utf-8"),
         f"{claude_dir}/settings.json",
     )
 
-    # MCP servers go in .mcp.json (not settings.json)
+    # MCP servers go in .mcp.json with env blocks for secrets
     if mcp_servers:
-        mcp_json = json.dumps({"mcpServers": mcp_servers}, indent=2)
+        mcp_config = _build_mcp_json(mcp_servers, secret_envs=secret_envs)
         await runtime.write_file(
             sandbox_id,
-            mcp_json.encode("utf-8"),
+            mcp_config.encode("utf-8"),
             f"{workspace}/.mcp.json",
         )
 
     # Mark onboarding complete and pre-approve the API key so Claude Code
     # starts without interactive prompts
-    claude_state = {"hasCompletedOnboarding": True, "bypassPermissionsModeAccepted": True}
+    claude_state = {
+        "hasCompletedOnboarding": True,
+        "bypassPermissionsModeAccepted": True,
+    }
     if api_key and len(api_key) >= 20:
         claude_state["customApiKeyResponses"] = {
             "approved": [api_key[-20:]],
@@ -67,7 +95,155 @@ async def provision_workspace(
         f"{workspace}/.claude.json",
     )
 
+    # --- Security hardening ---
+    await _provision_api_key_helper(runtime, sandbox_id, api_key, op_log)
+    await _provision_scoped_sudo(runtime, sandbox_id, op_log)
+
     op_log.info("workspace_provisioned")
+
+
+# ---------------------------------------------------------------------------
+# API key helper (Layer 1: blocks env var leak)
+# ---------------------------------------------------------------------------
+
+async def _provision_api_key_helper(
+    runtime: Runtime, sandbox_id: str, api_key: str, op_log,
+) -> None:
+    """
+    Write the Anthropic API key to tmpfs and create a helper script that
+    outputs it. Claude Code reads the key via apiKeyHelper in settings.json
+    instead of from an env var.
+
+    File layout:
+        /run/secrets/anthropic_key  (root:root 0400) — the key
+        /opt/abox/api-key-helper.sh (root:root 0555) — cat helper
+    """
+    if not api_key:
+        op_log.warning("api_key_helper_skipped", reason="no api key")
+        return
+
+    # Ensure /run/secrets exists (tmpfs in the agent image)
+    await runtime.exec(
+        sandbox_id,
+        ["bash", "-c", "mkdir -p /run/secrets"],
+        user="root",
+    )
+
+    # Write the key to tmpfs
+    await runtime.write_file(sandbox_id, api_key.encode("utf-8"), API_KEY_TMPFS_PATH)
+    await runtime.exec(
+        sandbox_id,
+        ["bash", "-c", f"chown root:root {API_KEY_TMPFS_PATH} && chmod 0400 {API_KEY_TMPFS_PATH}"],
+        user="root",
+    )
+
+    # Write the helper script
+    helper_script = f"#!/bin/bash\ncat {API_KEY_TMPFS_PATH}\n"
+    await runtime.exec(sandbox_id, ["mkdir", "-p", "/opt/abox"], user="root")
+    await runtime.write_file(
+        sandbox_id,
+        helper_script.encode("utf-8"),
+        API_KEY_HELPER_PATH,
+    )
+    await runtime.exec(
+        sandbox_id,
+        ["bash", "-c", f"chown root:root {API_KEY_HELPER_PATH} && chmod 0555 {API_KEY_HELPER_PATH}"],
+        user="root",
+    )
+
+    op_log.info("api_key_helper_provisioned")
+
+
+# ---------------------------------------------------------------------------
+# Scoped sudo (Layer 2: blocks privilege escalation to read secrets)
+# ---------------------------------------------------------------------------
+
+async def _provision_scoped_sudo(
+    runtime: Runtime, sandbox_id: str, op_log,
+) -> None:
+    """
+    Replace blanket NOPASSWD sudo with package-manager-only access.
+
+    Agents can: sudo apt-get install, sudo apt install, sudo dpkg -i
+    Agents cannot: sudo cat, sudo bash, sudo chown/chmod
+    """
+    sudoers_content = (
+        "# Agentobox: scoped sudo for agent container\n"
+        "# Allows package management only — blocks reading secrets via sudo\n"
+        "computeruse ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg\n"
+    )
+    sudoers_path = "/etc/sudoers.d/agentobox"
+
+    await runtime.write_file(
+        sandbox_id,
+        sudoers_content.encode("utf-8"),
+        sudoers_path,
+    )
+    await runtime.exec(
+        sandbox_id,
+        ["bash", "-c", f"chmod 0440 {sudoers_path}"],
+        user="root",
+    )
+
+    # Remove the blanket rule if it exists in the main sudoers file
+    # (defensive — the main sudoers may have "computeruse ALL=(ALL) NOPASSWD:ALL")
+    await runtime.exec(
+        sandbox_id,
+        ["bash", "-c", "sed -i '/computeruse.*NOPASSWD.*ALL$/d' /etc/sudoers"],
+        user="root",
+    )
+
+    op_log.info("scoped_sudo_provisioned")
+
+
+# ---------------------------------------------------------------------------
+# MCP config builder
+# ---------------------------------------------------------------------------
+
+def _build_mcp_json(
+    mcp_servers: dict,
+    secret_envs: dict[str, dict[str, str]] | None = None,
+) -> str:
+    """
+    Build .mcp.json content with optional per-server env blocks.
+
+    MCP server secrets are injected into the server's env block so they're
+    only available to the MCP subprocess, not the agent's shell.
+
+    Args:
+        mcp_servers: {name: {command, args, ...}} — resolved MCP config
+        secret_envs: {mcp_name: {KEY: VALUE}} — decrypted secrets per server
+    """
+    servers = {}
+    for name, config in mcp_servers.items():
+        entry = {"command": config["command"], "args": config["args"]}
+        # Inject secrets into env block if available
+        env_vars = (secret_envs or {}).get(name)
+        if env_vars:
+            entry["env"] = env_vars
+        servers[name] = entry
+
+    return json.dumps({"mcpServers": servers}, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md builder
+# ---------------------------------------------------------------------------
+
+# Security instructions appended to every agent's CLAUDE.md
+SECURITY_INSTRUCTIONS = """
+## Security
+
+NEVER output API keys, secrets, credentials, or tokens in your responses.
+If you encounter them in environment variables, files, or process output,
+redact them before displaying. This includes Anthropic keys (sk-ant-*),
+JWT tokens, GitHub tokens (ghp_*), database passwords, and any
+high-entropy strings that look like credentials.
+
+Do NOT attempt to read files in /run/secrets/ or inspect MCP server
+process environments. These contain credentials that are intentionally
+isolated from your shell.
+"""
 
 
 def _build_claude_md(
@@ -76,6 +252,8 @@ def _build_claude_md(
     variant: str = "debian",
     workspace_path: str = "",
     instructions: str = "",
+    agent_role: str = "worker",
+    team_members: list[dict] | None = None,
 ) -> str:
     os_desc = IMAGE_VARIANTS.get(variant, IMAGE_VARIANTS["debian"])
 
@@ -116,6 +294,45 @@ def _build_claude_md(
     if instructions:
         base += f"\n## Responsibilities\n\n{instructions.strip()}\n"
 
+    # Team coordination sections (lead-only)
+    if agent_role == "lead" and team_members:
+        # Your Team section (roster)
+        base += "\n## Your Team\n\n"
+        for member in team_members:
+            name = member.get("name", "unknown")
+            role = member.get("role", "worker")
+            responsibilities = member.get("instructions", "")
+            base += f"- **{name}** ({role}): {responsibilities}\n"
+
+        # Team Coordination section
+        base += textwrap.dedent("""
+            ## Team Coordination
+
+            You are the team lead. Use these tools to coordinate your team:
+
+            ### Task Management
+
+            - `TaskCreate` - Create tasks for teammates to work on
+            - `TaskUpdate` - Update task status, assign owners, set dependencies
+            - `TaskList` - View all tasks and their status
+            - `TaskGet` - Get full details of a specific task
+
+            ### Communication
+
+            - `SendMessage` - Send messages to specific teammates
+              - `type: "message"` - Direct message to one agent
+              - `type: "broadcast"` - Message all agents (use sparingly)
+              - `type: "shutdown_request"` - Request agent shutdown
+
+            ### Workflow
+
+            1. Break work into tasks using `TaskCreate`
+            2. Assign tasks to teammates using `TaskUpdate` with owner parameter
+            3. Teammates will claim and complete tasks
+            4. Monitor progress with `TaskList`
+            5. Coordinate via `SendMessage` as needed
+        """).strip() + "\n"
+
     # Append instructions from attached MCP servers
     if mcp_servers:
         for name in mcp_servers:
@@ -124,6 +341,9 @@ def _build_claude_md(
             if mcp_instructions:
                 base += "\n" + textwrap.dedent(mcp_instructions).strip() + "\n"
 
+    # Security instructions (soft control — Layer 6)
+    base += "\n" + SECURITY_INSTRUCTIONS.strip() + "\n"
+
     return base
 
 
@@ -131,6 +351,54 @@ def _build_claude_md(
 IMAGE_VARIANTS = {
     "alpine": "Alpine Linux (use `apk` not `apt`)",
     "debian": "Debian Linux (use `apt` not `apk`)",
+}
+
+# Team configuration templates
+# Each template defines a complete agent team with role, model, and responsibilities
+TEAM_CONFIGS = {
+    "solo": {
+        "agents": [
+            {
+                "name": "team-lead",
+                "role": "lead",
+                "model": "claude-opus-4-6",
+                "instructions": "You are the team lead and sole agent. Handle all aspects of the project.",
+                "mcp_servers": ["computer-use"],
+            }
+        ]
+    },
+    "fullstack": {
+        "agents": [
+            {
+                "name": "team-lead",
+                "role": "lead",
+                "model": "claude-opus-4-6",
+                "instructions": "Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
+                "mcp_servers": ["computer-use"],
+            },
+            {
+                "name": "backend",
+                "role": "worker",
+                "model": "claude-sonnet-4-5-20250929",
+                "instructions": "Backend development: APIs, database models, business logic, services.",
+                "mcp_servers": [],
+            },
+            {
+                "name": "frontend",
+                "role": "worker",
+                "model": "claude-sonnet-4-5-20250929",
+                "instructions": "Frontend development: UI components, styling, client-side logic, user experience.",
+                "mcp_servers": [],
+            },
+            {
+                "name": "qa",
+                "role": "worker",
+                "model": "claude-sonnet-4-5-20250929",
+                "instructions": "Quality assurance: testing, verification, bug reports, test automation.",
+                "mcp_servers": ["playwright"],
+            },
+        ]
+    },
 }
 
 # Known MCP servers bundled into the agent image.
@@ -244,10 +512,13 @@ def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
     return resolved
 
 
-def _build_settings_json() -> str:
+def _build_settings_json(api_key: str = "") -> str:
     settings = {
         "theme": "dark",
         "defaultMode": "bypassPermissions",
         "enableAllProjectMcpServers": True,
     }
+    # Use apiKeyHelper instead of env var for API key (Layer 1)
+    if api_key:
+        settings["apiKeyHelper"] = API_KEY_HELPER_PATH
     return json.dumps(settings, indent=2)

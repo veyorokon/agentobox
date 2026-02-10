@@ -33,6 +33,7 @@ services:
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
       MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent:${AGENT_VERSION:-latest}
       MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-dev}
+      ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}
       DOCKER_NETWORK: agentobox_default
     ports:
       - "8000:8000"

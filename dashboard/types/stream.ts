@@ -56,7 +56,7 @@ export interface ToolResultPart {
   type: 'tool_result';
   /** Correlates to the tool_use part's id. */
   tool_use_id: string;
-  /** Tool output content (string or content blocks). */
+  /** Tool output content (normalized to string by backend). */
   content: string;
   /** Whether the tool execution failed. */
   is_error: boolean;
