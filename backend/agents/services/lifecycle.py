@@ -25,6 +25,7 @@ async def create_agent(
     role: str = "worker",
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
+    from config.telemetry import bind_agent_context
     from projects.models import Project
 
     op_log = log.bind(project_id=str(project_id), agent=name)
@@ -61,12 +62,15 @@ async def create_agent(
         config_snapshot=config_snapshot,
     )
 
-    # Attach secret groups to agent (M2M)
+    # Attach secret groups to agent (M2M) and fetch them for provisioning
+    secret_envs = None
     if secret_group_ids:
         secret_groups = SecretGroup.objects.filter(
             id__in=secret_group_ids, project=project,
         )
         await agent.secret_groups.aset([sg async for sg in secret_groups])
+        # Fetch and decrypt secrets before launching background task
+        secret_envs = await _resolve_agent_secrets_sync(secret_group_ids, project, op_log)
 
     await broadcast_agent_update(agent)
     await broadcast_agent_event(agent, "created", {"name": name, "runtime": runtime_name})
@@ -74,7 +78,7 @@ async def create_agent(
     op_log.info("agent_created", agent_id=str(agent.id))
 
     asyncio.create_task(
-        _provision_agent(agent, project, runtime_name, op_log)
+        _provision_agent(agent, project, runtime_name, op_log, secret_envs)
     )
 
     return agent
@@ -105,7 +109,7 @@ _save_provisioned = sync_to_async(_save_agent_provisioned, thread_sensitive=Fals
 _save_failed = sync_to_async(_save_agent_failed, thread_sensitive=False)
 
 
-async def _provision_agent(agent, project, runtime_name, op_log):
+async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None):
     """
     Background task: create container, provision workspace, launch relay.
 
@@ -113,11 +117,23 @@ async def _provision_agent(agent, project, runtime_name, op_log):
     reads stdout events, and POSTs them to the backend. This replaces
     the previous tmux launch + hook system.
 
+    Args:
+        secret_envs: Pre-fetched decrypted secrets (fetched before launching task)
+
     See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Relay Process"
     """
+    from config.telemetry import bind_agent_context, clear_agent_context
+
     runtime = None
     sandbox_id = None
     agent_id = str(agent.id)
+
+    # Bind agent context for all logs in this task
+    bind_agent_context(
+        agent_id=agent_id,
+        agent_name=agent.name,
+        project_id=str(project.id),
+    )
 
     try:
         runtime = get_runtime(runtime_name)
@@ -134,12 +150,18 @@ async def _provision_agent(agent, project, runtime_name, op_log):
 
         sandbox = await runtime.create(agent.name, env, volumes=volumes)
         sandbox_id = sandbox.id
+
+        # Update agent context with sandbox_id now that it's available
+        bind_agent_context(
+            agent_id=agent_id,
+            agent_name=agent.name,
+            sandbox_id=sandbox_id,
+            project_id=str(project.id),
+        )
+
         op_log.info("container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
         api_key = getattr(settings, "ANTHROPIC_API_KEY", "")
-
-        # Resolve secret groups → per-MCP-server env dicts
-        secret_envs = await _resolve_agent_secrets(agent, op_log)
 
         await provision_workspace(
             runtime, sandbox.id, project,
@@ -220,10 +242,14 @@ async def _provision_agent(agent, project, runtime_name, op_log):
             )
         except Exception:
             op_log.exception("provision_cleanup_db_failed", agent_id=agent_id)
+    finally:
+        clear_agent_context()
 
 
 async def kill_agent(agent_id: str) -> bool:
     """Stop and remove an agent's container, mark as stopped."""
+    from config.telemetry import bind_agent_context, clear_agent_context
+
     op_log = log.bind(agent_id=agent_id)
     op_log.info("killing_agent")
 
@@ -232,6 +258,14 @@ async def kill_agent(agent_id: str) -> bool:
     except Agent.DoesNotExist:
         op_log.warning("agent_not_found")
         return False
+
+    # Bind agent context for this operation
+    bind_agent_context(
+        agent_id=agent_id,
+        agent_name=agent.name,
+        sandbox_id=agent.sandbox_id,
+        project_id=str(agent.project_id),
+    )
 
     if agent.sandbox_id:
         try:
@@ -247,6 +281,7 @@ async def kill_agent(agent_id: str) -> bool:
     await broadcast_agent_event(agent, "stopped", {})
 
     op_log.info("agent_killed")
+    clear_agent_context()
     return True
 
 
@@ -257,6 +292,8 @@ async def restart_agent(agent_id: str) -> Agent:
     Terminates the existing container, resets the agent's state, and provisions
     a new container with the same configuration that was used at creation time.
     """
+    from config.telemetry import bind_agent_context, clear_agent_context
+
     op_log = log.bind(agent_id=agent_id)
     op_log.info("restarting_agent")
 
@@ -265,6 +302,14 @@ async def restart_agent(agent_id: str) -> Agent:
     except Agent.DoesNotExist:
         op_log.warning("agent_not_found")
         raise ValueError(f"Agent {agent_id} not found")
+
+    # Bind agent context for this operation
+    bind_agent_context(
+        agent_id=agent_id,
+        agent_name=agent.name,
+        sandbox_id=agent.sandbox_id,
+        project_id=str(agent.project_id),
+    )
 
     # Kill existing container if running
     if agent.sandbox_id:
@@ -300,14 +345,17 @@ async def restart_agent(agent_id: str) -> Agent:
     agent.role = role
     await agent.asave()
 
-    # Re-attach secret groups from config snapshot
+    # Re-attach secret groups from config snapshot and fetch secrets
+    from projects.models import Project
+    project = await Project.objects.aget(id=agent.project_id)
+    secret_envs = None
     if secret_group_ids:
-        from projects.models import Project
-        project = await Project.objects.aget(id=agent.project_id)
         secret_groups = SecretGroup.objects.filter(
             id__in=secret_group_ids, project=project,
         )
         await agent.secret_groups.aset([sg async for sg in secret_groups])
+        # Fetch and decrypt secrets before launching background task
+        secret_envs = await _resolve_agent_secrets_sync(secret_group_ids, project, op_log)
 
     await broadcast_agent_update(agent)
     await broadcast_agent_event(agent, "restarted", {"agent_id": agent_id})
@@ -315,12 +363,11 @@ async def restart_agent(agent_id: str) -> Agent:
     op_log.info("agent_reset_complete", agent_id=agent_id)
 
     # Start provisioning in background
-    from projects.models import Project
-    project = await Project.objects.aget(id=agent.project_id)
     asyncio.create_task(
-        _provision_agent(agent, project, runtime_name, op_log)
+        _provision_agent(agent, project, runtime_name, op_log, secret_envs)
     )
 
+    clear_agent_context()
     return agent
 
 
@@ -356,6 +403,45 @@ def _build_agent_env(agent, project) -> dict[str, str]:
     }
 
 
+async def _resolve_agent_secrets_sync(secret_group_ids: list[str], project, op_log) -> dict[str, dict[str, str]] | None:
+    """
+    Decrypt secret groups by IDs (called before launching background task).
+
+    This function is safe to call in the normal async context (not inside create_task).
+    Returns dict suitable for passing to provision_workspace.
+    """
+    from agents.services.secrets import decrypt_secrets
+
+    if not secret_group_ids:
+        return None
+
+    # Query secret groups directly (safe in normal async context)
+    secret_groups = await SecretGroup.objects.filter(
+        id__in=secret_group_ids, project=project
+    ).aall()
+
+    if not secret_groups:
+        return None
+
+    # Flat merge: all secret groups' key-value pairs combined
+    merged: dict[str, str] = {}
+    for sg in secret_groups:
+        try:
+            data = decrypt_secrets(bytes(sg.encrypted_data))
+            merged.update(data)
+        except Exception:
+            op_log.warning(
+                "secret_group_decrypt_failed",
+                secret_group=sg.name,
+            )
+
+    if not merged:
+        return None
+
+    op_log.info("secrets_resolved", count=len(merged), groups=len(secret_groups))
+    return {"_global": merged}
+
+
 async def _resolve_agent_secrets(agent, op_log) -> dict[str, dict[str, str]] | None:
     """Decrypt all secret groups attached to this agent.
 
@@ -368,7 +454,10 @@ async def _resolve_agent_secrets(agent, op_log) -> dict[str, dict[str, str]] | N
     """
     from agents.services.secrets import decrypt_secrets
 
-    secret_groups = [sg async for sg in agent.secret_groups.all()]
+    # Query SecretGroup directly to avoid ManyToMany async issues
+    secret_groups = [
+        sg async for sg in SecretGroup.objects.filter(agents__id=agent.id)
+    ]
     if not secret_groups:
         return None
 

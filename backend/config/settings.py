@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django_structlog",
     "channels",
     "strawberry_django",
+    "config",  # Telemetry and logging setup
     "accounts",
     "projects",
     "agents",
@@ -130,16 +131,50 @@ MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
 
 # --- Logging ---
 
+import structlog  # noqa: E402
+from config.telemetry import (  # noqa: E402
+    copy_exception_to_stacktrace,
+    extract_otel_exception_fields,
+    get_log_queue,
+    merge_agent_context,
+    orjson_renderer,
+)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": structlog.stdlib.ProcessorFormatter,
+            "processors": [
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                orjson_renderer,  # 2-3x faster than JSONRenderer
+            ],
+            "foreign_pre_chain": [
+                structlog.contextvars.merge_contextvars,
+                merge_agent_context,  # Add agent metadata after contextvars
+                structlog.stdlib.add_log_level,
+                structlog.stdlib.add_logger_name,
+                structlog.processors.TimeStamper(fmt="iso"),
+                structlog.processors.StackInfoRenderer(),
+                extract_otel_exception_fields,
+                structlog.processors.format_exc_info,
+                copy_exception_to_stacktrace,
+            ],
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "json",
+        },
+        "queue": {
+            "class": "logging.handlers.QueueHandler",
+            "queue": get_log_queue(),
         },
     },
     "root": {
-        "handlers": ["console"],
+        "handlers": ["console"],  # TODO: Add queue handler after resolving ProcessorFormatter compat
         "level": "INFO",
     },
     # Keep noisy libraries quiet
@@ -147,6 +182,9 @@ LOGGING = {
         "django": {"level": "INFO"},
         "django.server": {"level": "WARNING"},
         "channels": {"level": "WARNING"},
+        # Daphne HTTP logs - suppress in favor of Django middleware structured logs
+        "daphne.server": {"level": "ERROR"},
+        "daphne.http_protocol": {"level": "ERROR"},
     },
 }
 

@@ -18,7 +18,7 @@ services:
   backend:
     build: ./backend
     entrypoint: ["bash", "/app/entrypoint.sh"]
-    command: ["uv", "run", "uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app"]
+    command: ["uv", "run", "daphne", "-b", "0.0.0.0", "-p", "8000", "-v", "0", "config.asgi:application"]
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
