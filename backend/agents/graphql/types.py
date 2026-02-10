@@ -6,6 +6,34 @@ from strawberry.scalars import JSON
 from agents import models
 
 
+@strawberry_django.type(models.SecretGroup)
+class SecretGroupType:
+    """
+    Secret group metadata exposed via GraphQL.
+
+    NEVER exposes decrypted secret values. Only returns the group name,
+    the list of key names, and timestamps.
+    """
+    id: auto
+    name: auto
+    created_at: auto
+    updated_at: auto
+
+    @strawberry.field
+    def project_id(self) -> str:
+        return str(self.project_id)  # type: ignore[return-value]
+
+    @strawberry.field
+    def keys(self) -> list[str]:
+        """Return the key names (not values) stored in this secret group."""
+        from agents.services.secrets import decrypt_secrets
+        try:
+            data = decrypt_secrets(bytes(self.encrypted_data))  # type: ignore[arg-type]
+            return sorted(data.keys())
+        except Exception:
+            return []
+
+
 @strawberry_django.type(models.AgentFeedback)
 class AgentFeedbackType:
     id: auto
@@ -88,12 +116,13 @@ class AgentType:
     mcp_servers: auto
     workspace_path: auto
     instructions: auto
+    role: auto
     session_cost_usd: auto
     capabilities: auto
     created_at: auto
 
     @strawberry_django.field
-    def stream_messages(self, limit: int = 100, offset: int = 0) -> list[MessageType]:
+    def stream_messages(self, limit: int = 500, offset: int = 0) -> list[MessageType]:
         """Stream-json messages (typed content parts). Replaces legacy messages."""
         return models.Message.objects.filter(agent_id=self.id).order_by("created_at")[offset:offset + limit]
 

@@ -12,7 +12,7 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 ### Test credentials
 
 - Username: `vahid`
-- Password: `testpass123`
+- Password: `test1234`
 
 ## CI/CD
 

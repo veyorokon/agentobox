@@ -248,6 +248,8 @@ Each tool defines `mapToolResultToToolResultBlockParam(result, tool_use_id)`:
 }
 ```
 
+**Note:** The `content` field can be either a plain string or an array of content blocks (e.g. `[{type: "text", text: "..."}]`). This is per the Anthropic API spec. The Agentobox backend normalizes this to always be a string via `_normalize_parts()` in `stream.py` before DB storage. See `docs/STREAM-JSON-INTEGRATION-SPEC.md`, "Content Parts Format".
+
 Result truncation via `MG7()` if content exceeds `maxResultSizeChars` — large outputs saved to file with preview.
 
 #### 5e. Post-Tool Hooks

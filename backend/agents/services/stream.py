@@ -26,6 +26,23 @@ from agents.services.broadcast import broadcast_agent_update, broadcast_stream_m
 log = structlog.get_logger("agents.stream")
 
 
+def _normalize_parts(parts: list[dict]) -> list[dict]:
+    """Normalize content parts to canonical format before storage.
+
+    Anthropic API allows tool_result.content to be either a string or an array
+    of content blocks. We normalize to always store it as a string so downstream
+    consumers (frontend, extractMessageItems) can trust the shape.
+    """
+    for part in parts:
+        if part.get("type") == "tool_result":
+            content = part.get("content")
+            if isinstance(content, list):
+                part["content"] = "\n".join(
+                    block.get("text", "") for block in content if isinstance(block, dict)
+                )
+    return parts
+
+
 async def process_stream_events(agent: Agent, events: list[dict]) -> None:
     """
     Process a batch of Claude Code stream-json events from the relay.
@@ -157,7 +174,7 @@ async def _handle_assistant(agent: Agent, event: dict) -> None:
     )
 
     # APPEND new content parts — never replace
-    new_parts = msg_data.get("content", [])
+    new_parts = _normalize_parts(msg_data.get("content", []))
     message.parts = message.parts + new_parts
     message.usage = msg_data.get("usage") or message.usage
     message.stop_reason = msg_data.get("stop_reason") or message.stop_reason
@@ -189,7 +206,7 @@ async def _handle_user(agent: Agent, event: dict) -> None:
     See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "user event"
     """
     msg_data = event.get("message", {})
-    content = msg_data.get("content", [])
+    content = _normalize_parts(msg_data.get("content", []))
     event_uuid = event.get("uuid", "")
     if not event_uuid:
         return

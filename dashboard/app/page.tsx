@@ -5,6 +5,7 @@ import { useQuery, useSubscription, useMutation } from 'urql';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Folder, ArrowRight, X, Terminal } from 'lucide-react';
+import html2canvas from 'html2canvas';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useMessagesStore } from '@/stores/messages';
@@ -15,9 +16,11 @@ import {
 } from '@/lib/graphql/subscriptions';
 import { CommandPanel } from '@/components/command-panel';
 import { AgentCard } from '@/components/agent-card';
+import { AgentDetailPanel } from '@/components/agent-detail-panel';
+import { ScreenshotModal } from '@/components/screenshot-modal';
 import { GridControl, type GridLayout, GRID_CLASSES } from '@/components/grid-control';
 import { DeployModal } from '@/components/modals/deploy-modal';
-import { CREATE_AGENT_MUTATION, CREATE_PROJECT_MUTATION } from '@/lib/graphql/mutations';
+import { CREATE_AGENT_MUTATION, CREATE_PROJECT_MUTATION, SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
 import type { Agent, Project } from '@/types';
 
@@ -35,6 +38,13 @@ export default function DashboardPage() {
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
   const upsertMessage = useMessagesStore((s) => s.upsert);
+  const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
+  const setSelectedAgent = useAgentsStore((s) => s.setSelectedAgent);
+
+  const selectedAgent = useMemo(
+    () => agents.find((a) => a.id === selectedAgentId) ?? null,
+    [agents, selectedAgentId]
+  );
 
   const [showDeployModal, setShowDeployModal] = useState(false);
   const [gridLayout, setGridLayout] = useState<GridLayout>(() => {
@@ -46,14 +56,33 @@ export default function DashboardPage() {
     return '1';
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [screenshotBlob, setScreenshotBlob] = useState<Blob | null>(null);
   const [, createAgentMut] = useMutation(CREATE_AGENT_MUTATION);
+  const [, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
 
-  // Cmd+B to toggle sidebar
+  // Cmd+B to toggle sidebar, Cmd+Shift+S to screenshot
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handler = async (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
         e.preventDefault();
         setSidebarCollapsed((v) => !v);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        try {
+          const canvas = await html2canvas(document.body, {
+            backgroundColor: null,
+            scale: window.devicePixelRatio || 1,
+          });
+          canvas.toBlob((blob) => {
+            if (blob) {
+              setScreenshotBlob(blob);
+            }
+          }, 'image/png');
+        } catch (error) {
+          toast.error('Failed to capture screenshot');
+          console.error('Screenshot error:', error);
+        }
       }
     };
     window.addEventListener('keydown', handler);
@@ -105,9 +134,11 @@ export default function DashboardPage() {
   const handleDeploy = async (
     name: string,
     runtime: string,
+    model: string,
     mcpServers: string[] = [],
     workspacePath: string = '',
     instructions: string = '',
+    secretGroupIds: string[] = [],
   ) => {
     if (!projectId) return;
     setShowDeployModal(false);
@@ -121,15 +152,68 @@ export default function DashboardPage() {
             projectId,
             name,
             runtime,
+            model,
             ...(mcpServers.length > 0 && { mcpServers }),
             ...(workspacePath && { workspacePath }),
             ...(instructions && { instructions }),
+            ...(secretGroupIds.length > 0 && { secretGroupIds }),
           },
         });
         if (error) throw error;
       });
     } catch {
       toast.error(`Failed to deploy ${name}`);
+    }
+  };
+
+  const handleScreenshotSend = async (blob: Blob, caption: string) => {
+    if (!selectedAgent) {
+      toast.error('No agent selected');
+      return;
+    }
+
+    try {
+      // 1. Upload screenshot to agent container
+      const token = localStorage.getItem('auth-token');
+      const backendUrl = (process.env.NEXT_PUBLIC_GRAPHQL_HTTP ?? 'http://localhost:8000/graphql').replace('/graphql', '');
+
+      const form = new FormData();
+      form.append('file', blob, 'screenshot.png');
+
+      const res = await fetch(`${backendUrl}/agents/${selectedAgent.id}/upload`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+
+      if (!res.ok) {
+        throw new Error('Upload failed');
+      }
+
+      const data = await res.json();
+      const imagePath = data.path;
+
+      // 2. Send message with caption + image path
+      const message = caption
+        ? `${caption}\n\n[Screenshot]\n${imagePath}`
+        : `[Screenshot]\n${imagePath}`;
+
+      await logger.withSpan('sendScreenshot', () =>
+        sendMessageMut({
+          input: {
+            agentId: selectedAgent.id,
+            message,
+          },
+        }).then(({ error }) => {
+          if (error) throw error;
+        })
+      );
+
+      toast.success('Screenshot sent');
+      setScreenshotBlob(null);
+    } catch (error) {
+      toast.error('Failed to send screenshot');
+      console.error('Screenshot send error:', error);
     }
   };
 
@@ -148,68 +232,84 @@ export default function DashboardPage() {
         {/* Subtle grid background */}
         <div className="dashboard-grid absolute inset-0 pointer-events-none" />
 
-        <motion.div
-          className="flex items-center justify-between px-6 pt-5 pb-4 relative z-10"
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="flex items-center gap-4">
-            <p className="text-muted-foreground text-sm font-mono">
-              <span className="text-accent/60 mr-1">//</span>
-              {agents.length} agent{agents.length !== 1 ? 's' : ''} deployed
-            </p>
-            {agents.length > 0 && (
-              <GridControl value={gridLayout} onChange={setGridLayout} />
-            )}
-          </div>
-          <button
-            onClick={() => setShowDeployModal(true)}
-            data-augmented-ui="tl-clip br-clip border"
-            className="deploy-btn px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
-            style={{
-              '--aug-tl': '8px',
-              '--aug-br': '8px',
-              '--aug-border-all': '2px',
-              '--aug-border-bg': 'var(--accent)',
-            } as React.CSSProperties}
-          >
-            + Deploy Agent
-          </button>
-        </motion.div>
+        {selectedAgent ? (
+          <AgentDetailPanel
+            agent={selectedAgent}
+            onBack={() => setSelectedAgent(null)}
+          />
+        ) : (
+          <>
+            <motion.div
+              className="flex items-center justify-between px-6 pt-5 pb-4 relative z-10"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="flex items-center gap-4">
+                <p className="text-muted-foreground text-sm font-mono">
+                  <span className="text-accent/60 mr-1">//</span>
+                  {agents.length} agent{agents.length !== 1 ? 's' : ''} deployed
+                </p>
+                {agents.length > 0 && (
+                  <GridControl value={gridLayout} onChange={setGridLayout} />
+                )}
+              </div>
+              <button
+                onClick={() => setShowDeployModal(true)}
+                data-augmented-ui="tl-clip br-clip border"
+                className="deploy-btn px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent"
+                style={{
+                  '--aug-tl': '8px',
+                  '--aug-br': '8px',
+                  '--aug-border-all': '2px',
+                  '--aug-border-bg': 'var(--accent)',
+                } as React.CSSProperties}
+              >
+                + Deploy Agent
+              </button>
+            </motion.div>
 
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-6 pb-6 relative z-10">
-          {agents.length === 0 ? (
-            <EmptyState />
-          ) : (
-            <div className={`grid gap-5 ${GRID_CLASSES[gridLayout]}`}>
-              <AnimatePresence mode="popLayout">
-                {agents.map((agent, i) => (
-                  <motion.div
-                    key={agent.id}
-                    initial={{ opacity: 0, scale: 0.95, y: 12 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: -8 }}
-                    transition={{
-                      duration: 0.45,
-                      delay: i * 0.06,
-                      ease: [0.16, 1, 0.3, 1],
-                    }}
-                    layout
-                  >
-                    <AgentCard agent={agent} />
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+            <div className="flex-1 overflow-y-auto scrollbar-thin px-6 pb-6 relative z-10">
+              {agents.length === 0 ? (
+                <EmptyState />
+              ) : (
+                <div className={`grid gap-5 ${GRID_CLASSES[gridLayout]}`}>
+                  <AnimatePresence mode="popLayout">
+                    {agents.map((agent, i) => (
+                      <motion.div
+                        key={agent.id}
+                        initial={{ opacity: 0, scale: 0.95, y: 12 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                        transition={{
+                          duration: 0.45,
+                          delay: i * 0.06,
+                          ease: [0.16, 1, 0.3, 1],
+                        }}
+                        layout
+                      >
+                        <AgentCard agent={agent} />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </main>
 
       <DeployModal
         open={showDeployModal}
         onClose={() => setShowDeployModal(false)}
         onDeploy={handleDeploy}
+        projectId={projectId}
+      />
+
+      <ScreenshotModal
+        blob={screenshotBlob}
+        onClose={() => setScreenshotBlob(null)}
+        onSend={handleScreenshotSend}
       />
     </div>
   );

@@ -39,8 +39,7 @@ class ModalRuntime:
                 modal_volumes[container_path] = vol
             op.info("modal_volumes_attached", labels=list(modal_volumes.keys()))
 
-        sb = await modal.Sandbox.create.aio(
-            "/init",
+        create_kwargs = dict(
             app=app,
             image=image,
             secrets=[env_secret],
@@ -48,8 +47,11 @@ class ModalRuntime:
             timeout=3600,
             cpu=2.0,
             memory=4096,
-            volumes=modal_volumes or None,
         )
+        if modal_volumes:
+            create_kwargs["volumes"] = modal_volumes
+
+        sb = await modal.Sandbox.create.aio("/init", **create_kwargs)
         await sb.set_tags.aio(
             {"agentobox.managed": "true", "agentobox.agent": name}
         )

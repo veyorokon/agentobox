@@ -21,6 +21,7 @@ export type AgentStatus =
 export interface Agent {
   id: string;
   name: string;
+  role: 'lead' | 'worker';
   status: AgentStatus;
   vncUrl: string;
   sandboxId: string;
@@ -33,7 +34,7 @@ export interface Agent {
   mcpServers: Record<string, unknown>;
   workspacePath: string;
   instructions: string;
-  sessionCostUsd: number | null;
+  sessionCostUsd: string | null;
   capabilities: AgentCapabilities | null;
   createdAt: string;
 }
@@ -158,6 +159,17 @@ export type MessageItem =
   | { type: 'tool'; message: Message; toolUse: Extract<ContentPart, { type: 'tool_use' }>; toolResult?: Extract<ContentPart, { type: 'tool_result' }>; status: ToolStatus };
 
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | null;
+
+// ── Secrets ──
+
+export interface SecretGroup {
+  id: string;
+  name: string;
+  projectId: string;
+  keys: string[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 // ── Other ──
 

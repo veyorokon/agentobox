@@ -54,8 +54,28 @@ export const CREATE_AGENT_MUTATION = gql`
       workspacePath
       instructions
       sessionCostUsd
+      capabilities
       createdAt
     }
+  }
+`;
+
+export const CREATE_SECRET_GROUP_MUTATION = gql`
+  mutation CreateSecretGroup($input: CreateSecretGroupInput!) {
+    createSecretGroup(input: $input) {
+      id
+      name
+      projectId
+      keys
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const DELETE_SECRET_GROUP_MUTATION = gql`
+  mutation DeleteSecretGroup($id: ID!) {
+    deleteSecretGroup(id: $id)
   }
 `;
 

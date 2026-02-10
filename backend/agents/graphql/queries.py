@@ -4,7 +4,7 @@ import strawberry
 from django.utils import timezone
 from strawberry import ID
 
-from agents.graphql.types import AgentEventType, AgentType
+from agents.graphql.types import AgentEventType, AgentType, SecretGroupType
 
 # Agents with no heartbeat for this long are marked as error
 STALE_HEARTBEAT_SECONDS = 30
@@ -47,4 +47,15 @@ class AgentQuery:
             e async for e in AgentEvent.objects.filter(
                 agent__project_id=project_id
             ).select_related("agent").order_by("-created_at")[:limit]
+        ]
+
+    @strawberry.field
+    async def secret_groups(self, project_id: ID) -> list[SecretGroupType]:
+        """List secret groups for a project (names and key names only, never values)."""
+        from agents.models import SecretGroup
+
+        return [
+            sg async for sg in SecretGroup.objects.filter(
+                project_id=project_id
+            ).order_by("name")
         ]

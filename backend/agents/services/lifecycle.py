@@ -5,7 +5,7 @@ import structlog
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentStatus, SecretGroup
 from agents.runtimes import get_runtime
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
 from agents.services.provision import provision_workspace, resolve_mcp_servers
@@ -17,9 +17,12 @@ async def create_agent(
     project_id: str,
     name: str,
     runtime_name: str = "modal",
+    model: str = "claude-sonnet-4-5-20250929",
     mcp_servers: dict | None = None,
     workspace_path: str = "",
     instructions: str = "",
+    secret_group_ids: list[str] | None = None,
+    role: str = "worker",
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from projects.models import Project
@@ -32,17 +35,38 @@ async def create_agent(
     # Resolve MCP names to full config
     resolved_mcps = mcp_servers or {}
 
+    # Build config snapshot for future restarts
+    config_snapshot = {
+        "runtime": runtime_name,
+        "model": model,
+        "mcp_servers": resolved_mcps,
+        "workspace_path": workspace_path,
+        "instructions": instructions,
+        "secret_group_ids": secret_group_ids or [],
+        "role": role,
+    }
+
     agent = await Agent.objects.acreate(
         name=name,
         project=project,
         runtime=runtime_name,
+        model=model,
         sandbox_id="",
         vnc_url="",
         status=AgentStatus.DEPLOYING,
         mcp_servers=resolved_mcps,
         workspace_path=workspace_path,
         instructions=instructions,
+        role=role,
+        config_snapshot=config_snapshot,
     )
+
+    # Attach secret groups to agent (M2M)
+    if secret_group_ids:
+        secret_groups = SecretGroup.objects.filter(
+            id__in=secret_group_ids, project=project,
+        )
+        await agent.secret_groups.aset([sg async for sg in secret_groups])
 
     await broadcast_agent_update(agent)
     await broadcast_agent_event(agent, "created", {"name": name, "runtime": runtime_name})
@@ -112,13 +136,18 @@ async def _provision_agent(agent, project, runtime_name, op_log):
         sandbox_id = sandbox.id
         op_log.info("container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
-        api_key = env.get("ANTHROPIC_API_KEY", "")
+        api_key = getattr(settings, "ANTHROPIC_API_KEY", "")
+
+        # Resolve secret groups → per-MCP-server env dicts
+        secret_envs = await _resolve_agent_secrets(agent, op_log)
+
         await provision_workspace(
             runtime, sandbox.id, project,
             api_key=api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
             instructions=agent.instructions,
+            secret_envs=secret_envs,
         )
 
         team_name = project.name.lower().replace(" ", "-")
@@ -136,7 +165,7 @@ async def _provision_agent(agent, project, runtime_name, op_log):
             f'export ABOX_CALLBACK_URL="{callback_url}"',
             f'export RELAY_AUTH_TOKEN="{relay_token}"',
             f'export ANTHROPIC_API_KEY="{api_key}"',
-            f'export CLAUDE_MODEL="claude-opus-4-6"',
+            f'export CLAUDE_MODEL="{agent.model}"',
         ]
 
         # Add MCP config path if agent has MCP servers
@@ -221,6 +250,80 @@ async def kill_agent(agent_id: str) -> bool:
     return True
 
 
+async def restart_agent(agent_id: str) -> Agent:
+    """
+    Restart an agent using its saved config_snapshot.
+
+    Terminates the existing container, resets the agent's state, and provisions
+    a new container with the same configuration that was used at creation time.
+    """
+    op_log = log.bind(agent_id=agent_id)
+    op_log.info("restarting_agent")
+
+    try:
+        agent = await Agent.objects.aget(id=agent_id)
+    except Agent.DoesNotExist:
+        op_log.warning("agent_not_found")
+        raise ValueError(f"Agent {agent_id} not found")
+
+    # Kill existing container if running
+    if agent.sandbox_id:
+        try:
+            runtime = get_runtime(agent.runtime)
+            await runtime.terminate(agent.sandbox_id)
+            op_log.info("container_terminated", sandbox_id=agent.sandbox_id)
+        except Exception:
+            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+
+    # Extract config from snapshot
+    config = agent.config_snapshot or {}
+    runtime_name = config.get("runtime", agent.runtime)
+    model = config.get("model", agent.model)
+    mcp_servers = config.get("mcp_servers", agent.mcp_servers)
+    workspace_path = config.get("workspace_path", agent.workspace_path)
+    instructions = config.get("instructions", agent.instructions)
+    secret_group_ids = config.get("secret_group_ids", [])
+    role = config.get("role", agent.role)
+
+    # Reset agent state to DEPLOYING
+    agent.status = AgentStatus.DEPLOYING
+    agent.sandbox_id = ""
+    agent.vnc_url = ""
+    agent.session_id = ""
+    agent.relay_token = ""
+    agent.last_heartbeat_at = None
+    agent.runtime = runtime_name
+    agent.model = model
+    agent.mcp_servers = mcp_servers
+    agent.workspace_path = workspace_path
+    agent.instructions = instructions
+    agent.role = role
+    await agent.asave()
+
+    # Re-attach secret groups from config snapshot
+    if secret_group_ids:
+        from projects.models import Project
+        project = await Project.objects.aget(id=agent.project_id)
+        secret_groups = SecretGroup.objects.filter(
+            id__in=secret_group_ids, project=project,
+        )
+        await agent.secret_groups.aset([sg async for sg in secret_groups])
+
+    await broadcast_agent_update(agent)
+    await broadcast_agent_event(agent, "restarted", {"agent_id": agent_id})
+
+    op_log.info("agent_reset_complete", agent_id=agent_id)
+
+    # Start provisioning in background
+    from projects.models import Project
+    project = await Project.objects.aget(id=agent.project_id)
+    asyncio.create_task(
+        _provision_agent(agent, project, runtime_name, op_log)
+    )
+
+    return agent
+
+
 async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
     """Best-effort capture of sandbox process list after provisioning."""
     try:
@@ -235,10 +338,14 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
 
 
 def _build_agent_env(agent, project) -> dict[str, str]:
-    """Build environment dict for the agent container."""
+    """Build environment dict for the agent container.
+
+    NOTE: ANTHROPIC_API_KEY is intentionally NOT included here.
+    The key is delivered via apiKeyHelper + tmpfs (see provision.py).
+    It remains in .relay_env so the relay can write it to tmpfs at boot,
+    but is NOT in the container's shell environment.
+    """
     return {
-        "ANTHROPIC_API_KEY": getattr(settings, "ANTHROPIC_API_KEY", ""),
-        "CLAUDE_CODE_API_KEY": getattr(settings, "ANTHROPIC_API_KEY", ""),
         "AGENT_ID": str(agent.id),
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
@@ -247,3 +354,40 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         "CLAUDECODE": "1",
     }
+
+
+async def _resolve_agent_secrets(agent, op_log) -> dict[str, dict[str, str]] | None:
+    """Decrypt all secret groups attached to this agent.
+
+    Returns a flat dict of {key: value} from all attached secret groups,
+    or None if no secrets are attached. These are passed to provision_workspace
+    as secret_envs for injection into MCP server env blocks.
+
+    Currently returns a flat merge of all secret groups. When MCP templates
+    (Phase 2) add required_secret_keys, this will become per-MCP-server mapping.
+    """
+    from agents.services.secrets import decrypt_secrets
+
+    secret_groups = [sg async for sg in agent.secret_groups.all()]
+    if not secret_groups:
+        return None
+
+    # Flat merge: all secret groups' key-value pairs combined
+    # Phase 2 will map specific keys to specific MCP servers
+    merged: dict[str, str] = {}
+    for sg in secret_groups:
+        try:
+            data = decrypt_secrets(bytes(sg.encrypted_data))
+            merged.update(data)
+        except Exception:
+            op_log.warning(
+                "secret_group_decrypt_failed",
+                secret_group=sg.name,
+                agent_id=str(agent.id),
+            )
+
+    if not merged:
+        return None
+
+    op_log.info("secrets_resolved", count=len(merged), groups=len(secret_groups))
+    return {"_global": merged}

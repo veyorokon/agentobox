@@ -1,54 +1,66 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, ChevronRight } from 'lucide-react';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { McpPicker, type McpSelection } from '@/components/mcp-picker';
+import { SecretAttacher } from '@/components/secret-attacher';
 
-const AVAILABLE_MCPS = [
-  { id: 'computer-use', label: 'Computer Use', description: 'Mouse, keyboard, and screenshot control' },
-  { id: 'playwright', label: 'Playwright', description: 'Browser automation and testing' },
+const AVAILABLE_MODELS = [
+  { id: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5', description: 'Fast, cost-effective' },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6', description: 'Most capable' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', description: 'Fastest, lowest cost' },
 ] as const;
 
 export function DeployModal({
   open,
   onClose,
   onDeploy,
+  projectId,
 }: {
   open: boolean;
   onClose: () => void;
-  onDeploy: (name: string, runtime: string, mcpServers: string[], workspacePath: string, instructions: string) => void;
+  onDeploy: (name: string, runtime: string, model: string, mcpServers: string[], workspacePath: string, instructions: string, secretGroupIds: string[]) => void;
+  projectId: string;
 }) {
   const [name, setName] = useState('');
   const [runtime, setRuntime] = useState('modal');
-  const [selectedMcps, setSelectedMcps] = useState<string[]>([]);
+  const [model, setModel] = useState<string>(AVAILABLE_MODELS[0].id);
+  const [selectedMcps, setSelectedMcps] = useState<McpSelection[]>([]);
   const [workspacePath, setWorkspacePath] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [secretGroupIds, setSecretGroupIds] = useState<string[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
+
+  // Track which advanced sections are open
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const [secretsOpen, setSecretsOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
       setName('');
       setRuntime('modal');
+      setModel(AVAILABLE_MODELS[0].id);
       setSelectedMcps([]);
       setWorkspacePath('');
       setInstructions('');
+      setSecretGroupIds([]);
+      setMcpOpen(false);
+      setSecretsOpen(false);
       setTimeout(() => nameRef.current?.focus(), 50);
     }
   }, [open]);
 
-  const toggleMcp = (id: string) => {
-    setSelectedMcps((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-    );
-  };
-
   const handleSubmit = () => {
     const trimmed = name.trim().toLowerCase().replace(/\s+/g, '-');
     if (!trimmed) return;
-    onDeploy(trimmed, runtime, selectedMcps, workspacePath.trim(), instructions.trim());
+    const mcpIds = selectedMcps.map((m) => m.id);
+    onDeploy(trimmed, runtime, model, mcpIds, workspacePath.trim(), instructions.trim(), secretGroupIds);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    const target = e.target as HTMLElement;
+    if (e.key === 'Enter' && target.tagName !== 'TEXTAREA') {
       e.preventDefault();
       handleSubmit();
     }
@@ -68,7 +80,7 @@ export function DeployModal({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
         data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-        className="relative w-[420px] bg-card"
+        className="relative w-[520px] max-h-[85vh] bg-card flex flex-col"
         style={{
           '--aug-tl': '16px',
           '--aug-tr': '16px',
@@ -78,7 +90,7 @@ export function DeployModal({
           '--aug-border-bg': 'var(--accent)',
         } as React.CSSProperties}
       >
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto scrollbar-thin flex-1">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-accent font-bold text-xs uppercase tracking-widest">
@@ -145,6 +157,34 @@ export function DeployModal({
             </div>
           </div>
 
+          {/* Model */}
+          <div className="mb-4">
+            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
+              Model
+            </label>
+            <div
+              data-augmented-ui="tl-clip br-clip border"
+              style={{
+                '--aug-tl': '8px',
+                '--aug-br': '8px',
+                '--aug-border-all': '1px',
+                '--aug-border-bg': 'var(--border)',
+              } as React.CSSProperties}
+            >
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 focus:outline-none appearance-none cursor-pointer"
+              >
+                {AVAILABLE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label} — {m.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Workspace Path */}
           <div className="mb-4">
             <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
@@ -199,54 +239,72 @@ export function DeployModal({
             </p>
           </div>
 
-          {/* MCP Servers */}
-          <div className="mb-6">
-            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
-              MCP Servers
-            </label>
-            <div className="space-y-2">
-              {AVAILABLE_MCPS.map((mcp) => (
-                <label
-                  key={mcp.id}
-                  className="flex items-start gap-3 cursor-pointer group"
-                >
-                  <div
-                    data-augmented-ui="tl-clip br-clip border"
-                    className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"
-                    style={{
-                      '--aug-tl': '4px',
-                      '--aug-br': '4px',
-                      '--aug-border-all': '1px',
-                      '--aug-border-bg': selectedMcps.includes(mcp.id)
-                        ? 'var(--accent)'
-                        : 'var(--border)',
-                      background: selectedMcps.includes(mcp.id)
-                        ? 'var(--accent)'
-                        : 'transparent',
-                    } as React.CSSProperties}
-                    onClick={() => toggleMcp(mcp.id)}
-                  >
-                    {selectedMcps.includes(mcp.id) && (
-                      <span className="text-accent-foreground text-[10px] font-bold">
-                        &#10003;
-                      </span>
-                    )}
-                  </div>
-                  <div onClick={() => toggleMcp(mcp.id)}>
-                    <span className="text-foreground font-mono text-sm block">
-                      {mcp.label}
-                    </span>
-                    <span className="text-muted-foreground text-[10px]">
-                      {mcp.description}
-                    </span>
-                  </div>
-                </label>
-              ))}
-            </div>
+          {/* ── Advanced: MCP Servers (Collapsible) ── */}
+          <div className="border-t border-border/50 pt-3 mt-2">
+            <Collapsible open={mcpOpen} onOpenChange={setMcpOpen}>
+              <CollapsibleTrigger className="flex items-center justify-between w-full py-2 group">
+                <div className="flex items-center gap-2">
+                  <ChevronRight
+                    className="w-3.5 h-3.5 text-muted-foreground transition-transform duration-200"
+                    style={{ transform: mcpOpen ? 'rotate(90deg)' : undefined }}
+                  />
+                  <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider group-hover:text-foreground transition-colors">
+                    MCP Servers
+                  </span>
+                </div>
+                {selectedMcps.length > 0 && (
+                  <span className="text-[9px] font-mono text-accent bg-accent/10 px-1.5 py-0.5 rounded">
+                    {selectedMcps.length}
+                  </span>
+                )}
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="pl-[22px] pb-3 pt-1">
+                  <McpPicker selected={selectedMcps} onChange={setSelectedMcps} />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+
+            {/* TODO: Skills section (depends on backend Phase 2 — SkillTemplate query)
+            <Collapsible>
+              <CollapsibleTrigger>Skills</CollapsibleTrigger>
+              <CollapsibleContent>
+                <SkillPicker selected={selectedSkills} onChange={handleSkillsChange} />
+              </CollapsibleContent>
+            </Collapsible>
+            */}
+
+            <Collapsible open={secretsOpen} onOpenChange={setSecretsOpen}>
+              <CollapsibleTrigger className="flex items-center justify-between w-full py-2 group">
+                <div className="flex items-center gap-2">
+                  <ChevronRight
+                    className="w-3.5 h-3.5 text-muted-foreground transition-transform duration-200"
+                    style={{ transform: secretsOpen ? 'rotate(90deg)' : undefined }}
+                  />
+                  <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider group-hover:text-foreground transition-colors">
+                    Secrets
+                  </span>
+                </div>
+                {secretGroupIds.length > 0 && (
+                  <span className="text-[9px] font-mono text-accent bg-accent/10 px-1.5 py-0.5 rounded">
+                    {secretGroupIds.length}
+                  </span>
+                )}
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="pl-[22px] pb-3 pt-1">
+                  <SecretAttacher
+                    projectId={projectId}
+                    selectedIds={secretGroupIds}
+                    onSelectionChange={setSecretGroupIds}
+                  />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-3 pt-4 mt-2 border-t border-border/30">
             <button
               onClick={onClose}
               data-augmented-ui="tl-clip br-clip border"

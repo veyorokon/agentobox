@@ -25,6 +25,7 @@ export const AGENTS_QUERY = gql`
     agents(projectId: $projectId) {
       id
       name
+      role
       runtime
       sandboxId
       vncUrl
@@ -40,6 +41,19 @@ export const AGENTS_QUERY = gql`
       sessionCostUsd
       capabilities
       createdAt
+    }
+  }
+`;
+
+export const SECRET_GROUPS_QUERY = gql`
+  query SecretGroups($projectId: ID!) {
+    secretGroups(projectId: $projectId) {
+      id
+      name
+      projectId
+      keys
+      createdAt
+      updatedAt
     }
   }
 `;

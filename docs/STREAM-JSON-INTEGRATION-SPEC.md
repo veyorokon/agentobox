@@ -308,6 +308,7 @@ Tool execution result. Role is `user` because tool results are user-turn message
 
 Key fields:
 - `tool_use_id` — correlates to the `tool_use` event's `id`.
+- `content` — tool output. The Anthropic API allows this to be either a `string` or an array of content blocks (`ContentBlock[]`). The backend's `_normalize_parts()` function normalizes it to always be a string before DB storage, so downstream consumers (frontend, `extractMessageItems`) can trust the shape.
 - `is_error` — whether the tool failed.
 - `tool_use_result.interrupted` — whether tool was canceled.
 
@@ -607,7 +608,9 @@ class Message(models.Model):
 ]
 ```
 
-No translation layer. The frontend reads the same content part types that Claude produces. This matches how Crush stores messages — typed parts array in a JSON column.
+**Normalization:** The Anthropic API allows `tool_result.content` to be either a `string` or an array of content blocks (`ContentBlock[]`). The backend's `_normalize_parts()` function normalizes it to always be a string before storage. This runs at both the `_handle_assistant` and `_handle_user` ingestion points in `stream.py`, so `parts` always contains `tool_result.content` as a string.
+
+No translation layer beyond this normalization. The frontend reads the same content part types that Claude produces. This matches how Crush stores messages — typed parts array in a JSON column.
 
 ### SessionResult Model
 
@@ -693,8 +696,8 @@ def process_stream_event(agent, event):
                 "parent_tool_use_id": event.get("parent_tool_use_id", ""),
             }
         )
-        # Append new content parts to existing parts list
-        new_parts = msg_data.get("content", [])
+        # Normalize content parts (tool_result.content: array → string) then append
+        new_parts = _normalize_parts(msg_data.get("content", []))
         message.parts = message.parts + new_parts
         message.usage = msg_data.get("usage") or message.usage
         message.stop_reason = msg_data.get("stop_reason") or message.stop_reason
@@ -707,8 +710,9 @@ def process_stream_event(agent, event):
         # Tool results — each tool_result arrives as a separate event.
         # Use the event's uuid as message_id (not tool_use_id) for
         # idempotency on relay retry. get_or_create for safety.
+        # Normalize content parts (tool_result.content: array → string)
         msg_data = event.get("message", {})
-        content = msg_data.get("content", [])
+        content = _normalize_parts(msg_data.get("content", []))
         event_uuid = event.get("uuid", "")
         Message.objects.get_or_create(
             agent=agent,
@@ -783,6 +787,8 @@ type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean };
+  // Note: tool_result.content is normalized to string by backend (_normalize_parts).
+  // The Anthropic API allows string | ContentBlock[], but we always store string.
 
 interface TokenUsage {
   input_tokens: number;
