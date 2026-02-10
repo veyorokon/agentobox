@@ -48,6 +48,7 @@
     "framer-motion": "^12.31.0",
     "graphql": "^16.12.0",
     "graphql-ws": "^6.0.7",
+    "html2canvas": "^1.4.1",
     "input-otp": "1.4.1",
     "lucide-react": "^0.454.0",
     "next": "16.1.6",
