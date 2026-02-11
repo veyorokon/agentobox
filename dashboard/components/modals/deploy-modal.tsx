@@ -74,7 +74,7 @@ export function DeployModal({
       className="fixed inset-0 z-50 flex items-center justify-center"
       onClick={onClose}
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm pointer-events-none" />
 
       <div
         onClick={(e) => e.stopPropagation()}

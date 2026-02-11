@@ -4,7 +4,7 @@ import { useMemo, useRef, useEffect } from 'react';
 import { RotateCw } from 'lucide-react';
 import { getAgentColor } from '@/lib/agent-colors';
 import { extractMessageItems } from '@/lib/messages';
-import type { Agent, Message, MessageItem } from '@/types';
+import type { Agent, Message, MessageItem, TimelineEntry, ContentPart } from '@/types';
 
 // ── Feed item types (grouped for display) ──
 
@@ -12,9 +12,13 @@ type FeedGroup =
   | { kind: 'user'; item: Extract<MessageItem, { type: 'user' }>; agentId: string }
   | { kind: 'text'; item: Extract<MessageItem, { type: 'assistant' }>; agentId: string }
   | { kind: 'activity'; agentId: string; tools: Extract<MessageItem, { type: 'tool' }>[] }
-  | { kind: 'error'; item: Extract<MessageItem, { type: 'tool' }>; agentId: string };
+  | { kind: 'error'; item: Extract<MessageItem, { type: 'tool' }>; agentId: string }
+  | { kind: 'status'; entry: TimelineEntry; agentId: string }
+  | { kind: 'task'; entry: TimelineEntry; agentId: string }
+  | { kind: 'system'; entry: TimelineEntry; agentId: string }
+  | { kind: 'event-error'; entry: TimelineEntry; agentId: string };
 
-// ── Tool labels (human-readable summaries) ──
+// ── Helpers ──
 
 function toolLabel(name: string, input?: Record<string, unknown>): string {
   const filePath = typeof input?.file_path === 'string' ? input.file_path : '';
@@ -37,9 +41,62 @@ function toolLabel(name: string, input?: Record<string, unknown>): string {
   }
 }
 
-// ── Group consecutive tool calls from the same agent ──
+function formatTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
 
-function groupFeedItems(items: MessageItem[]): FeedGroup[] {
+function statusDotColor(status: string): string {
+  switch (status) {
+    case 'deploying': return 'var(--agent-deploying)';
+    case 'running': return 'var(--agent-active)';
+    case 'idle': return 'var(--agent-active)';
+    case 'stopped': return 'var(--agent-dead)';
+    case 'error': return 'var(--agent-dead)';
+    default: return 'var(--muted-foreground)';
+  }
+}
+
+// ── Reconstruct Message from timeline entry data ──
+
+function messageFromEntry(entry: TimelineEntry): Message {
+  const d = entry.data;
+  return {
+    id: entry.id,
+    agentId: entry.agentId,
+    messageId: String(d.message_id ?? ''),
+    sessionId: String(d.session_id ?? ''),
+    role: d.role as Message['role'],
+    parts: (d.parts ?? []) as ContentPart[],
+    turnNumber: Number(d.turn_number ?? 0),
+    createdAt: entry.createdAt,
+  };
+}
+
+// ── Build feed groups from timeline entries ──
+
+function buildFeedGroups(entries: TimelineEntry[]): FeedGroup[] {
+  // 1. Collect message entries, reconstruct Messages for item extraction
+  const messages: Message[] = [];
+  for (const entry of entries) {
+    if (entry.entryType === 'message') {
+      messages.push(messageFromEntry(entry));
+    }
+  }
+
+  // 2. Extract message items (handles tool_use → tool_result matching)
+  const msgItems = extractMessageItems(messages);
+
+  // 3. Index items by messageId for lookup during timeline walk
+  const itemsByMsgId = new Map<string, MessageItem[]>();
+  for (const item of msgItems) {
+    const mid = item.message.messageId;
+    const list = itemsByMsgId.get(mid) ?? [];
+    list.push(item);
+    itemsByMsgId.set(mid, list);
+  }
+
+  // 4. Walk entries in order, building feed groups with tool batching
   const result: FeedGroup[] = [];
   let toolBatch: Extract<MessageItem, { type: 'tool' }>[] = [];
   let batchAgentId: string | null = null;
@@ -52,29 +109,53 @@ function groupFeedItems(items: MessageItem[]): FeedGroup[] {
     }
   }
 
-  for (const item of items) {
-    if (item.type === 'tool') {
-      // Errors always show individually
-      if (item.status === 'error') {
-        flush();
-        result.push({ kind: 'error', item, agentId: item.message.agentId });
-        continue;
-      }
+  for (const entry of entries) {
+    if (entry.entryType === 'message') {
+      const mid = String(entry.data.message_id ?? '');
+      const items = itemsByMsgId.get(mid) ?? [];
 
-      const aid = item.message.agentId;
-      if (batchAgentId === aid) {
-        toolBatch.push(item);
-      } else {
-        flush();
-        batchAgentId = aid;
-        toolBatch.push(item);
+      for (const item of items) {
+        if (item.type === 'tool') {
+          if (item.status === 'error') {
+            flush();
+            result.push({ kind: 'error', item, agentId: item.message.agentId });
+            continue;
+          }
+          const aid = item.message.agentId;
+          if (batchAgentId === aid) {
+            toolBatch.push(item);
+          } else {
+            flush();
+            batchAgentId = aid;
+            toolBatch.push(item);
+          }
+        } else if (item.type === 'user') {
+          flush();
+          result.push({ kind: 'user', item, agentId: item.message.agentId });
+        } else {
+          flush();
+          result.push({ kind: 'text', item, agentId: item.message.agentId });
+        }
       }
-    } else if (item.type === 'user') {
-      flush();
-      result.push({ kind: 'user', item, agentId: item.message.agentId });
     } else {
       flush();
-      result.push({ kind: 'text', item, agentId: item.message.agentId });
+      switch (entry.entryType) {
+        case 'status':
+          result.push({ kind: 'status', entry, agentId: entry.agentId });
+          break;
+        case 'task':
+          result.push({ kind: 'task', entry, agentId: entry.agentId });
+          break;
+        case 'system':
+          result.push({ kind: 'system', entry, agentId: entry.agentId });
+          break;
+        case 'error':
+          result.push({ kind: 'event-error', entry, agentId: entry.agentId });
+          break;
+        case 'cost':
+          // Silent — cost events update StatusBar, not the feed
+          break;
+      }
     }
   }
   flush();
@@ -85,38 +166,20 @@ function groupFeedItems(items: MessageItem[]): FeedGroup[] {
 // ── Main feed component ──
 
 interface ChatViewProps {
-  /** All messages keyed by agentId -> messageId */
-  allMessages: Record<string, Record<string, Message>>;
-  /** Agent lookup map by ID */
+  entries: TimelineEntry[];
   agentsMap: Record<string, Agent>;
-  /** When set, filters feed to this agent */
   selectedAgentId: string | null;
 }
 
-export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewProps) {
+export function ChatView({ entries, agentsMap, selectedAgentId }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Merge, sort, extract, group
   const groups = useMemo(() => {
-    const allMsgs: Message[] = [];
-    const agentIds = selectedAgentId ? [selectedAgentId] : Object.keys(allMessages);
-
-    for (const aid of agentIds) {
-      const msgs = allMessages[aid];
-      if (msgs) {
-        for (const msg of Object.values(msgs)) {
-          allMsgs.push(msg);
-        }
-      }
-    }
-
-    allMsgs.sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-
-    const items = extractMessageItems(allMsgs);
-    return groupFeedItems(items);
-  }, [allMessages, selectedAgentId]);
+    const filtered = selectedAgentId
+      ? entries.filter((e) => e.agentId === selectedAgentId)
+      : entries;
+    return buildFeedGroups(filtered);
+  }, [entries, selectedAgentId]);
 
   // Auto-scroll on new content
   const prevGroupCount = useRef(groups.length);
@@ -133,7 +196,7 @@ export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewPr
         <div className="text-center">
           <p className="text-muted-foreground/50 text-xs font-mono">
             {selectedAgentId
-              ? `No messages from ${agentsMap[selectedAgentId]?.name ?? 'agent'} yet`
+              ? `No activity from ${agentsMap[selectedAgentId]?.name ?? 'agent'} yet`
               : 'Deploy an agent and send a message to begin'}
           </p>
           <span className="empty-cursor" />
@@ -149,14 +212,14 @@ export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewPr
     >
       {groups.map((group, i) => {
         const agent = agentsMap[group.agentId];
-        const agentName = agent?.name ?? 'unknown';
         const agentColor = agent
           ? getAgentColor(agent.name, agent.role)
           : 'var(--muted-foreground)';
         const isLead = agent?.role === 'lead';
 
         switch (group.kind) {
-          case 'user':
+          case 'user': {
+            const agentName = agent?.name ?? 'unknown';
             return (
               <UserBubble
                 key={`u-${i}`}
@@ -165,7 +228,9 @@ export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewPr
                 agentColor={agentColor}
               />
             );
-          case 'text':
+          }
+          case 'text': {
+            const agentName = agent?.name ?? 'unknown';
             return (
               <AgentTextBubble
                 key={`t-${i}`}
@@ -175,7 +240,9 @@ export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewPr
                 isLead={isLead}
               />
             );
-          case 'activity':
+          }
+          case 'activity': {
+            const agentName = agent?.name ?? 'unknown';
             return (
               <ActivityLine
                 key={`a-${i}`}
@@ -184,12 +251,47 @@ export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewPr
                 agentColor={agentColor}
               />
             );
-          case 'error':
+          }
+          case 'error': {
+            const agentName = agent?.name ?? 'unknown';
             return (
               <ErrorBubble
                 key={`e-${i}`}
                 item={group.item}
                 agentName={agentName}
+                agentColor={agentColor}
+              />
+            );
+          }
+          case 'status':
+            return (
+              <StatusLine
+                key={`s-${i}`}
+                entry={group.entry}
+                agentColor={agentColor}
+              />
+            );
+          case 'task':
+            return (
+              <TaskLine
+                key={`tk-${i}`}
+                entry={group.entry}
+                agentColor={agentColor}
+              />
+            );
+          case 'system':
+            return (
+              <SystemLine
+                key={`sys-${i}`}
+                entry={group.entry}
+                agentColor={agentColor}
+              />
+            );
+          case 'event-error':
+            return (
+              <EventErrorLine
+                key={`ee-${i}`}
+                entry={group.entry}
                 agentColor={agentColor}
               />
             );
@@ -199,7 +301,7 @@ export function ChatView({ allMessages, agentsMap, selectedAgentId }: ChatViewPr
   );
 }
 
-// ── Bubble components ──
+// ── Message bubble components ──
 
 function UserBubble({
   text,
@@ -220,7 +322,7 @@ function UserBubble({
           <span className="text-[9px] font-mono text-muted-foreground/60">
             you
           </span>
-          <span className="text-[9px] font-mono text-muted-foreground/40">→</span>
+          <span className="text-[9px] font-mono text-muted-foreground/40">&rarr;</span>
           <span
             className="text-[9px] font-mono font-bold"
             style={{ color: agentColor }}
@@ -304,7 +406,6 @@ function ActivityLine({
   agentName: string;
   agentColor: string;
 }) {
-  // Build summary: first 2 tools named, rest as "+N more"
   const labels = tools.map((t) => toolLabel(t.toolUse.name, t.toolUse.input));
   const shown = labels.slice(0, 2).join(', ');
   const rest = labels.length > 2 ? ` +${labels.length - 2} more` : '';
@@ -401,7 +502,6 @@ function ErrorBubble({
               {truncated}
             </pre>
           )}
-          {/* Inline restart affordance */}
           <button
             className="mt-2 flex items-center gap-1.5 text-[9px] font-mono font-bold uppercase tracking-wider transition-colors hover:opacity-80"
             style={{ color: 'var(--agent-dead)' }}
@@ -414,6 +514,135 @@ function ErrorBubble({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Timeline annotation components ──
+// Visually lighter than message bubbles — context, not content.
+// Mixed density per Attio timeline pattern.
+
+function StatusLine({
+  entry,
+  agentColor,
+}: {
+  entry: TimelineEntry;
+  agentColor: string;
+}) {
+  const data = entry.data as { from?: string; to?: string };
+  const dotColor = statusDotColor(data.to ?? '');
+  const time = formatTime(entry.createdAt);
+
+  return (
+    <div
+      className="flex items-center gap-2 py-px px-1"
+      style={{ animation: 'msg-enter 0.15s ease-out forwards' }}
+    >
+      <span
+        className="w-1 h-1 rounded-full flex-shrink-0"
+        style={{ background: dotColor, opacity: 0.7 }}
+      />
+      <span className="text-[9px] font-mono text-muted-foreground/35 truncate">
+        {entry.summary ?? (
+          <><span style={{ color: agentColor, opacity: 0.5 }}>{entry.agentName}</span>{' is now '}{data.to}</>
+        )}
+      </span>
+      <span className="text-[8px] font-mono text-muted-foreground/20 ml-auto flex-shrink-0">
+        {time}
+      </span>
+    </div>
+  );
+}
+
+function TaskLine({
+  entry,
+  agentColor,
+}: {
+  entry: TimelineEntry;
+  agentColor: string;
+}) {
+  const time = formatTime(entry.createdAt);
+
+  return (
+    <div
+      className="flex items-center gap-2 py-px px-1"
+      style={{ animation: 'msg-enter 0.15s ease-out forwards' }}
+    >
+      <span
+        className="w-1 h-1 rounded-full flex-shrink-0"
+        style={{ background: agentColor, opacity: 0.4 }}
+      />
+      <span className="text-[9px] font-mono text-muted-foreground/35 truncate">
+        {entry.summary ?? `${entry.agentName} task`}
+      </span>
+      <span className="text-[8px] font-mono text-muted-foreground/20 ml-auto flex-shrink-0">
+        {time}
+      </span>
+    </div>
+  );
+}
+
+function SystemLine({
+  entry,
+  agentColor,
+}: {
+  entry: TimelineEntry;
+  agentColor: string;
+}) {
+  const time = formatTime(entry.createdAt);
+
+  return (
+    <div
+      className="flex items-center gap-2 py-px px-1"
+      style={{ animation: 'msg-enter 0.15s ease-out forwards' }}
+    >
+      <span
+        className="w-1 h-1 rounded-full flex-shrink-0"
+        style={{ background: agentColor, opacity: 0.3 }}
+      />
+      <span className="text-[9px] font-mono text-muted-foreground/30 truncate">
+        {entry.summary ?? `${entry.agentName} system event`}
+      </span>
+      <span className="text-[8px] font-mono text-muted-foreground/20 ml-auto flex-shrink-0">
+        {time}
+      </span>
+    </div>
+  );
+}
+
+function EventErrorLine({
+  entry,
+  agentColor,
+}: {
+  entry: TimelineEntry;
+  agentColor: string;
+}) {
+  const time = formatTime(entry.createdAt);
+
+  return (
+    <div
+      className="flex items-center gap-2 py-px px-1"
+      style={{ animation: 'msg-enter 0.15s ease-out forwards' }}
+    >
+      <span
+        className="w-1 h-1 rounded-full flex-shrink-0"
+        style={{ background: 'var(--agent-dead)', opacity: 0.7 }}
+      />
+      <span
+        className="text-[9px] font-mono font-bold flex-shrink-0"
+        style={{ color: agentColor, opacity: 0.5 }}
+      >
+        {entry.agentName}
+      </span>
+      <span
+        className="text-[9px] font-mono truncate"
+        style={{ color: 'var(--agent-dead)', opacity: 0.4 }}
+      >
+        {entry.summary ?? 'error'}
+      </span>
+      <span className="text-[8px] font-mono text-muted-foreground/20 ml-auto flex-shrink-0">
+        {time}
+      </span>
     </div>
   );
 }

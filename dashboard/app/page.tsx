@@ -7,15 +7,15 @@ import { motion } from 'framer-motion';
 import { Plus, Folder, ArrowRight, X } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
-import { useMessagesStore } from '@/stores/messages';
+import { useTimelineStore } from '@/stores/timeline';
 import {
   AGENTS_QUERY,
-  AGENT_MESSAGES_QUERY,
   PROJECTS_QUERY,
+  TIMELINE_QUERY,
 } from '@/lib/graphql/queries';
 import {
   AGENT_UPDATED_SUBSCRIPTION,
-  MESSAGE_RECEIVED_SUBSCRIPTION,
+  TIMELINE_STREAM_SUBSCRIPTION,
 } from '@/lib/graphql/subscriptions';
 import { StatusBar } from '@/components/status-bar';
 import { CommandPanel } from '@/components/command-panel';
@@ -42,8 +42,8 @@ export default function DashboardPage() {
   );
   const setAgents = useAgentsStore((s) => s.setAgents);
   const upsertAgent = useAgentsStore((s) => s.upsertAgent);
-  const upsertMessage = useMessagesStore((s) => s.upsert);
-  const allMessages = useMessagesStore((s) => s.byAgent);
+  const timelineEntries = useTimelineStore((s) => s.entries);
+  const upsertTimelineEntry = useTimelineStore((s) => s.upsert);
   const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
   const setSelectedAgent = useAgentsStore((s) => s.setSelectedAgent);
 
@@ -88,7 +88,7 @@ export default function DashboardPage() {
     }
   }, [data, projectId, setAgents]);
 
-  // Subscribe to agent updates
+  // Subscribe to agent updates (for CommandPanel/StatusBar)
   const [agentSubResult] = useSubscription({
     query: AGENT_UPDATED_SUBSCRIPTION,
     variables: queryVars,
@@ -101,22 +101,18 @@ export default function DashboardPage() {
     }
   }, [agentSubResult.data, projectId, upsertAgent]);
 
-  // Subscribe to stream messages
-  const [messageSubResult] = useSubscription({
-    query: MESSAGE_RECEIVED_SUBSCRIPTION,
+  // Subscribe to unified timeline stream
+  const [timelineSubResult] = useSubscription({
+    query: TIMELINE_STREAM_SUBSCRIPTION,
     variables: queryVars,
     pause: paused,
   });
 
   useEffect(() => {
-    if (messageSubResult.data?.messageReceived) {
-      const msg = messageSubResult.data.messageReceived;
-      upsertMessage({
-        ...msg,
-        parts: msg.parts ?? [],
-      });
+    if (timelineSubResult.data?.timelineStream) {
+      upsertTimelineEntry(timelineSubResult.data.timelineStream);
     }
-  }, [messageSubResult.data, upsertMessage]);
+  }, [timelineSubResult.data, upsertTimelineEntry]);
 
   const handleDeploy = async (
     name: string,
@@ -173,7 +169,7 @@ export default function DashboardPage() {
 
         <main className="flex-1 flex flex-col overflow-hidden">
           <ChatView
-            allMessages={allMessages}
+            entries={timelineEntries}
             agentsMap={agentsMap}
             selectedAgentId={selectedAgentId}
           />
@@ -184,10 +180,8 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* Invisible message loaders — hydrate store per agent */}
-      {agents.map((agent) => (
-        <MessageLoader key={agent.id} agentId={agent.id} />
-      ))}
+      {/* Timeline hydration — single loader replaces per-agent MessageLoaders */}
+      <TimelineLoader projectId={projectId} />
 
       <DeployModal
         open={showDeployModal}
@@ -199,22 +193,22 @@ export default function DashboardPage() {
   );
 }
 
-// ── Invisible message loader ──
-// Fetches historical messages for an agent on mount, populates Zustand store.
-// Real-time updates come via MESSAGE_RECEIVED_SUBSCRIPTION in the parent.
+// ── Timeline loader ──
+// Fetches historical timeline on mount, populates Zustand store.
+// Real-time updates come via TIMELINE_STREAM_SUBSCRIPTION in the parent.
 
-function MessageLoader({ agentId }: { agentId: string }) {
-  const setMessages = useMessagesStore((s) => s.setMessages);
+function TimelineLoader({ projectId }: { projectId: string }) {
+  const hydrate = useTimelineStore((s) => s.hydrate);
   const [{ data }] = useQuery({
-    query: AGENT_MESSAGES_QUERY,
-    variables: { agentId },
+    query: TIMELINE_QUERY,
+    variables: { projectId, limit: 500 },
   });
 
   useEffect(() => {
-    if (data?.agent?.streamMessages) {
-      setMessages(agentId, data.agent.streamMessages);
+    if (data?.timeline) {
+      hydrate(data.timeline);
     }
-  }, [data, agentId, setMessages]);
+  }, [data, hydrate]);
 
   return null;
 }

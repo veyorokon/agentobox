@@ -5,6 +5,7 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
     agentUpdated(projectId: $projectId) {
       id
       name
+      role
       runtime
       sandboxId
       vncUrl
@@ -14,6 +15,7 @@ export const AGENT_UPDATED_SUBSCRIPTION = gql`
       model
       cwd
       permissionMode
+      mcpServers
       workspacePath
       instructions
       sessionCostUsd
@@ -34,6 +36,20 @@ export const MESSAGE_RECEIVED_SUBSCRIPTION = gql`
       parts
       sessionId
       turnNumber
+      createdAt
+    }
+  }
+`;
+
+export const TIMELINE_STREAM_SUBSCRIPTION = gql`
+  subscription TimelineStream($projectId: ID!) {
+    timelineStream(projectId: $projectId) {
+      id
+      entryType
+      agentId
+      agentName
+      summary
+      data
       createdAt
     }
   }

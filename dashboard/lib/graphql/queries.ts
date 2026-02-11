@@ -58,6 +58,20 @@ export const SECRET_GROUPS_QUERY = gql`
   }
 `;
 
+export const TIMELINE_QUERY = gql`
+  query Timeline($projectId: ID!, $limit: Int, $offset: Int) {
+    timeline(projectId: $projectId, limit: $limit, offset: $offset) {
+      id
+      entryType
+      agentId
+      agentName
+      summary
+      data
+      createdAt
+    }
+  }
+`;
+
 export const AGENT_MESSAGES_QUERY = gql`
   query AgentMessages($agentId: ID!) {
     agent(agentId: $agentId) {

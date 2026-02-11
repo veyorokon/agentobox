@@ -6,6 +6,7 @@ import { useMutation } from 'urql';
 import { toast } from 'sonner';
 import { logger } from '@/lib/observability';
 import { getAgentColor } from '@/lib/agent-colors';
+import { useAgentsStore } from '@/stores/agents';
 import { SEND_MESSAGE_MUTATION } from '@/lib/graphql/mutations';
 import type { Agent } from '@/types';
 
@@ -15,7 +16,7 @@ interface MessageComposerProps {
 }
 
 export function MessageComposer({ agents, selectedAgentId }: MessageComposerProps) {
-  const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
+  const setSelectedAgent = useAgentsStore((s) => s.setSelectedAgent);
   const [showTargetPicker, setShowTargetPicker] = useState(false);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<
@@ -31,11 +32,6 @@ export function MessageComposer({ agents, selectedAgentId }: MessageComposerProp
 
   const [, sendMessageMut] = useMutation(SEND_MESSAGE_MUTATION);
 
-  // Sync target when sidebar selection changes
-  useEffect(() => {
-    setTargetAgentId(selectedAgentId);
-  }, [selectedAgentId]);
-
   // Close picker on outside click
   useEffect(() => {
     if (!showTargetPicker) return;
@@ -48,7 +44,7 @@ export function MessageComposer({ agents, selectedAgentId }: MessageComposerProp
     return () => document.removeEventListener('mousedown', handler);
   }, [showTargetPicker]);
 
-  const targetAgent = agents.find((a) => a.id === targetAgentId) ?? null;
+  const targetAgent = agents.find((a) => a.id === selectedAgentId) ?? null;
   const targetColor = targetAgent
     ? getAgentColor(targetAgent.name, targetAgent.role)
     : 'var(--accent)';
@@ -154,7 +150,7 @@ export function MessageComposer({ agents, selectedAgentId }: MessageComposerProp
     const backendUrl = (
       process.env.NEXT_PUBLIC_GRAPHQL_HTTP ?? 'http://localhost:8000/graphql'
     ).replace('/graphql', '');
-    const uploadTargetId = targetAgentId ?? agents[0]?.id;
+    const uploadTargetId = selectedAgentId ?? agents[0]?.id;
     if (!uploadTargetId) return text;
 
     const uploadedPaths: string[] = [];
@@ -196,8 +192,8 @@ export function MessageComposer({ agents, selectedAgentId }: MessageComposerProp
     setSelectedChip(-1);
 
     // Send to specific agent, or broadcast to all
-    const targets = targetAgentId
-      ? [targetAgentId]
+    const targets = selectedAgentId
+      ? [selectedAgentId]
       : agents.map((a) => a.id);
 
     try {
@@ -370,13 +366,13 @@ export function MessageComposer({ agents, selectedAgentId }: MessageComposerProp
               {/* All agents option */}
               <button
                 onClick={() => {
-                  setTargetAgentId(null);
+                  setSelectedAgent(null);
                   setShowTargetPicker(false);
                 }}
                 className="w-full px-3 py-2 flex items-center gap-2 text-left transition-colors"
                 style={{
                   background:
-                    targetAgentId === null
+                    selectedAgentId === null
                       ? 'color-mix(in srgb, var(--accent) 8%, transparent)'
                       : 'transparent',
                 }}
@@ -393,12 +389,12 @@ export function MessageComposer({ agents, selectedAgentId }: MessageComposerProp
               {/* Per-agent options */}
               {agents.map((agent) => {
                 const color = getAgentColor(agent.name, agent.role);
-                const isTarget = targetAgentId === agent.id;
+                const isTarget = selectedAgentId === agent.id;
                 return (
                   <button
                     key={agent.id}
                     onClick={() => {
-                      setTargetAgentId(agent.id);
+                      setSelectedAgent(agent.id);
                       setShowTargetPicker(false);
                     }}
                     className="w-full px-3 py-2 flex items-center gap-2 text-left transition-colors"

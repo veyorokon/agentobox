@@ -4,7 +4,7 @@ import strawberry
 import structlog
 from strawberry import ID
 
-from agents.graphql.types import AgentEventSubType, AgentType, MessageSubType
+from agents.graphql.types import AgentEventSubType, AgentType, MessageSubType, TimelineEntryType
 
 log = structlog.get_logger("agents.subscriptions")
 
@@ -111,3 +111,40 @@ class AgentSubscription:
                         "message_not_found_for_subscription",
                         message_id=msg["message_id"],
                     )
+
+    @strawberry.subscription
+    async def timeline_stream(
+        self, info: strawberry.Info, project_id: ID
+    ) -> AsyncGenerator[TimelineEntryType, None]:
+        """
+        Unified timeline stream joining Messages and AgentEvents.
+
+        Pushes TimelineEntry objects whenever a Message is saved/updated
+        or an AgentEvent is created, interleaved in real time.
+        """
+        from datetime import datetime
+
+        ws = info.context["ws"]
+        channel_layer = ws.channel_layer
+        group = f"project_{project_id}_timeline"
+
+        await channel_layer.group_add(group, ws.channel_name)
+        log.info("subscription_connected", type="timeline_stream", group=group)
+
+        async with ws.listen_to_channel("timeline.entry", groups=[group]) as cm:
+            async for msg in cm:
+                created_at = msg.get("created_at", "")
+                if isinstance(created_at, str) and created_at:
+                    created_at = datetime.fromisoformat(created_at)
+                elif not isinstance(created_at, datetime):
+                    created_at = datetime.now()
+
+                yield TimelineEntryType(
+                    id=msg["source_id"],
+                    entry_type=msg["entry_type"],
+                    agent_id=msg["agent_id"],
+                    agent_name=msg["agent_name"],
+                    summary=msg.get("summary") or None,
+                    data=msg.get("data", {}),
+                    created_at=created_at,
+                )

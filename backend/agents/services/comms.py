@@ -49,7 +49,10 @@ async def send_message(agent_id: str, message: str) -> bool:
         op_log.warning("agent_not_found")
         return False
 
-    await broadcast_agent_event(agent, "inbound_message", {"message": message})
+    await broadcast_agent_event(
+        agent, "inbound_message", {"message": message},
+        summary=f"Message sent to {agent.name}",
+    )
 
     # Store user message in stream Message model so the frontend sees it
     msg_record = await Message.objects.acreate(
@@ -101,6 +104,6 @@ async def interrupt_agent(agent_id: str) -> bool:
     agent.pending_signal = "SIGINT"
     await agent.asave(update_fields=["pending_signal"])
 
-    await broadcast_agent_event(agent, "interrupted", {})
+    await broadcast_agent_event(agent, "interrupted", {}, summary=f"{agent.name} interrupted")
     op_log.info("interrupt_enqueued")
     return True

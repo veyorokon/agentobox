@@ -160,6 +160,37 @@ export type MessageItem =
 
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | null;
 
+// ── Timeline ──
+
+/**
+ * Entry types for the unified timeline stream.
+ * Maps to backend TimelineEntry GraphQL type.
+ */
+export type TimelineEntryType =
+  | 'message'
+  | 'status'
+  | 'task'
+  | 'system'
+  | 'error'
+  | 'cost';
+
+/**
+ * Unified timeline entry — messages and system events interleaved
+ * in a single sorted stream. Replaces the 3-subscription merge pattern.
+ *
+ * For entryType="message", data contains { role, parts, message_id, turn_number, session_id }.
+ * For other types, data contains the AgentEvent data payload.
+ */
+export interface TimelineEntry {
+  id: string;
+  entryType: TimelineEntryType;
+  agentId: string;
+  agentName: string;
+  summary: string | null;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
 // ── Secrets ──
 
 export interface SecretGroup {

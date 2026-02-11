@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget xz-utils c
 
 # --- System packages ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl jq git sudo openssl fontconfig unzip \
+    bash curl jq git sudo openssl fontconfig unzip tmux \
     xvfb x11vnc xterm xdotool \
     awesome dbus dbus-x11 \
     python3-websockify \

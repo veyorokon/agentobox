@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import strawberry
 import strawberry_django
 from strawberry import auto
@@ -141,6 +143,7 @@ class AgentEventType:
     id: auto
     event_type: auto
     data: auto
+    summary: auto
     created_at: auto
 
     @strawberry.field
@@ -177,3 +180,21 @@ class MessageSubType:
     session_id: str
     turn_number: int
     created_at: str
+
+
+@strawberry.type
+class TimelineEntryType:
+    """
+    Unified timeline entry joining Messages and AgentEvents.
+
+    For Messages: entry_type="message", data contains role/parts/message_id/turn_number/session_id.
+    For AgentEvents: entry_type=event.event_type, data is the event's existing data field.
+    """
+
+    id: str
+    entry_type: str
+    agent_id: str
+    agent_name: str
+    summary: str | None
+    data: JSON
+    created_at: datetime

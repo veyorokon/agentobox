@@ -1,4 +1,5 @@
 import asyncio
+import re
 import secrets
 
 import structlog
@@ -9,6 +10,11 @@ from agents.models import Agent, AgentStatus, SecretGroup
 from agents.runtimes import get_runtime
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
 from agents.services.provision import provision_workspace, resolve_mcp_servers
+
+
+def _sanitize_name(value: str) -> str:
+    """Strip HTML tags and trim whitespace from a name."""
+    return re.sub(r"<[^>]*>", "", value).strip()
 
 log = structlog.get_logger("agents.lifecycle")
 
@@ -28,10 +34,20 @@ async def create_agent(
     from config.telemetry import bind_agent_context
     from projects.models import Project
 
+    name = _sanitize_name(name)
+    if not name:
+        raise ValueError("Agent name cannot be empty")
+
     op_log = log.bind(project_id=str(project_id), agent=name)
     op_log.info("creating_agent", runtime=runtime_name, workspace_path=workspace_path)
 
     project = await Project.objects.aget(id=project_id)
+
+    # Check for duplicate name within the same project
+    if await Agent.objects.filter(project=project, name=name).aexists():
+        raise ValueError(
+            f"An agent named '{name}' already exists in this project"
+        )
 
     # Resolve MCP names to full config
     resolved_mcps = mcp_servers or {}
@@ -73,7 +89,10 @@ async def create_agent(
         secret_envs = await _resolve_agent_secrets_sync(secret_group_ids, project, op_log)
 
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(agent, "created", {"name": name, "runtime": runtime_name})
+    await broadcast_agent_event(
+        agent, "created", {"name": name, "runtime": runtime_name},
+        summary=f"{name} created",
+    )
 
     op_log.info("agent_created", agent_id=str(agent.id))
 
@@ -238,7 +257,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             agent = await _save_failed(agent_id)
             await broadcast_agent_update(agent)
             await broadcast_agent_event(
-                agent, "provision_failed", {"error": "Container provisioning failed"}
+                agent, "provision_failed", {"error": "Container provisioning failed"},
+                summary=f"{agent.name} failed to provision",
             )
         except Exception:
             op_log.exception("provision_cleanup_db_failed", agent_id=agent_id)
@@ -278,7 +298,7 @@ async def kill_agent(agent_id: str) -> bool:
     await agent.asave(update_fields=["status"])
 
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(agent, "stopped", {})
+    await broadcast_agent_event(agent, "stopped", {}, summary=f"{agent.name} stopped")
 
     op_log.info("agent_killed")
     clear_agent_context()
@@ -358,7 +378,10 @@ async def restart_agent(agent_id: str) -> Agent:
         secret_envs = await _resolve_agent_secrets_sync(secret_group_ids, project, op_log)
 
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(agent, "restarted", {"agent_id": agent_id})
+    await broadcast_agent_event(
+        agent, "restarted", {"agent_id": agent_id},
+        summary=f"{agent.name} restarted",
+    )
 
     op_log.info("agent_reset_complete", agent_id=agent_id)
 

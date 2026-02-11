@@ -44,6 +44,12 @@ class SecretGroup(models.Model):
 
 class Agent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._original_status = instance.status
+        return instance
     name = models.CharField(max_length=100)
     project = models.ForeignKey(
         "projects.Project", on_delete=models.CASCADE, related_name="agents"
@@ -105,6 +111,11 @@ class Agent(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="unique_project_agent_name"
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.status})"
@@ -114,6 +125,7 @@ class AgentEvent(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="events")
     event_type = models.CharField(max_length=50)
     data = models.JSONField(default=dict)
+    summary = models.CharField(max_length=200, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

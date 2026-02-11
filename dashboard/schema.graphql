@@ -1,0 +1,230 @@
+type AgentEventSubType {
+  id: Int!
+  eventType: String!
+  data: JSON!
+  agentId: String!
+  agentName: String!
+  createdAt: String!
+}
+
+type AgentEventType {
+  id: ID!
+  eventType: String!
+  data: JSON!
+  summary: String!
+  createdAt: DateTime!
+  agentId: String!
+  agentName: String!
+}
+
+type AgentFeedbackType {
+  id: UUID!
+  rating: Int!
+  comment: String!
+  sessionId: String!
+  createdAt: DateTime!
+  agentId: String!
+}
+
+type AgentType {
+  id: UUID!
+  name: String!
+  runtime: String!
+  sandboxId: String!
+  vncUrl: String!
+  status: String!
+  teamName: String!
+  parentSessionId: String!
+  sessionId: String!
+  model: String!
+  cwd: String!
+  permissionMode: String!
+  mcpServers: JSON!
+  workspacePath: String!
+  instructions: String!
+  role: String!
+  sessionCostUsd: Decimal!
+  capabilities: JSON
+  createdAt: DateTime!
+  streamMessages(limit: Int! = 500, offset: Int! = 0): [MessageType!]!
+  sessionResult: SessionResultType
+  feedback(limit: Int! = 50, offset: Int! = 0): [AgentFeedbackType!]!
+}
+
+type AuthPayload {
+  user: UserType!
+  token: String!
+}
+
+input CreateAgentInput {
+  projectId: ID!
+  name: String!
+  runtime: String! = "modal"
+  model: String! = "claude-sonnet-4-5-20250929"
+  mcpServers: JSON = null
+  workspacePath: String! = ""
+  instructions: String! = ""
+  secretGroupIds: [ID!] = null
+  role: String! = "worker"
+}
+
+input CreateProjectInput {
+  name: String!
+}
+
+input CreateSecretGroupInput {
+  projectId: ID!
+  name: String!
+  secrets: JSON!
+}
+
+"""Date with time (isoformat)"""
+scalar DateTime
+
+"""Decimal (fixed-point)"""
+scalar Decimal
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf).
+"""
+scalar JSON @specifiedBy(url: "https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf")
+
+input LoginInput {
+  username: String!
+  password: String!
+}
+
+type MessageSubType {
+  id: Int!
+  messageId: String!
+  agentId: String!
+  agentName: String!
+  role: String!
+  parts: JSON!
+  sessionId: String!
+  turnNumber: Int!
+  createdAt: String!
+}
+
+type MessageType {
+  id: ID!
+  messageId: String!
+  sessionId: String!
+  role: String!
+  model: String!
+  parts: JSON!
+  usage: JSON
+  parentToolUseId: String!
+  stopReason: String!
+  turnNumber: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  agentId: String!
+}
+
+type Mutation {
+  login(input: LoginInput!): AuthPayload!
+  register(input: RegisterInput!): AuthPayload!
+  createApiKey: String!
+  createProject(input: CreateProjectInput!): ProjectType!
+  updateProject(id: ID!, name: String!): ProjectType!
+  deleteProject(id: ID!): Boolean!
+  createAgent(input: CreateAgentInput!): AgentType!
+  killAgent(agentId: ID!): Boolean!
+  restartAgent(agentId: ID!): AgentType!
+  interruptAgent(agentId: ID!): Boolean!
+  sendMessage(input: SendMessageInput!): Boolean!
+  rateAgent(input: RateFeedbackInput!): AgentFeedbackType
+  createSecretGroup(input: CreateSecretGroupInput!): SecretGroupType!
+  updateSecretGroup(input: UpdateSecretGroupInput!): SecretGroupType!
+  deleteSecretGroup(id: ID!): Boolean!
+}
+
+type ProjectType {
+  id: UUID!
+  name: String!
+  createdAt: DateTime!
+}
+
+type Query {
+  me: UserType
+  projects: [ProjectType!]!
+  project(id: ID!): ProjectType
+  agents(projectId: ID!): [AgentType!]!
+  agent(agentId: ID!): AgentType
+  events(projectId: ID!, limit: Int! = 100): [AgentEventType!]!
+  timeline(projectId: ID!, limit: Int! = 200, offset: Int! = 0): [TimelineEntryType!]!
+  secretGroups(projectId: ID!): [SecretGroupType!]!
+}
+
+input RateFeedbackInput {
+  agentId: ID!
+  messageId: ID = null
+  rating: Int!
+  comment: String! = ""
+}
+
+input RegisterInput {
+  username: String!
+  email: String!
+  password: String!
+}
+
+type SecretGroupType {
+  id: UUID!
+  name: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  projectId: String!
+  keys: [String!]!
+}
+
+input SendMessageInput {
+  agentId: ID!
+  message: String!
+}
+
+type SessionResultType {
+  id: ID!
+  sessionId: String!
+  isError: Boolean!
+  totalCostUsd: Decimal!
+  durationMs: Int!
+  durationApiMs: Int!
+  numTurns: Int!
+  modelUsage: JSON!
+  permissionDenials: JSON!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  agentId: String!
+}
+
+type Subscription {
+  agentUpdated(projectId: ID!): AgentType!
+  newEvent(projectId: ID!): AgentEventSubType!
+  messageReceived(projectId: ID!): MessageSubType!
+  timelineStream(projectId: ID!): TimelineEntryType!
+}
+
+type TimelineEntryType {
+  id: String!
+  entryType: String!
+  agentId: String!
+  agentName: String!
+  summary: String
+  data: JSON!
+  createdAt: DateTime!
+}
+
+scalar UUID
+
+input UpdateSecretGroupInput {
+  id: ID!
+  secrets: JSON!
+}
+
+type UserType {
+  id: ID!
+  username: String!
+  email: String!
+}

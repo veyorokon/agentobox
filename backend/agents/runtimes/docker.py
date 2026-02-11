@@ -27,7 +27,8 @@ class DockerRuntime:
         self, name: str, env: dict[str, str],
         volumes: dict[str, str] | None = None,
     ) -> SandboxInstance:
-        container_name = f"agentobox-agent-{name}"
+        project_id = env.get("PROJECT_ID", "")[:8]
+        container_name = f"agentobox-agent-{project_id}-{name}"
         image = getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest")
         network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
 
