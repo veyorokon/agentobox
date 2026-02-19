@@ -45,29 +45,81 @@ export const AGENTS_QUERY = gql`
   }
 `;
 
-export const SECRET_GROUPS_QUERY = gql`
-  query SecretGroups($projectId: ID!) {
-    secretGroups(projectId: $projectId) {
+export const PROJECT_SECRETS_QUERY = gql`
+  query ProjectSecrets($projectId: ID!) {
+    projectSecrets(projectId: $projectId) {
       id
-      name
+      key
       projectId
-      keys
+      scopedAgentIds
       createdAt
       updatedAt
     }
   }
 `;
 
-export const TIMELINE_QUERY = gql`
-  query Timeline($projectId: ID!, $limit: Int, $offset: Int) {
-    timeline(projectId: $projectId, limit: $limit, offset: $offset) {
-      id
-      entryType
-      agentId
-      agentName
-      summary
-      data
-      createdAt
+export const PROJECT_FEED_QUERY = gql`
+  query ProjectFeed($projectId: ID!, $limit: Int, $before: String) {
+    projectFeed(projectId: $projectId, limit: $limit, before: $before) {
+      items {
+        id
+        kind
+        agentId
+        agentName
+        timestamp
+        text
+        imageUrls
+        targetName
+        targetAgentIds
+        tools {
+          name
+          input
+          result
+          isError
+        }
+        fromStatus
+        toStatus
+        taskSummary
+        errorText
+        cumulativeCostUsd
+        questions {
+          question
+          header
+          options {
+            label
+            description
+          }
+          multiSelect
+        }
+        answers {
+          selectedIndices
+          otherText
+        }
+        toolUseId
+        memoryContent
+        planStatus
+        planSummary
+        planSteps
+        taskDividerSubject
+        taskDividerId
+        taskDividerActiveForm
+        senderName
+      }
+      hasMore
+      endCursor
+    }
+  }
+`;
+
+export const AGENT_OPTIONS_QUERY = gql`
+  query AgentOptions {
+    availableModels {
+      value
+      label
+    }
+    mcpRegistry {
+      name
+      compat
     }
   }
 `;

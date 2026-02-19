@@ -23,19 +23,24 @@ async def provision_workspace(
     variant: str = "debian",
     workspace_path: str = "",
     instructions: str = "",
-    secret_envs: dict[str, dict[str, str]] | None = None,
+    secret_envs: dict[str, str] | None = None,
+    agent_role: str = "worker",
+    agent_name: str = "",
+    team_members: list[dict] | None = None,
 ) -> None:
     """
     Write CLAUDE.md, .claude/settings.json, .mcp.json, and security
     hardening files into the agent container.
 
     Args:
-        secret_envs: Mapping of MCP server name -> {env_key: env_value}.
-            Already-decrypted secrets resolved by lifecycle from SecretGroups.
-            Injected into MCP server env blocks in .mcp.json.
+        secret_envs: Flat {key: value} dict of decrypted secrets from
+            ProjectSecret. Injected into every MCP server env block.
+        agent_role: "lead" or "worker".
+        agent_name: This agent's name (for team context).
+        team_members: List of team member dicts for CLAUDE.md roster.
     """
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
-    workspace = "/home/computeruse"
+    workspace = "/home/agent"
     op_log.info(
         "provisioning_workspace",
         context_path=workspace,
@@ -51,6 +56,9 @@ async def provision_workspace(
         variant=variant,
         workspace_path=workspace_path,
         instructions=instructions,
+        agent_role=agent_role,
+        agent_name=agent_name,
+        team_members=team_members,
     )
     await runtime.write_file(
         sandbox_id,
@@ -170,7 +178,7 @@ async def _provision_scoped_sudo(
     sudoers_content = (
         "# Agentobox: scoped sudo for agent container\n"
         "# Allows package management only — blocks reading secrets via sudo\n"
-        "computeruse ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg\n"
+        "agent ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg\n"
     )
     sudoers_path = "/etc/sudoers.d/agentobox"
 
@@ -186,10 +194,10 @@ async def _provision_scoped_sudo(
     )
 
     # Remove the blanket rule if it exists in the main sudoers file
-    # (defensive — the main sudoers may have "computeruse ALL=(ALL) NOPASSWD:ALL")
+    # (defensive — the main sudoers may have "agent ALL=(ALL) NOPASSWD:ALL")
     await runtime.exec(
         sandbox_id,
-        ["bash", "-c", "sed -i '/computeruse.*NOPASSWD.*ALL$/d' /etc/sudoers"],
+        ["bash", "-c", "sed -i '/agent.*NOPASSWD.*ALL$/d' /etc/sudoers"],
         user="root",
     )
 
@@ -202,25 +210,24 @@ async def _provision_scoped_sudo(
 
 def _build_mcp_json(
     mcp_servers: dict,
-    secret_envs: dict[str, dict[str, str]] | None = None,
+    secret_envs: dict[str, str] | None = None,
 ) -> str:
     """
-    Build .mcp.json content with optional per-server env blocks.
+    Build .mcp.json content with secrets injected into every server's env block.
 
-    MCP server secrets are injected into the server's env block so they're
-    only available to the MCP subprocess, not the agent's shell.
+    All project secrets are merged flat and injected into every MCP server's
+    env block. MCP servers ignore keys they don't recognize, so extra keys
+    are harmless. This avoids needing per-server secret routing.
 
     Args:
         mcp_servers: {name: {command, args, ...}} — resolved MCP config
-        secret_envs: {mcp_name: {KEY: VALUE}} — decrypted secrets per server
+        secret_envs: flat {KEY: VALUE} — decrypted project secrets
     """
     servers = {}
     for name, config in mcp_servers.items():
         entry = {"command": config["command"], "args": config["args"]}
-        # Inject secrets into env block if available
-        env_vars = (secret_envs or {}).get(name)
-        if env_vars:
-            entry["env"] = env_vars
+        if secret_envs:
+            entry["env"] = dict(secret_envs)
         servers[name] = entry
 
     return json.dumps({"mcpServers": servers}, indent=2)
@@ -253,6 +260,7 @@ def _build_claude_md(
     workspace_path: str = "",
     instructions: str = "",
     agent_role: str = "worker",
+    agent_name: str = "",
     team_members: list[dict] | None = None,
 ) -> str:
     os_desc = IMAGE_VARIANTS.get(variant, IMAGE_VARIANTS["debian"])
@@ -261,7 +269,7 @@ def _build_claude_md(
         workspace_section = (
             "## Workspace\n"
             "\n"
-            "You are working in `/home/computeruse/workspace` (mounted from host).\n"
+            "You are working in `/home/agent/workspace` (mounted from host).\n"
             "This is a shared volume — changes you make are visible on the host and\n"
             "to other agents. Stay within this directory for project work.\n"
         )
@@ -269,13 +277,14 @@ def _build_claude_md(
         workspace_section = (
             "## Workspace\n"
             "\n"
-            "You are working in `/home/computeruse`. Stay within this directory.\n"
+            "You are working in `/home/agent`. Stay within this directory.\n"
         )
 
+    role_desc = "the team lead" if agent_role == "lead" else "a team member"
     base = (
         f"# {project.name}\n"
         f"\n"
-        f"You are an agentobox agent working on the {project.name} project.\n"
+        f"You are **{agent_name}**, {role_desc} on the {project.name} project.\n"
         f"\n"
         f"{workspace_section}"
         f"\n"
@@ -294,43 +303,47 @@ def _build_claude_md(
     if instructions:
         base += f"\n## Responsibilities\n\n{instructions.strip()}\n"
 
-    # Team coordination sections (lead-only)
-    if agent_role == "lead" and team_members:
-        # Your Team section (roster)
-        base += "\n## Your Team\n\n"
+    # Team section — all agents get teammate roster and communication info
+    if team_members:
+        base += "\n## Team\n\n"
         for member in team_members:
             name = member.get("name", "unknown")
             role = member.get("role", "worker")
             responsibilities = member.get("instructions", "")
-            base += f"- **{name}** ({role}): {responsibilities}\n"
+            marker = " (you)" if name == agent_name else ""
+            base += f"- **{name}** ({role}){marker}: {responsibilities}\n"
 
-        # Team Coordination section
-        base += textwrap.dedent("""
-            ## Team Coordination
+        # Communication — how messages actually work
+        base += "\n" + textwrap.dedent("""
+            ## Communication
 
-            You are the team lead. Use these tools to coordinate your team:
+            Messages from teammates arrive as regular user turns prefixed with the
+            sender's name, e.g. `[Team message from team-lead]: ...`. You do NOT
+            need to poll files, check inboxes, or read config.json — messages are
+            delivered to you automatically via stdin.
 
-            ### Task Management
+            To send messages, use the `SendMessage` tool:
+            - `type: "message"` + `recipient: "<name>"` — Direct message
+            - `type: "broadcast"` — Message all teammates (use sparingly)
+            - `type: "shutdown_request"` + `recipient: "<name>"` — Request shutdown
 
-            - `TaskCreate` - Create tasks for teammates to work on
-            - `TaskUpdate` - Update task status, assign owners, set dependencies
-            - `TaskList` - View all tasks and their status
-            - `TaskGet` - Get full details of a specific task
+            Always refer to teammates by their **name** (e.g. "backend", "frontend").
+        """).strip() + "\n"
 
-            ### Communication
+    # Lead-only: task management tools
+    if agent_role == "lead" and team_members:
+        base += "\n" + textwrap.dedent("""
+            ## Task Management
 
-            - `SendMessage` - Send messages to specific teammates
-              - `type: "message"` - Direct message to one agent
-              - `type: "broadcast"` - Message all agents (use sparingly)
-              - `type: "shutdown_request"` - Request agent shutdown
+            As team lead, use these tools to coordinate work:
 
-            ### Workflow
+            - `TaskCreate` — Create tasks for teammates
+            - `TaskUpdate` — Assign owners, update status, set dependencies
+            - `TaskList` — View all tasks and progress
+            - `TaskGet` — Full details of a specific task
 
-            1. Break work into tasks using `TaskCreate`
-            2. Assign tasks to teammates using `TaskUpdate` with owner parameter
-            3. Teammates will claim and complete tasks
-            4. Monitor progress with `TaskList`
-            5. Coordinate via `SendMessage` as needed
+            Workflow: create tasks, assign via `TaskUpdate` with owner param,
+            monitor with `TaskList`, coordinate via `SendMessage` as needed.
         """).strip() + "\n"
 
     # Append instructions from attached MCP servers
@@ -400,6 +413,15 @@ TEAM_CONFIGS = {
         ]
     },
 }
+
+# Available models for agent provisioning.
+# value = Anthropic model ID passed to Claude Code via --model
+# label = human-friendly name shown in the dashboard
+MODELS_REGISTRY = [
+    {"value": "claude-sonnet-4-5-20250929", "label": "Sonnet 4.5"},
+    {"value": "claude-opus-4-20250514", "label": "Opus 4"},
+    {"value": "claude-opus-4-6", "label": "Opus 4.6"},
+]
 
 # Known MCP servers bundled into the agent image.
 # Keys match checkbox values in the deploy modal.
@@ -486,6 +508,104 @@ MCP_REGISTRY = {
 }
 
 
+async def provision_team_config(
+    runtime: Runtime,
+    sandbox_id: str,
+    team_name: str,
+    agents: list,
+    current_agent_name: str,
+) -> None:
+    """
+    Create Claude Code team infrastructure inside the container.
+
+    Creates:
+        ~/.claude/teams/{team}/config.json  — member roster
+        ~/.claude/teams/{team}/inboxes/     — per-agent inbox directory
+        ~/.claude/tasks/{team}/             — shared task directory
+
+    Claude Code's native team system is entirely file-based. Each agent polls
+    its own inbox file (~1s interval) for incoming messages. The config.json
+    lists all team members so agents can discover each other for SendMessage.
+
+    This is called during provisioning AND when team membership changes (new
+    agent created) so all running agents have an up-to-date roster.
+    """
+    home = "/home/agent"
+    team_dir = f"{home}/.claude/teams/{team_name}"
+    tasks_dir = f"{home}/.claude/tasks/{team_name}"
+
+    await runtime.exec(sandbox_id, ["mkdir", "-p", f"{team_dir}/inboxes"])
+    await runtime.exec(sandbox_id, ["mkdir", "-p", tasks_dir])
+
+    # Build config.json with all team members
+    members = []
+    for agent in agents:
+        workspace = "/home/agent/workspace" if agent.workspace_path else "/home/agent"
+        members.append({
+            "agentId": f"{agent.name}@{team_name}",
+            "name": agent.name,
+            "agentType": "general-purpose",
+            "model": agent.model or "claude-sonnet-4-5-20250929",
+            "cwd": workspace,
+        })
+
+    config = json.dumps({"members": members}, indent=2)
+    await runtime.write_file(
+        sandbox_id,
+        config.encode("utf-8"),
+        f"{team_dir}/config.json",
+    )
+
+    # Create empty inbox for this agent (Claude Code expects a JSON array)
+    inbox_path = f"{team_dir}/inboxes/{current_agent_name}.json"
+    await runtime.write_file(sandbox_id, b"[]", inbox_path)
+
+    log.info(
+        "team_config_provisioned",
+        team=team_name,
+        agent=current_agent_name,
+        members=len(members),
+    )
+
+
+async def update_team_configs(project) -> None:
+    """
+    Update team config in all running agents when team membership changes.
+
+    Called after create_agent to ensure all existing agents can discover
+    the new teammate via SendMessage.
+    """
+    from asgiref.sync import sync_to_async
+    from agents.models import Agent, AgentStatus
+    from agents.runtimes import get_runtime
+
+    # thread_sensitive=False because this runs inside asyncio.create_task
+    # where the request's CurrentThreadExecutor is gone
+    agents = await sync_to_async(
+        lambda: list(
+            Agent.objects.filter(project=project)
+            .exclude(status__in=[AgentStatus.STOPPED, AgentStatus.ERROR])
+        ),
+        thread_sensitive=False,
+    )()
+    team_name = project.name.lower().replace(" ", "-")
+
+    for agent in agents:
+        if not agent.sandbox_id:
+            continue
+        try:
+            runtime = get_runtime(agent.runtime)
+            await provision_team_config(
+                runtime, agent.sandbox_id, team_name, agents, agent.name,
+            )
+        except Exception:
+            log.warning(
+                "team_config_update_failed",
+                agent=agent.name,
+                sandbox_id=agent.sandbox_id,
+            )
+
+
 def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
     """Resolve a list of MCP names to their full config from the registry.
 
@@ -512,11 +632,100 @@ def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
     return resolved
 
 
+async def write_secrets_env(runtime: Runtime, sandbox_id: str, secret_envs: dict[str, str] | None) -> None:
+    """Write project secrets to /mnt/abox-state/secrets/env for shell access.
+
+    Format: export KEY="VALUE" lines, sourced by .bashrc so every Bash tool
+    call gets fresh secrets without a restart.
+
+    Used during initial provisioning (lifecycle.py) and hot-reload (push_secrets_to_agent).
+    """
+
+    if not secret_envs:
+        content = "# Auto-generated by agentobox. No secrets configured.\n"
+    else:
+        lines = ["# Auto-generated by agentobox. Do not edit."]
+        for key, value in secret_envs.items():
+            # Escape double quotes and backslashes in values
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'export {key}="{escaped}"')
+        content = "\n".join(lines) + "\n"
+
+    await runtime.write_file(sandbox_id, content.encode("utf-8"), "/mnt/abox-state/secrets/env")
+
+
+async def write_theme_files(runtime: Runtime, sandbox_id: str, tokens: dict[str, str]) -> None:
+    """Write theme tokens to /tmp/abox-theme.lua and /tmp/abox-theme.json.
+
+    Two consumers read from /tmp:
+    - AwesomeWM rc.lua polls abox-theme.lua (Lua table format)
+    - Firefox native messaging host reads abox-theme.json
+
+    Token keys use the same names as CSS variables (minus --), e.g.
+    "muted-foreground". Lua accesses them via bracket notation.
+    """
+    # Lua format for AwesomeWM
+    entries = ", ".join(
+        f'["{k}"] = "{v}"' for k, v in sorted(tokens.items())
+    )
+    lua_content = f"return {{ {entries} }}\n"
+    await runtime.write_file(sandbox_id, lua_content.encode("utf-8"), "/tmp/abox-theme.lua")
+
+    # JSON format for Firefox theme bridge
+    json_content = json.dumps(tokens, indent=2) + "\n"
+    await runtime.write_file(sandbox_id, json_content.encode("utf-8"), "/tmp/abox-theme.json")
+
+    log.info("theme_files_written", sandbox_id=sandbox_id[:12], token_count=len(tokens))
+
+
+async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret_envs: dict[str, str]) -> None:
+    """
+    Hot-reload secrets on a running agent by rewriting files and triggering
+    a soft restart via pending_signal.
+
+    1. Rewrites .mcp.json with updated env blocks (MCP servers re-init on restart)
+    2. Writes /mnt/abox-state/secrets/env for immediate shell access
+    3. Sets pending_signal="restart" so relay soft-restarts Claude with --continue
+    """
+    workspace = "/home/agent"
+
+    if agent.mcp_servers:
+        mcp_config = _build_mcp_json(agent.mcp_servers, secret_envs=secret_envs)
+        await runtime.write_file(
+            sandbox_id,
+            mcp_config.encode("utf-8"),
+            f"{workspace}/.mcp.json",
+        )
+
+    # Write secrets env file for shell access (zero-restart path)
+    await write_secrets_env(runtime, sandbox_id, secret_envs)
+
+    log.info(
+        "secrets_pushed",
+        agent=agent.name,
+        sandbox_id=sandbox_id[:12],
+        secret_count=len(secret_envs),
+    )
+
+
 def _build_settings_json(api_key: str = "") -> str:
     settings = {
         "theme": "dark",
         "defaultMode": "bypassPermissions",
         "enableAllProjectMcpServers": True,
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Task",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "python3 /opt/abox/hooks/pre-tool-use.py",
+                        }
+                    ],
+                }
+            ],
+        },
     }
     # Use apiKeyHelper instead of env var for API key (Layer 1)
     if api_key:

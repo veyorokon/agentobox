@@ -1,14 +1,14 @@
 #!/command/with-contenv bash
 # Firefox profile setup — create default profile, inject textfox + Rose Pine Moon
-UHOME=/home/computeruse
+UHOME=/home/agent
 export HOME="$UHOME"
 [ -f /run/dbus-session ] && . /run/dbus-session && export DBUS_SESSION_BUS_ADDRESS
 
 # Firefox-ESR uses ~/.mozilla/firefox/ (not XDG ~/.config/mozilla/firefox/)
 FF_DIR="$UHOME/.mozilla/firefox"
 
-# Brief headless launch as computeruse to create default profile
-s6-setuidgid computeruse /usr/bin/firefox-esr --headless &
+# Brief headless launch as agent to create default profile
+s6-setuidgid agent /usr/bin/firefox-esr --headless &
 FF_PID=$!
 for i in $(seq 1 30); do
     FF_ACTIVE=$(find "$FF_DIR" -maxdepth 2 -name 'prefs.js' 2>/dev/null | head -1)
@@ -24,8 +24,13 @@ if [ -n "$FF_ACTIVE" ]; then
     cp /opt/textfox/user.js "$FF_TARGET/user.js"
     cp "$UHOME/.firefox-config/config.css" "$FF_TARGET/chrome/config.css"
     cat "$UHOME/.firefox-config/user-overrides.js" >> "$FF_TARGET/user.js"
-    chown -R computeruse:computeruse "$FF_TARGET"
-    echo "[agentobox] textfox injected into $(basename "$FF_TARGET")"
+
+    # Install theme bridge extension (sideloaded, auto-enabled via autoDisableScopes=0)
+    mkdir -p "$FF_TARGET/extensions"
+    echo "/opt/abox/firefox-theme/" > "$FF_TARGET/extensions/abox-theme@agentobox.com"
+
+    chown -R agent:agent "$FF_TARGET"
+    echo "[agentobox] textfox + theme bridge injected into $(basename "$FF_TARGET")"
 else
     echo "[agentobox] WARNING: Firefox profile not detected, textfox not applied"
 fi

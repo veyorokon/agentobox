@@ -56,13 +56,17 @@
   --agent-border-active: #39ff14;
   --agent-glow: rgba(57, 255, 20, 0.1);
 
-  /* Agent identity colors (per-agent, not per-status) */
-  --agent-color-0: #0284c7;
-  --agent-color-1: #db2777;
-  --agent-color-2: #ca8a04;
-  --agent-color-3: #7c3aed;
-  --agent-color-4: #059669;
-  --agent-color-5: #ea580c;
+  /* Agent identity — OKLCH knobs (hue via golden angle in JS) */
+  --agent-l: 0.55;
+  --agent-c: 0.17;
+
+  /* Interactive states */
+  --highlight: rgba(0, 0, 0, 0.06);
+  --highlight-foreground: #0a0a0a;
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.25);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.45);
 
   /* Misc */
   --radius: 0.625rem;
@@ -89,7 +93,7 @@
   --accent-foreground: #0a0a0a;
 
   --muted: #1a1a1a;
-  --muted-foreground: rgba(255, 255, 255, 0.4);
+  --muted-foreground: rgba(255, 255, 255, 0.55);
 
   --destructive: #ef4444;
   --destructive-foreground: #fafafa;
@@ -112,13 +116,17 @@
   --agent-border-active: #39ff14;
   --agent-glow: rgba(57, 255, 20, 0.1);
 
-  /* Agent identity */
-  --agent-color-0: #38bdf8;
-  --agent-color-1: #f472b6;
-  --agent-color-2: #facc15;
-  --agent-color-3: #a78bfa;
-  --agent-color-4: #34d399;
-  --agent-color-5: #fb923c;
+  /* Interactive states */
+  --highlight: rgba(57, 255, 20, 0.18);
+  --highlight-foreground: #39ff14;
+
+  /* Scrollbar — neon green tint */
+  --scrollbar-thumb: rgba(57, 255, 20, 0.3);
+  --scrollbar-thumb-hover: rgba(57, 255, 20, 0.55);
+
+  /* Agent identity — OKLCH knobs */
+  --agent-l: 0.78;
+  --agent-c: 0.17;
 }
 
 /* ============================================
@@ -143,7 +151,7 @@
   --accent-foreground: #1a1714;
 
   --muted: #2a2520;
-  --muted-foreground: #4b607f;
+  --muted-foreground: #7b8da8;
 
   --destructive: #D12128;
   --destructive-foreground: #e8d8c9;
@@ -166,13 +174,17 @@
   --agent-border-active: #658761;
   --agent-glow: rgba(101, 135, 97, 0.12);
 
-  /* Agent identity */
-  --agent-color-0: #7ba5b5;
-  --agent-color-1: #c77986;
-  --agent-color-2: #DFA05D;
-  --agent-color-3: #967bb6;
-  --agent-color-4: #658761;
-  --agent-color-5: #b87c4c;
+  /* Interactive states */
+  --highlight: rgba(243, 112, 30, 0.20);
+  --highlight-foreground: #f3701e;
+
+  /* Scrollbar — warm orange tint */
+  --scrollbar-thumb: rgba(243, 112, 30, 0.35);
+  --scrollbar-thumb-hover: rgba(243, 112, 30, 0.55);
+
+  /* Agent identity — OKLCH knobs */
+  --agent-l: 0.64;
+  --agent-c: 0.08;
 }
 
 /* ============================================
@@ -198,7 +210,7 @@
   --accent-foreground: #232136;
 
   --muted: #393552;
-  --muted-foreground: #6e6a86;
+  --muted-foreground: #908caa;
 
   --destructive: #eb6f92;
   --destructive-foreground: #e0def4;
@@ -221,13 +233,75 @@
   --agent-border-active: #c4a7e7;
   --agent-glow: rgba(196, 167, 231, 0.12);
 
-  /* Agent identity */
-  --agent-color-0: #9ccfd8;
-  --agent-color-1: #eb6f92;
-  --agent-color-2: #f6c177;
-  --agent-color-3: #c4a7e7;
-  --agent-color-4: #3e8fb0;
-  --agent-color-5: #ea9a97;
+  /* Interactive states */
+  --highlight: rgba(196, 167, 231, 0.22);
+  --highlight-foreground: #c4a7e7;
+
+  /* Scrollbar — soft iris/purple tint */
+  --scrollbar-thumb: rgba(196, 167, 231, 0.35);
+  --scrollbar-thumb-hover: rgba(196, 167, 231, 0.55);
+
+  /* Agent identity — OKLCH knobs */
+  --agent-l: 0.74;
+  --agent-c: 0.10;
+}
+
+/* ============================================
+   Hyper Blyss theme
+   Palette: base16-ocean.dark — muted, cool-toned, blue-grey
+   ============================================ */
+[data-theme="hyper"] {
+  --background: #2b303b;
+  --foreground: #c0c5ce;
+  --card: rgba(43, 48, 59, 0.8);
+  --card-foreground: #c0c5ce;
+  --popover: #343d46;
+  --popover-foreground: #c0c5ce;
+  --surface: #343d46;
+  --surface-inset: #252a33;
+
+  --primary: #c0c5ce;
+  --primary-foreground: #2b303b;
+  --secondary: #3b4252;
+  --secondary-foreground: #c0c5ce;
+  --accent: #8fa1b3;
+  --accent-foreground: #2b303b;
+
+  --muted: #3b4252;
+  --muted-foreground: #8a919c;
+
+  --destructive: #bf616a;
+  --destructive-foreground: #c0c5ce;
+
+  --border: rgba(192, 197, 206, 0.12);
+  --border-subtle: rgba(192, 197, 206, 0.06);
+  --input: rgba(192, 197, 206, 0.12);
+  --ring: rgba(143, 161, 179, 0.3);
+
+  --agent-deploying: #ebcb8b;
+  --agent-active: #a3be8c;
+  --agent-conversing: #8fa1b3;
+  --agent-needs-info: #b48ead;
+  --agent-completed: #a3be8c;
+  --agent-blocked: #ebcb8b;
+  --agent-goal-changed: #d08770;
+  --agent-dead: #bf616a;
+
+  --agent-border: rgba(192, 197, 206, 0.2);
+  --agent-border-active: #8fa1b3;
+  --agent-glow: rgba(143, 161, 179, 0.12);
+
+  /* Interactive states */
+  --highlight: rgba(143, 161, 179, 0.22);
+  --highlight-foreground: #8fa1b3;
+
+  /* Scrollbar — cool blue-grey tint */
+  --scrollbar-thumb: rgba(143, 161, 179, 0.35);
+  --scrollbar-thumb-hover: rgba(143, 161, 179, 0.55);
+
+  /* Agent identity — OKLCH knobs */
+  --agent-l: 0.72;
+  --agent-c: 0.08;
 }
 
 /* ============================================
@@ -258,6 +332,9 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
 
+  --color-highlight: var(--highlight);
+  --color-highlight-foreground: var(--highlight-foreground);
+
   --color-border: var(--border);
   --color-border-subtle: var(--border-subtle);
   --color-input: var(--input);
@@ -275,53 +352,72 @@
   --color-agent-border-active: var(--agent-border-active);
   --color-agent-glow: var(--agent-glow);
 
-  --color-agent-color-0: var(--agent-color-0);
-  --color-agent-color-1: var(--agent-color-1);
-  --color-agent-color-2: var(--agent-color-2);
-  --color-agent-color-3: var(--agent-color-3);
-  --color-agent-color-4: var(--agent-color-4);
-  --color-agent-color-5: var(--agent-color-5);
-
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Global scrollbar theming */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+/* ============================================
+   Scrollbar theming
+   Thin, themed thumbs on transparent tracks.
+   Uses per-theme --scrollbar-thumb / --scrollbar-thumb-hover variables.
+
+   Strategy:
+   - Firefox: standard scrollbar-color (scoped via @supports so it
+     doesn't override ::-webkit-scrollbar in Chrome/Safari).
+   - Chrome / Safari / Edge: ::-webkit-scrollbar pseudo-elements.
+     Setting scrollbar-color to a non-auto value would override these
+     pseudo-elements (per spec), so we keep it Firefox-only.
+   ============================================ */
+
+/* Firefox — standard properties (Firefox doesn't support ::-webkit-scrollbar) */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
 }
+
+/* WebKit (Chrome, Safari, Edge) — pseudo-element approach */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
+  background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
-/* Narrower scrollbar for panels */
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+/* Narrower scrollbar for inner panels (feed, file tree, tool expansion, code blocks) */
+@supports not selector(::-webkit-scrollbar) {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
 }
 .scrollbar-thin::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
+  height: 5px;
 }
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* ============================================
@@ -381,6 +477,12 @@
   }
 }
 
+/* Block breathe animation for active timeline blocks */
+@keyframes block-breathe {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
 /* Activity line shimmer */
 @keyframes activity-shimmer {
   0% { background-position: -200% 0; }
@@ -411,6 +513,42 @@
   to { opacity: 1; }
 }
 
+/* Lightbox overlay */
+@keyframes lightbox-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes lightbox-scale {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Screenshot filmstrip thumbnails */
+.screenshot-thumb {
+  border: 1px solid color-mix(in srgb, var(--sc-color, var(--muted-foreground)) 30%, transparent);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.screenshot-thumb:hover {
+  border-color: color-mix(in srgb, var(--sc-color, var(--muted-foreground)) 60%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--sc-color, var(--muted-foreground)) 15%, transparent);
+}
+.screenshot-thumb img {
+  filter: brightness(0.85);
+  transition: filter 0.15s ease;
+}
+.screenshot-thumb:hover img {
+  filter: brightness(1);
+}
+
+/* Lightbox navigation buttons */
+.lightbox-nav {
+  color: rgba(255, 255, 255, 0.3);
+  transition: color 0.15s ease;
+}
+.lightbox-nav:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
 /* ============================================
    Dashboard main area
    ============================================ */
@@ -431,6 +569,29 @@
 .deploy-btn:hover {
   filter: brightness(1.1);
   box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* VNC loading: expanding signal rings */
+@keyframes vnc-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+@keyframes vnc-glow {
+  0%, 100% {
+    opacity: 0.3;
+    filter: blur(8px);
+  }
+  50% {
+    opacity: 0.6;
+    filter: blur(12px);
+  }
 }
 
 /* Scan-line overlay on VNC area */
@@ -502,4 +663,9 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Global pointer cursor for interactive elements */
+button, [role="button"] {
+  cursor: pointer;
 }

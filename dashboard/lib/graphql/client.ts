@@ -6,6 +6,7 @@ import {
   subscriptionExchange,
   mapExchange,
 } from 'urql';
+import { cacheExchange } from '@urql/exchange-graphcache';
 import { createClient as createWSClient } from 'graphql-ws';
 import { logger } from '@/lib/observability';
 
@@ -25,6 +26,17 @@ const wsClient = createWSClient({
   connectionParams: () => {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
+  },
+  // Auto-reconnect with exponential backoff (1s → 2s → 4s … capped at 30s)
+  retryAttempts: Infinity,
+  shouldRetry: () => true,
+  retryWait: async (retries) => {
+    const delay = Math.min(1000 * 2 ** retries, 30_000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  },
+  on: {
+    connected: () => logger.debug('ws', 'WebSocket connected'),
+    closed: (event) => logger.warn('ws', 'WebSocket closed', { code: (event as CloseEvent)?.code }),
   },
 });
 
@@ -83,6 +95,14 @@ export const client = new Client({
           networkError: error.networkError?.message,
           graphQLErrors: error.graphQLErrors?.map((e) => e.message),
         });
+      },
+    }),
+    cacheExchange({
+      keys: {
+        ToolUseItemType: () => null,
+        AgentQuestionType: () => null,
+        QuestionOptionType: () => null,
+        QuestionAnswerType: () => null,
       },
     }),
     fetchExchange,

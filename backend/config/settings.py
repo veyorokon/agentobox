@@ -14,6 +14,7 @@ env = environ.Env(
     ANTHROPIC_API_KEY=(str, ""),
     ABOX_ENCRYPTION_KEY=(str, ""),
     DOCKER_NETWORK=(str, "agentobox_default"),
+    AGENT_ROOTFS_PATH=(str, ""),
     MODAL_APP_NAME=(str, "agentobox"),
     MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent:latest"),
 )
@@ -126,8 +127,14 @@ ABOX_DASHBOARD_URL = env("ABOX_DASHBOARD_URL")
 ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
 ABOX_ENCRYPTION_KEY = env("ABOX_ENCRYPTION_KEY")
 DOCKER_NETWORK = env("DOCKER_NETWORK")
+AGENT_ROOTFS_PATH = env("AGENT_ROOTFS_PATH")
 MODAL_APP_NAME = env("MODAL_APP_NAME")
 MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
+
+# --- Media / S3 ---
+
+MEDIA_BUCKET = env("MEDIA_BUCKET", default="agentobox-media")
+MEDIA_CDN_URL = env("MEDIA_CDN_URL", default="")
 
 # --- Logging ---
 
@@ -138,6 +145,7 @@ from config.telemetry import (  # noqa: E402
     get_log_queue,
     merge_agent_context,
     orjson_renderer,
+    truncate_graphql_request,
 )
 
 LOGGING = {
@@ -153,6 +161,7 @@ LOGGING = {
             "foreign_pre_chain": [
                 structlog.contextvars.merge_contextvars,
                 merge_agent_context,  # Add agent metadata after contextvars
+                truncate_graphql_request,  # Shorten URL-encoded GraphQL queries
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.add_logger_name,
                 structlog.processors.TimeStamper(fmt="iso"),
@@ -182,6 +191,8 @@ LOGGING = {
         "django": {"level": "INFO"},
         "django.server": {"level": "WARNING"},
         "channels": {"level": "WARNING"},
+        # Channels server logs full URL-encoded GraphQL queries at INFO — very noisy
+        "django.channels.server": {"level": "WARNING"},
         # Daphne HTTP logs - suppress in favor of Django middleware structured logs
         "daphne.server": {"level": "ERROR"},
         "daphne.http_protocol": {"level": "ERROR"},

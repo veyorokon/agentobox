@@ -85,6 +85,25 @@ def copy_exception_to_stacktrace(logger, method_name, event_dict):
     return event_dict
 
 
+def truncate_graphql_request(logger, method_name, event_dict):
+    """Truncate URL-encoded GraphQL query strings in request log fields.
+
+    django_structlog logs the full request path including query params.
+    GraphQL GET requests encode the entire query in the URL, producing
+    multi-KB log lines that are unreadable and wasteful.
+    """
+    request = event_dict.get("request")
+    if isinstance(request, str) and "/graphql?" in request and len(request) > 120:
+        # Keep method + path + operation name hint, drop the query noise
+        method_path = request.split("?", 1)[0]
+        # Try to extract operationName from the query string
+        import re
+        op_match = re.search(r"operationName=([^&]+)", request)
+        op_name = op_match.group(1) if op_match else "unknown"
+        event_dict["request"] = f"{method_path} [{op_name}]"
+    return event_dict
+
+
 def merge_agent_context(logger, method_name, event_dict):
     """
     Merge agent metadata from context variable into log entries.

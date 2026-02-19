@@ -12,8 +12,8 @@ CRITICAL: Assistant events carry 1 content part each. Parts are APPENDED
 to the Message, not replaced. See the "Content Part Accumulation" comment
 on docs/ISSUE-36-BACKEND.md.
 
-See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Event Processing Logic"
-See: docs/CRUSH-ARCHITECTURE.md, "Streaming Callbacks" (AppendContent pattern)
+See: docs/ARCHITECTURE.md, "Event Processing Logic"
+See: docs/ARCHITECTURE.md, "Streaming Callbacks" (AppendContent pattern)
 """
 
 import structlog
@@ -22,25 +22,27 @@ from django.utils import timezone
 
 from agents.models import Agent, AgentStatus, Message, SessionResult
 from agents.services.broadcast import broadcast_agent_update, broadcast_stream_message
+from agents.services.media import externalize_image_block
+from agents.services.interagent import route_inter_agent_messages, route_task_operations
 
 log = structlog.get_logger("agents.stream")
 
 
-def _normalize_parts(parts: list[dict]) -> list[dict]:
-    """Normalize content parts to canonical format before storage.
-
-    Anthropic API allows tool_result.content to be either a string or an array
-    of content blocks. We normalize to always store it as a string so downstream
-    consumers (frontend, extractMessageItems) can trust the shape.
-    """
+def _externalize_media(parts: list[dict]) -> list[dict]:
+    """Walk content parts, upload base64 images to S3, swap source to URL."""
+    result = []
     for part in parts:
         if part.get("type") == "tool_result":
             content = part.get("content")
             if isinstance(content, list):
-                part["content"] = "\n".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                )
-    return parts
+                part = {
+                    **part,
+                    "content": [externalize_image_block(block) for block in content],
+                }
+        elif part.get("type") == "image":
+            part = externalize_image_block(part)
+        result.append(part)
+    return result
 
 
 async def process_stream_events(agent: Agent, events: list[dict]) -> None:
@@ -50,7 +52,7 @@ async def process_stream_events(agent: Agent, events: list[dict]) -> None:
     Events are the raw JSON objects from Claude's stdout, each with
     a `type` field: "system", "assistant", "user", or "result".
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Event Processing Logic"
+    See: docs/ARCHITECTURE.md, "Event Processing Logic"
     """
     for event in events:
         try:
@@ -73,8 +75,8 @@ async def _process_one(agent: Agent, event: dict) -> None:
         user      -> create Message (tool_result content parts)
         result    -> upsert SessionResult (cumulative cost/usage)
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Event Processing Logic"
-    See: docs/CLAUDE-CODE-MESSAGE-PIPELINE.md, "Turn Lifecycle"
+    See: docs/ARCHITECTURE.md, "Event Processing Logic"
+    See: docs/ARCHITECTURE.md, "Turn Lifecycle"
     """
     event_type = event.get("type", "")
 
@@ -101,7 +103,7 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         exit_code == 0 -> stopped (clean exit)
         exit_code != 0 -> error (crash)
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "system/init", "system/process_exit"
+    See: docs/ARCHITECTURE.md, "system/init", "system/process_exit"
     """
     subtype = event.get("subtype", "")
 
@@ -153,8 +155,8 @@ async def _handle_assistant(agent: Agent, event: dict) -> None:
         stop_reason <- event.message.stop_reason (overwritten when non-null)
         parent_tool_use_id <- event.parent_tool_use_id
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "assistant event"
-    See: docs/CRUSH-ARCHITECTURE.md, "Streaming Callbacks"
+    See: docs/ARCHITECTURE.md, "assistant event"
+    See: docs/ARCHITECTURE.md, "Streaming Callbacks"
     """
     msg_data = event.get("message", {})
     message_id = msg_data.get("id", "")
@@ -174,11 +176,17 @@ async def _handle_assistant(agent: Agent, event: dict) -> None:
     )
 
     # APPEND new content parts — never replace
-    new_parts = _normalize_parts(msg_data.get("content", []))
+    new_parts = await sync_to_async(_externalize_media)(msg_data.get("content", []))
     message.parts = message.parts + new_parts
     message.usage = msg_data.get("usage") or message.usage
     message.stop_reason = msg_data.get("stop_reason") or message.stop_reason
     await message.asave(update_fields=["parts", "usage", "stop_reason", "updated_at"])
+
+    # Route inter-agent messages (SendMessage tool calls)
+    await route_inter_agent_messages(agent, new_parts)
+
+    # Sync task operations to DB (TaskCreate/TaskUpdate tool calls)
+    await route_task_operations(agent, new_parts)
 
     # Update agent status to running
     if agent.status != AgentStatus.RUNNING:
@@ -203,10 +211,10 @@ async def _handle_user(agent: Agent, event: dict) -> None:
         role        <- "user"
         parts       <- event.message.content[] (tool_result content parts)
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "user event"
+    See: docs/ARCHITECTURE.md, "user event"
     """
     msg_data = event.get("message", {})
-    content = _normalize_parts(msg_data.get("content", []))
+    content = await sync_to_async(_externalize_media)(msg_data.get("content", []))
     event_uuid = event.get("uuid", "")
     if not event_uuid:
         return
@@ -227,10 +235,10 @@ async def _handle_user(agent: Agent, event: dict) -> None:
 
 async def _handle_result(agent: Agent, event: dict) -> None:
     """
-    Handle result events: upsert SessionResult with cumulative cost/usage.
+    Handle result events: insert SessionResult per turn.
 
-    `result` fires per-turn with cumulative totals, so we upsert by
-    (agent, session_id) — always one row per session with latest values.
+    `result` fires per-turn with cumulative totals. Each turn gets its
+    own row so we have a full cost timeline for point-in-time display.
 
     Field mapping:
         is_error         <- event.is_error
@@ -241,24 +249,22 @@ async def _handle_result(agent: Agent, event: dict) -> None:
         model_usage      <- event.modelUsage (per-model cost/token breakdown)
         permission_denials <- event.permission_denials
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "result event"
+    See: docs/ARCHITECTURE.md, "result event"
     """
     session_id = event.get("session_id", "")
     if not session_id:
         return
 
-    await SessionResult.objects.aupdate_or_create(
+    await SessionResult.objects.acreate(
         agent=agent,
         session_id=session_id,
-        defaults={
-            "is_error": event.get("is_error", False),
-            "total_cost_usd": event.get("total_cost_usd", 0),
-            "duration_ms": event.get("duration_ms", 0),
-            "duration_api_ms": event.get("duration_api_ms", 0),
-            "num_turns": event.get("num_turns", 0),
-            "model_usage": event.get("modelUsage", {}),
-            "permission_denials": event.get("permission_denials", []),
-        },
+        is_error=event.get("is_error", False),
+        total_cost_usd=event.get("total_cost_usd", 0),
+        duration_ms=event.get("duration_ms", 0),
+        duration_api_ms=event.get("duration_api_ms", 0),
+        num_turns=event.get("num_turns", 0),
+        model_usage=event.get("modelUsage", {}),
+        permission_denials=event.get("permission_denials", []),
     )
 
     # Update agent's running session cost and mark idle (turn complete)

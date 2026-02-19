@@ -5,8 +5,8 @@
  * Field names follow Claude Code conventions (snake_case in wire format,
  * camelCase in TypeScript per GraphQL convention).
  *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Data Model"
- * @see docs/CRUSH-ARCHITECTURE.md, "Message Model" (pattern origin)
+ * @see docs/ARCHITECTURE.md, "Data Model"
+ * @see docs/ARCHITECTURE.md, "Message Model" (pattern origin)
  */
 
 // ── Agent ──
@@ -42,13 +42,14 @@ export interface Agent {
 /**
  * Agent capabilities from Claude Code's system/init event.
  *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "system/init"
+ * @see docs/ARCHITECTURE.md, "system/init"
  */
 export interface AgentCapabilities {
   tools: string[];
-  mcpServers: { name: string; status: string }[];
+  mcpServers: { name: string; status: string; toolCount?: number }[];
   model: string;
   version: string;
+  skills?: string[];
 }
 
 // ── Messages (stream-json) ──
@@ -69,8 +70,8 @@ export interface AgentCapabilities {
  *   stopReason <- event.message.stop_reason ("end_turn" | "tool_use" | "max_tokens")
  *   parentToolUseId <- event.parent_tool_use_id (non-null for subagent responses)
  *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Data Model"
- * @see docs/CRUSH-ARCHITECTURE.md, "Message Model" (pattern origin)
+ * @see docs/ARCHITECTURE.md, "Data Model"
+ * @see docs/ARCHITECTURE.md, "Message Model" (pattern origin)
  */
 export interface Message {
   id: string;
@@ -96,7 +97,7 @@ export interface Message {
  *   tool_use    <- {type: "tool_use", id: string, name: string, input: object}
  *   tool_result <- {type: "tool_result", tool_use_id: string, content: string, is_error: boolean}
  *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Data Model"
+ * @see docs/ARCHITECTURE.md, "Data Model"
  */
 export type ContentPart =
   | { type: 'text'; text: string }
@@ -114,7 +115,7 @@ export interface TokenUsage {
  * Cost and usage from Claude Code's stream-json result events.
  * Upserted per-turn with cumulative totals.
  *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "result event"
+ * @see docs/ARCHITECTURE.md, "result event"
  */
 export interface SessionResult {
   id: string;
@@ -140,7 +141,7 @@ export interface SessionResult {
 /**
  * Derived tool status from matching tool_use and tool_result content parts.
  *
- * @see docs/CRUSH-ARCHITECTURE.md, "ExtractMessageItems"
+ * @see docs/ARCHITECTURE.md, "ExtractMessageItems"
  */
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error' | 'canceled';
 
@@ -150,8 +151,8 @@ export type ToolStatus = 'pending' | 'running' | 'success' | 'error' | 'canceled
  *
  * Pattern lifted from Crush (charmbracelet/crush).
  *
- * @see docs/CRUSH-ARCHITECTURE.md, "ExtractMessageItems"
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Patterns to Implement"
+ * @see docs/ARCHITECTURE.md, "ExtractMessageItems"
+ * @see docs/ARCHITECTURE.md, "Patterns to Implement"
  */
 export type MessageItem =
   | { type: 'user'; message: Message; text: string }
@@ -193,11 +194,11 @@ export interface TimelineEntry {
 
 // ── Secrets ──
 
-export interface SecretGroup {
+export interface ProjectSecret {
   id: string;
-  name: string;
+  key: string;
   projectId: string;
-  keys: string[];
+  scopedAgentIds: string[];  // empty = all agents
   createdAt: string;
   updatedAt: string;
 }

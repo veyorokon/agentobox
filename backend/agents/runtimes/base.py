@@ -8,14 +8,33 @@ class SandboxInstance:
     vnc_url: str
 
 
+@dataclass
+class VolumeMount:
+    """Runtime-agnostic volume specification.
+
+    - name: Logical volume identifier. On Modal, this becomes the volume label
+      passed to modal.Volume.from_name(). On Docker, this maps to a host path
+      via host_path or is used as a Docker named volume.
+    - mount_path: Absolute path inside the container.
+    - host_path: Host filesystem path for Docker bind mounts. Docker-only —
+      ignored by Modal. When set, Docker bind-mounts this path instead of
+      using a named volume.
+    - read_only: Mount as read-only (default False).
+    """
+    name: str
+    mount_path: str
+    host_path: str = ""
+    read_only: bool = False
+
+
 class Runtime(Protocol):
     async def create(
         self, name: str, env: dict[str, str],
-        volumes: dict[str, str] | None = None,
+        volumes: list[VolumeMount] | None = None,
     ) -> SandboxInstance: ...
 
     async def exec(
-        self, sandbox_id: str, cmd: list[str], user: str = "computeruse"
+        self, sandbox_id: str, cmd: list[str], user: str = "agent"
     ) -> str: ...
 
     async def write_file(

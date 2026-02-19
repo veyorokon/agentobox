@@ -15,6 +15,23 @@ services:
     ports:
       - "6379:6379"
 
+  localstack:
+    image: localstack/localstack:latest
+    environment:
+      SERVICES: s3,secretsmanager
+      DEFAULT_REGION: us-east-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - ./localstack-init:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   backend:
     build: ./backend
     entrypoint: ["bash", "/app/entrypoint.sh"]
@@ -35,11 +52,22 @@ services:
       MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-dev}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}
       DOCKER_NETWORK: agentobox_default
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      MEDIA_BUCKET: ${MEDIA_BUCKET:-agentobox-media}
+      MEDIA_CDN_URL: ${MEDIA_CDN_URL:-http://localhost:4566/agentobox-media}
+      AGENT_ROOTFS_PATH: ${AGENT_ROOTFS_PATH:-}
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      localstack:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - /app/.venv
@@ -61,3 +89,4 @@ services:
 
 volumes:
   pgdata:
+  localstack-data:

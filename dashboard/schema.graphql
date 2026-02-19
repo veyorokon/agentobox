@@ -26,6 +26,13 @@ type AgentFeedbackType {
   agentId: String!
 }
 
+type AgentQuestionType {
+  question: String!
+  header: String!
+  options: [QuestionOptionType!]!
+  multiSelect: Boolean!
+}
+
 type AgentType {
   id: UUID!
   name: String!
@@ -41,6 +48,7 @@ type AgentType {
   permissionMode: String!
   mcpServers: JSON!
   workspacePath: String!
+  volumeMounts: JSON!
   instructions: String!
   role: String!
   sessionCostUsd: Decimal!
@@ -51,9 +59,21 @@ type AgentType {
   feedback(limit: Int! = 50, offset: Int! = 0): [AgentFeedbackType!]!
 }
 
+input AnswerQuestionInput {
+  agentId: ID!
+  toolUseId: String!
+  answerText: String!
+}
+
 type AuthPayload {
   user: UserType!
   token: String!
+}
+
+input BroadcastMessageInput {
+  agentIds: [ID!]!
+  message: String! = ""
+  content: JSON = null
 }
 
 input CreateAgentInput {
@@ -63,8 +83,8 @@ input CreateAgentInput {
   model: String! = "claude-sonnet-4-5-20250929"
   mcpServers: JSON = null
   workspacePath: String! = ""
+  volumeMounts: [VolumeMountInput!] = null
   instructions: String! = ""
-  secretGroupIds: [ID!] = null
   role: String! = "worker"
 }
 
@@ -72,17 +92,56 @@ input CreateProjectInput {
   name: String!
 }
 
-input CreateSecretGroupInput {
-  projectId: ID!
-  name: String!
-  secrets: JSON!
-}
-
 """Date with time (isoformat)"""
 scalar DateTime
 
 """Decimal (fixed-point)"""
 scalar Decimal
+
+enum FeedItemKind {
+  USER_MESSAGE
+  AGENT_TEXT
+  ACTIVITY
+  STATUS
+  TASK
+  SYSTEM
+  ERROR
+  QUESTION
+  MEMORY
+  PLAN
+  TASK_START
+  TASK_END
+  TEAM_MESSAGE
+}
+
+type FeedItemType {
+  id: String!
+  kind: FeedItemKind!
+  agentId: String!
+  agentName: String!
+  timestamp: DateTime!
+  text: String
+  imageUrls: [String!]
+  targetName: String
+  tools: [ToolUseItemType!]
+  fromStatus: String
+  toStatus: String
+  taskSummary: String
+  errorText: String
+  cumulativeCostUsd: Float
+  questions: [AgentQuestionType!]
+  memoryContent: String
+  planStatus: String
+  planSummary: String
+  planSteps: [String!]
+  taskDividerSubject: String
+  taskDividerId: String
+  taskDividerActiveForm: String
+  answers: [QuestionAnswerType]
+  toolUseId: String
+  senderName: String
+  targetAgentIds: [String!]
+}
 
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf).
@@ -129,15 +188,32 @@ type Mutation {
   createProject(input: CreateProjectInput!): ProjectType!
   updateProject(id: ID!, name: String!): ProjectType!
   deleteProject(id: ID!): Boolean!
+  stopAllAgents(projectId: ID!): Int!
+  setProjectTheme(input: SetProjectThemeInput!): Boolean!
   createAgent(input: CreateAgentInput!): AgentType!
   killAgent(agentId: ID!): Boolean!
-  restartAgent(agentId: ID!): AgentType!
+  removeAgent(agentId: ID!): Boolean!
+  hardRestartAgent(agentId: ID!): AgentType!
   interruptAgent(agentId: ID!): Boolean!
+  restartAgent(agentId: ID!): Boolean!
+  clearAgentSession(agentId: ID!): Boolean!
   sendMessage(input: SendMessageInput!): Boolean!
+  broadcastMessage(input: BroadcastMessageInput!): Boolean!
+  answerQuestion(input: AnswerQuestionInput!): Boolean!
+  updateAgentInstructions(input: UpdateAgentInstructionsInput!): AgentType!
   rateAgent(input: RateFeedbackInput!): AgentFeedbackType
-  createSecretGroup(input: CreateSecretGroupInput!): SecretGroupType!
-  updateSecretGroup(input: UpdateSecretGroupInput!): SecretGroupType!
-  deleteSecretGroup(id: ID!): Boolean!
+  setSecret(input: SetSecretInput!): ProjectSecretType!
+  deleteSecret(projectId: ID!, key: String!): Boolean!
+  scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
+}
+
+type ProjectSecretType {
+  id: UUID!
+  key: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  projectId: String!
+  scopedAgentIds: [String!]!
 }
 
 type ProjectType {
@@ -154,7 +230,19 @@ type Query {
   agent(agentId: ID!): AgentType
   events(projectId: ID!, limit: Int! = 100): [AgentEventType!]!
   timeline(projectId: ID!, limit: Int! = 200, offset: Int! = 0): [TimelineEntryType!]!
-  secretGroups(projectId: ID!): [SecretGroupType!]!
+  agentFeed(agentId: ID!, limit: Int! = 200, offset: Int! = 0): [FeedItemType!]!
+  projectFeed(projectId: ID!, limit: Int! = 200, offset: Int! = 0): [FeedItemType!]!
+  projectSecrets(projectId: ID!): [ProjectSecretType!]!
+}
+
+type QuestionAnswerType {
+  selectedIndices: [Int!]!
+  otherText: String
+}
+
+type QuestionOptionType {
+  label: String!
+  description: String!
 }
 
 input RateFeedbackInput {
@@ -170,18 +258,16 @@ input RegisterInput {
   password: String!
 }
 
-type SecretGroupType {
-  id: UUID!
-  name: String!
-  createdAt: DateTime!
-  updatedAt: DateTime!
-  projectId: String!
-  keys: [String!]!
+input ScopeSecretInput {
+  projectId: ID!
+  key: String!
+  agentIds: [ID!]!
 }
 
 input SendMessageInput {
   agentId: ID!
-  message: String!
+  message: String! = ""
+  content: JSON = null
 }
 
 type SessionResultType {
@@ -197,6 +283,17 @@ type SessionResultType {
   createdAt: DateTime!
   updatedAt: DateTime!
   agentId: String!
+}
+
+input SetProjectThemeInput {
+  projectId: ID!
+  tokens: JSON!
+}
+
+input SetSecretInput {
+  projectId: ID!
+  key: String!
+  value: String!
 }
 
 type Subscription {
@@ -216,15 +313,29 @@ type TimelineEntryType {
   createdAt: DateTime!
 }
 
+type ToolUseItemType {
+  name: String!
+  input: JSON!
+  result: JSON!
+  isError: Boolean!
+}
+
 scalar UUID
 
-input UpdateSecretGroupInput {
-  id: ID!
-  secrets: JSON!
+input UpdateAgentInstructionsInput {
+  agentId: ID!
+  instructions: String!
 }
 
 type UserType {
   id: ID!
   username: String!
   email: String!
+}
+
+input VolumeMountInput {
+  name: String!
+  mountPath: String!
+  hostPath: String! = ""
+  readOnly: Boolean! = false
 }

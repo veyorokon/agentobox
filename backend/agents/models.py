@@ -11,35 +11,36 @@ class AgentStatus(models.TextChoices):
     ERROR = "error"
 
 
-class SecretGroup(models.Model):
+
+class ProjectSecret(models.Model):
     """
-    Named collection of encrypted key-value pairs, scoped to a project.
+    Individual secret at project level. Fernet-encrypted value.
 
-    Secrets are Fernet-encrypted at rest. Decrypted only during agent
-    provisioning to inject into MCP server env blocks or tmpfs.
-
-    Pattern inspired by Modal's secret groups:
-        modal.Secret.from_dict({"KEY": "value"})
+    Default: all agents in the project receive this secret.
+    If scoped_agents is non-empty, only those agents receive it.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     project = models.ForeignKey(
-        "projects.Project", on_delete=models.CASCADE, related_name="secret_groups"
+        "projects.Project", on_delete=models.CASCADE, related_name="secrets"
     )
-    name = models.CharField(max_length=100)
-    encrypted_data = models.BinaryField()
+    key = models.CharField(max_length=255)
+    encrypted_value = models.BinaryField()
+    scoped_agents = models.ManyToManyField(
+        "Agent", blank=True, related_name="scoped_secrets"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["project", "name"], name="unique_project_secret_group"
+                fields=["project", "key"], name="unique_project_secret_key"
             ),
         ]
-        ordering = ["name"]
+        ordering = ["key"]
 
     def __str__(self):
-        return f"{self.name} → {self.project.name}"
+        return f"{self.key} → {self.project.name}"
 
 
 class Agent(models.Model):
@@ -76,14 +77,14 @@ class Agent(models.Model):
     # MCP server config: {"server-name": {"command": "...", "args": [...]}}
     mcp_servers = models.JSONField(default=dict, blank=True)
 
-    # Host path to bind-mount into the container as /home/computeruse/workspace
+    # Host path to bind-mount into the container as /home/agent/workspace
     workspace_path = models.CharField(max_length=500, blank=True)
+
+    # Explicit volume mounts: [{"name": "...", "mount_path": "...", "host_path": "", "read_only": false}]
+    volume_mounts = models.JSONField(default=list, blank=True)
 
     # Role instructions injected into CLAUDE.md
     instructions = models.TextField(blank=True)
-
-    # Secret groups attached to this agent (decrypted at provisioning time)
-    secret_groups = models.ManyToManyField(SecretGroup, blank=True, related_name="agents")
 
     # Team configuration
     role = models.CharField(
@@ -100,6 +101,9 @@ class Agent(models.Model):
     capabilities = models.JSONField(null=True, blank=True)
     # Queue of messages for relay piggyback (list of JSON dicts)
     pending_input = models.JSONField(default=list, blank=True)
+    # Queue of inter-agent inbox messages for relay piggyback
+    # Relay writes these to ~/.claude/teams/{team}/inboxes/{agent}.json
+    pending_inbox = models.JSONField(default=list, blank=True)
     # Queued signal for relay piggyback (e.g. "SIGINT")
     pending_signal = models.CharField(max_length=20, blank=True)
     # Auth token for relay -> backend communication
@@ -173,8 +177,8 @@ class Message(models.Model):
         stop_reason <- event.message.stop_reason ("end_turn" | "tool_use" | "max_tokens")
         parent_tool_use_id <- event.parent_tool_use_id (non-null for subagent responses)
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Data Model"
-    See: docs/CRUSH-ARCHITECTURE.md, "Message Model" (pattern origin)
+    See: docs/ARCHITECTURE.md, "Data Model"
+    See: docs/ARCHITECTURE.md, "Message Model" (pattern origin)
     """
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="stream_messages")
     message_id = models.CharField(max_length=100, db_index=True)
@@ -206,8 +210,13 @@ class SessionResult(models.Model):
     """
     Cost and usage from Claude Code's stream-json `result` events.
 
-    Upserted by (agent, session_id) because `result` fires per-turn with
-    cumulative totals — not per-session.
+    One row per turn (inserted, not upserted). `result` fires after each
+    turn with cumulative totals, so each row is a point-in-time snapshot
+    of the session's cost/usage. This gives us a full cost timeline for
+    the agent_feed query's cumulative_cost_usd field.
+
+    To get the latest state: .filter(agent=agent).order_by("-updated_at").first()
+    To get the full timeline: .filter(agent=agent).order_by("created_at")
 
     Field mapping from Claude Code stream-json:
         is_error         <- event.is_error
@@ -218,7 +227,7 @@ class SessionResult(models.Model):
         model_usage      <- event.modelUsage (per-model cost/token breakdown)
         permission_denials <- event.permission_denials
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "result event"
+    See: docs/ARCHITECTURE.md, "result event"
     """
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="session_results")
     session_id = models.CharField(max_length=100)
@@ -233,12 +242,38 @@ class SessionResult(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["agent", "session_id"], name="unique_session_result"),
-        ]
+        ordering = ["created_at"]
 
     def __str__(self):
         return f"session {self.session_id[:12]} ${self.total_cost_usd} → {self.agent.name}"
+
+
+class AgentTask(models.Model):
+    """Task created by an agent via Claude Code's native TaskCreate tool.
+
+    Synced from stream observation — when an agent calls TaskCreate/TaskUpdate,
+    we mirror the task here for dashboard visibility.
+    """
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="tasks")
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE)
+    task_id = models.CharField(max_length=64)  # Claude's internal task ID
+    subject = models.CharField(max_length=500)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=32, default="pending")
+    owner = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "task_id"], name="unique_project_task_id"
+            ),
+        ]
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.subject[:50]} ({self.status}) -> {self.agent.name}"
 
 
 class AgentFeedback(models.Model):

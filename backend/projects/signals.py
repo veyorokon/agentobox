@@ -61,7 +61,6 @@ async def _create_team_lead(project_id: str, config: dict, op_log):
         mcp_servers=mcp_config,
         workspace_path="",
         instructions=config["instructions"],
-        secret_group_ids=None,
         role=config["role"],
     )
 

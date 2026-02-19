@@ -8,7 +8,7 @@ import docker
 import structlog
 from django.conf import settings
 
-from agents.runtimes.base import SandboxInstance
+from agents.runtimes.base import SandboxInstance, VolumeMount
 
 log = structlog.get_logger("agents.runtime.docker")
 
@@ -25,7 +25,7 @@ class DockerRuntime:
 
     async def create(
         self, name: str, env: dict[str, str],
-        volumes: dict[str, str] | None = None,
+        volumes: list[VolumeMount] | None = None,
     ) -> SandboxInstance:
         project_id = env.get("PROJECT_ID", "")[:8]
         container_name = f"agentobox-agent-{project_id}-{name}"
@@ -33,14 +33,20 @@ class DockerRuntime:
         network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
 
         op = log.bind(op="create", agent=name, image=image)
-        op.info("creating_container", volumes=volumes)
+        op.info("creating_container", volumes=[m.name for m in volumes] if volumes else [])
         t0 = time.monotonic()
 
-        # Convert {host_path: container_path} to docker-py format
+        # Convert VolumeMount list to docker-py format
         docker_volumes = {}
         if volumes:
-            for host_path, container_path in volumes.items():
-                docker_volumes[host_path] = {"bind": container_path, "mode": "rw"}
+            for mount in volumes:
+                mode = "ro" if mount.read_only else "rw"
+                if mount.host_path:
+                    # Bind mount (local dev)
+                    docker_volumes[mount.host_path] = {"bind": mount.mount_path, "mode": mode}
+                else:
+                    # Named Docker volume
+                    docker_volumes[mount.name] = {"bind": mount.mount_path, "mode": mode}
 
         def _create():
             # Remove stale container with the same name (e.g. from a previous failed deploy)
@@ -84,7 +90,7 @@ class DockerRuntime:
         return result
 
     async def exec(
-        self, sandbox_id: str, cmd: list[str], user: str = "computeruse"
+        self, sandbox_id: str, cmd: list[str], user: str = "agent"
     ) -> str:
         op = log.bind(op="exec", container_id=sandbox_id[:12], cmd=cmd[:3])
         op.info("exec_start")
@@ -93,10 +99,16 @@ class DockerRuntime:
         def _exec():
             container = self._client.containers.get(sandbox_id)
             exit_code, output = container.exec_run(cmd, user=user)
-            return output.decode("utf-8", errors="replace")
+            decoded = output.decode("utf-8", errors="replace")
+            return exit_code, decoded
 
-        result = await self._run_sync(_exec)
-        op.info("exec_done", elapsed_s=round(time.monotonic() - t0, 2))
+        exit_code, result = await self._run_sync(_exec)
+        elapsed = round(time.monotonic() - t0, 2)
+        if exit_code != 0:
+            op.warning("exec_failed", exit_code=exit_code, elapsed_s=elapsed,
+                       output=result[:500] if result else "")
+        else:
+            op.info("exec_done", elapsed_s=elapsed)
         return result
 
     async def write_file(

@@ -17,8 +17,8 @@ Synthetic events (not from Claude):
         Emitted when Claude process terminates. Includes exit code and
         captured stderr for crash diagnosis.
 
-See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Relay Process"
-See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Piggyback Pattern"
+See: docs/ARCHITECTURE.md, "Relay Process"
+See: docs/ARCHITECTURE.md, "Piggyback Pattern"
 """
 
 import asyncio
@@ -58,11 +58,18 @@ RETRY_BASE_DELAY_S = 1.0
 # ---------------------------------------------------------------------------
 
 
-def build_claude_cmd() -> list[str]:
+def build_claude_cmd(resume_session_id: str = "") -> list[str]:
     """
     Build the Claude CLI command with stream-json flags and team agent flags.
 
-    Flag reference from docs/STREAM-JSON-INTEGRATION-SPEC.md, "All Spawn Flags".
+    Args:
+        resume_session_id: If non-empty, adds --resume <id> so Claude loads
+            the prior session's messages. Used after soft restart to preserve
+            conversation context. Preferred over --continue because --continue
+            picks the most recent session on disk, which may be stale from a
+            previous container lifecycle (volume-persisted .claude dir).
+
+    Flag reference from docs/ARCHITECTURE.md, "All Spawn Flags".
     Team flags from env vars set by backend's _provision_agent().
     """
     cmd = [
@@ -72,6 +79,9 @@ def build_claude_cmd() -> list[str]:
         "--verbose",
         "--dangerously-skip-permissions",
     ]
+
+    if resume_session_id:
+        cmd.extend(["--resume", resume_session_id])
 
     agent_name = os.environ.get("AGENT_NAME", "")
     team_name = os.environ.get("TEAM_NAME", "")
@@ -113,7 +123,7 @@ def post_events(events: list[dict]) -> dict | None:
         pending_input:  list of JSON messages to write to Claude's stdin
         pending_signal: Signal name to send to Claude process (or null)
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Piggyback Pattern"
+    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
     """
     if not CALLBACK_URL:
         return None
@@ -152,49 +162,93 @@ class Relay:
         self.batch_lock = asyncio.Lock()
         self.last_event_time: float = 0.0
         self.shutting_down = False
+        self.restart_requested = False
+        self.clear_requested = False
 
     async def run(self):
-        """Entry point — spawn Claude and start all reader/writer tasks."""
-        cmd = build_claude_cmd()
-        log.info("Spawning: %s", " ".join(cmd))
+        """Entry point — spawn Claude with restart loop for soft restarts.
 
-        try:
-            self.proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, "CLAUDECODE": "1"},
-            )
-        except FileNotFoundError:
-            log.error("claude binary not found")
-            self._post_exit_event(127, "claude: command not found")
-            return
+        On normal exit: flush events, post process_exit, return.
+        On soft restart (pending_signal="restart"): respawn Claude with
+        --resume <session_id> to preserve conversation context. MCP servers
+        re-init from updated .mcp.json on restart.
 
-        log.info("Claude started, pid=%d", self.proc.pid)
+        On first launch after a hard restart, RESUME_SESSION_ID env var
+        carries the prior session_id so context is preserved across
+        container reprovisioning.
+        """
+        # Check env for resume session from hard restart (container reprovision)
+        resume_session_id = os.environ.get("RESUME_SESSION_ID", "")
 
-        tasks = [
-            asyncio.create_task(self._read_stdout(), name="stdout"),
-            asyncio.create_task(self._read_stderr(), name="stderr"),
-            asyncio.create_task(self._batch_flusher(), name="flusher"),
-            asyncio.create_task(self._heartbeat(), name="heartbeat"),
-        ]
+        while True:
+            cmd = build_claude_cmd(resume_session_id=resume_session_id)
+            log.info("Spawning: %s", " ".join(cmd))
 
-        await self.proc.wait()
-        exit_code = self.proc.returncode
-        log.info("Claude exited, code=%d", exit_code)
+            try:
+                self.proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env={**os.environ, "CLAUDECODE": "1"},
+                )
+            except FileNotFoundError:
+                log.error("claude binary not found")
+                self._post_exit_event(127, "claude: command not found")
+                return
 
-        # Give readers a moment to finish draining
-        self.shutting_down = True
-        await asyncio.sleep(0.2)
+            log.info("Claude started, pid=%d", self.proc.pid)
 
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+            tasks = [
+                asyncio.create_task(self._read_stdout(), name="stdout"),
+                asyncio.create_task(self._read_stderr(), name="stderr"),
+                asyncio.create_task(self._batch_flusher(), name="flusher"),
+                asyncio.create_task(self._heartbeat(), name="heartbeat"),
+            ]
 
-        # Flush remaining events + send process_exit
-        await self._flush_batch()
-        self._post_exit_event(exit_code, self.stderr_output)
+            await self.proc.wait()
+            exit_code = self.proc.returncode
+            log.info("Claude exited, code=%d", exit_code)
+
+            # Give readers a moment to finish draining
+            self.shutting_down = True
+            await asyncio.sleep(0.2)
+
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Flush remaining events before deciding next action
+            await self._flush_batch()
+
+            if self.clear_requested:
+                # Clear: wipe session and restart fresh (no --resume)
+                self.clear_requested = False
+                self.restart_requested = False
+                resume_session_id = ""
+                self.session_id = ""
+                log.info("Clear: respawning fresh (no resume)")
+                self.proc = None
+                self.stderr_output = ""
+                self.shutting_down = False
+                continue
+
+            if self.restart_requested:
+                self.restart_requested = False
+                if self.session_id:
+                    resume_session_id = self.session_id
+                    log.info("Soft restart: respawning with --resume %s", self.session_id)
+                else:
+                    log.info("Soft restart: no session_id captured, starting fresh")
+                # Reset state for new subprocess
+                self.proc = None
+                self.stderr_output = ""
+                self.shutting_down = False
+                continue
+
+            # Normal exit
+            self._post_exit_event(exit_code, self.stderr_output)
+            break
 
     async def _read_stdout(self):
         """
@@ -204,7 +258,7 @@ class Relay:
         immediately (not batched) for live typing display.
         All other types are collected into the batch buffer.
 
-        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream"
+        See: docs/ARCHITECTURE.md, "Output Event Stream"
         """
         assert self.proc and self.proc.stdout
         while True:
@@ -223,6 +277,7 @@ class Relay:
             # Capture session_id from first event
             if not self.session_id and "session_id" in event:
                 self.session_id = event["session_id"]
+                log.info("Session ID: %s", self.session_id)
 
             # stream_event = real-time (not batched)
             if event.get("type") == "stream_event":
@@ -264,7 +319,7 @@ class Relay:
         Send empty heartbeat POST every HEARTBEAT_INTERVAL_S when idle
         to poll for pending input/signals via piggyback.
 
-        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Piggyback Pattern"
+        See: docs/ARCHITECTURE.md, "Piggyback Pattern"
         """
         while not self.shutting_down:
             await asyncio.sleep(HEARTBEAT_INTERVAL_S)
@@ -290,13 +345,14 @@ class Relay:
         """
         Process piggyback response from backend POST.
 
-        The backend includes pending_input (list of messages to write to stdin)
-        and pending_signal (signal to send to Claude) in every POST response.
+        The backend includes pending_input (list of messages to write to stdin),
+        pending_inbox (inter-agent messages to write to inbox file), and
+        pending_signal (signal to send to Claude) in every POST response.
 
         pending_input is a list because multiple send_message() calls may
         queue up between relay POSTs.
 
-        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Piggyback Pattern"
+        See: docs/ARCHITECTURE.md, "Piggyback Pattern"
         """
         # Handle pending input messages
         pending_input = resp.get("pending_input")
@@ -307,9 +363,29 @@ class Relay:
             elif isinstance(pending_input, dict):
                 await self._write_stdin(pending_input)
 
+        # Handle pending inbox messages (inter-agent, written to local inbox file)
+        pending_inbox = resp.get("pending_inbox")
+        if pending_inbox and isinstance(pending_inbox, list):
+            for msg in pending_inbox:
+                self._write_inbox(msg)
+
         # Handle pending signal
         pending_signal = resp.get("pending_signal")
-        if pending_signal == "SIGINT" and self.proc:
+        if pending_signal == "clear" and self.proc:
+            log.info(
+                "Clear requested, sending SIGINT (pid=%d, session=%s)",
+                self.proc.pid, self.session_id or "none",
+            )
+            self.clear_requested = True
+            self.proc.send_signal(signal.SIGINT)
+        elif pending_signal == "restart" and self.proc:
+            log.info(
+                "Restart requested, sending SIGINT (pid=%d, session=%s)",
+                self.proc.pid, self.session_id or "none",
+            )
+            self.restart_requested = True
+            self.proc.send_signal(signal.SIGINT)
+        elif pending_signal == "SIGINT" and self.proc:
             log.info("Sending SIGINT to Claude (pid=%d)", self.proc.pid)
             self.proc.send_signal(signal.SIGINT)
 
@@ -320,7 +396,7 @@ class Relay:
         Input must follow the stream-json input format:
             {"type": "user", "message": {"role": "user", "content": [...]}}
 
-        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Input Format"
+        See: docs/ARCHITECTURE.md, "Input Format"
         """
         if not self.proc or not self.proc.stdin:
             log.warning("Cannot write to stdin — process not running")
@@ -329,6 +405,45 @@ class Relay:
         self.proc.stdin.write(line.encode())
         await self.proc.stdin.drain()
         log.info("Wrote to stdin: type=%s", msg.get("type", "?"))
+
+    def _write_inbox(self, msg: dict):
+        """
+        Write an inter-agent message to the local Claude Code inbox file.
+
+        Claude Code polls ~/.claude/teams/{team}/inboxes/{agent}.json at ~1s
+        intervals. Messages written here are picked up by the internal
+        readMailbox() loop and delivered to the agent natively.
+
+        Uses atomic write (tempfile + os.replace) to prevent partial reads
+        from Claude Code's polling loop.
+        """
+        team_name = os.environ.get("TEAM_NAME", "")
+        agent_name = os.environ.get("AGENT_NAME", "")
+        if not team_name or not agent_name:
+            log.warning("Cannot write inbox — TEAM_NAME or AGENT_NAME not set")
+            return
+
+        inbox_path = f"/home/agent/.claude/teams/{team_name}/inboxes/{agent_name}.json"
+
+        # Read existing inbox, append, write back atomically
+        try:
+            with open(inbox_path, "r") as f:
+                inbox = json.loads(f.read())
+            if not isinstance(inbox, list):
+                inbox = []
+        except (FileNotFoundError, json.JSONDecodeError):
+            inbox = []
+
+        inbox.append(msg)
+
+        tmp_path = inbox_path + ".tmp"
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(inbox, f)
+            os.replace(tmp_path, inbox_path)
+            log.info("Wrote inbox message from=%s", msg.get("from", "?"))
+        except OSError as exc:
+            log.warning("Failed to write inbox: %s", exc)
 
     def _post_exit_event(self, exit_code: int, stderr: str):
         """
@@ -341,7 +456,7 @@ class Relay:
             {type: "system", subtype: "process_exit", exit_code, stderr,
              session_id, agent_id}
 
-        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "system/process_exit"
+        See: docs/ARCHITECTURE.md, "system/process_exit"
         """
         event = {
             "type": "system",

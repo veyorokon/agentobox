@@ -1,8 +1,17 @@
 import strawberry
+from asgiref.sync import sync_to_async
 from strawberry import ID
 from strawberry.scalars import JSON
 
-from agents.graphql.types import AgentFeedbackType, AgentType, SecretGroupType
+from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType
+
+
+@strawberry.input
+class VolumeMountInput:
+    name: str
+    mount_path: str
+    host_path: str = ""
+    read_only: bool = False
 
 
 @strawberry.input
@@ -13,15 +22,36 @@ class CreateAgentInput:
     model: str = "claude-sonnet-4-5-20250929"
     mcp_servers: JSON | None = None
     workspace_path: str = ""
+    volume_mounts: list[VolumeMountInput] | None = None
     instructions: str = ""
-    secret_group_ids: list[ID] | None = None
     role: str = "worker"
 
 
 @strawberry.input
 class SendMessageInput:
     agent_id: ID
-    message: str
+    message: str = ""
+    content: JSON | None = None  # ContentBlock[] — takes precedence over message
+
+
+@strawberry.input
+class BroadcastMessageInput:
+    agent_ids: list[ID]
+    message: str = ""
+    content: JSON | None = None  # ContentBlock[] — takes precedence over message
+
+
+@strawberry.input
+class AnswerQuestionInput:
+    agent_id: ID
+    tool_use_id: str
+    answer_text: str
+
+
+@strawberry.input
+class UpdateAgentInstructionsInput:
+    agent_id: ID
+    instructions: str
 
 
 @strawberry.input
@@ -33,16 +63,26 @@ class RateFeedbackInput:
 
 
 @strawberry.input
-class CreateSecretGroupInput:
-    project_id: ID
-    name: str
-    secrets: JSON  # {"KEY": "value", ...}
+class UpdateAgentConfigInput:
+    agent_id: ID
+    model: str | None = None
+    role: str | None = None
+    mcp_registry_names: list[str] | None = None
+    mcp_custom_servers: JSON | None = None
 
 
 @strawberry.input
-class UpdateSecretGroupInput:
-    id: ID
-    secrets: JSON  # {"KEY": "value", ...}
+class SetSecretInput:
+    project_id: ID
+    key: str
+    value: str
+
+
+@strawberry.input
+class ScopeSecretInput:
+    project_id: ID
+    key: str
+    agent_ids: list[ID]  # empty = all agents (unscoped)
 
 
 @strawberry.type
@@ -60,6 +100,19 @@ class AgentMutation:
             elif isinstance(input.mcp_servers, dict):
                 mcp_config = input.mcp_servers
 
+        # Convert VolumeMountInput list to dicts for JSONField storage
+        vm_dicts = None
+        if input.volume_mounts:
+            vm_dicts = [
+                {
+                    "name": vm.name,
+                    "mount_path": vm.mount_path,
+                    "host_path": vm.host_path,
+                    "read_only": vm.read_only,
+                }
+                for vm in input.volume_mounts
+            ]
+
         return await create_agent(
             project_id=input.project_id,
             name=input.name,
@@ -68,10 +121,8 @@ class AgentMutation:
             mcp_servers=mcp_config,
             workspace_path=input.workspace_path,
             instructions=input.instructions,
-            secret_group_ids=[str(sid) for sid in input.secret_group_ids]
-            if input.secret_group_ids
-            else None,
             role=input.role,
+            volume_mounts=vm_dicts,
         )
 
     @strawberry.mutation
@@ -81,10 +132,16 @@ class AgentMutation:
         return await kill_agent(agent_id)
 
     @strawberry.mutation
-    async def restart_agent(self, agent_id: ID) -> AgentType:
-        from agents.services.lifecycle import restart_agent
+    async def remove_agent(self, agent_id: ID) -> bool:
+        from agents.services.lifecycle import remove_agent
 
-        return await restart_agent(agent_id)
+        return await remove_agent(agent_id)
+
+    @strawberry.mutation
+    async def hard_restart_agent(self, agent_id: ID) -> AgentType:
+        from agents.services.lifecycle import hard_restart_agent
+
+        return await hard_restart_agent(agent_id)
 
     @strawberry.mutation
     async def interrupt_agent(self, agent_id: ID) -> bool:
@@ -93,10 +150,84 @@ class AgentMutation:
         return await interrupt_agent(agent_id)
 
     @strawberry.mutation
+    async def restart_agent(self, agent_id: ID) -> bool:
+        from agents.services.comms import restart_agent
+
+        return await restart_agent(agent_id)
+
+    @strawberry.mutation
+    async def clear_agent_session(self, agent_id: ID) -> bool:
+        from agents.services.comms import clear_agent_session
+
+        return await clear_agent_session(agent_id)
+
+    @strawberry.mutation
     async def send_message(self, input: SendMessageInput) -> bool:
         from agents.services.comms import send_message
 
-        return await send_message(input.agent_id, input.message)
+        return await send_message(input.agent_id, input.message, input.content)
+
+    @strawberry.mutation
+    async def broadcast_message(self, input: BroadcastMessageInput) -> bool:
+        from agents.services.comms import broadcast_message
+
+        return await broadcast_message(
+            [str(aid) for aid in input.agent_ids],
+            input.message,
+            input.content,
+        )
+
+    @strawberry.mutation
+    async def answer_question(self, input: AnswerQuestionInput) -> bool:
+        from agents.services.comms import answer_question
+
+        return await answer_question(input.agent_id, input.tool_use_id, input.answer_text)
+
+    @strawberry.mutation
+    async def update_agent_instructions(self, input: UpdateAgentInstructionsInput) -> AgentType:
+        from agents.models import Agent, AgentStatus
+        from agents.runtimes import get_runtime
+        from agents.services.provision import _build_claude_md
+
+        agent = await Agent.objects.select_related("project").aget(id=input.agent_id)
+        agent.instructions = input.instructions
+        await agent.asave(update_fields=["instructions"])
+
+        # Rewrite CLAUDE.md on the running container if it has a sandbox
+        if agent.sandbox_id:
+            try:
+                # Build team roster (same as provisioning)
+                all_agents = await sync_to_async(
+                    lambda: list(
+                        Agent.objects.filter(project=agent.project)
+                        .exclude(status=AgentStatus.STOPPED)
+                    ),
+                    thread_sensitive=False,
+                )()
+                team_members = [
+                    {"name": a.name, "role": a.role, "instructions": a.instructions or ""}
+                    for a in all_agents
+                ]
+
+                runtime = get_runtime(agent.runtime)
+                claude_md = _build_claude_md(
+                    agent.project,
+                    mcp_servers=agent.mcp_servers or None,
+                    workspace_path=agent.workspace_path,
+                    instructions=input.instructions,
+                    agent_role=agent.role,
+                    agent_name=agent.name,
+                    team_members=team_members,
+                )
+                await runtime.write_file(
+                    agent.sandbox_id,
+                    claude_md.encode("utf-8"),
+                    "/home/agent/CLAUDE.md",
+                )
+            except Exception:
+                pass  # Agent may be stopped — DB is updated, will take effect on restart
+
+        return agent
 
     @strawberry.mutation
     async def rate_agent(self, input: RateFeedbackInput) -> AgentFeedbackType | None:
@@ -138,50 +269,122 @@ class AgentMutation:
             comment=input.comment,
         )
 
-    # --- Secret Group CRUD ---
+    @strawberry.mutation
+    async def update_agent_config(self, input: UpdateAgentConfigInput) -> AgentType:
+        from agents.models import Agent
+        from agents.services.lifecycle import hard_restart_agent
+        from agents.services.provision import resolve_mcp_servers
+
+        agent = await Agent.objects.select_related("project").aget(id=input.agent_id)
+
+        if input.model is not None:
+            agent.model = input.model
+        if input.role is not None:
+            agent.role = input.role
+
+        # Merge registry MCPs + custom MCPs
+        mcp_servers = agent.mcp_servers or {}
+        if input.mcp_registry_names is not None or input.mcp_custom_servers is not None:
+            resolved = {}
+            if input.mcp_registry_names is not None:
+                resolved = resolve_mcp_servers(input.mcp_registry_names)
+            if input.mcp_custom_servers and isinstance(input.mcp_custom_servers, dict):
+                resolved.update(input.mcp_custom_servers)
+            mcp_servers = resolved
+        agent.mcp_servers = mcp_servers
+
+        # Update config_snapshot so hard_restart picks up new values
+        config = agent.config_snapshot or {}
+        config["model"] = agent.model
+        config["role"] = agent.role
+        config["mcp_servers"] = agent.mcp_servers
+        agent.config_snapshot = config
+
+        await agent.asave(update_fields=[
+            "model", "role", "mcp_servers", "config_snapshot",
+        ])
+
+        return await hard_restart_agent(str(agent.id))
+
+    # --- Project Secrets ---
 
     @strawberry.mutation
-    async def create_secret_group(self, input: CreateSecretGroupInput) -> SecretGroupType:
-        """Create an encrypted secret group for a project."""
-        from agents.models import SecretGroup
-        from agents.services.secrets import encrypt_secrets
+    async def set_secret(self, input: SetSecretInput) -> ProjectSecretType:
+        """Create or update a project secret (upsert by project + key)."""
+        from agents.models import ProjectSecret
+        from agents.services.secrets import encrypt_value
         from projects.models import Project
 
         project = await Project.objects.aget(id=input.project_id)
 
-        if not isinstance(input.secrets, dict):
-            raise ValueError("secrets must be a JSON object of key-value pairs")
-
-        encrypted = encrypt_secrets(input.secrets)
-        return await SecretGroup.objects.acreate(
+        secret, created = await ProjectSecret.objects.aupdate_or_create(
             project=project,
-            name=input.name,
-            encrypted_data=encrypted,
+            key=input.key,
+            defaults={"encrypted_value": encrypt_value(input.value)},
         )
 
-    @strawberry.mutation
-    async def update_secret_group(self, input: UpdateSecretGroupInput) -> SecretGroupType:
-        """Replace all secrets in a secret group with new values."""
-        from agents.models import SecretGroup
-        from agents.services.secrets import encrypt_secrets
+        # Push secrets to all running agents (both create and update)
+        await _push_secrets_for_project(project)
 
-        sg = await SecretGroup.objects.aget(id=input.id)
-
-        if not isinstance(input.secrets, dict):
-            raise ValueError("secrets must be a JSON object of key-value pairs")
-
-        sg.encrypted_data = encrypt_secrets(input.secrets)
-        await sg.asave(update_fields=["encrypted_data", "updated_at"])
-        return sg
+        return secret
 
     @strawberry.mutation
-    async def delete_secret_group(self, id: ID) -> bool:
-        """Delete a secret group. Fails silently if not found."""
-        from agents.models import SecretGroup
+    async def delete_secret(self, project_id: ID, key: str) -> bool:
+        """Delete a project secret by key."""
+        from agents.models import ProjectSecret
 
         try:
-            sg = await SecretGroup.objects.aget(id=id)
-            await sg.adelete()
+            secret = await ProjectSecret.objects.aget(project_id=project_id, key=key)
+            await secret.adelete()
             return True
-        except SecretGroup.DoesNotExist:
+        except ProjectSecret.DoesNotExist:
             return False
+
+    @strawberry.mutation
+    async def scope_secret(self, input: ScopeSecretInput) -> ProjectSecretType:
+        """Set which agents a secret is restricted to. Empty = all agents."""
+        from agents.models import Agent, ProjectSecret
+
+        secret = await ProjectSecret.objects.aget(
+            project_id=input.project_id, key=input.key,
+        )
+
+        if input.agent_ids:
+            agents = [
+                a async for a in Agent.objects.filter(
+                    id__in=[str(aid) for aid in input.agent_ids]
+                )
+            ]
+            await secret.scoped_agents.aset(agents)
+        else:
+            await secret.scoped_agents.aclear()
+
+        return secret
+
+async def _push_secrets_for_project(project) -> None:
+    """Push merged secrets to all running agents in a project."""
+    from agents.models import Agent, AgentStatus
+    from agents.runtimes import get_runtime
+    from agents.services.lifecycle import resolve_agent_secrets
+    from agents.services.provision import push_secrets_to_agent
+
+    import structlog
+    op_log = structlog.get_logger("agents.secrets")
+
+    running_agents = [
+        a async for a in Agent.objects.filter(
+            project=project,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        ).exclude(sandbox_id="")
+    ]
+
+    for agent in running_agents:
+        try:
+            secret_envs = await resolve_agent_secrets(agent, op_log)
+            if secret_envs:
+                runtime = get_runtime(agent.runtime)
+                await push_secrets_to_agent(
+                    runtime, agent.sandbox_id, agent, secret_envs,
+                )
+        except Exception:
+            pass  # Best-effort

@@ -6,4 +6,4 @@ DBUS_ADDR="unix:path=/tmp/dbus-session-bus"
 echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_ADDR" > /run/dbus-session
 chmod 644 /run/dbus-session
 
-exec s6-setuidgid computeruse dbus-daemon --session --nofork --address="$DBUS_ADDR"
+exec s6-setuidgid agent dbus-daemon --session --nofork --address="$DBUS_ADDR"

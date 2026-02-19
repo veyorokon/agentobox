@@ -6,10 +6,13 @@ import structlog
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
-from agents.models import Agent, AgentStatus, SecretGroup
+from agents.models import Agent, AgentStatus
 from agents.runtimes import get_runtime
+from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
-from agents.services.provision import provision_workspace, resolve_mcp_servers
+from agents.services.provision import provision_team_config, provision_workspace, resolve_mcp_servers, update_team_configs, write_secrets_env, write_theme_files
+
+CONTAINER_WORKSPACE = "/home/agent/workspace"
 
 
 def _sanitize_name(value: str) -> str:
@@ -27,8 +30,8 @@ async def create_agent(
     mcp_servers: dict | None = None,
     workspace_path: str = "",
     instructions: str = "",
-    secret_group_ids: list[str] | None = None,
     role: str = "worker",
+    volume_mounts: list[dict] | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from config.telemetry import bind_agent_context
@@ -59,8 +62,8 @@ async def create_agent(
         "mcp_servers": resolved_mcps,
         "workspace_path": workspace_path,
         "instructions": instructions,
-        "secret_group_ids": secret_group_ids or [],
         "role": role,
+        "volume_mounts": volume_mounts or [],
     }
 
     agent = await Agent.objects.acreate(
@@ -73,20 +76,14 @@ async def create_agent(
         status=AgentStatus.DEPLOYING,
         mcp_servers=resolved_mcps,
         workspace_path=workspace_path,
+        volume_mounts=volume_mounts or [],
         instructions=instructions,
         role=role,
         config_snapshot=config_snapshot,
     )
 
-    # Attach secret groups to agent (M2M) and fetch them for provisioning
-    secret_envs = None
-    if secret_group_ids:
-        secret_groups = SecretGroup.objects.filter(
-            id__in=secret_group_ids, project=project,
-        )
-        await agent.secret_groups.aset([sg async for sg in secret_groups])
-        # Fetch and decrypt secrets before launching background task
-        secret_envs = await _resolve_agent_secrets_sync(secret_group_ids, project, op_log)
+    # Resolve project secrets for this agent (default-all with optional scoping)
+    secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
     await broadcast_agent_event(
@@ -99,6 +96,9 @@ async def create_agent(
     asyncio.create_task(
         _provision_agent(agent, project, runtime_name, op_log, secret_envs)
     )
+
+    # Update team config in all existing agents so they can discover the new agent
+    asyncio.create_task(update_team_configs(project))
 
     return agent
 
@@ -128,7 +128,46 @@ _save_provisioned = sync_to_async(_save_agent_provisioned, thread_sensitive=Fals
 _save_failed = sync_to_async(_save_agent_failed, thread_sensitive=False)
 
 
-async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None):
+def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
+    """Build volume mount list from agent config.
+
+    Priority: explicit volume_mounts field > workspace_path fallback.
+    Always includes the project state volume for session persistence.
+    """
+    mounts: list[VolumeMount] = []
+
+    if agent.volume_mounts:
+        mounts.extend(
+            VolumeMount(
+                name=v["name"],
+                mount_path=v["mount_path"],
+                host_path=v.get("host_path", ""),
+                read_only=v.get("read_only", False),
+            )
+            for v in agent.volume_mounts
+        )
+    elif agent.workspace_path:
+        # Backward compat: derive from workspace_path
+        mounts.append(
+            VolumeMount(
+                name=f"ws-{agent.id}",
+                mount_path=CONTAINER_WORKSPACE,
+                host_path=agent.workspace_path,
+            )
+        )
+
+    # Project state volume (session persistence, shared secrets)
+    project_id = str(agent.project_id)[:8]
+    mounts.append(VolumeMount(
+        name=f"agentobox-state-{project_id}",
+        mount_path="/mnt/abox-state",
+    ))
+
+    return mounts
+
+
+async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None,
+                           resume_session_id: str = ""):
     """
     Background task: create container, provision workspace, launch relay.
 
@@ -138,8 +177,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
     Args:
         secret_envs: Pre-fetched decrypted secrets (fetched before launching task)
+        resume_session_id: If non-empty, passed to relay as RESUME_SESSION_ID
+            env var so Claude starts with --resume to preserve context.
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "Relay Process"
+    See: docs/ARCHITECTURE.md, "Relay Process"
     """
     from config.telemetry import bind_agent_context, clear_agent_context
 
@@ -161,13 +202,24 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Generate relay auth token for this agent
         relay_token = secrets.token_urlsafe(32)
 
-        # Build volume mounts when workspace_path is set
-        CONTAINER_WORKSPACE = "/home/computeruse/workspace"
-        volumes = None
-        if agent.workspace_path:
-            volumes = {agent.workspace_path: CONTAINER_WORKSPACE}
+        # Build volume mounts from agent config (explicit or workspace_path fallback)
+        mounts = _build_volume_mounts(agent)
 
-        sandbox = await runtime.create(agent.name, env, volumes=volumes)
+        # Dev: bind-mount relay.py and hooks so changes don't require image rebuild
+        rootfs_path = getattr(settings, "AGENT_ROOTFS_PATH", "")
+        if rootfs_path:
+            mounts.append(VolumeMount(
+                name="dev-relay",
+                mount_path="/opt/abox/relay.py",
+                host_path=f"{rootfs_path}/opt/abox/relay.py",
+            ))
+            mounts.append(VolumeMount(
+                name="dev-hooks",
+                mount_path="/opt/abox/hooks",
+                host_path=f"{rootfs_path}/opt/abox/hooks",
+            ))
+
+        sandbox = await runtime.create(agent.name, env, volumes=mounts or None)
         sandbox_id = sandbox.id
 
         # Update agent context with sandbox_id now that it's available
@@ -180,7 +232,53 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         op_log.info("container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
+        # Set up session persistence: symlink ~/.claude to volume-backed dir
+        # Run as root because fresh Docker volumes are root-owned
+        agent_state_dir = f"/mnt/abox-state/agents/{agent_id}/.claude"
+        await runtime.exec(sandbox_id, [
+            "bash", "-c",
+            f"mkdir -p {agent_state_dir} /mnt/abox-state/secrets"
+            f" && chown -R agent:agent /mnt/abox-state/agents/{agent_id}"
+            f" && chown agent:agent /mnt/abox-state/secrets"
+            f" && rm -rf /home/agent/.claude"
+            f" && ln -sf {agent_state_dir} /home/agent/.claude",
+        ], user="root")
+
+        # Write shared secrets env file and source it from .bashrc
+        await write_secrets_env(runtime, sandbox_id, secret_envs)
+        await runtime.exec(sandbox_id, [
+            "bash", "-c",
+            "grep -q 'abox-state/secrets/env' /home/agent/.bashrc 2>/dev/null"
+            " || echo 'source /mnt/abox-state/secrets/env 2>/dev/null' >> /home/agent/.bashrc",
+        ])
+
         api_key = getattr(settings, "ANTHROPIC_API_KEY", "")
+
+        team_name = project.name.lower().replace(" ", "-")
+        parent_session_id = str(project.id)
+        work_dir = CONTAINER_WORKSPACE if agent.workspace_path else "/home/agent"
+        callback_url = env.get("ABOX_CALLBACK_URL", "")
+
+        # Fetch all team agents for CLAUDE.md roster and team config
+        # thread_sensitive=False because this runs inside asyncio.create_task
+        # where the request's CurrentThreadExecutor is gone
+        all_agents = await sync_to_async(
+            lambda: list(
+                Agent.objects.filter(project=project)
+                .exclude(status=AgentStatus.STOPPED)
+            ),
+            thread_sensitive=False,
+        )()
+
+        # Build team roster for CLAUDE.md
+        team_members = [
+            {
+                "name": a.name,
+                "role": a.role,
+                "instructions": a.instructions or "",
+            }
+            for a in all_agents
+        ]
 
         await provision_workspace(
             runtime, sandbox.id, project,
@@ -189,12 +287,17 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             workspace_path=agent.workspace_path,
             instructions=agent.instructions,
             secret_envs=secret_envs,
+            agent_role=agent.role,
+            agent_name=agent.name,
+            team_members=team_members,
+        )
+        await provision_team_config(
+            runtime, sandbox.id, team_name, all_agents, agent.name,
         )
 
-        team_name = project.name.lower().replace(" ", "-")
-        parent_session_id = str(project.id)
-        work_dir = CONTAINER_WORKSPACE if agent.workspace_path else "/home/computeruse"
-        callback_url = env.get("ABOX_CALLBACK_URL", "")
+        # Write theme tokens if project has them
+        if project.theme_tokens:
+            await write_theme_files(runtime, sandbox.id, project.theme_tokens)
 
         # Build relay environment variables
         # The relay reads these to spawn Claude with correct flags and POST events
@@ -209,6 +312,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             f'export CLAUDE_MODEL="{agent.model}"',
         ]
 
+        # Pass resume session so relay can --resume the prior conversation
+        if resume_session_id:
+            relay_env_lines.append(f'export RESUME_SESSION_ID="{resume_session_id}"')
+
         # Add MCP config path if agent has MCP servers
         if agent.mcp_servers:
             relay_env_lines.append(f'export MCP_CONFIG="{work_dir}/.mcp.json"')
@@ -217,12 +324,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         await runtime.write_file(
             sandbox.id,
             relay_env_content.encode("utf-8"),
-            "/home/computeruse/.relay_env",
+            "/home/agent/.relay_env",
         )
 
         # Launch relay process via tmux (so it's visible in VNC)
         relay_cmd = (
-            f"cd {work_dir} && source /home/computeruse/.relay_env"
+            f"cd {work_dir} && source /home/agent/.relay_env"
             f" && python3 /opt/abox/relay.py"
         )
         await runtime.exec(
@@ -305,12 +412,65 @@ async def kill_agent(agent_id: str) -> bool:
     return True
 
 
-async def restart_agent(agent_id: str) -> Agent:
+async def remove_agent(agent_id: str) -> bool:
+    """Permanently delete an agent record from the fleet.
+
+    For stopped/error agents only — removes the DB record entirely.
+    Running agents should be killed first.
     """
-    Restart an agent using its saved config_snapshot.
+    from config.telemetry import bind_agent_context, clear_agent_context
+
+    op_log = log.bind(agent_id=agent_id)
+    op_log.info("removing_agent")
+
+    try:
+        agent = await Agent.objects.aget(id=agent_id)
+    except Agent.DoesNotExist:
+        op_log.warning("agent_not_found")
+        return False
+
+    bind_agent_context(
+        agent_id=agent_id,
+        agent_name=agent.name,
+        project_id=str(agent.project_id),
+    )
+
+    # Safety: terminate sandbox if somehow still running
+    if agent.sandbox_id:
+        try:
+            runtime = get_runtime(agent.runtime)
+            await runtime.terminate(agent.sandbox_id)
+        except Exception:
+            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+
+    project_id = agent.project_id
+    agent_name = agent.name
+
+    # Broadcast before delete — the event FK needs the agent row to exist
+    await broadcast_agent_event(
+        agent, "removed", {"agent_id": agent_id},
+        summary=f"{agent_name} removed",
+    )
+
+    await agent.adelete()
+
+    # Update team configs so remaining agents stop seeing this one
+    from projects.models import Project
+    project = await Project.objects.aget(id=project_id)
+    asyncio.create_task(update_team_configs(project))
+
+    op_log.info("agent_removed")
+    clear_agent_context()
+    return True
+
+
+async def hard_restart_agent(agent_id: str) -> Agent:
+    """
+    Hard restart: kill container + reprovision with context preservation.
 
     Terminates the existing container, resets the agent's state, and provisions
     a new container with the same configuration that was used at creation time.
+    Captures the current session_id so the new container can --resume it.
     """
     from config.telemetry import bind_agent_context, clear_agent_context
 
@@ -346,36 +506,40 @@ async def restart_agent(agent_id: str) -> Agent:
     model = config.get("model", agent.model)
     mcp_servers = config.get("mcp_servers", agent.mcp_servers)
     workspace_path = config.get("workspace_path", agent.workspace_path)
+    volume_mounts = config.get("volume_mounts", agent.volume_mounts)
     instructions = config.get("instructions", agent.instructions)
-    secret_group_ids = config.get("secret_group_ids", [])
     role = config.get("role", agent.role)
 
-    # Reset agent state to DEPLOYING
+    # Capture session_id for resume BEFORE clearing — the new container
+    # will --resume this session to preserve conversation context.
+    resume_session_id = agent.session_id
+
+    # Reset agent state to DEPLOYING — clear stale session data.
+    # pending_input is cleared because old messages belong to the previous
+    # session and have no context in the new one. The caller (e.g.
+    # broadcast_message) enqueues the new message AFTER restart returns.
     agent.status = AgentStatus.DEPLOYING
     agent.sandbox_id = ""
     agent.vnc_url = ""
     agent.session_id = ""
     agent.relay_token = ""
     agent.last_heartbeat_at = None
+    agent.pending_input = []
+    agent.pending_inbox = []
+    agent.pending_signal = ""
     agent.runtime = runtime_name
     agent.model = model
     agent.mcp_servers = mcp_servers
     agent.workspace_path = workspace_path
+    agent.volume_mounts = volume_mounts
     agent.instructions = instructions
     agent.role = role
     await agent.asave()
 
-    # Re-attach secret groups from config snapshot and fetch secrets
+    # Resolve project secrets for this agent
     from projects.models import Project
     project = await Project.objects.aget(id=agent.project_id)
-    secret_envs = None
-    if secret_group_ids:
-        secret_groups = SecretGroup.objects.filter(
-            id__in=secret_group_ids, project=project,
-        )
-        await agent.secret_groups.aset([sg async for sg in secret_groups])
-        # Fetch and decrypt secrets before launching background task
-        secret_envs = await _resolve_agent_secrets_sync(secret_group_ids, project, op_log)
+    secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
     await broadcast_agent_event(
@@ -385,9 +549,11 @@ async def restart_agent(agent_id: str) -> Agent:
 
     op_log.info("agent_reset_complete", agent_id=agent_id)
 
-    # Start provisioning in background
+    # Start provisioning in background — pass resume_session_id so the
+    # new container can --resume the prior conversation.
     asyncio.create_task(
-        _provision_agent(agent, project, runtime_name, op_log, secret_envs)
+        _provision_agent(agent, project, runtime_name, op_log, secret_envs,
+                         resume_session_id=resume_session_id)
     )
 
     clear_agent_context()
@@ -423,83 +589,45 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         "ABOX_DASHBOARD_URL": getattr(settings, "ABOX_DASHBOARD_URL", ""),
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         "CLAUDECODE": "1",
+        # BASH_ENV is sourced by bash for every non-interactive invocation.
+        # Claude Code's Bash tool uses non-interactive shells, so .bashrc
+        # is NOT read. BASH_ENV ensures secrets are available to all commands.
+        "BASH_ENV": "/mnt/abox-state/secrets/env",
     }
 
 
-async def _resolve_agent_secrets_sync(secret_group_ids: list[str], project, op_log) -> dict[str, dict[str, str]] | None:
+async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
+    """Collect all project secrets this agent should receive.
+
+    A secret goes to this agent if:
+      1. It has no scoped_agents (default-all), OR
+      2. This agent is in its scoped_agents set
+
+    Returns a flat {key: value} dict, or None if no secrets.
     """
-    Decrypt secret groups by IDs (called before launching background task).
+    from agents.models import ProjectSecret
+    from agents.services.secrets import decrypt_value
 
-    This function is safe to call in the normal async context (not inside create_task).
-    Returns dict suitable for passing to provision_workspace.
-    """
-    from agents.services.secrets import decrypt_secrets
-
-    if not secret_group_ids:
-        return None
-
-    # Query secret groups directly (safe in normal async context)
-    secret_groups = await SecretGroup.objects.filter(
-        id__in=secret_group_ids, project=project
-    ).aall()
-
-    if not secret_groups:
-        return None
-
-    # Flat merge: all secret groups' key-value pairs combined
-    merged: dict[str, str] = {}
-    for sg in secret_groups:
-        try:
-            data = decrypt_secrets(bytes(sg.encrypted_data))
-            merged.update(data)
-        except Exception:
-            op_log.warning(
-                "secret_group_decrypt_failed",
-                secret_group=sg.name,
-            )
-
-    if not merged:
-        return None
-
-    op_log.info("secrets_resolved", count=len(merged), groups=len(secret_groups))
-    return {"_global": merged}
-
-
-async def _resolve_agent_secrets(agent, op_log) -> dict[str, dict[str, str]] | None:
-    """Decrypt all secret groups attached to this agent.
-
-    Returns a flat dict of {key: value} from all attached secret groups,
-    or None if no secrets are attached. These are passed to provision_workspace
-    as secret_envs for injection into MCP server env blocks.
-
-    Currently returns a flat merge of all secret groups. When MCP templates
-    (Phase 2) add required_secret_keys, this will become per-MCP-server mapping.
-    """
-    from agents.services.secrets import decrypt_secrets
-
-    # Query SecretGroup directly to avoid ManyToMany async issues
-    secret_groups = [
-        sg async for sg in SecretGroup.objects.filter(agents__id=agent.id)
+    all_secrets = [
+        s async for s in ProjectSecret.objects.filter(
+            project_id=agent.project_id
+        ).prefetch_related("scoped_agents")
     ]
-    if not secret_groups:
+
+    if not all_secrets:
         return None
 
-    # Flat merge: all secret groups' key-value pairs combined
-    # Phase 2 will map specific keys to specific MCP servers
     merged: dict[str, str] = {}
-    for sg in secret_groups:
-        try:
-            data = decrypt_secrets(bytes(sg.encrypted_data))
-            merged.update(data)
-        except Exception:
-            op_log.warning(
-                "secret_group_decrypt_failed",
-                secret_group=sg.name,
-                agent_id=str(agent.id),
-            )
+    for secret in all_secrets:
+        scoped_ids = {a.id for a in secret.scoped_agents.all()}
+        if not scoped_ids or agent.id in scoped_ids:
+            try:
+                merged[secret.key] = decrypt_value(bytes(secret.encrypted_value))
+            except Exception:
+                op_log.warning("secret_decrypt_failed", key=secret.key)
 
     if not merged:
         return None
 
-    op_log.info("secrets_resolved", count=len(merged), groups=len(secret_groups))
-    return {"_global": merged}
+    op_log.info("secrets_resolved", count=len(merged), agent=agent.name)
+    return merged

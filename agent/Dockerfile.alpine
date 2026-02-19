@@ -49,8 +49,8 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ libx11-dev libxtst
     && npm cache clean --force
 
 # --- User ---
-RUN adduser -D -s /bin/bash computeruse \
-    && echo "computeruse ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN adduser -D -s /bin/bash agent \
+    && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # --- Filesystem overlay (configs + s6 services) ---
 COPY rootfs/ /
@@ -58,7 +58,7 @@ RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run 2>/dev/null || true \
     && chmod +x /opt/abox/relay.py \
     && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
-    && chown -R computeruse:computeruse /home/computeruse
+    && chown -R agent:agent /home/agent
 
 # --- Environment ---
 ENV DISPLAY=:1

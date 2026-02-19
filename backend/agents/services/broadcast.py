@@ -128,7 +128,7 @@ async def broadcast_agent_event(
 async def broadcast_stream_message(agent: Agent, message: Message) -> None:
     """Push a new/updated stream Message to the project's message_received and timeline subscriptions.
 
-    See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "messageReceived subscription"
+    See: docs/ARCHITECTURE.md, "messageReceived subscription"
     """
     channel_layer = get_channel_layer()
     group = _group_name(str(agent.project_id), "messages")

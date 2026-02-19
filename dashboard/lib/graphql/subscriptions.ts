@@ -41,15 +41,14 @@ export const MESSAGE_RECEIVED_SUBSCRIPTION = gql`
   }
 `;
 
-export const TIMELINE_STREAM_SUBSCRIPTION = gql`
-  subscription TimelineStream($projectId: ID!) {
-    timelineStream(projectId: $projectId) {
+export const NEW_EVENT_SUBSCRIPTION = gql`
+  subscription NewEvent($projectId: ID!) {
+    newEvent(projectId: $projectId) {
       id
-      entryType
+      eventType
+      data
       agentId
       agentName
-      summary
-      data
       createdAt
     }
   }

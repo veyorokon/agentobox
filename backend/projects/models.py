@@ -11,6 +11,7 @@ class Project(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="projects"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    theme_tokens = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

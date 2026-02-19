@@ -74,7 +74,7 @@ class AgentSubscription:
         Pushes typed Message payloads (with content parts) when the
         backend processes assistant/user events from the relay.
 
-        See: docs/STREAM-JSON-INTEGRATION-SPEC.md, "messageReceived subscription"
+        See: docs/ARCHITECTURE.md, "messageReceived subscription"
         """
         from agents.models import Message
 

@@ -1,42 +1,76 @@
 import { create } from 'zustand';
+import { buildAgentColorMap } from '@/lib/agent-colors';
 import type { Agent } from '@/types';
-
-export type DetailTab = 'desktop' | 'chat' | 'config';
+import type { MockAgent } from '@/lib/mock-v2-data';
 
 interface AgentsState {
-  agents: Record<string, Agent[]>; // keyed by projectId
-  selectedAgentId: string | null;
-  detailTab: DetailTab;
-  setAgents: (projectId: string, agents: Agent[]) => void;
-  upsertAgent: (projectId: string, agent: Agent) => void;
-  setSelectedAgent: (agentId: string | null) => void;
-  setDetailTab: (tab: DetailTab) => void;
+  agents: Record<string, MockAgent>;
+  sortedAgents: MockAgent[];
+  agentColors: Record<string, string>;
+  stats: { running: number; idle: number; totalCost: number };
+  fetching: boolean;
+
+  setAgents: (raw: Agent[]) => void;
+  updateAgent: (agent: Agent) => void;
+  setFetching: (v: boolean) => void;
+  reset: () => void;
 }
 
-export const useAgentsStore = create<AgentsState>((set) => ({
+function sortAgents(agents: MockAgent[]): MockAgent[] {
+  return [...agents].sort((a, b) => {
+    if (a.role === 'lead' && b.role !== 'lead') return -1;
+    if (b.role === 'lead' && a.role !== 'lead') return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function computeStats(agents: MockAgent[]) {
+  return {
+    running: agents.filter((a) => a.status === 'running').length,
+    idle: agents.filter((a) => a.status === 'idle').length,
+    totalCost: agents.reduce((sum, a) => sum + Number(a.sessionCostUsd || 0), 0),
+  };
+}
+
+export const useAgentsStore = create<AgentsState>()((set, get) => ({
   agents: {},
-  selectedAgentId: null,
-  detailTab: 'chat',
+  sortedAgents: [],
+  agentColors: {},
+  stats: { running: 0, idle: 0, totalCost: 0 },
+  fetching: false,
 
-  setAgents: (projectId, agents) =>
-    set((state) => ({
-      agents: { ...state.agents, [projectId]: agents },
-    })),
+  setAgents: (raw) => {
+    const agents: Record<string, MockAgent> = {};
+    for (const a of raw as MockAgent[]) agents[a.id] = a;
+    const sorted = sortAgents(raw as MockAgent[]);
+    set({
+      agents,
+      sortedAgents: sorted,
+      agentColors: buildAgentColorMap(sorted),
+      stats: computeStats(sorted),
+    });
+  },
 
-  upsertAgent: (projectId, agent) =>
-    set((state) => {
-      const current = state.agents[projectId] ?? [];
-      const idx = current.findIndex((a) => a.id === agent.id);
-      const updated =
-        idx >= 0
-          ? current.map((a, i) => (i === idx ? agent : a))
-          : [...current, agent];
-      return { agents: { ...state.agents, [projectId]: updated } };
+  updateAgent: (agent) => {
+    const prev = get().agents;
+    const updated = { ...prev, [agent.id]: agent as MockAgent };
+    const all = Object.values(updated);
+    const sorted = sortAgents(all);
+    set({
+      agents: updated,
+      sortedAgents: sorted,
+      agentColors: buildAgentColorMap(sorted),
+      stats: computeStats(all),
+    });
+  },
+
+  setFetching: (v) => set({ fetching: v }),
+  reset: () =>
+    set({
+      agents: {},
+      sortedAgents: [],
+      agentColors: {},
+      stats: { running: 0, idle: 0, totalCost: 0 },
+      fetching: false,
     }),
-
-  setSelectedAgent: (agentId) =>
-    set({ selectedAgentId: agentId }),
-
-  setDetailTab: (tab) =>
-    set({ detailTab: tab }),
 }));

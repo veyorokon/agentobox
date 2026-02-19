@@ -1,7 +1,7 @@
 """
-Fernet-based encryption for SecretGroup data.
+Fernet-based encryption for project secrets.
 
-Secrets are stored as Fernet-encrypted JSON blobs in the database.
+Secrets are stored as individually Fernet-encrypted values in the database.
 Decrypted only during agent provisioning (to inject into MCP env blocks
 or write to tmpfs).
 
@@ -9,13 +9,11 @@ The encryption key is read from settings.ABOX_ENCRYPTION_KEY. If not set,
 secret creation raises an error rather than silently falling back.
 
 Usage:
-    from agents.services.secrets import encrypt_secrets, decrypt_secrets
+    from agents.services.secrets import encrypt_value, decrypt_value
 
-    encrypted = encrypt_secrets({"SUPABASE_URL": "https://...", "SUPABASE_KEY": "eyJ..."})
-    plaintext = decrypt_secrets(encrypted)  # -> {"SUPABASE_URL": "...", ...}
+    encrypted = encrypt_value("sk-ant-...")
+    plaintext = decrypt_value(encrypted)  # -> "sk-ant-..."
 """
-
-import json
 
 from cryptography.fernet import Fernet
 from django.conf import settings
@@ -37,15 +35,14 @@ def _get_fernet() -> Fernet:
     return Fernet(key.encode() if isinstance(key, str) else key)
 
 
-def encrypt_secrets(data: dict[str, str]) -> bytes:
-    """Encrypt a dict of key-value pairs to a Fernet token (bytes)."""
+
+def encrypt_value(value: str) -> bytes:
+    """Encrypt a single secret value to a Fernet token."""
     f = _get_fernet()
-    plaintext = json.dumps(data).encode("utf-8")
-    return f.encrypt(plaintext)
+    return f.encrypt(value.encode("utf-8"))
 
 
-def decrypt_secrets(encrypted: bytes) -> dict[str, str]:
-    """Decrypt a Fernet token back to the original key-value dict."""
+def decrypt_value(encrypted: bytes) -> str:
+    """Decrypt a single Fernet token back to a string value."""
     f = _get_fernet()
-    plaintext = f.decrypt(encrypted)
-    return json.loads(plaintext.decode("utf-8"))
+    return f.decrypt(encrypted).decode("utf-8")

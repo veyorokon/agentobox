@@ -13,9 +13,9 @@
  *     → persist StreamEvent + broadcast via GraphQL subscription
  *     → dashboard Zustand stores → components
  *
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md
- * @see docs/CRUSH-ARCHITECTURE.md (pattern origin for MessageItem/extractMessageItems)
- * @see docs/CLAUDE-CODE-MESSAGE-PIPELINE.md (Claude Code internals)
+ * @see docs/ARCHITECTURE.md
+ * @see docs/ARCHITECTURE.md (pattern origin for MessageItem/extractMessageItems)
+ * @see docs/ARCHITECTURE.md (Claude Code internals)
  */
 
 // ─── Content Parts ─────────────────────────────────────────────────────────
@@ -34,8 +34,8 @@
 // toolUseId, is_error not isError) because these are stored/transmitted as-is
 // from the stream-json output.
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream" §3-§5
-// @see docs/CLAUDE-CODE-MESSAGE-PIPELINE.md, "Content Parts"
+// @see docs/ARCHITECTURE.md, "Output Event Stream" §3-§5
+// @see docs/ARCHITECTURE.md, "Content Parts"
 
 export interface TextPart {
   type: 'text';
@@ -90,7 +90,7 @@ export type ContentPart =
 //   cacheCreationInputTokens <- usage.cache_creation_input_tokens
 //   cacheReadInputTokens    <- usage.cache_read_input_tokens
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Metrics Available"
+// @see docs/ARCHITECTURE.md, "Metrics Available"
 
 export interface TokenUsage {
   inputTokens: number;
@@ -122,9 +122,9 @@ export interface TokenUsage {
 // (e.g. text part followed by tool_use part). The store must MERGE parts
 // arrays on matching messageId, not skip duplicates.
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream" §3-§5
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Event Correlation"
-// @see docs/CRUSH-ARCHITECTURE.md, "Message Pipeline" (pattern origin)
+// @see docs/ARCHITECTURE.md, "Output Event Stream" §3-§5
+// @see docs/ARCHITECTURE.md, "Event Correlation"
+// @see docs/ARCHITECTURE.md, "Message Pipeline" (pattern origin)
 
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | null;
 
@@ -167,8 +167,8 @@ export interface Message {
 //     is_error: true                          → error
 //     tool_use_result.interrupted: true        → canceled
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Tool Call Lifecycle"
-// @see docs/CRUSH-ARCHITECTURE.md, "Tool Status Display"
+// @see docs/ARCHITECTURE.md, "Tool Call Lifecycle"
+// @see docs/ARCHITECTURE.md, "Tool Status Display"
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error' | 'canceled';
 
@@ -186,7 +186,7 @@ export type ToolStatus = 'pending' | 'running' | 'success' | 'error' | 'canceled
 //   contextWindow           <- modelUsage[model].contextWindow
 //   maxOutputTokens         <- modelUsage[model].maxOutputTokens
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream" §6 (result)
+// @see docs/ARCHITECTURE.md, "Output Event Stream" §6 (result)
 
 export interface ModelUsage {
   inputTokens: number;
@@ -218,8 +218,8 @@ export interface ModelUsage {
 //   modelUsage       <- result.modelUsage (per-model breakdown)
 //   permissionDenials <- result.permission_denials (blocked tool attempts)
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream" §6 (result)
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Metrics Available"
+// @see docs/ARCHITECTURE.md, "Output Event Stream" §6 (result)
+// @see docs/ARCHITECTURE.md, "Metrics Available"
 
 export interface SessionResult {
   agentId: string;
@@ -241,7 +241,7 @@ export interface SessionResult {
 //
 // MCP server status from system/init event's mcp_servers array.
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream" §1 (system/init)
+// @see docs/ARCHITECTURE.md, "Output Event Stream" §1 (system/init)
 
 export interface McpServer {
   name: string;
@@ -263,7 +263,7 @@ export interface McpServer {
 //   agents     <- init.agents (subagent types: ["Bash", "general-purpose", ...])
 //   skills     <- init.skills (loaded skills: ["react-best-practices", ...])
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Output Event Stream" §1 (system/init)
+// @see docs/ARCHITECTURE.md, "Output Event Stream" §1 (system/init)
 
 export interface AgentCapabilities {
   tools: string[];
@@ -293,7 +293,7 @@ export interface AgentCapabilities {
 //   text     <- model is producing text
 //   tool_use <- model is producing tool call JSON
 //
-// @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Partial Messages (Live Streaming)"
+// @see docs/ARCHITECTURE.md, "Partial Messages (Live Streaming)"
 // @see docs/ISSUE-37-FRONTEND.md, "Update: --include-partial-messages validated"
 
 export type StreamDeltaEventType =
@@ -331,7 +331,7 @@ export interface StreamDelta {
 // The extractMessageItems() function in lib/messages.ts performs this
 // conversion.
 //
-// @see docs/CRUSH-ARCHITECTURE.md, "TUI / Display Layer" → ExtractMessageItems
+// @see docs/ARCHITECTURE.md, "TUI / Display Layer" → ExtractMessageItems
 // @see docs/ISSUE-37-FRONTEND.md, "Patterns to Implement" §1
 
 export interface UserMessageItem {

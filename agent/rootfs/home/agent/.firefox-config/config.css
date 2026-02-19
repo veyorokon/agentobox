@@ -1,0 +1,10 @@
+/* agentobox overrides — layout/typography only, colors from theme bridge */
+:root {
+  --tf-font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  --tf-border-width: 2px;
+  --tf-display-horizontal-tabs: block;
+  --tf-display-nav-buttons: flex;
+  --tf-display-window-controls: none;
+  /* Accent from theme bridge: tab_line -> --lwt-tab-line-color carries the accent token */
+  --tf-accent: var(--lwt-tab-line-color, var(--toolbarbutton-icon-fill));
+}

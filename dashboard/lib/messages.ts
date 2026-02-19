@@ -5,8 +5,8 @@
  * from render model. One assistant Message with text + 2 tool calls becomes
  * 3 MessageItems (1 text + 2 tool items with matched results).
  *
- * @see docs/CRUSH-ARCHITECTURE.md, "ExtractMessageItems"
- * @see docs/STREAM-JSON-INTEGRATION-SPEC.md, "Patterns to Implement"
+ * @see docs/ARCHITECTURE.md, "ExtractMessageItems"
+ * @see docs/ARCHITECTURE.md, "Patterns to Implement"
  */
 import type { Message, MessageItem, ContentPart, ToolStatus } from '@/types';
 

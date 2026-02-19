@@ -23,6 +23,7 @@ PLATFORM ?= linux/amd64
 
 agent-image:
 	docker build --platform $(PLATFORM) -f agent/Dockerfile.$(VARIANT) -t agentobox-agent:$(VARIANT) ./agent
+	docker tag agentobox-agent:$(VARIANT) agentobox-agent:latest
 
 up:
 	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build

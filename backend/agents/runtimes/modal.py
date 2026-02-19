@@ -4,7 +4,7 @@ import modal
 import structlog
 from django.conf import settings
 
-from agents.runtimes.base import SandboxInstance
+from agents.runtimes.base import SandboxInstance, VolumeMount
 
 log = structlog.get_logger("agents.runtime.modal")
 
@@ -14,10 +14,10 @@ class ModalRuntime:
 
     async def create(
         self, name: str, env: dict[str, str],
-        volumes: dict[str, str] | None = None,
+        volumes: list[VolumeMount] | None = None,
     ) -> SandboxInstance:
         op = log.bind(op="create", agent=name)
-        op.info("creating_sandbox", volumes=volumes)
+        op.info("creating_sandbox", volumes=[m.name for m in volumes] if volumes else [])
         t0 = time.monotonic()
 
         app = await modal.App.lookup.aio(
@@ -29,15 +29,14 @@ class ModalRuntime:
         )
         env_secret = modal.Secret.from_dict(env)
 
-        # Map {host_path: container_path} to Modal volumes.
-        # Each unique workspace gets a named volume keyed by a slug of the path.
+        # Convert VolumeMount list to Modal volumes.
+        # mount.name is used directly as the Modal volume label.
         modal_volumes = {}
         if volumes:
-            for host_path, container_path in volumes.items():
-                vol_label = "agentobox-ws-" + host_path.strip("/").replace("/", "-")[-60:]
-                vol = modal.Volume.from_name(vol_label, create_if_missing=True)
-                modal_volumes[container_path] = vol
-            op.info("modal_volumes_attached", labels=list(modal_volumes.keys()))
+            for mount in volumes:
+                vol = modal.Volume.from_name(mount.name, create_if_missing=True)
+                modal_volumes[mount.mount_path] = vol
+            op.info("modal_volumes_attached", names=[m.name for m in volumes])
 
         create_kwargs = dict(
             app=app,
@@ -67,7 +66,7 @@ class ModalRuntime:
         return SandboxInstance(id=sb.object_id, vnc_url=vnc_url)
 
     async def exec(
-        self, sandbox_id: str, cmd: list[str], user: str = "computeruse"
+        self, sandbox_id: str, cmd: list[str], user: str = "agent"
     ) -> str:
         op = log.bind(op="exec", sandbox_id=sandbox_id, cmd=cmd[:3])
         op.info("exec_start")

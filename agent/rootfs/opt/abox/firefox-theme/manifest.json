@@ -1,0 +1,18 @@
+{
+  "manifest_version": 2,
+  "name": "Agentobox Theme Bridge",
+  "version": "1.0",
+  "description": "Syncs dashboard theme to Firefox via native messaging",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "abox-theme@agentobox.com"
+    }
+  },
+  "permissions": [
+    "theme",
+    "nativeMessaging"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  }
+}

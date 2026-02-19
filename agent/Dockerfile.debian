@@ -72,16 +72,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- User ---
-RUN useradd -m -s /bin/bash computeruse \
-    && echo "computeruse ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN useradd -m -s /bin/bash agent \
+    && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # --- Filesystem overlay (configs + s6 services) ---
 COPY rootfs/ /
 RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run 2>/dev/null || true \
     && chmod +x /opt/abox/relay.py \
+    && chmod +x /opt/abox/theme-bridge.py \
     && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
-    && chown -R computeruse:computeruse /home/computeruse
+    && python3 -c "import zipfile; z = zipfile.ZipFile('/opt/abox/firefox-theme.xpi', 'w'); z.write('/opt/abox/firefox-theme/manifest.json', 'manifest.json'); z.write('/opt/abox/firefox-theme/background.js', 'background.js'); z.close()" \
+    && chown -R agent:agent /home/agent
 
 # --- Environment ---
 ENV DISPLAY=:1

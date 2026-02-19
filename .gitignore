@@ -10,6 +10,7 @@ __pycache__/
 node_modules/
 dist/
 .next/
+.pnpm-store/
 
 # IDE
 .idea/
@@ -37,3 +38,6 @@ pgdata/
 *.png
 *.jpg
 *.jpeg
+
+# Test output
+test-results/

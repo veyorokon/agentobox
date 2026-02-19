@@ -1,216 +1,40 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
-import { useQuery, useSubscription, useMutation } from 'urql';
+import { useState } from 'react';
+import { useQuery, useMutation, useClient } from 'urql';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { Plus, Folder, ArrowRight, X } from 'lucide-react';
+import { Plus, Folder, ArrowRight, X, Pencil, Trash2, Square } from 'lucide-react';
 import { useProjectsStore } from '@/stores/projects';
-import { useAgentsStore } from '@/stores/agents';
-import { useTimelineStore } from '@/stores/timeline';
+import { useSyncServerData } from '@/hooks/use-sync-server-data';
+import { DashboardShell } from '@/components/v2/layout/dashboard-shell';
+import { PROJECTS_QUERY, AGENTS_QUERY } from '@/lib/graphql/queries';
 import {
-  AGENTS_QUERY,
-  PROJECTS_QUERY,
-  TIMELINE_QUERY,
-} from '@/lib/graphql/queries';
-import {
-  AGENT_UPDATED_SUBSCRIPTION,
-  TIMELINE_STREAM_SUBSCRIPTION,
-} from '@/lib/graphql/subscriptions';
-import { StatusBar } from '@/components/status-bar';
-import { CommandPanel } from '@/components/command-panel';
-import { ChatView } from '@/components/chat-view';
-import { MessageComposer } from '@/components/message-composer';
-import { DeployModal } from '@/components/modals/deploy-modal';
-import {
-  CREATE_AGENT_MUTATION,
   CREATE_PROJECT_MUTATION,
+  DELETE_PROJECT_MUTATION,
+  UPDATE_PROJECT_MUTATION,
+  STOP_ALL_AGENTS_MUTATION,
 } from '@/lib/graphql/mutations';
-import { logger } from '@/lib/observability';
-import type { Agent, Project } from '@/types';
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '@/components/ui/context-menu';
+import type { Project } from '@/types';
 
-const EMPTY_AGENTS: Agent[] = [];
-
-export default function DashboardPage() {
+export default function RootPage() {
   const projectId = useProjectsStore((s) => s.currentProjectId);
-  const allAgents = useAgentsStore((s) =>
-    projectId ? (s.agents[projectId] ?? EMPTY_AGENTS) : EMPTY_AGENTS
-  );
-  const agents = useMemo(
-    () => allAgents.filter((a) => a.status !== 'stopped'),
-    [allAgents]
-  );
-  const setAgents = useAgentsStore((s) => s.setAgents);
-  const upsertAgent = useAgentsStore((s) => s.upsertAgent);
-  const timelineEntries = useTimelineStore((s) => s.entries);
-  const upsertTimelineEntry = useTimelineStore((s) => s.upsert);
-  const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
-  const setSelectedAgent = useAgentsStore((s) => s.setSelectedAgent);
 
-  // Build agent lookup map for ChatView
-  const agentsMap = useMemo(() => {
-    const map: Record<string, Agent> = {};
-    for (const agent of agents) {
-      map[agent.id] = agent;
-    }
-    return map;
-  }, [agents]);
-
-  const [showDeployModal, setShowDeployModal] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [, createAgentMut] = useMutation(CREATE_AGENT_MUTATION);
-
-  // Cmd+B to toggle sidebar
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
-        e.preventDefault();
-        setSidebarCollapsed((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  const queryVars = useMemo(() => ({ projectId }), [projectId]);
-  const paused = !projectId;
-
-  // Fetch agents for current project
-  const [{ data }] = useQuery({
-    query: AGENTS_QUERY,
-    variables: queryVars,
-    pause: paused,
-  });
-
-  useEffect(() => {
-    if (data?.agents && projectId) {
-      setAgents(projectId, data.agents);
-    }
-  }, [data, projectId, setAgents]);
-
-  // Subscribe to agent updates (for CommandPanel/StatusBar)
-  const [agentSubResult] = useSubscription({
-    query: AGENT_UPDATED_SUBSCRIPTION,
-    variables: queryVars,
-    pause: paused,
-  });
-
-  useEffect(() => {
-    if (agentSubResult.data?.agentUpdated && projectId) {
-      upsertAgent(projectId, agentSubResult.data.agentUpdated);
-    }
-  }, [agentSubResult.data, projectId, upsertAgent]);
-
-  // Subscribe to unified timeline stream
-  const [timelineSubResult] = useSubscription({
-    query: TIMELINE_STREAM_SUBSCRIPTION,
-    variables: queryVars,
-    pause: paused,
-  });
-
-  useEffect(() => {
-    if (timelineSubResult.data?.timelineStream) {
-      upsertTimelineEntry(timelineSubResult.data.timelineStream);
-    }
-  }, [timelineSubResult.data, upsertTimelineEntry]);
-
-  const handleDeploy = async (
-    name: string,
-    runtime: string,
-    model: string,
-    mcpServers: string[] = [],
-    workspacePath: string = '',
-    instructions: string = '',
-    secretGroupIds: string[] = [],
-  ) => {
-    if (!projectId) return;
-    setShowDeployModal(false);
-    toast(`Deploying ${name}...`, {
-      description: 'Spinning up container -- this takes about 30-60s.',
-    });
-    try {
-      await logger.withSpan('deployAgent', async () => {
-        const { error } = await createAgentMut({
-          input: {
-            projectId,
-            name,
-            runtime,
-            model,
-            ...(mcpServers.length > 0 && { mcpServers }),
-            ...(workspacePath && { workspacePath }),
-            ...(instructions && { instructions }),
-            ...(secretGroupIds.length > 0 && { secretGroupIds }),
-          },
-        });
-        if (error) throw error;
-      });
-    } catch {
-      toast.error(`Failed to deploy ${name}`);
-    }
-  };
+  // Bridge urql transport -> Zustand stores (no data returned, just side effects)
+  useSyncServerData();
 
   if (!projectId) {
     return <LandingPage />;
   }
 
-  return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background">
-      <StatusBar agents={agents} />
-
-      <div className="flex-1 flex overflow-hidden">
-        <CommandPanel
-          agents={agents}
-          selectedAgentId={selectedAgentId}
-          onSelectAgent={setSelectedAgent}
-          onDeploy={() => setShowDeployModal(true)}
-          collapsed={sidebarCollapsed}
-          onToggle={() => setSidebarCollapsed((v) => !v)}
-        />
-
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <ChatView
-            entries={timelineEntries}
-            agentsMap={agentsMap}
-            selectedAgentId={selectedAgentId}
-          />
-          <MessageComposer
-            agents={agents}
-            selectedAgentId={selectedAgentId}
-          />
-        </main>
-      </div>
-
-      {/* Timeline hydration — single loader replaces per-agent MessageLoaders */}
-      <TimelineLoader projectId={projectId} />
-
-      <DeployModal
-        open={showDeployModal}
-        onClose={() => setShowDeployModal(false)}
-        onDeploy={handleDeploy}
-        projectId={projectId}
-      />
-    </div>
-  );
-}
-
-// ── Timeline loader ──
-// Fetches historical timeline on mount, populates Zustand store.
-// Real-time updates come via TIMELINE_STREAM_SUBSCRIPTION in the parent.
-
-function TimelineLoader({ projectId }: { projectId: string }) {
-  const hydrate = useTimelineStore((s) => s.hydrate);
-  const [{ data }] = useQuery({
-    query: TIMELINE_QUERY,
-    variables: { projectId, limit: 500 },
-  });
-
-  useEffect(() => {
-    if (data?.timeline) {
-      hydrate(data.timeline);
-    }
-  }, [data, hydrate]);
-
-  return null;
+  return <DashboardShell />;
 }
 
 // ── Landing page — shown when no project selected ──
@@ -225,26 +49,51 @@ const fadeUp = {
   show: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] },
+    transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] as const },
   },
 };
 
+const ACTIVE_STATUSES = ['running', 'deploying', 'idle'];
+
+const augBorder = (color = 'var(--border)') =>
+  ({
+    '--aug-tl': '8px',
+    '--aug-br': '8px',
+    '--aug-border-all': '1px',
+    '--aug-border-bg': color,
+  }) as React.CSSProperties;
+
 function LandingPage() {
   const setCurrentProject = useProjectsStore((s) => s.setCurrentProject);
-  const [{ data, fetching }] = useQuery({ query: PROJECTS_QUERY });
-  const [, createProject] = useMutation(CREATE_PROJECT_MUTATION);
+  const currentProjectId = useProjectsStore((s) => s.currentProjectId);
+  const client = useClient();
 
+  const [{ data, fetching }, reexecuteProjectsQuery] = useQuery({
+    query: PROJECTS_QUERY,
+  });
+  const [, createProject] = useMutation(CREATE_PROJECT_MUTATION);
+  const [, updateProject] = useMutation(UPDATE_PROJECT_MUTATION);
+  const [, deleteProject] = useMutation(DELETE_PROJECT_MUTATION);
+  const [, stopAllAgents] = useMutation(STOP_ALL_AGENTS_MUTATION);
+
+  // Create state
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
 
+  // Rename state
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameName, setRenameName] = useState('');
+
+  // Delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
+  const [runningAgentCount, setRunningAgentCount] = useState<number | null>(null);
+  const [stoppingAgents, setStoppingAgents] = useState(false);
+
   const projects: Project[] = data?.projects ?? [];
 
-  // Auto-select if exactly one project exists
-  useEffect(() => {
-    if (projects.length === 1) {
-      setCurrentProject(projects[0].id);
-    }
-  }, [projects, setCurrentProject]);
+
+  // ── Create ──
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -259,6 +108,93 @@ function LandingPage() {
       setNewName('');
       setCreating(false);
     }
+  };
+
+  // ── Rename ──
+
+  const startRename = (project: Project) => {
+    setDeletingId(null);
+    setRenamingId(project.id);
+    setRenameName(project.name);
+  };
+
+  const handleRename = async () => {
+    if (!renamingId) return;
+    const name = renameName.trim();
+    if (!name) return;
+    const { error } = await updateProject({ id: renamingId, name });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setRenamingId(null);
+    setRenameName('');
+    reexecuteProjectsQuery({ requestPolicy: 'network-only' });
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
+    setRenameName('');
+  };
+
+  // ── Delete ──
+
+  const startDelete = async (project: Project) => {
+    setRenamingId(null);
+    setDeletingId(project.id);
+    setDeleteConfirmName('');
+    setRunningAgentCount(null);
+
+    // Fetch agents to check for running ones
+    const { data: agentsData } = await client
+      .query(AGENTS_QUERY, { projectId: project.id })
+      .toPromise();
+    const agents = agentsData?.agents ?? [];
+    const running = agents.filter(
+      (a: { status: string }) => ACTIVE_STATUSES.includes(a.status)
+    );
+    setRunningAgentCount(running.length);
+  };
+
+  const handleStopAll = async () => {
+    if (!deletingId) return;
+    setStoppingAgents(true);
+    const { data: result, error } = await stopAllAgents({
+      projectId: deletingId,
+    });
+    setStoppingAgents(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    const stopped = result?.stopAllAgents ?? 0;
+    toast.success(`Stopped ${stopped} agent${stopped !== 1 ? 's' : ''}`);
+    setRunningAgentCount(0);
+  };
+
+  const handleDelete = async () => {
+    if (!deletingId) return;
+    const project = projects.find((p) => p.id === deletingId);
+    if (!project || deleteConfirmName !== project.name) return;
+
+    const { error } = await deleteProject({ id: deletingId });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success('Project deleted');
+    if (currentProjectId === deletingId) {
+      setCurrentProject(null);
+    }
+    setDeletingId(null);
+    setDeleteConfirmName('');
+    reexecuteProjectsQuery({ requestPolicy: 'network-only' });
+  };
+
+  const cancelDelete = () => {
+    setDeletingId(null);
+    setDeleteConfirmName('');
+    setRunningAgentCount(null);
   };
 
   return (
@@ -312,49 +248,195 @@ function LandingPage() {
 
         {/* Project cards */}
         <div className="space-y-2 mb-3">
-          {projects.map((project) => (
-            <motion.button
-              key={project.id}
-              initial="hidden"
-              animate="show"
-              variants={fadeUp}
-              onClick={() => setCurrentProject(project.id)}
-              data-augmented-ui="tl-clip br-clip border"
-              className="w-full text-left group"
-              style={
-                {
-                  '--aug-tl': '8px',
-                  '--aug-br': '8px',
-                  '--aug-border-all': '1px',
-                  '--aug-border-bg': 'var(--border)',
-                } as React.CSSProperties
-              }
-            >
-              <div className="px-4 py-3.5 flex items-center justify-between transition-colors group-hover:bg-accent/5">
-                <div className="flex items-center gap-3">
-                  <Folder className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
-                  <p className="text-foreground text-sm font-medium">
-                    {project.name}
-                  </p>
-                </div>
-                <ArrowRight className="w-4 h-4 text-muted-foreground/0 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
-              </div>
-            </motion.button>
-          ))}
+          {projects.map((project) => {
+            const isRenaming = renamingId === project.id;
+            const isDeleting = deletingId === project.id;
+
+            // ── Rename mode ──
+            if (isRenaming) {
+              return (
+                <motion.div
+                  key={project.id}
+                  initial="hidden"
+                  animate="show"
+                  variants={fadeUp}
+                  data-augmented-ui="tl-clip br-clip border"
+                  style={augBorder('var(--accent)')}
+                >
+                  <div className="px-4 py-3 flex items-center gap-3">
+                    <Folder className="w-4 h-4 text-accent shrink-0" />
+                    <input
+                      type="text"
+                      value={renameName}
+                      onChange={(e) => setRenameName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleRename();
+                        if (e.key === 'Escape') cancelRename();
+                      }}
+                      className="flex-1 bg-transparent text-foreground text-sm font-mono focus:outline-none"
+                      autoFocus
+                      onFocus={(e) => e.target.select()}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleRename}
+                        disabled={
+                          !renameName.trim() ||
+                          renameName.trim() === project.name
+                        }
+                        className="text-accent text-[10px] font-bold uppercase tracking-wider hover:opacity-80 disabled:opacity-30 transition-opacity"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelRename}
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            }
+
+            // ── Delete confirmation mode ──
+            if (isDeleting) {
+              const nameMatches = deleteConfirmName === project.name;
+              const hasRunningAgents =
+                runningAgentCount !== null && runningAgentCount > 0;
+              const loading = runningAgentCount === null;
+
+              return (
+                <motion.div
+                  key={project.id}
+                  initial="hidden"
+                  animate="show"
+                  variants={fadeUp}
+                  data-augmented-ui="tl-clip br-clip border"
+                  style={augBorder('var(--destructive, #ef4444)')}
+                >
+                  <div className="px-4 py-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-foreground text-sm font-medium">
+                        {project.name}
+                      </p>
+                      <button
+                        onClick={cancelDelete}
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <p className="text-muted-foreground text-xs">
+                      This permanently removes all agents, history, and data.
+                    </p>
+
+                    {loading ? (
+                      <p className="text-muted-foreground text-xs font-mono">
+                        Checking agents...
+                      </p>
+                    ) : hasRunningAgents ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-yellow-500 text-xs">
+                          {runningAgentCount} agent
+                          {runningAgentCount !== 1 ? 's' : ''} running
+                        </p>
+                        <button
+                          onClick={handleStopAll}
+                          disabled={stoppingAgents}
+                          className="text-yellow-500 text-[10px] font-bold uppercase tracking-wider hover:opacity-80 disabled:opacity-50 transition-opacity flex items-center gap-1"
+                        >
+                          <Square className="w-3 h-3" />
+                          {stoppingAgents ? 'Stopping...' : 'Stop all agents'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={deleteConfirmName}
+                          onChange={(e) => setDeleteConfirmName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && nameMatches)
+                              handleDelete();
+                            if (e.key === 'Escape') cancelDelete();
+                          }}
+                          placeholder={`Type "${project.name}" to confirm`}
+                          className="w-full bg-transparent text-foreground text-sm font-mono focus:outline-none placeholder:text-muted-foreground/30 border-b border-border/50 pb-1"
+                          autoFocus
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={cancelDelete}
+                            className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider hover:opacity-80 transition-opacity"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleDelete}
+                            disabled={!nameMatches}
+                            className="text-red-500 text-[10px] font-bold uppercase tracking-wider hover:opacity-80 disabled:opacity-30 transition-opacity"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            }
+
+            // ── Normal project card with context menu ──
+            return (
+              <ContextMenu key={project.id}>
+                <ContextMenuTrigger asChild>
+                  <motion.button
+                    initial="hidden"
+                    animate="show"
+                    variants={fadeUp}
+                    onClick={() => setCurrentProject(project.id)}
+                    data-augmented-ui="tl-clip br-clip border"
+                    className="w-full text-left group"
+                    style={augBorder()}
+                  >
+                    <div className="px-4 py-3.5 flex items-center justify-between transition-colors group-hover:bg-accent/5">
+                      <div className="flex items-center gap-3">
+                        <Folder className="w-4 h-4 text-muted-foreground group-hover:text-accent transition-colors" />
+                        <p className="text-foreground text-sm font-medium">
+                          {project.name}
+                        </p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-muted-foreground/0 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
+                    </div>
+                  </motion.button>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onSelect={() => startRename(project)}>
+                    <Pencil className="w-4 h-4" />
+                    Rename
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    variant="destructive"
+                    onSelect={() => startDelete(project)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          })}
 
           {/* Create new project */}
           <motion.div variants={fadeUp}>
             {creating ? (
               <div
                 data-augmented-ui="tl-clip br-clip border"
-                style={
-                  {
-                    '--aug-tl': '8px',
-                    '--aug-br': '8px',
-                    '--aug-border-all': '1px',
-                    '--aug-border-bg': 'var(--accent)',
-                  } as React.CSSProperties
-                }
+                style={augBorder('var(--accent)')}
               >
                 <div className="px-4 py-3 flex items-center gap-3">
                   <Plus className="w-4 h-4 text-accent shrink-0" />
@@ -400,10 +482,7 @@ function LandingPage() {
                 className="w-full text-left group"
                 style={
                   {
-                    '--aug-tl': '8px',
-                    '--aug-br': '8px',
-                    '--aug-border-all': '1px',
-                    '--aug-border-bg': 'var(--border)',
+                    ...augBorder(),
                     borderStyle: 'dashed',
                   } as React.CSSProperties
                 }
@@ -425,7 +504,7 @@ function LandingPage() {
           className="text-muted-foreground/40 text-[10px] font-mono"
         >
           {projects.length > 0
-            ? 'select a project to view agents'
+            ? 'right-click a project for more options'
             : 'create your first project to begin'}
         </motion.p>
       </motion.div>

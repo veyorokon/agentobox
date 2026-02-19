@@ -3,7 +3,7 @@
 ## Local Dev
 
 ```bash
-docker compose up -d          # postgres, redis, backend, gda, dashboard
+docker compose up -d          # postgres, redis, backend, dashboard
 ```
 
 - Dashboard: http://localhost:3000
@@ -21,9 +21,14 @@ docker compose up -d          # postgres, redis, backend, gda, dashboard
 - Release builds: push `v*` tag -> `:latest` + `:v1.2.3`
 - Image: `ghcr.io/veyorokon/agentobox-agent` (private, Modal pulls via `ghcr-secret`)
 
-## Foundations
+## Documentation
 
-`docs/FOUNDATIONS.md` is the source of truth for product axioms, design principles, research findings, and experiment results. Read it before making architectural decisions, adding new hook integrations, changing agent lifecycle logic, or designing features that touch the control plane. It documents how Claude Code's teaming, hooks, mailbox, and task system actually work (validated by experiments), and what Agentobox's role is relative to Claude's native capabilities.
+- `docs/FOUNDATIONS.md` — Product axioms, principles, design decisions, open questions
+- `docs/ARCHITECTURE.md` — Technical reference: system architecture, patterns, services, models
+- `docs/DASHBOARD-UX-SPEC.md` — UX framework, feature inventory, component hierarchy
+- `docs/archive/` — Historical research (experiments, binary analysis, Crush comparison)
+
+Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before writing backend code, adding hook interceptions, or modifying agent provisioning. Read DASHBOARD-UX-SPEC before frontend work.
 
 ## Architecture
 
@@ -80,7 +85,7 @@ The team lead is Claude Code on the host. Agents are Docker containers visible i
 ### Key fields on createAgent
 
 - `name` — Role identifier visible to teammates for task routing
-- `workspacePath` — Host dir bind-mounted to `/home/computeruse/workspace`
+- `workspacePath` — Host dir bind-mounted to `/home/agent/workspace`
 - `instructions` — Scope of responsibilities, injected as "## Responsibilities" in CLAUDE.md
 - `mcpServers` — List of MCP names from registry (e.g. `["playwright"]`)
 
