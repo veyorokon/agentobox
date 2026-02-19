@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useQuery, useSubscription, useClient } from 'urql';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
@@ -30,12 +30,22 @@ export function useSyncServerData() {
     pause: !projectId,
   });
 
+  // Only use the query for the INITIAL agent load. After that, all updates
+  // come through the agentUpdated subscription. This prevents urql's document
+  // cache invalidation (triggered by subscription AgentType results) from
+  // refetching stale data that overwrites subscription-driven updates.
+  const [agentsInitLoaded, setAgentsInitLoaded] = useState(false);
+
   useEffect(() => {
     useAgentsStore.getState().setFetching(agentsFetching);
-    if (agentsData?.agents) {
+  }, [agentsFetching]);
+
+  useEffect(() => {
+    if (agentsData?.agents && !agentsInitLoaded) {
       useAgentsStore.getState().setAgents(agentsData.agents as Agent[]);
+      setAgentsInitLoaded(true);
     }
-  }, [agentsData, agentsFetching]);
+  }, [agentsData, agentsInitLoaded]);
 
   // ── Feed: initial load (newest page) ──
   const [{ data: feedData, fetching: feedFetching }] = useQuery({
@@ -148,6 +158,7 @@ export function useSyncServerData() {
     if (projectId !== prevProjectId.current) {
       useAgentsStore.getState().reset();
       useFeedStore.getState().reset();
+      setAgentsInitLoaded(false); // allow fresh query load for new project
       prevProjectId.current = projectId;
     }
   }, [projectId]);

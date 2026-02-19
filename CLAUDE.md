@@ -118,3 +118,23 @@ curl -s localhost:8000/graphql -H 'Content-Type: application/json' \
 
 - **Python**: `uv` for package management (`uv run`, `uv sync`, `uv pip`)
 - In Docker containers, always use `uv run` to execute Python commands
+
+### Uploading screenshots to GitHub issues
+
+macOS screenshot filenames contain a Unicode narrow no-break space (`U+202F`) before AM/PM that breaks most CLI tools (cp, gh, etc.). The file shows up in `ls` but fails in every other command.
+
+```bash
+# Diagnose: look for 3-byte sequence e2 80 af before "PM"
+ls Screenshot* | xxd | head
+
+# Fix: strip non-ASCII chars from filenames
+for f in Screenshot*; do
+  mv "$f" "$(echo "$f" | LC_ALL=C tr -dc 'a-zA-Z0-9._-')"
+done
+
+# Upload to GitHub issue (uses gh-attach extension)
+# Install once: gh extension install atani/gh-attach
+gh attach --issue <num> --image /path/to/file.png --release --body "description"
+```
+
+`--release` mode uses GitHub Releases API (CLI auth only, no browser needed). Creates a `gh-attach-assets` release tag in the repo for hosting the images.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useEffect, useCallback } from 'react';
+import { useMemo, useRef, useEffect, useCallback, useState } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
@@ -81,6 +81,29 @@ export function SummaryFeed() {
   const filteredRef = useRef<MockFeedItem[]>(filtered);
   filteredRef.current = filtered;
 
+  // Auto-scroll: track whether user is near the bottom.
+  // When at bottom and new items arrive, scroll down. Disengages when user scrolls up.
+  const isAtBottomRef = useRef(true);
+  const prevCountRef = useRef(filtered.length);
+
+  const handleAtBottomChange = useCallback((atBottom: boolean) => {
+    isAtBottomRef.current = atBottom;
+  }, []);
+
+  useEffect(() => {
+    const prevCount = prevCountRef.current;
+    prevCountRef.current = filtered.length;
+    if (filtered.length > prevCount && isAtBottomRef.current) {
+      requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: filtered.length - 1,
+          align: 'end',
+          behavior: 'smooth',
+        });
+      });
+    }
+  }, [filtered.length]);
+
   useEffect(() => {
     if (!scrollToFeedId) return;
     const idx = filtered.findIndex((item) => item.id === scrollToFeedId);
@@ -145,7 +168,8 @@ export function SummaryFeed() {
         scrollerRef={handleScrollerRef}
         data={filtered}
         computeItemKey={(_, item) => item.id}
-        followOutput="smooth"
+        atBottomThreshold={200}
+        atBottomStateChange={handleAtBottomChange}
         initialTopMostItemIndex={Math.max(0, filtered.length - 1)}
         itemContent={renderItem}
         className="scrollbar-thin"
