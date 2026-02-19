@@ -55,26 +55,50 @@ export function SummaryFeed() {
   const filteredRef = useRef<MockFeedItem[]>(filtered);
   filteredRef.current = filtered;
 
-  // ── Scroll-lock: suppress followOutput during active user scrolling ──
-  const isScrollingRef = useRef(false);
+  // ── Scroll-lock: bypass Virtuoso's followOutput entirely ──
+  // Track pinned state via user-initiated scroll events (wheel/touch).
+  // Programmatic scrolls (from totalListHeightChanged) don't trigger
+  // wheel/touch, so they can't accidentally unpin.
+  const isPinnedRef = useRef(true);
+  const scrollerElRef = useRef<HTMLElement | null>(null);
 
-  const handleIsScrolling = useCallback((scrolling: boolean) => {
-    isScrollingRef.current = scrolling;
+  const scrollerRef = useCallback((el: HTMLElement | Window | null) => {
+    if (!el || el instanceof Window) return;
+    scrollerElRef.current = el;
+
+    // Only user-initiated events (wheel, touch) update pinned state.
+    // This avoids the problem of programmatic scrollTop changes
+    // triggering 'scroll' events and falsely unpinning.
+    const updatePinned = () => {
+      requestAnimationFrame(() => {
+        const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+        isPinnedRef.current = gap < 50;
+      });
+    };
+    el.addEventListener('wheel', updatePinned, { passive: true });
+    el.addEventListener('touchend', updatePinned, { passive: true });
   }, []);
 
-  // Primary auto-scroll: suppress during active user scrolling
-  const followOutput = useCallback(
-    (isAtBottom: boolean) => {
-      if (isScrollingRef.current) {
-        console.log(`[feed] followOutput SUPPRESSED (user scrolling) atBottom=${isAtBottom}`);
-        return false;
+  // Reset pinned on agent filter change — new context should always start at bottom
+  useEffect(() => {
+    isPinnedRef.current = true;
+  }, [selectedAgentId]);
+
+  // Scroll to bottom reactively: fires whenever Virtuoso's total list height changes
+  // (items rendered, measured, added). No arbitrary timeouts — this is the actual
+  // signal that new content is ready to be scrolled to.
+  const handleListHeightChanged = useCallback(() => {
+    if (!isPinnedRef.current) return;
+    // Defer to next frame: totalListHeightChanged fires before DOM update
+    // and before Virtuoso's own initialTopMostItemIndex positioning.
+    // rAF runs after both, so scrollTop = scrollHeight reaches the true bottom.
+    requestAnimationFrame(() => {
+      const el = scrollerElRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
       }
-      const result = isAtBottom ? 'auto' : false;
-      console.log(`[feed] followOutput atBottom=${isAtBottom} → ${result} items=${filteredRef.current.length}`);
-      return result;
-    },
-    [],
-  );
+    });
+  }, []);
 
   useEffect(() => {
     if (!scrollToFeedId) return;
@@ -127,12 +151,11 @@ export function SummaryFeed() {
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       <Virtuoso
         ref={virtuosoRef}
+        scrollerRef={scrollerRef}
         data={filtered}
         computeItemKey={(_, item) => item.id}
-        followOutput={followOutput}
-        atBottomThreshold={100}
-        isScrolling={handleIsScrolling}
         initialTopMostItemIndex={Math.max(0, filtered.length - 1)}
+        totalListHeightChanged={handleListHeightChanged}
         itemContent={renderItem}
         className="scrollbar-thin"
         style={{ flex: 1 }}
