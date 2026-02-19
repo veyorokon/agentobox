@@ -27,6 +27,7 @@ async def provision_workspace(
     agent_role: str = "worker",
     agent_name: str = "",
     team_members: list[dict] | None = None,
+    team_name: str = "",
 ) -> None:
     """
     Write CLAUDE.md, .claude/settings.json, .mcp.json, and security
@@ -38,6 +39,7 @@ async def provision_workspace(
         agent_role: "lead" or "worker".
         agent_name: This agent's name (for team context).
         team_members: List of team member dicts for CLAUDE.md roster.
+        team_name: Team name for lead's spawning instructions.
     """
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/agent"
@@ -59,6 +61,7 @@ async def provision_workspace(
         agent_role=agent_role,
         agent_name=agent_name,
         team_members=team_members,
+        team_name=team_name,
     )
     await runtime.write_file(
         sandbox_id,
@@ -262,11 +265,39 @@ def _build_claude_md(
     agent_role: str = "worker",
     agent_name: str = "",
     team_members: list[dict] | None = None,
+    team_name: str = "",
 ) -> str:
     os_desc = IMAGE_VARIANTS.get(variant, IMAGE_VARIANTS["debian"])
+    is_lead = agent_role == "lead"
+    sections: list[str] = []
 
+    # --- 1. Identity ---
+    role_desc = "the team lead" if is_lead else "a team member"
+    sections.append(
+        f"# {project.name}\n"
+        f"\n"
+        f"You are **{agent_name}**, {role_desc} on the **{project.name}** project.\n"
+    )
+
+    # --- 2. Platform ---
+    sections.append(textwrap.dedent("""\
+        ## Platform
+
+        You are running inside an **agentobox** container — a managed platform for
+        AI agent teams. Key things to know:
+
+        - Your container has a full Linux desktop (X11), browser, and terminal
+        - A relay process runs alongside you, streaming your activity to the backend
+          — your tool calls, messages, and outputs are visible in the dashboard
+        - Hooks intercept certain actions (like teammate creation) and route them
+          through the platform instead of executing locally
+        - Your workspace is a shared volume — file changes are visible to the host
+          and other agents immediately
+    """))
+
+    # --- 3. Workspace ---
     if workspace_path:
-        workspace_section = (
+        sections.append(
             "## Workspace\n"
             "\n"
             "You are working in `/home/agent/workspace` (mounted from host).\n"
@@ -274,47 +305,41 @@ def _build_claude_md(
             "to other agents. Stay within this directory for project work.\n"
         )
     else:
-        workspace_section = (
+        sections.append(
             "## Workspace\n"
             "\n"
             "You are working in `/home/agent`. Stay within this directory.\n"
         )
 
-    role_desc = "the team lead" if agent_role == "lead" else "a team member"
-    base = (
-        f"# {project.name}\n"
-        f"\n"
-        f"You are **{agent_name}**, {role_desc} on the {project.name} project.\n"
-        f"\n"
-        f"{workspace_section}"
-        f"\n"
-        f"## Environment\n"
-        f"\n"
+    # --- 4. Environment ---
+    sections.append(
+        "## Environment\n"
+        "\n"
         f"- OS: {os_desc}\n"
-        f"- Display: X11 on `:1` (AwesomeWM window manager)\n"
-        f"- Browser: Firefox ESR (pre-installed)\n"
-        f"\n"
-        f"## Services\n"
-        f"\n"
-        f"- Backend API: available at env var `ABOX_CALLBACK_URL`\n"
-        f"- Dashboard: available at env var `ABOX_DASHBOARD_URL`\n"
+        "- Display: X11 on `:1` (AwesomeWM window manager)\n"
+        "- Browser: Firefox ESR (pre-installed)\n"
+        "- Backend API: available at env var `ABOX_CALLBACK_URL`\n"
+        "- Dashboard: available at env var `ABOX_DASHBOARD_URL`\n"
     )
 
+    # --- 5. Responsibilities ---
     if instructions:
-        base += f"\n## Responsibilities\n\n{instructions.strip()}\n"
+        sections.append(f"## Responsibilities\n\n{instructions.strip()}\n")
 
-    # Team section — all agents get teammate roster and communication info
+    # --- 6. Team roster ---
     if team_members:
-        base += "\n## Team\n\n"
+        roster = "## Team\n\n"
         for member in team_members:
             name = member.get("name", "unknown")
             role = member.get("role", "worker")
             responsibilities = member.get("instructions", "")
             marker = " (you)" if name == agent_name else ""
-            base += f"- **{name}** ({role}){marker}: {responsibilities}\n"
+            roster += f"- **{name}** ({role}){marker}: {responsibilities}\n"
+        sections.append(roster)
 
-        # Communication — how messages actually work
-        base += "\n" + textwrap.dedent("""
+    # --- 7. Communication ---
+    if team_members:
+        sections.append(textwrap.dedent("""\
             ## Communication
 
             Messages from teammates arrive as regular user turns prefixed with the
@@ -328,12 +353,15 @@ def _build_claude_md(
             - `type: "shutdown_request"` + `recipient: "<name>"` — Request shutdown
 
             Always refer to teammates by their **name** (e.g. "backend", "frontend").
-        """).strip() + "\n"
+        """))
 
-    # Lead-only: task management tools
-    if agent_role == "lead" and team_members:
-        base += "\n" + textwrap.dedent("""
-            ## Task Management
+    # --- 8. Coordination (lead only) ---
+    if is_lead and team_members:
+        # 8a. Task Management
+        sections.append(textwrap.dedent("""\
+            ## Coordination
+
+            ### Task Management
 
             As team lead, use these tools to coordinate work:
 
@@ -344,20 +372,80 @@ def _build_claude_md(
 
             Workflow: create tasks, assign via `TaskUpdate` with owner param,
             monitor with `TaskList`, coordinate via `SendMessage` as needed.
-        """).strip() + "\n"
+        """))
 
-    # Append instructions from attached MCP servers
+        # 8b. Spawning Teammates
+        tn = team_name or project.name.lower().replace(" ", "-")
+        sections.append(textwrap.dedent(f"""\
+            ### Spawning Teammates
+
+            To create a new agent on the team, use the Task tool with `team_name`:
+
+                Task(
+                    team_name="{tn}",
+                    name="<role-name>",
+                    prompt="<responsibilities and initial task>"
+                )
+
+            This deploys a new container agent that:
+            - Boots in ~30-60 seconds
+            - Shares your workspace (same mounted directory)
+            - Joins the team — message it via SendMessage(recipient="<name>")
+            - Persists until stopped from the dashboard
+
+            **Important:**
+            - Do NOT create `.claude/agents/` files — they don't work in this environment
+            - `Task(team_name=...)` → persistent container teammate (parallel, own context)
+            - `Task(...)` without team_name → ephemeral local subtask (runs inside your
+              container, blocks until done, then disappears)
+            - Each teammate is a separate container. Spawn when parallel work or
+              specialization justifies the overhead.
+        """))
+
+    # --- 9. Tasks (worker only) ---
+    if not is_lead:
+        sections.append(textwrap.dedent("""\
+            ## Tasks
+
+            You may receive tasks from the team lead. Use these tools to manage your work:
+
+            - `TaskList` — See tasks assigned to you
+            - `TaskGet` — Read full task details and requirements
+            - `TaskUpdate` — Mark tasks in_progress when starting, completed when done
+
+            When you finish a task, mark it completed and check TaskList for the next one.
+            If you're blocked, message the team lead via SendMessage.
+        """))
+
+    # --- 10. How the System Works ---
+    sections.append(textwrap.dedent("""\
+        ## How the System Works
+
+        Your container runs a **relay process** that streams your activity (tool calls,
+        messages, outputs) to the agentobox backend. This is transparent — you don't
+        need to do anything special. The dashboard shows your activity in real-time.
+
+        **Hooks** intercept specific tool calls and route them through the platform:
+        - `Task` with `team_name` parameter → intercepted, creates a real container
+          agent instead of a local subprocess
+        - All other tools execute normally inside your container
+
+        **Team config** lives at `~/.claude/teams/` — the platform manages this
+        automatically. Don't modify these files manually.
+    """))
+
+    # --- 11. MCP Tools ---
     if mcp_servers:
         for name in mcp_servers:
             entry = MCP_REGISTRY.get(name, {})
             mcp_instructions = entry.get("instructions")
             if mcp_instructions:
-                base += "\n" + textwrap.dedent(mcp_instructions).strip() + "\n"
+                sections.append(textwrap.dedent(mcp_instructions).strip() + "\n")
 
-    # Security instructions (soft control — Layer 6)
-    base += "\n" + SECURITY_INSTRUCTIONS.strip() + "\n"
+    # --- 12. Security ---
+    sections.append(SECURITY_INSTRUCTIONS.strip() + "\n")
 
-    return base
+    return "\n".join(sections)
 
 
 # Image variants and their OS descriptions for CLAUDE.md

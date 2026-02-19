@@ -290,6 +290,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             agent_role=agent.role,
             agent_name=agent.name,
             team_members=team_members,
+            team_name=team_name,
         )
         await provision_team_config(
             runtime, sandbox.id, team_name, all_agents, agent.name,

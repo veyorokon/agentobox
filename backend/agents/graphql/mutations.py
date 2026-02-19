@@ -209,6 +209,7 @@ class AgentMutation:
                     for a in all_agents
                 ]
 
+                team_name = agent.project.name.lower().replace(" ", "-")
                 runtime = get_runtime(agent.runtime)
                 claude_md = _build_claude_md(
                     agent.project,
@@ -218,6 +219,7 @@ class AgentMutation:
                     agent_role=agent.role,
                     agent_name=agent.name,
                     team_members=team_members,
+                    team_name=team_name,
                 )
                 await runtime.write_file(
                     agent.sandbox_id,
@@ -309,13 +311,17 @@ class AgentMutation:
     # --- Project Secrets ---
 
     @strawberry.mutation
-    async def set_secret(self, input: SetSecretInput) -> ProjectSecretType:
+    async def set_secret(self, input: SetSecretInput, info: strawberry.types.Info) -> ProjectSecretType:
         """Create or update a project secret (upsert by project + key)."""
         from agents.models import ProjectSecret
         from agents.services.secrets import encrypt_value
         from projects.models import Project
 
-        project = await Project.objects.aget(id=input.project_id)
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        project = await Project.objects.aget(id=input.project_id, owner=user)
 
         secret, created = await ProjectSecret.objects.aupdate_or_create(
             project=project,
@@ -329,24 +335,34 @@ class AgentMutation:
         return secret
 
     @strawberry.mutation
-    async def delete_secret(self, project_id: ID, key: str) -> bool:
+    async def delete_secret(self, project_id: ID, key: str, info: strawberry.types.Info) -> bool:
         """Delete a project secret by key."""
         from agents.models import ProjectSecret
 
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
         try:
-            secret = await ProjectSecret.objects.aget(project_id=project_id, key=key)
+            secret = await ProjectSecret.objects.aget(
+                project_id=project_id, project__owner=user, key=key,
+            )
             await secret.adelete()
             return True
         except ProjectSecret.DoesNotExist:
             return False
 
     @strawberry.mutation
-    async def scope_secret(self, input: ScopeSecretInput) -> ProjectSecretType:
+    async def scope_secret(self, input: ScopeSecretInput, info: strawberry.types.Info) -> ProjectSecretType:
         """Set which agents a secret is restricted to. Empty = all agents."""
         from agents.models import Agent, ProjectSecret
 
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
         secret = await ProjectSecret.objects.aget(
-            project_id=input.project_id, key=input.key,
+            project_id=input.project_id, project__owner=user, key=input.key,
         )
 
         if input.agent_ids:
