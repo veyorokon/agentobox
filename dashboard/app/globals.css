@@ -75,7 +75,7 @@
 /* ============================================
    Cyberpunk dark theme (default dark)
    ============================================ */
-.dark, [data-theme="cyberpunk"] {
+[data-theme="cyberpunk"] {
   --background: #000000;
   --foreground: #fafafa;
   --card: rgba(0, 0, 0, 0.5);
