@@ -23,6 +23,7 @@ export const useFeedStore = create<FeedState>()((set) => ({
 
   setItems: (raw) => {
     const items = adaptFeedItems(raw);
+    console.log(`[feed-store] setItems: ${raw.length} raw → ${items.length} adapted`);
     set({ items, timeline: adaptFeedToTimeline(items) });
   },
 
@@ -31,6 +32,7 @@ export const useFeedStore = create<FeedState>()((set) => ({
     set((state) => {
       const existingIds = new Set(state.items.map((i) => i.id));
       const fresh = incoming.filter((i) => !existingIds.has(i.id));
+      console.log(`[feed-store] mergeLatest: ${incoming.length} incoming, ${fresh.length} fresh, ${state.items.length} existing`);
       if (fresh.length === 0) return state;
       const all = [...state.items, ...fresh];
       return { items: all, timeline: adaptFeedToTimeline(all) };

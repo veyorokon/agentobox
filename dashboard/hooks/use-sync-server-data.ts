@@ -48,6 +48,14 @@ export function useSyncServerData() {
   }, [agentsData, agentsInitLoaded]);
 
   // ── Feed: initial load (all items) ──
+  // Same pattern as agents: only use the query for the INITIAL load.
+  // After that, all updates come through mergeLatest (subscription-driven).
+  // Without this gate, urql's document cache invalidation (triggered by the
+  // imperative fetchLatest) re-fires this useQuery, calling setItems which
+  // replaces the entire array — causing Virtuoso to lose scroll position
+  // and breaking followOutput auto-scroll.
+  const [feedInitLoaded, setFeedInitLoaded] = useState(false);
+
   const [{ data: feedData, fetching: feedFetching }] = useQuery({
     query: PROJECT_FEED_QUERY,
     variables: { projectId },
@@ -56,20 +64,29 @@ export function useSyncServerData() {
 
   useEffect(() => {
     useFeedStore.getState().setFetching(feedFetching);
-    if (feedData?.projectFeed) {
+  }, [feedFetching]);
+
+  useEffect(() => {
+    if (feedData?.projectFeed && !feedInitLoaded) {
+      console.log(`[sync] feed initial load: ${feedData.projectFeed.length} items`);
       useFeedStore.getState().setItems(feedData.projectFeed as GqlFeedItem[]);
+      setFeedInitLoaded(true);
+    } else if (feedData?.projectFeed && feedInitLoaded) {
+      console.log(`[sync] feed useQuery re-fired (BLOCKED by gate) — ${feedData.projectFeed.length} items`);
     }
-  }, [feedData, feedFetching]);
+  }, [feedData, feedInitLoaded]);
 
   // ── Imperative: fetch latest and merge (for subscriptions) ──
   const fetchLatest = useCallback(async () => {
     if (!projectId) return;
+    console.log('[sync] fetchLatest triggered (subscription → network-only query)');
     const result = await client.query(
       PROJECT_FEED_QUERY,
       { projectId },
       { requestPolicy: 'network-only' },
     ).toPromise();
     if (result.data?.projectFeed) {
+      console.log(`[sync] fetchLatest got ${result.data.projectFeed.length} items → mergeLatest`);
       useFeedStore.getState().mergeLatest(result.data.projectFeed as GqlFeedItem[]);
     }
   }, [client, projectId]);
@@ -102,7 +119,10 @@ export function useSyncServerData() {
   );
 
   useEffect(() => {
-    if (msgSubData) debouncedFetchLatest();
+    if (msgSubData) {
+      console.log('[sync] messageReceived subscription fired');
+      debouncedFetchLatest();
+    }
   }, [msgSubData, debouncedFetchLatest]);
 
   const [{ data: eventSubData }] = useSubscription(
@@ -111,7 +131,10 @@ export function useSyncServerData() {
   );
 
   useEffect(() => {
-    if (eventSubData) debouncedFetchLatest();
+    if (eventSubData) {
+      console.log('[sync] newEvent subscription fired');
+      debouncedFetchLatest();
+    }
   }, [eventSubData, debouncedFetchLatest]);
 
   // Reset stores on project change
@@ -120,7 +143,8 @@ export function useSyncServerData() {
     if (projectId !== prevProjectId.current) {
       useAgentsStore.getState().reset();
       useFeedStore.getState().reset();
-      setAgentsInitLoaded(false); // allow fresh query load for new project
+      setAgentsInitLoaded(false);
+      setFeedInitLoaded(false);
       prevProjectId.current = projectId;
     }
   }, [projectId]);

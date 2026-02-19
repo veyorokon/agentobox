@@ -55,22 +55,32 @@ export function SummaryFeed() {
   const filteredRef = useRef<MockFeedItem[]>(filtered);
   filteredRef.current = filtered;
 
-  // Auto-scroll: Virtuoso's followOutput handles this natively.
-  // Uses 'auto' (instant) instead of 'smooth' because with multiple agents
-  // sending rapid messages, smooth animation can't finish before the next batch
-  // arrives — causing Virtuoso to think you're not at bottom and disengage.
-  const followOutput = useCallback((isAtBottom: boolean) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[feed] followOutput atBottom=${isAtBottom}`);
-    }
-    return isAtBottom ? 'auto' : false;
+  // ── Scroll-lock: suppress followOutput during active user scrolling ──
+  const isScrollingRef = useRef(false);
+
+  const handleIsScrolling = useCallback((scrolling: boolean) => {
+    isScrollingRef.current = scrolling;
   }, []);
+
+  // Primary auto-scroll: suppress during active user scrolling
+  const followOutput = useCallback(
+    (isAtBottom: boolean) => {
+      if (isScrollingRef.current) {
+        console.log(`[feed] followOutput SUPPRESSED (user scrolling) atBottom=${isAtBottom}`);
+        return false;
+      }
+      const result = isAtBottom ? 'auto' : false;
+      console.log(`[feed] followOutput atBottom=${isAtBottom} → ${result} items=${filteredRef.current.length}`);
+      return result;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!scrollToFeedId) return;
     const idx = filtered.findIndex((item) => item.id === scrollToFeedId);
     if (idx !== -1) {
-      virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior: 'smooth' });
+      virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior: 'auto' });
     }
   }, [scrollToFeedId, filtered]);
 
@@ -120,7 +130,8 @@ export function SummaryFeed() {
         data={filtered}
         computeItemKey={(_, item) => item.id}
         followOutput={followOutput}
-        atBottomThreshold={50}
+        atBottomThreshold={100}
+        isScrolling={handleIsScrolling}
         initialTopMostItemIndex={Math.max(0, filtered.length - 1)}
         itemContent={renderItem}
         className="scrollbar-thin"
