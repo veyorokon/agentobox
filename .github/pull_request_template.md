@@ -2,6 +2,10 @@
 
 <!-- Closes #123 — or "None" if no linked issue -->
 
+### Agent
+
+<!-- Which agent authored this? e.g. backend, frontend, team-lead, host -->
+
 ### What and why
 
 <!-- One paragraph: what problem does this solve and what's the approach? -->
