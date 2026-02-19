@@ -2,9 +2,49 @@
 
 Technical reference for Agentobox. Read this before writing backend code, adding hook interceptions, implementing stream event handlers, or modifying agent provisioning.
 
-## System Overview
+For product-level axioms and principles, see `docs/FOUNDATIONS.md`. For dashboard UX, see `docs/DASHBOARD-UX-SPEC.md`.
 
-Agentobox runs Claude Code agents in isolated Docker (or Modal) containers, observes their activity via stream-json, and presents it through a web dashboard.
+## The Insight
+
+Agentobox is a coordination layer, not a runtime.
+
+Every agent runtime — Claude Code, OpenClaw, Codex — handles "single agent doing work" well. None of them handle "multiple agents working together" well. Claude Code's native team system is file-based and single-machine. OpenClaw's RFC #10036 acknowledges the gap. Clawe duct-tapes coordination on top. Codex has no team concept at all.
+
+Agentobox fills that gap: coordination tools + backend state + fleet observability.
+
+```
+Any Agent Runtime              Agentobox (our code)
+(OpenClaw, CC, Codex)
+┌──────────────────┐          ┌──────────────────┐
+│ read/write/edit  │          │ Coordination MCP  │
+│ bash/browser     │  ◄────►  │ (team/task/msg)   │
+│ skills/desktop   │          └────────┬──────────┘
+│ "do the work"    │                   │
+└──────────────────┘          ┌────────▼──────────┐
+                              │  Django Backend    │
+                              │  (state + events)  │
+                              └────────┬──────────┘
+                                       │
+                              ┌────────▼──────────┐
+                              │    Dashboard       │
+                              │  (observability)   │
+                              └───────────────────┘
+```
+
+The runtime handles tool execution, file I/O, browser control. Agentobox handles everything between agents: push messaging, shared task state, event aggregation, cost tracking, and a dashboard that shows what the fleet is doing.
+
+## What Exists Today (V2)
+
+The current deployed system — what's actually running. All code paths described below are real and in production.
+
+### Components
+
+- **Backend**: Django 6.0 + Strawberry GraphQL + Daphne (ASGI). ~3,468 lines in `backend/agents/services/`.
+- **Dashboard**: Next.js + urql + Zustand + augmented-ui. Real-time updates via GraphQL subscriptions over WebSocket.
+- **Agent container**: Alpine/Debian image with s6-overlay, AwesomeWM, Firefox, noVNC, Claude Code, and the abox-relay process.
+- **Runtimes**: Docker (local dev) and Modal (serverless). Abstracted behind `Runtime` protocol in `backend/agents/runtimes/base.py`.
+
+### System Overview
 
 ```
 Container                              Backend (Django)
@@ -28,119 +68,132 @@ Container                              Backend (Django)
                                      └─────────────────────┘
 ```
 
-**Components:**
-- **Agent container**: Alpine/Debian image with s6-overlay, AwesomeWM, Firefox, noVNC, Claude Code, and the abox-relay process
-- **abox-relay**: ~150-line Python process inside each container. Spawns Claude with `--output-format stream-json`, reads stdout, batches events, POSTs to backend, writes pending_input to stdin
-- **Backend**: Django 6.0 + Strawberry GraphQL + Daphne (ASGI). Processes stream events, manages agent lifecycle, routes inter-agent messages
-- **Dashboard**: Next.js + urql + Zustand + augmented-ui. Receives updates via GraphQL subscriptions over WebSocket
+## Runtime Protocol
 
-## Claude Code Integration
+The `Runtime` protocol (`backend/agents/runtimes/base.py`) abstracts container operations across Docker and Modal:
 
-### What Claude Code Provides Natively
-
-Claude Code has built-in support for agent teams: mailbox communication, shared task lists, hooks, and a file-based coordination system. Agentobox extends (not replaces) these capabilities.
-
-**Native tools when teaming is active:**
-
-| Tool | Purpose | Who uses it |
-|------|---------|-------------|
-| `TeamCreate` | Create team namespace (config.json, task dirs, inboxes) | Lead only |
-| `Task` (with `team_name`) | Spawn a new teammate | Lead |
-| `SendMessage` | Direct message, broadcast, shutdown request/response | All agents |
-| `TaskCreate` | Create a work item in the shared task list | All agents |
-| `TaskUpdate` | Update status, assign owner, set dependencies | All agents |
-| `TaskList` / `TaskGet` | View tasks and status | All agents |
-| `TeamDelete` | Remove team config and task dirs | Lead only |
-
-### Task Tool: Two Modes
-
-The `Task` tool has two fundamentally different modes controlled by the `team_name` parameter:
-
-| | Subagent mode | Teammate mode |
-|---|---|---|
-| **Parameters** | `Task(prompt, subagent_type)` | `Task(prompt, subagent_type, team_name, name)` |
-| **Lifecycle** | Ephemeral — blocks caller, returns result, dies | Persistent — runs independently until shutdown |
-| **Communication** | Return value only | File-based mailbox (SendMessage) |
-| **Registration** | None | Added to config.json with agentId, tmuxPaneId |
-| **tmux** | No pane | Gets own tmux pane |
-
-### File-Based Internals
-
-Claude Code's team system is entirely file-based:
-
-| Component | Path | Format |
-|-----------|------|--------|
-| Team config | `~/.claude/teams/{team}/config.json` | Member roster with agentId, name, model, cwd |
-| Inboxes | `~/.claude/teams/{team}/inboxes/{agent}.json` | JSON array of message objects |
-| Tasks | `~/.claude/tasks/{team}/` | `.lock` file + individual task files |
-
-**Key behaviors:**
-- `SendMessage` reads config.json to find the target, writes to the target's inbox file
-- Receiving uses an internal polling loop (~1s interval) that reads the agent's own inbox file
-- `--parent-session-id` is a namespace key — any UUID works, agents sharing the same value can communicate
-- agentId format: `{name}@{team-name}`
-- File locking via `filelock.FileLock` for cross-process atomicity
-- Atomic writes via tempfile + `os.replace` to prevent partial reads
-
-## Distributed Bridge
-
-### The Gap
-
-Claude Code's file-based tools assume all agents share a filesystem. In Agentobox, each agent runs in a separate container. When Agent A calls `SendMessage` targeting Agent B, Claude writes to a local file that Agent B never sees.
-
-### SendMessage Routing
-
-```
-Agent A calls SendMessage(recipient="agent-b", content="hello")
-  │
-  ├─ Claude writes to local inbox file (harmless no-op)
-  │
-  ├─ assistant event with SendMessage tool_use flows to backend via relay
-  │
-  ├─ stream.py → _handle_assistant → route_inter_agent_messages()
-  │   └─ Extracts recipient + content from tool_use input
-  │   └─ Finds target Agent by name in same project
-  │   └─ Formats as stream-json user input, atomically enqueues in target.pending_input
-  │
-  ├─ Target relay picks up pending_input in next piggyback response
-  │
-  └─ Relay writes to Claude's stdin → Agent B receives message as a user turn
+```python
+class Runtime(Protocol):
+    async def create(self, name, env, volumes=None) -> SandboxInstance: ...
+    async def exec(self, sandbox_id, cmd, user="agent") -> str: ...
+    async def write_file(self, sandbox_id, content, dest) -> None: ...
+    async def terminate(self, sandbox_id) -> None: ...
+    async def list_sandboxes(self) -> list[SandboxInstance]: ...
+    async def get_status(self, sandbox_id) -> str: ...
 ```
 
-**File:** `backend/agents/services/interagent.py` — `route_inter_agent_messages()`
+`SandboxInstance` returns `id` and `vnc_url`. `VolumeMount` specifies `name`, `mount_path`, `host_path` (Docker bind mounts), and `read_only`.
 
-### Task Interception (PreToolUse Hook)
+## Relay Process
 
-If `Task(team_name=..., name=...)` executes locally, Claude spawns a tmux pane inside the container — consuming API tokens with no relay, no backend tracking, no VNC. The PreToolUse hook intercepts this.
+**File:** `agent/rootfs/opt/abox/relay.py` (~516 lines)
+
+The relay is an in-container Python process that bridges Claude's stdout to the backend via HTTP. Uses only stdlib (no external dependencies).
+
+**Responsibilities:**
+1. Spawn Claude with stream-json flags
+2. Read stdout line-by-line, batch events (75ms window), POST batch to backend
+3. Read stderr separately, include in `process_exit` event
+4. Parse POST response for `pending_input` — write each to Claude's stdin
+5. Parse POST response for `pending_signal` — send SIGINT to Claude if present
+6. Send heartbeat POST every 2s when idle to poll for pending input/signals
+7. On Claude exit: POST synthetic `process_exit` event, optionally restart with `--resume`
+
+**Spawn command:**
+```
+claude -p \
+  --output-format stream-json \
+  --input-format stream-json \
+  --verbose \
+  --dangerously-skip-permissions \
+  --agent-id {name}@{team} \
+  --agent-name {name} \
+  --team-name {team} \
+  --parent-session-id {project_uuid} \
+  --agent-type general-purpose \
+  --model {model}
+```
+
+Key flags: `-p` (non-interactive), `--output-format stream-json` (structured events on stdout), `--input-format stream-json` (accepts JSON on stdin for multi-turn), `--verbose` (required by stream-json).
+
+**Restart modes:**
+- **Soft restart** (`pending_signal="restart"`): SIGINT → respawn with `--resume {session_id}`. MCP servers re-init from updated `.mcp.json`.
+- **Clear** (`pending_signal="clear"`): SIGINT → respawn fresh (no `--resume`).
+- **Hard restart** (backend `hard_restart_agent()`): Terminate container, reprovision with `RESUME_SESSION_ID` env var.
+
+## Piggyback Pattern
+
+Instead of the relay running its own HTTP listener, the backend piggybacks pending input in POST responses:
 
 ```
-Agent calls Task(team_name="my-team", name="helper")
-  │
-  ├─ PreToolUse hook fires → pre-tool-use.py reads stdin JSON
-  │
-  ├─ Detects team_name in tool_input → POSTs to backend hook endpoint
-  │
-  ├─ Backend creates a real container via create_agent()
-  │
-  └─ Hook returns exit code 2 + "Deploying teammate..." feedback
-     └─ Claude receives feedback, continues working (doesn't block)
+Relay POSTs events  →  Backend responds with:
+                        {"ack": true, "pending_input": [], "pending_signal": null}
+                        — or —
+                        {"ack": true, "pending_input": [{...}], "pending_signal": "SIGINT"}
 ```
 
-Plain `Task(prompt=...)` without `team_name` passes through — subagents run locally and that's fine.
+The relay writes any `pending_input` items to Claude's stdin. When Claude is idle (no events to POST), the relay sends periodic heartbeats (every 2s) to poll for pending input.
 
-**Files:**
-- `agent/rootfs/opt/abox/hooks/pre-tool-use.py` — Hook script in container
-- `backend/agents/services/provision.py` — Hook config in `_build_settings_json()`
-- `backend/agents/views.py` — `hook_create_teammate` endpoint
+**Why this pattern:**
+- No port binding in container (security + simplicity)
+- Single HTTP connection
+- Backpressure-aware (relay polls when idle)
+- No firewall/networking setup
 
-### Team Config Provisioning
+**File:** `backend/agents/services/comms.py` — builds piggyback responses. `backend/agents/views.py` — `/agents/stream` endpoint.
 
-At container creation, `provision_team_config()` creates:
-- `~/.claude/teams/{team}/config.json` — member roster (all agents in the project)
-- `~/.claude/teams/{team}/inboxes/{agent}.json` — empty inbox file
-- `~/.claude/tasks/{team}/` — task directory
+## Event Processing
 
-When a new agent is created, `update_team_configs()` pushes updated config.json to all running agents so they can discover the new teammate.
+### Event Types
+
+| Event | Source | Content |
+|-------|--------|---------|
+| `system/init` | Claude | tools, mcp_servers, model, version. Fires at session start. |
+| `system/process_exit` | Relay (synthetic) | exit_code, stderr. Fires when Claude process exits. |
+| `assistant` | Claude | message.content[] with text and/or tool_use parts. 1 part per event. |
+| `user` | Claude | message.content[] with tool_result parts. |
+| `result` | Claude | Cumulative cost/usage/duration. Fires after each turn. |
+
+### Event Processing Logic
+
+**File:** `backend/agents/services/stream.py` — `process_stream_events()`
+
+Each event type routes to a handler:
+
+| Event | Handler | Action |
+|-------|---------|--------|
+| `system/init` | `_handle_system` | Upsert `agent.capabilities`, update `session_id` |
+| `system/process_exit` | `_handle_system` | Set `agent.status` to stopped (exit 0) or error (exit != 0) |
+| `assistant` | `_handle_assistant` | Get-or-create Message by `message_id`, APPEND parts, route interagent messages, route task operations, broadcast |
+| `user` | `_handle_user` | Create Message by event `uuid` (idempotent), store tool_result parts |
+| `result` | `_handle_result` | Create SessionResult (per-turn snapshot), update `agent.session_cost_usd`, mark agent idle |
+
+### Content Part Accumulation (Streaming Callbacks)
+
+**Critical:** Assistant events carry exactly 1 content part each with the same `message.id`. Parts arrive incrementally:
+
+```
+assistant {message.id: "msg_A", content: [{type: "text"}]}          ← 1 part
+assistant {message.id: "msg_A", content: [{type: "tool_use"}]}      ← 1 part
+assistant {message.id: "msg_A", content: [{type: "tool_use"}]}      ← 1 part (parallel)
+user      {content: [{tool_use_id: "toolu_X", type: "tool_result"}]}
+assistant {message.id: "msg_B", content: [{type: "text"}]}          ← new turn
+```
+
+The backend must **APPEND** parts to the Message, not replace. Same pattern as the Anthropic API streaming and Crush's AppendContent().
+
+### Turn Lifecycle
+
+```
+system/init (session start)
+  → assistant event (text part)           ← status: running
+  → assistant event (tool_use part)
+  → user event (tool_result)
+  → assistant event (text part, new msg)
+  → result event                          ← status: idle, cost updated
+  ...
+  → system/process_exit (Claude exits)    ← status: stopped or error
+```
 
 ## Control Plane Patterns
 
@@ -158,7 +211,7 @@ Does local execution cause harm?
 
 **When:** Local execution is actively harmful and must be prevented.
 
-**How:** Claude Code fires a PreToolUse hook before tool execution. The hook script reads stdin (JSON with tool_name and tool_input), decides whether to intercept, and exits with code 2 to block execution and inject feedback.
+**How:** Claude Code fires a PreToolUse hook before tool execution. The hook script reads stdin (JSON with `tool_name` and `tool_input`), decides whether to intercept, and exits with code 2 to block execution and inject feedback.
 
 **Exit codes:**
 - `0` — allow (tool executes normally)
@@ -166,6 +219,20 @@ Does local execution cause harm?
 - Other — non-blocking error (logged, does not affect agent)
 
 **Current interception:** `Task` with `team_name` parameter (teammate spawning).
+
+```
+Agent calls Task(team_name="my-team", name="helper")
+  ├─ PreToolUse hook fires → pre-tool-use.py reads stdin JSON
+  ├─ Detects team_name in tool_input → POSTs to backend hook endpoint
+  ├─ Backend creates a real container via create_agent()
+  └─ Hook returns exit code 2 + "Deploying teammate..." feedback
+     └─ Claude receives feedback, continues working (doesn't block)
+```
+
+**Files:**
+- `agent/rootfs/opt/abox/hooks/pre-tool-use.py` — Hook script in container
+- `backend/agents/services/provision.py` — Hook config in `_build_settings_json()`
+- `backend/agents/views.py` — `hook_create_teammate` endpoint
 
 ### Mechanism 2: Stream Observation (Sync After Execution)
 
@@ -184,157 +251,47 @@ Does local execution cause harm?
 3. If NO but backend needs data: add observation in `interagent.py` + call from `stream.py`
 4. If NO and backend doesn't need data: do nothing
 
-## Stream-JSON Pipeline
+## Distributed Bridge
 
-### Relay Process
+### The Gap
 
-The relay is an in-container Python process (~150 lines) that bridges Claude's stdout to the backend via HTTP.
+Claude Code's file-based team system assumes all agents share a filesystem. In Agentobox, each agent runs in a separate container. When Agent A calls `SendMessage` targeting Agent B, Claude writes to a local inbox file that Agent B never sees.
 
-**Responsibilities:**
-1. Spawn Claude with stream-json flags
-2. Read stdout line-by-line, batch events (50-100ms), POST batch to backend
-3. Read stderr in a separate thread, include in `process_exit` event
-4. Parse POST response for `pending_input` — write each to Claude's stdin
-5. Parse POST response for `pending_signal` — send SIGINT to Claude if present
-6. Send heartbeat POST every 2s when idle to poll for pending input/signals
-7. On Claude exit, POST a final `process_exit` event (synthetic, relay-created)
-
-**Spawn command:**
-```python
-cmd = [
-    "claude", "-p",
-    "--output-format", "stream-json",
-    "--input-format", "stream-json",
-    "--verbose",
-    "--dangerously-skip-permissions",
-    "--agent-id", f"{name}@{team}",
-    "--agent-name", name,
-    "--team-name", team,
-    "--parent-session-id", parent_session_id,
-    "--agent-type", "general-purpose",
-    "--model", model,
-]
-```
-
-**Key flags:** `-p` (non-interactive), `--output-format stream-json` (structured events on stdout), `--input-format stream-json` (accepts JSON on stdin for multi-turn), `--verbose` (required by stream-json).
-
-### Message Delivery: Piggyback Pattern
-
-Instead of the relay running its own HTTP listener, the backend piggybacks pending input in POST responses:
+### SendMessage Routing
 
 ```
-Relay POSTs events  →  Backend responds with:
-                        {"ack": true, "pending_input": [], "pending_signal": null}
-                        — or —
-                        {"ack": true, "pending_input": [{...}], "pending_signal": "SIGINT"}
+Agent A calls SendMessage(recipient="agent-b", content="hello")
+  ├─ Claude writes to local inbox file (harmless no-op)
+  ├─ assistant event with SendMessage tool_use flows to backend via relay
+  ├─ stream.py → _handle_assistant → route_inter_agent_messages()
+  │   ├─ Extracts recipient + content from tool_use input
+  │   ├─ Finds target Agent by name in same project
+  │   └─ Formats as stream-json user input, atomically enqueues in target.pending_input
+  ├─ Target relay picks up pending_input in next piggyback response
+  └─ Relay writes to Claude's stdin → Agent B receives message as a user turn
 ```
 
-The relay writes any `pending_input` items to Claude's stdin. When Claude is idle (no events to POST), the relay sends periodic heartbeats (every 2s) to poll for pending input.
+**File:** `backend/agents/services/interagent.py` — `route_inter_agent_messages()`
 
-### Event Types
+### Message Types
 
-| Event | Source | Content |
-|-------|--------|---------|
-| `system/init` | Claude | tools, mcp_servers, model, version. Fires at session start AND each turn. |
-| `system/process_exit` | Relay (synthetic) | exit_code, stderr. Fires when Claude process exits. |
-| `assistant` | Claude | message.content[] with text and/or tool_use parts. 1 part per event. |
-| `user` | Claude | message.content[] with tool_result parts. 1 part per event. |
-| `result` | Claude | Cumulative cost/usage/duration. Fires after each turn. |
+| Type | Behavior |
+|------|----------|
+| `message` | Direct message to named recipient |
+| `broadcast` | Sent to all non-stopped agents in project |
+| `shutdown_request` | Direct message requesting agent shutdown |
+| `shutdown_response` | Broadcast (no explicit recipient) |
+| `plan_approval_response` | Direct message |
 
-### Content Part Accumulation
+### Atomic Enqueue
 
-**Critical:** Assistant events carry exactly 1 content part each with the same `message.id`. Parts arrive incrementally:
+Messages are appended to `pending_input` under a database row lock (`select_for_update()`) to prevent concurrent clobber. If the target agent is idle, its status is set to running.
 
-```
-assistant {message.id: "msg_A", content: [{type: "text"}]}          ← 1 part
-assistant {message.id: "msg_A", content: [{type: "tool_use"}]}      ← 1 part
-assistant {message.id: "msg_A", content: [{type: "tool_use"}]}      ← 1 part (parallel)
-user      {content: [{tool_use_id: "toolu_X", type: "tool_result"}]}
-assistant {message.id: "msg_B", content: [{type: "text"}]}          ← new turn
-```
-
-The backend must **APPEND** parts to the Message, not replace. See `_handle_assistant()` in `stream.py`.
-
-### Event Processing
-
-**File:** `backend/agents/services/stream.py` — `process_stream_events()`
-
-Each event type routes to a handler:
-
-| Event | Handler | Action |
-|-------|---------|--------|
-| `system/init` | `_handle_system` | Upsert `agent.capabilities`, update `session_id` |
-| `system/process_exit` | `_handle_system` | Set `agent.status` to stopped or error |
-| `assistant` | `_handle_assistant` | Get-or-create Message by `message_id`, APPEND parts, route interagent messages, route task operations, broadcast |
-| `user` | `_handle_user` | Create Message by event `uuid` (idempotent), store tool_result parts |
-| `result` | `_handle_result` | Create SessionResult (per-turn snapshot), update `agent.session_cost_usd`, mark agent idle |
-
-## Hook Reference
-
-### Hook Events
-
-| Event | When | Key Fields |
-|-------|------|------------|
-| PreToolUse | Before any tool runs | `tool_name`, `tool_input`, `tool_use_id` |
-| PostToolUse | After tool completes | `tool_name`, `tool_input`, `tool_response`, `tool_use_id` |
-| Stop | Agent considers stopping | `reason` |
-| SessionStart | Session begins | `source`, `model` |
-| SessionEnd | Session ends | `reason` |
-| TeammateIdle | Teammate becomes idle | `teammate_name`, `team_name` |
-| TaskCompleted | Task marked complete | `task_id`, `task_subject`, `task_description`, `teammate_name`, `team_name` |
-| SubagentStart | Subagent spawned | `agent_id`, `agent_type` |
-| SubagentStop | Subagent stopping | `agent_id`, `agent_type`, `agent_transcript_path` |
-| PreCompact | Before context compaction | (none extra) |
-
-### Hook Input Format
-
-All hooks receive JSON via stdin with common fields:
-
-```json
-{
-  "session_id": "uuid",
-  "transcript_path": "/path/to/session.jsonl",
-  "cwd": "/working/dir",
-  "hook_event_name": "PreToolUse",
-  "permission_mode": "bypassPermissions"
-}
-```
-
-Plus event-specific fields (e.g., `tool_name` + `tool_input` for PreToolUse).
-
-### Hook Output
-
-**Exit codes:**
-- `0` — allow action to proceed
-- `2` — feedback: stderr content injected as system message to Claude, tool blocked
-- Other — non-blocking error (logged)
-
-**PreToolUse JSON output:**
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "allow|deny|ask",
-    "updatedInput": {}
-  }
-}
-```
-
-### Hook Config
-
-Hooks are configured in `.claude/settings.json` via `_build_settings_json()` in `provision.py`. Currently only `PreToolUse` on `Task` tool is configured.
-
-**Matcher syntax:**
-- `"Task"` — exact match
-- `"Read|Write|Edit"` — multiple tools (OR)
-- `"*"` — wildcard (all tools)
-- `"mcp__.*__delete.*"` — regex
-
-## Data Models
-
-### Agent
+## Data Model
 
 **File:** `backend/agents/models.py`
+
+### Agent
 
 | Field | Purpose |
 |-------|---------|
@@ -345,7 +302,7 @@ Hooks are configured in `.claude/settings.json` via `_build_settings_json()` in 
 | `capabilities` | Tools, MCP servers, model, version (from system/init) |
 | `pending_input` | Queue of stream-json messages for relay piggyback |
 | `pending_inbox` | Queue of inter-agent inbox messages for relay |
-| `pending_signal` | Queued signal (e.g., "SIGINT") for relay |
+| `pending_signal` | Queued signal (e.g., "SIGINT", "restart", "clear") for relay |
 | `relay_token` | Auth token for relay → backend |
 | `last_heartbeat_at` | Relay health inference (stale > 10s = down) |
 | `session_cost_usd` | Running total from SessionResult |
@@ -354,6 +311,7 @@ Hooks are configured in `.claude/settings.json` via `_build_settings_json()` in 
 | `workspace_path` | Host path bind-mounted into container |
 | `volume_mounts` | Explicit volume mount list |
 | `instructions` | Role instructions injected into CLAUDE.md |
+| `role` | "lead" or "worker" |
 
 **Status lifecycle:**
 ```
@@ -374,6 +332,7 @@ Mirrors Claude Code's stream-json events. Each `assistant` or `user` event becom
 | `parts` | Typed content parts array: text, tool_use, tool_result |
 | `usage` | Token counts with cache breakdown |
 | `parent_tool_use_id` | Non-null for subagent responses |
+| `stop_reason` | "end_turn", "tool_use", "max_tokens" |
 | `turn_number` | Set from result event's `num_turns` |
 
 **Content parts format** (same as Anthropic API):
@@ -411,6 +370,262 @@ Synced from stream observation when agents call `TaskCreate`/`TaskUpdate`.
 
 Lifecycle events for the dashboard feed (created, stopped, restarted, provision_failed).
 
+### AgentMessage (Deprecated)
+
+Kept only for `AgentFeedback` FK. Will be removed in a future migration.
+
+### ProjectSecret
+
+Fernet-encrypted secrets at project level. Scoped to specific agents via `scoped_agents` M2M, or delivered to all agents if unscoped.
+
+## Claude Code Integration
+
+### Native Team Tools
+
+When teaming is active, Claude Code provides:
+
+| Tool | Purpose | Who uses it |
+|------|---------|-------------|
+| `Task` (with `team_name`) | Spawn a new teammate | Lead |
+| `SendMessage` | Direct message, broadcast, shutdown | All agents |
+| `TaskCreate` / `TaskUpdate` | Create/update work items | All agents |
+| `TaskList` / `TaskGet` | View tasks and status | All agents |
+
+### File-Based Internals
+
+Claude Code's team system is entirely file-based:
+
+| Component | Path | Format |
+|-----------|------|--------|
+| Team config | `~/.claude/teams/{team}/config.json` | Member roster with agentId, name, model, cwd |
+| Inboxes | `~/.claude/teams/{team}/inboxes/{agent}.json` | JSON array of message objects |
+| Tasks | `~/.claude/tasks/{team}/` | `.lock` file + individual task files |
+
+Key behaviors:
+- `SendMessage` reads config.json to find the target, writes to the target's inbox file
+- Receiving uses an internal polling loop (~1s interval) that reads the agent's own inbox file
+- `--parent-session-id` is a namespace key — agents sharing the same value can communicate
+- agentId format: `{name}@{team-name}`
+
+### Task Tool: Two Modes
+
+| | Subagent mode | Teammate mode |
+|---|---|---|
+| **Parameters** | `Task(prompt, subagent_type)` | `Task(prompt, subagent_type, team_name, name)` |
+| **Lifecycle** | Ephemeral — blocks caller, returns result, dies | Persistent — runs independently until shutdown |
+| **Communication** | Return value only | File-based mailbox (SendMessage) |
+
+## Agent Provisioning
+
+### Container Creation Flow
+
+```
+create_agent()
+  ├─ Create Agent record (status: deploying)
+  ├─ Resolve project secrets
+  ├─ Broadcast agent update to dashboard
+  ├─ Background: _provision_agent()
+  │    ├─ runtime.create() with env vars + volume mounts
+  │    ├─ Set up session persistence: symlink ~/.claude to volume-backed dir
+  │    ├─ Write shared secrets env file + source from .bashrc
+  │    ├─ provision_workspace()
+  │    │    ├─ Write /home/agent/CLAUDE.md (project context, instructions, team roster)
+  │    │    ├─ Write /home/agent/.claude/settings.json (hooks, apiKeyHelper)
+  │    │    ├─ Write /home/agent/.mcp.json (MCP servers with secrets in env blocks)
+  │    │    ├─ Write /home/agent/.claude.json (onboarding complete, key approved)
+  │    │    ├─ Provision API key helper (tmpfs + script)
+  │    │    └─ Provision scoped sudo (package-manager-only)
+  │    ├─ provision_team_config()
+  │    │    ├─ Write ~/.claude/teams/{team}/config.json (member roster)
+  │    │    ├─ Write ~/.claude/teams/{team}/inboxes/{agent}.json (empty inbox)
+  │    │    └─ Create ~/.claude/tasks/{team}/ directory
+  │    ├─ Write /home/agent/.relay_env (relay environment variables)
+  │    └─ Launch relay via: tmux new-session -d -s claude -x 200 -y 50
+  └─ Background: update_team_configs() → push roster to all running agents
+```
+
+### Security
+
+- **API key**: Delivered via `apiKeyHelper` in settings.json. Key stored in tmpfs (`/run/secrets/anthropic_key`, root:root 0400), read by a helper script. Not in shell environment.
+- **Scoped sudo**: Agents can only `sudo apt-get/apt/dpkg`. Cannot `sudo cat`, `sudo bash`, etc.
+- **CLAUDE.md security section**: Instructions to never output secrets, never read /run/secrets.
+- **Relay auth**: Per-agent `relay_token` generated at provisioning, validated on every stream POST.
+- **Secrets in MCP**: Project secrets injected into every MCP server's env block. MCP servers ignore keys they don't recognize.
+- **BASH_ENV**: Set to `/mnt/abox-state/secrets/env` so non-interactive shells (Claude Code's Bash tool) have access to secrets.
+
+### MCP Registry
+
+Two types in `provision.py`:
+- **Bundled**: Pre-installed in agent image (e.g., `computer-use` — node server at `/opt/mcp-servers/`)
+- **npx**: Downloaded at runtime (e.g., `playwright` via `npx @playwright/mcp@latest`)
+
+Each registry entry has: `command`, `args`, `compat` (image variants), and optional `instructions` (injected into CLAUDE.md).
+
+### Team Config Updates
+
+When a new agent is created, `update_team_configs()` pushes updated `config.json` to all running agents so they can discover the new teammate via SendMessage.
+
+## Hook Reference
+
+### Hook Events
+
+| Event | When | Key Fields |
+|-------|------|------------|
+| PreToolUse | Before any tool runs | `tool_name`, `tool_input`, `tool_use_id` |
+| PostToolUse | After tool completes | `tool_name`, `tool_input`, `tool_response`, `tool_use_id` |
+| Stop | Agent considers stopping | `reason` |
+| SessionStart | Session begins | `source`, `model` |
+| SessionEnd | Session ends | `reason` |
+| TeammateIdle | Teammate becomes idle | `teammate_name`, `team_name` |
+| TaskCompleted | Task marked complete | `task_id`, `task_subject`, `teammate_name`, `team_name` |
+| SubagentStart | Subagent spawned | `agent_id`, `agent_type` |
+| SubagentStop | Subagent stopping | `agent_id`, `agent_type`, `agent_transcript_path` |
+| PreCompact | Before context compaction | (none extra) |
+
+### Hook Input Format
+
+All hooks receive JSON via stdin with common fields:
+
+```json
+{
+  "session_id": "uuid",
+  "transcript_path": "/path/to/session.jsonl",
+  "cwd": "/working/dir",
+  "hook_event_name": "PreToolUse",
+  "permission_mode": "bypassPermissions"
+}
+```
+
+Plus event-specific fields (e.g., `tool_name` + `tool_input` for PreToolUse).
+
+### Hook Config
+
+Hooks are configured in `.claude/settings.json` via `_build_settings_json()` in `provision.py`. Currently only `PreToolUse` on `Task` tool is configured.
+
+Matcher syntax: `"Task"` (exact), `"Read|Write|Edit"` (OR), `"*"` (wildcard), `"mcp__.*__delete.*"` (regex).
+
+## The MCP Coordination Server (Target)
+
+The core new component — an MCP server that any agent runtime can consume. This is the path from "CC-only coordination" to "runtime-agnostic coordination."
+
+### Implementation: FastMCP on Daphne
+
+Built with [FastMCP](https://github.com/jlowin/fastmcp) (29k stars, v3.0.0, Feb 2026). Mounted alongside Django on the existing Daphne ASGI server at `/mcp`. No separate process, no bridge library, no extra dependencies beyond `fastmcp`.
+
+**Why FastMCP over django-mcp-server:** `django-mcp-server` is pre-1.0, single-maintainer (last commit Oct 2025), with open bugs (406 errors on WSGI, 100% CPU under Gunicorn). FastMCP is the production-grade MCP SDK that all Django wrappers build on anyway.
+
+**ASGI mounting:**
+
+```python
+# asgi.py
+from django.core.asgi import get_asgi_application
+from coordination.mcp import mcp_app
+
+django_app = get_asgi_application()
+
+async def application(scope, receive, send):
+    if scope["path"].startswith("/mcp"):
+        await mcp_app.asgi_app(scope, receive, send)
+    else:
+        await django_app(scope, receive, send)
+```
+
+**Agent `.mcp.json` config** (Claude Code natively supports HTTP MCP):
+
+```json
+{
+  "abox-coord": {
+    "type": "http",
+    "url": "http://backend:8000/mcp",
+    "headers": {
+      "Authorization": "Bearer ${RELAY_AUTH_TOKEN}"
+    }
+  }
+}
+```
+
+No local MCP process in the container. No `mcp-remote`. Claude Code connects directly via native HTTP MCP transport using the `relay_token` the agent already has.
+
+```
+Agent Container                          Django Backend (Daphne)
+┌──────────────────────┐                ┌──────────────────────┐
+│ Claude Code          │                │                      │
+│   ├─ relay (events)  │── HTTP POST ──→│ /agents/stream       │
+│   └─ MCP (coord)     │── HTTP ───────→│ /mcp                 │
+│       (native HTTP   │                │   FastMCP            │
+│        transport)    │                │   → Django services   │
+└──────────────────────┘                └──────────────────────┘
+```
+
+### Tool Surface
+
+| Tool | Purpose |
+|------|---------|
+| `team_create` | Create a team namespace |
+| `teammate_spawn` | Deploy a new agent container |
+| `teammate_message` | Send a direct message to a teammate |
+| `teammate_broadcast` | Message all teammates |
+| `task_add` | Create a task |
+| `task_claim` | Claim a task for execution |
+| `task_complete` | Mark a task done |
+| `task_list` | List tasks with status |
+| `team_status` | Fleet overview (statuses, costs, last activity) |
+
+Tools are decorated functions that call existing Django services directly — no GraphQL middleman:
+
+```python
+from fastmcp import FastMCP
+
+mcp = FastMCP("agentobox")
+
+@mcp.tool()
+async def teammate_message(recipient: str, content: str) -> dict:
+    """Send a message to a teammate by name."""
+    # Calls _deliver_to_stdin() from interagent.py directly
+    ...
+
+@mcp.tool()
+async def teammate_spawn(name: str, instructions: str, model: str = "claude-sonnet-4-5-20250929") -> dict:
+    """Deploy a new agent container as a teammate."""
+    # Calls create_agent() from lifecycle.py directly
+    ...
+
+@mcp.tool()
+async def team_status() -> dict:
+    """Fleet overview: agent statuses, costs, last activity."""
+    # Queries Agent model directly
+    ...
+```
+
+### Auth
+
+Bearer token auth using the same `relay_token` generated at provisioning. Validated via ASGI middleware or FastMCP dependency before any tool executes. Same token the relay uses for stream POSTs — no new auth mechanism.
+
+### What Changes
+
+- SendMessage routing moves from stream observation to explicit MCP tool calls
+- Task management becomes first-class (not observed from CC's internal TaskCreate)
+- Team spawning moves from PreToolUse hook interception to MCP tool
+- The relay/piggyback pattern remains for event streaming — MCP handles coordination, relay handles observability
+
+### What Stays the Same
+
+- Data model (Agent, Message, SessionResult, AgentTask, AgentEvent)
+- Event processing pipeline (stream.py)
+- Dashboard and subscriptions
+- Runtime protocol (Docker/Modal)
+- Provisioning flow
+- Security model
+
+### Migration Path
+
+1. **Add FastMCP to backend** — mount at `/mcp` in `asgi.py`, define tools in `coordination/mcp.py`
+2. **Wire into provisioning** — add `abox-coord` to `.mcp.json` in `_build_mcp_json()`. Agents get both CC native tools and MCP coordination tools.
+3. **Update agent CLAUDE.md** — instruct agents to prefer MCP coordination tools over CC native `SendMessage`/`TaskCreate`
+4. **Deprecate old paths** — remove stream observation routing for SendMessage/TaskCreate in `interagent.py` and PreToolUse hook for Task spawning
+
+Each step is independently deployable. Nothing breaks between steps.
+
 ## Key Services
 
 ### lifecycle.py
@@ -421,8 +636,8 @@ Agent lifecycle management.
 |----------|---------|
 | `create_agent()` | Create agent record, resolve secrets, provision container in background |
 | `kill_agent()` | Terminate container, mark stopped |
-| `restart_agent()` | Terminate + re-provision using saved `config_snapshot` |
-| `_provision_agent()` | Background task: create container, provision workspace, launch relay |
+| `remove_agent()` | Delete agent record permanently |
+| `hard_restart_agent()` | Terminate + re-provision using saved `config_snapshot`, preserve session via `--resume` |
 
 ### stream.py
 
@@ -459,67 +674,65 @@ Workspace setup and team config.
 | `_build_claude_md()` | Generate agent CLAUDE.md with project context, instructions, team roster |
 | `_build_settings_json()` | Generate settings with hook config and apiKeyHelper |
 | `_build_mcp_json()` | Generate .mcp.json with secrets injected into env blocks |
+| `push_secrets_to_agent()` | Hot-reload secrets on running agent |
+
+### comms.py
+
+Message persistence and inter-agent delivery. Builds piggyback responses for relay.
 
 ### broadcast.py
 
 WebSocket push to dashboard via GraphQL subscriptions.
 
-## Agent Provisioning
+### feed_transform.py
 
-### Container Creation Flow
+Transforms stream events and lifecycle events into `FeedItem` objects for the dashboard.
 
-```
-create_agent()
-  ├─ Create Agent record (status: deploying)
-  ├─ Resolve project secrets
-  ├─ Broadcast agent update to dashboard
-  ├─ Background: _provision_agent()
-  │    ├─ runtime.create() with env vars + volume mounts
-  │    ├─ provision_workspace()
-  │    │    ├─ Write /home/agent/CLAUDE.md (project context, instructions, team roster)
-  │    │    ├─ Write /home/agent/.claude/settings.json (hooks, apiKeyHelper)
-  │    │    ├─ Write /home/agent/.mcp.json (MCP servers with secrets in env blocks)
-  │    │    ├─ Write /home/agent/.claude.json (onboarding complete, key approved)
-  │    │    ├─ Provision API key helper (tmpfs + script)
-  │    │    └─ Provision scoped sudo (package-manager-only)
-  │    ├─ provision_team_config()
-  │    │    ├─ Write ~/.claude/teams/{team}/config.json (member roster)
-  │    │    ├─ Write ~/.claude/teams/{team}/inboxes/{agent}.json (empty inbox)
-  │    │    └─ Create ~/.claude/tasks/{team}/ directory
-  │    ├─ Write /home/agent/.relay_env (relay environment variables)
-  │    └─ Launch relay via: tmux new-session -d -s claude -x 200 -y 50
-  └─ Background: update_team_configs() → push roster to all running agents
-```
+## Known Issues
 
-### Security
+1. **Agent state drift** — Agent shows "running" but relay is down. `last_heartbeat_at` stale detection exists (>10s = down) but reconciliation may not fire consistently. Needs `reconcile.py` to run reliably.
 
-- **API key**: Delivered via `apiKeyHelper` in settings.json. Key stored in tmpfs (`/run/secrets/anthropic_key`, root:root 0400), read by a helper script. Not in shell environment.
-- **Scoped sudo**: Agents can only `sudo apt-get/apt/dpkg`. Cannot `sudo cat`, `sudo bash`, etc.
-- **CLAUDE.md security section**: Instructions to never output secrets, never read /run/secrets.
-- **Relay auth**: Per-agent `relay_token` generated at provisioning, validated on every stream POST.
-- **Secrets in MCP**: Project secrets injected into every MCP server's env block. MCP servers ignore keys they don't recognize.
+2. **Message delivery not guaranteed** — `pending_input` piggyback has no delivery confirmation. If the relay misses a response (network blip, timeout), the message is lost. Backend clears `pending_input` after including it in a response. No retry queue.
 
-### MCP Registry
+3. **AgentMessage deprecated but referenced** — `AgentMessage` model is deprecated but `AgentFeedback` still has a FK to it. Needs a migration to drop the FK and remove the model.
 
-Two types in `provision.py`:
-- **Bundled**: Pre-installed in agent image (e.g., `computer-use` — node server at `/opt/mcp-servers/`)
-- **npx**: Downloaded at runtime (e.g., `playwright` via `npx @playwright/mcp@latest`)
+4. **Feed scroll refinements** — Recent commits (`36f1d44`, `3c18de5`, `41793d2`) stabilized scroll-to-bottom with height-based approach + pinned-state tracking. Stable but may need tuning for edge cases (long tool outputs, rapid message bursts).
 
-Each registry entry has: `command`, `args`, `compat` (image variants), and optional `instructions` (injected into CLAUDE.md).
+## Roadmap
+
+1. **MCP coordination server** — Runtime-agnostic coordination tools (the new component described above)
+2. **Reliability fixes** — Heartbeat reconciliation, message delivery guarantees (retry queue for pending_input)
+3. **Feed/UI stabilization** — Edge case scroll fixes, performance with large feeds
+4. **Agent CLAUDE.md formalization** — Structured injection of project context, role instructions, and coordination protocol
+5. **Casebase** — Session storage + retrieval for institutional memory (from FOUNDATIONS.md open questions)
 
 ## File Reference
 
 | File | Role |
 |------|------|
-| `backend/agents/models.py` | Agent, Message, SessionResult, AgentTask, AgentEvent models |
-| `backend/agents/services/lifecycle.py` | create_agent, kill_agent, restart_agent |
+| `backend/agents/models.py` | Agent, Message, SessionResult, AgentTask, AgentEvent, ProjectSecret models |
+| `backend/agents/services/lifecycle.py` | create_agent, kill_agent, remove_agent, hard_restart_agent |
 | `backend/agents/services/stream.py` | Stream event processing pipeline |
 | `backend/agents/services/interagent.py` | Inter-agent message routing + task observation |
 | `backend/agents/services/provision.py` | Workspace setup, settings, CLAUDE.md, team config, MCP registry |
+| `backend/agents/services/comms.py` | Message persistence + piggyback response building |
 | `backend/agents/services/broadcast.py` | WebSocket push to dashboard |
+| `backend/agents/services/feed_transform.py` | Stream event → FeedItem transform |
+| `backend/agents/services/media.py` | S3 image externalization from base64 |
+| `backend/agents/services/reconcile.py` | Agent state reconciliation |
+| `backend/agents/services/secrets.py` | Secret encryption/decryption |
 | `backend/agents/views.py` | GraphQL mutations + hook callback endpoints |
 | `backend/agents/runtimes/base.py` | Runtime protocol (create, terminate, exec, write_file) |
 | `backend/agents/runtimes/docker.py` | Docker runtime implementation |
 | `backend/agents/runtimes/modal.py` | Modal runtime implementation |
 | `agent/rootfs/opt/abox/relay.py` | In-container relay process |
 | `agent/rootfs/opt/abox/hooks/pre-tool-use.py` | PreToolUse hook script |
+
+## Archived Docs
+
+Previous architectural iterations are preserved in `docs/archive/` for historical reference:
+
+- `V2-REDESIGN.md` — V2 relay/stream redesign spec
+- `V3-ARCHITECTURE.md` — Multi-layer gateway architecture (not implemented)
+- `V4-ARCHITECTURE.md` — OpenClaw runtime research + strategic direction
+- `LIFT-MAP.md` — Implementation sequencing (superseded by Roadmap above)
