@@ -21,8 +21,6 @@ import { StatusSegment } from './status-segment';
 
 export function StatusBar() {
   const { theme, setTheme, themes } = useTheme();
-  const nextTheme = themes[(themes.indexOf(theme) + 1) % themes.length];
-
   const projectId = useProjectsStore((s) => s.currentProjectId);
   const setCurrentProject = useProjectsStore((s) => s.setCurrentProject);
   const logout = useAuthStore((s) => s.logout);
@@ -35,15 +33,14 @@ export function StatusBar() {
   const loading = useAgentsStore((s) => s.fetching);
   const me = useMe();
 
-  const handleThemeSwitch = useCallback(() => {
-    setTheme(nextTheme);
-    // After DOM updates with new CSS vars, resolve tokens and push to backend
+  const handleThemeSelect = useCallback((t: typeof theme) => {
+    setTheme(t);
     requestAnimationFrame(() => {
       if (!projectId) return;
       const tokens = resolveThemeTokens();
       setProjectTheme({ input: { projectId, tokens } });
     });
-  }, [nextTheme, setTheme, projectId, setProjectTheme]);
+  }, [setTheme, projectId, setProjectTheme]);
 
   const currentProject = useMemo(
     () => projects.find((p) => p.id === projectId),
@@ -204,12 +201,45 @@ export function StatusBar() {
           className="w-1 h-1 rounded-full flex-shrink-0"
           style={{ background: 'var(--muted-foreground)', opacity: 0.3 }}
         />
-        <button
-          onClick={handleThemeSwitch}
-          className="text-[9px] font-mono font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors px-2 py-1"
-        >
-          {theme}
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex items-center gap-1 text-[9px] font-mono font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors px-2 py-1 cursor-pointer"
+              title="Switch theme"
+            >
+              {theme}
+              <ChevronDown className="w-3 h-3 text-muted-foreground/50" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="min-w-[140px]"
+            style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+          >
+            {themes.map((t) => (
+              <DropdownMenuItem
+                key={t}
+                onClick={() => handleThemeSelect(t)}
+                className="text-[9px] font-mono cursor-pointer gap-2"
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{
+                    background: t === theme ? 'var(--accent)' : 'transparent',
+                  }}
+                />
+                <span
+                  className="uppercase tracking-wider"
+                  style={{
+                    color: t === theme ? 'var(--foreground)' : 'var(--muted-foreground)',
+                  }}
+                >
+                  {t}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );
