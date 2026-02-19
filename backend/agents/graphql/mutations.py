@@ -226,6 +226,13 @@ class AgentMutation:
                     claude_md.encode("utf-8"),
                     "/home/agent/CLAUDE.md",
                 )
+                from agents.services.comms import send_system_message
+                await send_system_message(
+                    str(agent.id),
+                    "Your instructions have been updated. Re-read CLAUDE.md for the latest.",
+                    response_policy="discard",
+                    trigger="instruction_update",
+                )
             except Exception:
                 pass  # Agent may be stopped — DB is updated, will take effect on restart
 
@@ -306,6 +313,14 @@ class AgentMutation:
             "model", "role", "mcp_servers", "config_snapshot",
         ])
 
+        from agents.services.comms import send_system_message
+        await send_system_message(
+            str(agent.id),
+            "Your configuration has been updated (model, role, or MCP servers changed). A restart is in progress.",
+            response_policy="discard",
+            trigger="config_change",
+        )
+
         return await hard_restart_agent(str(agent.id))
 
     # --- Project Secrets ---
@@ -381,6 +396,7 @@ async def _push_secrets_for_project(project) -> None:
     """Push merged secrets to all running agents in a project."""
     from agents.models import Agent, AgentStatus
     from agents.runtimes import get_runtime
+    from agents.services.comms import send_system_message
     from agents.services.lifecycle import resolve_agent_secrets
     from agents.services.provision import push_secrets_to_agent
 
@@ -401,6 +417,12 @@ async def _push_secrets_for_project(project) -> None:
                 runtime = get_runtime(agent.runtime)
                 await push_secrets_to_agent(
                     runtime, agent.sandbox_id, agent, secret_envs,
+                )
+                await send_system_message(
+                    str(agent.id),
+                    "Project secrets have been updated. New values are available in your environment.",
+                    response_policy="discard",
+                    trigger="secret_rotation",
                 )
         except Exception:
             pass  # Best-effort

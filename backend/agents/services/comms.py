@@ -68,6 +68,64 @@ def _atomic_enqueue(agent_id: str, input_msg: dict) -> Agent:
     return agent
 
 
+async def send_system_message(
+    agent_id: str, text: str, response_policy: str = "discard", trigger: str = "",
+) -> bool:
+    """Send a system-level message to an agent (backend-initiated).
+
+    System messages notify agents of runtime state changes (secrets rotated,
+    instructions updated, teammates joined/left, config changed). They carry
+    response_policy metadata that controls feed visibility:
+        discard    — agent processes, no response expected, hidden from feed
+        silent_ack — same as discard for now (future: ack without feed entry)
+        visible    — shown in feed like a normal message
+
+    The message text is wrapped in <system-reminder> tags so Claude treats it
+    as context injection rather than a user prompt requiring a response.
+    """
+    op_log = log.bind(agent_id=agent_id, trigger=trigger)
+
+    try:
+        agent = await Agent.objects.aget(id=agent_id)
+    except Agent.DoesNotExist:
+        op_log.warning("agent_not_found")
+        return False
+
+    # Skip agents that aren't alive — system messages are informational,
+    # no point auto-restarting just to deliver a notification.
+    if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
+        op_log.info("system_message_skipped", status=agent.status)
+        return False
+
+    # Build parts: text + metadata (metadata stripped before relay delivery)
+    system_meta = {"type": "_system_meta", "response_policy": response_policy, "trigger": trigger}
+    parts = [{"type": "text", "text": text}, system_meta]
+
+    msg_record = await Message.objects.acreate(
+        agent=agent,
+        message_id=f"sys_{uuid.uuid4().hex[:16]}",
+        session_id=agent.session_id or "",
+        role="system",
+        parts=parts,
+        turn_number=0,
+    )
+    await broadcast_stream_message(agent, msg_record)
+
+    # Wrap in <system-reminder> for relay delivery — Claude reads this as
+    # context, not a user prompt, so it typically won't produce a response.
+    relay_parts = [{"type": "text", "text": f"<system-reminder>\n{text}\n</system-reminder>"}]
+    input_msg = {
+        "type": "user",
+        "message": {"role": "user", "content": relay_parts},
+    }
+
+    agent = await _atomic_enqueue(agent_id, input_msg)
+    await broadcast_agent_update(agent)
+
+    op_log.info("system_message_sent", response_policy=response_policy)
+    return True
+
+
 async def send_message(agent_id: str, message: str, content: list | None = None) -> bool:
     """
     Enqueue a message for delivery to an agent's Claude Code session.

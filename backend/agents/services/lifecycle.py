@@ -100,6 +100,9 @@ async def create_agent(
     # Update team config in all existing agents so they can discover the new agent
     asyncio.create_task(update_team_configs(project))
 
+    # Notify existing agents about the new teammate
+    asyncio.create_task(_notify_teammates_joined(project, agent))
+
     return agent
 
 
@@ -460,6 +463,9 @@ async def remove_agent(agent_id: str) -> bool:
     project = await Project.objects.aget(id=project_id)
     asyncio.create_task(update_team_configs(project))
 
+    # Notify remaining agents about the departure
+    asyncio.create_task(_notify_teammates_left(project, agent_name))
+
     op_log.info("agent_removed")
     clear_agent_context()
     return True
@@ -632,3 +638,41 @@ async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
 
     op_log.info("secrets_resolved", count=len(merged), agent=agent.name)
     return merged
+
+
+async def _notify_teammates_joined(project, new_agent: Agent) -> None:
+    """Notify existing agents that a new teammate has joined."""
+    from agents.services.comms import send_system_message
+
+    agents = [
+        a async for a in Agent.objects.filter(
+            project=project,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        ).exclude(id=new_agent.id)
+    ]
+    for agent in agents:
+        await send_system_message(
+            str(agent.id),
+            f"Teammate {new_agent.name} ({new_agent.role}) has joined the team.",
+            response_policy="discard",
+            trigger="teammate_join",
+        )
+
+
+async def _notify_teammates_left(project, departed_name: str) -> None:
+    """Notify remaining agents that a teammate has left."""
+    from agents.services.comms import send_system_message
+
+    agents = [
+        a async for a in Agent.objects.filter(
+            project=project,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        )
+    ]
+    for agent in agents:
+        await send_system_message(
+            str(agent.id),
+            f"Teammate {departed_name} has left the team.",
+            response_policy="discard",
+            trigger="teammate_leave",
+        )

@@ -41,6 +41,9 @@ def messages_to_feed(
 ) -> list[FeedItemType]:
     """Convert raw Messages + AgentEvents into sorted FeedItemType list."""
 
+    # Step 0: Filter out system messages with non-visible response_policy
+    messages = [m for m in messages if _should_include_in_feed(m)]
+
     # Step 1: Build tool_result index from user-role messages
     tool_results: dict[str, dict] = {}
     for msg in messages:
@@ -550,6 +553,20 @@ def _extract_plan_steps(text: str | None) -> list[str] | None:
             if step:
                 steps.append(step)
     return steps if steps else None
+
+
+def _should_include_in_feed(msg: "Message") -> bool:
+    """Check if a message should appear in the feed.
+
+    System messages (role="system") are excluded unless their response_policy
+    is "visible". All other messages pass through.
+    """
+    if msg.role != "system":
+        return True
+    meta = next((p for p in msg.parts if p.get("type") == "_system_meta"), None)
+    if not meta:
+        return True
+    return meta.get("response_policy") == "visible"
 
 
 def _parse_team_message(text: str) -> tuple[str | None, str | None]:
