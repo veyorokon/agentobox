@@ -59,54 +59,50 @@ export const PROJECT_SECRETS_QUERY = gql`
 `;
 
 export const PROJECT_FEED_QUERY = gql`
-  query ProjectFeed($projectId: ID!, $limit: Int, $before: String) {
-    projectFeed(projectId: $projectId, limit: $limit, before: $before) {
-      items {
-        id
-        kind
-        agentId
-        agentName
-        timestamp
-        text
-        imageUrls
-        targetName
-        targetAgentIds
-        tools {
-          name
-          input
-          result
-          isError
-        }
-        fromStatus
-        toStatus
-        taskSummary
-        errorText
-        cumulativeCostUsd
-        questions {
-          question
-          header
-          options {
-            label
-            description
-          }
-          multiSelect
-        }
-        answers {
-          selectedIndices
-          otherText
-        }
-        toolUseId
-        memoryContent
-        planStatus
-        planSummary
-        planSteps
-        taskDividerSubject
-        taskDividerId
-        taskDividerActiveForm
-        senderName
+  query ProjectFeed($projectId: ID!) {
+    projectFeed(projectId: $projectId) {
+      id
+      kind
+      agentId
+      agentName
+      timestamp
+      text
+      imageUrls
+      targetName
+      targetAgentIds
+      tools {
+        name
+        input
+        result
+        isError
       }
-      hasMore
-      endCursor
+      fromStatus
+      toStatus
+      taskSummary
+      errorText
+      cumulativeCostUsd
+      questions {
+        question
+        header
+        options {
+          label
+          description
+        }
+        multiSelect
+      }
+      answers {
+        selectedIndices
+        otherText
+      }
+      toolUseId
+      memoryContent
+      planStatus
+      planSummary
+      planSteps
+      taskDividerSubject
+      taskDividerId
+      taskDividerActiveForm
+      senderName
     }
   }
 `;

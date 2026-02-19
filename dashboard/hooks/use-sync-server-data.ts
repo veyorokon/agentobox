@@ -47,70 +47,32 @@ export function useSyncServerData() {
     }
   }, [agentsData, agentsInitLoaded]);
 
-  // ── Feed: initial load (newest page) ──
+  // ── Feed: initial load (all items) ──
   const [{ data: feedData, fetching: feedFetching }] = useQuery({
     query: PROJECT_FEED_QUERY,
-    variables: { projectId, limit: 50 },
+    variables: { projectId },
     pause: !projectId,
   });
 
   useEffect(() => {
     useFeedStore.getState().setFetching(feedFetching);
     if (feedData?.projectFeed) {
-      const conn = feedData.projectFeed as {
-        items: GqlFeedItem[];
-        hasMore: boolean;
-        endCursor: string | null;
-      };
-      useFeedStore.getState().setItems(conn.items, conn.hasMore, conn.endCursor);
+      useFeedStore.getState().setItems(feedData.projectFeed as GqlFeedItem[]);
     }
   }, [feedData, feedFetching]);
 
-  // ── Imperative: fetch latest page and merge (for subscriptions) ──
+  // ── Imperative: fetch latest and merge (for subscriptions) ──
   const fetchLatest = useCallback(async () => {
     if (!projectId) return;
     const result = await client.query(
       PROJECT_FEED_QUERY,
-      { projectId, limit: 50 },
+      { projectId },
       { requestPolicy: 'network-only' },
     ).toPromise();
     if (result.data?.projectFeed) {
-      const conn = result.data.projectFeed as {
-        items: GqlFeedItem[];
-        hasMore: boolean;
-        endCursor: string | null;
-      };
-      useFeedStore.getState().mergeLatest(conn.items);
+      useFeedStore.getState().mergeLatest(result.data.projectFeed as GqlFeedItem[]);
     }
   }, [client, projectId]);
-
-  // ── Imperative: load older page (for scroll-up pagination) ──
-  const loadOlderFeed = useCallback(async () => {
-    const { cursor, hasMore, loadingOlder } = useFeedStore.getState();
-    if (!projectId || !hasMore || loadingOlder) return;
-    useFeedStore.getState().setLoadingOlder(true);
-    const result = await client.query(
-      PROJECT_FEED_QUERY,
-      { projectId, limit: 50, before: cursor },
-      { requestPolicy: 'network-only' },
-    ).toPromise();
-    if (result.data?.projectFeed) {
-      const conn = result.data.projectFeed as {
-        items: GqlFeedItem[];
-        hasMore: boolean;
-        endCursor: string | null;
-      };
-      useFeedStore.getState().prependOlder(conn.items, conn.hasMore, conn.endCursor);
-    } else {
-      useFeedStore.getState().setLoadingOlder(false);
-    }
-  }, [client, projectId]);
-
-  // Store loadOlderFeed in Zustand so SummaryFeed can call it
-  useEffect(() => {
-    useFeedStore.getState().setLoadOlderFeed(loadOlderFeed);
-    return () => useFeedStore.getState().setLoadOlderFeed(null);
-  }, [loadOlderFeed]);
 
   // ── Subscriptions ──
   // AgentUpdated -> granular store update (no refetch needed)

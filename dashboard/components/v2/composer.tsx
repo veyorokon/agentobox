@@ -38,6 +38,11 @@ export function Composer() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
 
+  // Message history (shell-style up/down cycling)
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1); // -1 = not cycling
+  const draftRef = useRef('');
+
   const leadAgent = useMemo(() => agents.find((a) => a.role === 'lead') ?? null, [agents]);
   const MAX_HEIGHT = 200;
 
@@ -153,6 +158,13 @@ export function Composer() {
 
     sendMessage(targetIds, content);
 
+    // Push text to history (skip if duplicate of last entry)
+    if (text && (historyRef.current.length === 0 || historyRef.current[historyRef.current.length - 1] !== text)) {
+      historyRef.current.push(text);
+    }
+    historyIndexRef.current = -1;
+    draftRef.current = '';
+
     // Reset
     setMsgInput('');
     attachments.forEach((a) => URL.revokeObjectURL(a.preview));
@@ -163,6 +175,38 @@ export function Composer() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (hasContent) handleSend();
+      return;
+    }
+
+    const history = historyRef.current;
+    if (history.length === 0) return;
+    const el = textareaRef.current;
+
+    if (e.key === 'ArrowUp') {
+      // Only cycle when cursor is at position 0 (or input is empty)
+      if (el && el.selectionStart !== 0) return;
+      e.preventDefault();
+
+      if (historyIndexRef.current === -1) {
+        // Entering history — save current input as draft
+        draftRef.current = msgInput;
+        historyIndexRef.current = history.length - 1;
+      } else if (historyIndexRef.current > 0) {
+        historyIndexRef.current -= 1;
+      }
+      setMsgInput(history[historyIndexRef.current]);
+    } else if (e.key === 'ArrowDown') {
+      if (historyIndexRef.current === -1) return;
+      e.preventDefault();
+
+      if (historyIndexRef.current < history.length - 1) {
+        historyIndexRef.current += 1;
+        setMsgInput(history[historyIndexRef.current]);
+      } else {
+        // Bottom of stack — restore draft
+        historyIndexRef.current = -1;
+        setMsgInput(draftRef.current);
+      }
     }
   };
 
@@ -250,10 +294,10 @@ export function Composer() {
 
   return (
     <div
-      className="absolute bottom-0 left-0 right-0 z-10 px-4 pb-3 pt-2"
+      className="relative z-10 px-4 pb-3 pt-6 flex-shrink-0 -mt-6"
       style={{
         background:
-          'linear-gradient(to bottom, transparent 0%, var(--background) 12px)',
+          'linear-gradient(to bottom, transparent 0%, var(--background) 24px)',
       }}
     >
       {/* Hidden file input */}
@@ -351,7 +395,11 @@ export function Composer() {
               <textarea
                 ref={textareaRef}
                 value={msgInput}
-                onChange={(e) => setMsgInput(e.target.value)}
+                onChange={(e) => {
+                  setMsgInput(e.target.value);
+                  // Any manual typing resets history cycling
+                  historyIndexRef.current = -1;
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={placeholder}
                 rows={1}

@@ -199,6 +199,80 @@ def stop_queue_listener():
         _queue_listener = None
 
 
+class GraphQLLoggingExtension:
+    """
+    Strawberry schema extension that logs every GraphQL operation.
+
+    Emits structured logs with operation name, type, variables, timing,
+    and errors — replacing the opaque `POST /graphql → 200` lines.
+    """
+
+    def on_operation(self):
+        import time
+
+        ctx = self.execution_context
+        op_name = ctx.operation_name or "anonymous"
+        op_type = "unknown"
+        if ctx.query:
+            stripped = ctx.query.strip()
+            if stripped.startswith("mutation"):
+                op_type = "mutation"
+            elif stripped.startswith("subscription"):
+                op_type = "subscription"
+            else:
+                op_type = "query"
+
+        log = structlog.get_logger("graphql.operation")
+        start = time.monotonic()
+        yield
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+
+        result = ctx.result
+        errors = None
+        if result and hasattr(result, "errors") and result.errors:
+            errors = [str(e) for e in result.errors]
+
+        log_kwargs = {
+            "operation": op_name,
+            "type": op_type,
+            "duration_ms": elapsed_ms,
+        }
+
+        # Include variables but redact sensitive values
+        if ctx.variables:
+            safe_vars = _redact_variables(ctx.variables)
+            log_kwargs["variables"] = safe_vars
+
+        if errors:
+            log_kwargs["errors"] = errors
+            log.error("graphql_operation", **log_kwargs)
+        else:
+            log.info("graphql_operation", **log_kwargs)
+
+    def resolve(self, _next, root, info, *args, **kwargs):
+        return _next(root, info, *args, **kwargs)
+
+
+# Keys whose values should be redacted in GraphQL operation logs
+_SENSITIVE_KEYS = frozenset({
+    "password", "token", "secret", "value", "encrypted_value",
+    "api_key", "apiKey", "authorization",
+})
+
+
+def _redact_variables(variables: dict) -> dict:
+    """Shallow-redact sensitive variable values."""
+    redacted = {}
+    for key, val in variables.items():
+        if key.lower() in _SENSITIVE_KEYS or any(s in key.lower() for s in ("password", "secret", "token")):
+            redacted[key] = "***"
+        elif isinstance(val, dict):
+            redacted[key] = _redact_variables(val)
+        else:
+            redacted[key] = val
+    return redacted
+
+
 def setup():
     """
     Configure structlog to integrate with Python's stdlib logging.
@@ -212,6 +286,7 @@ def setup():
             add_service_metadata,
             structlog.contextvars.merge_contextvars,
             merge_agent_context,  # Add agent metadata from context
+            truncate_graphql_request,  # Shorten URL-encoded GraphQL queries
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),

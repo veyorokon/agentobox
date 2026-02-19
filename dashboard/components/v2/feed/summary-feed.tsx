@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useEffect, useCallback, useState } from 'react';
+import { useMemo, useRef, useEffect, useCallback } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
@@ -17,7 +17,7 @@ const VirtuosoItem = ({ children, ...props }: any) => (
     {children}
   </div>
 );
-const VirtuosoFooter = () => <div className="h-44" />;
+const VirtuosoFooter = () => <div className="h-6" />;
 const virtuosoComponents = { Item: VirtuosoItem, Footer: VirtuosoFooter };
 
 export function SummaryFeed() {
@@ -27,34 +27,8 @@ export function SummaryFeed() {
   const scrollToFeedId = useDashboardStore((s) => s.scrollToFeedId);
 
   const items = useFeedStore((s) => s.items);
-  const hasMore = useFeedStore((s) => s.hasMore);
-  const loadingOlder = useFeedStore((s) => s.loadingOlder);
-  const loadOlderFeed = useFeedStore((s) => s.loadOlderFeed);
   const agents = useAgentsStore((s) => s.sortedAgents);
   const colorMap = useAgentsStore((s) => s.agentColors);
-
-  // Direct scroll listener for load-older pagination.
-  // react-virtuoso's startReached only fires once (known bug, see GitHub #1177).
-  // We bypass it entirely with a scroll listener on the actual scroller element.
-  const paginationRef = useRef({ hasMore, loadOlderFeed, loadingOlder });
-  paginationRef.current = { hasMore, loadOlderFeed, loadingOlder };
-
-  const scrollCleanupRef = useRef<(() => void) | null>(null);
-  const handleScrollerRef = useCallback((ref: HTMLElement | Window | null) => {
-    scrollCleanupRef.current?.();
-    scrollCleanupRef.current = null;
-    if (!ref || ref === window) return;
-    const el = ref as HTMLElement;
-    const onScroll = () => {
-      const { hasMore, loadOlderFeed, loadingOlder } = paginationRef.current;
-      if (el.scrollTop < 100 && hasMore && loadOlderFeed && !loadingOlder) {
-        loadOlderFeed();
-      }
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    scrollCleanupRef.current = () => el.removeEventListener('scroll', onScroll);
-  }, []);
-  useEffect(() => () => scrollCleanupRef.current?.(), []);
 
   // Build lookup maps — but store in refs so renderItem callback stays stable
   const agentsMapRef = useRef<Record<string, MockAgent>>({});
@@ -81,28 +55,16 @@ export function SummaryFeed() {
   const filteredRef = useRef<MockFeedItem[]>(filtered);
   filteredRef.current = filtered;
 
-  // Auto-scroll: track whether user is near the bottom.
-  // When at bottom and new items arrive, scroll down. Disengages when user scrolls up.
-  const isAtBottomRef = useRef(true);
-  const prevCountRef = useRef(filtered.length);
-
-  const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    isAtBottomRef.current = atBottom;
-  }, []);
-
-  useEffect(() => {
-    const prevCount = prevCountRef.current;
-    prevCountRef.current = filtered.length;
-    if (filtered.length > prevCount && isAtBottomRef.current) {
-      requestAnimationFrame(() => {
-        virtuosoRef.current?.scrollToIndex({
-          index: filtered.length - 1,
-          align: 'end',
-          behavior: 'smooth',
-        });
-      });
+  // Auto-scroll: Virtuoso's followOutput handles this natively.
+  // Uses 'auto' (instant) instead of 'smooth' because with multiple agents
+  // sending rapid messages, smooth animation can't finish before the next batch
+  // arrives — causing Virtuoso to think you're not at bottom and disengage.
+  const followOutput = useCallback((isAtBottom: boolean) => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[feed] followOutput atBottom=${isAtBottom}`);
     }
-  }, [filtered.length]);
+    return isAtBottom ? 'auto' : false;
+  }, []);
 
   useEffect(() => {
     if (!scrollToFeedId) return;
@@ -153,23 +115,12 @@ export function SummaryFeed() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-      {loadingOlder && (
-        <div className="flex justify-center py-1 flex-shrink-0">
-          <span
-            className="text-[8px] font-mono animate-pulse"
-            style={{ color: 'var(--muted-foreground)', opacity: 0.6 }}
-          >
-            Loading older items...
-          </span>
-        </div>
-      )}
       <Virtuoso
         ref={virtuosoRef}
-        scrollerRef={handleScrollerRef}
         data={filtered}
         computeItemKey={(_, item) => item.id}
-        atBottomThreshold={200}
-        atBottomStateChange={handleAtBottomChange}
+        followOutput={followOutput}
+        atBottomThreshold={50}
         initialTopMostItemIndex={Math.max(0, filtered.length - 1)}
         itemContent={renderItem}
         className="scrollbar-thin"

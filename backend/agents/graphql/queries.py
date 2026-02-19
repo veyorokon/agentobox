@@ -7,7 +7,6 @@ from strawberry import ID
 from agents.graphql.types import (
     AgentEventType,
     AgentType,
-    FeedConnectionType,
     FeedItemType,
     McpRegistryEntryType,
     ModelEntryType,
@@ -156,68 +155,28 @@ class AgentQuery:
         return feed[offset:offset + limit]
 
     @strawberry.field
-    async def project_feed(
-        self, project_id: ID, limit: int = 50, before: str | None = None,
-    ) -> FeedConnectionType:
-        """
-        Cursor-paginated activity feed for all agents in a project.
-
-        Returns the newest `limit` items. Pass `before` (ISO timestamp of
-        the oldest item you already have) to load older items for reverse-
-        chronological pagination.
-        """
-        from datetime import datetime as dt
-        from datetime import timezone as tz
-
+    async def project_feed(self, project_id: ID) -> list[FeedItemType]:
+        """Full activity feed for all agents in a project, oldest first."""
         from agents.models import AgentEvent, Message, SessionResult
         from agents.services.feed_transform import messages_to_feed
 
-        # Parse cursor
-        before_dt = None
-        if before:
-            before_dt = dt.fromisoformat(before)
-            if before_dt.tzinfo is None:
-                before_dt = before_dt.replace(tzinfo=tz.utc)
+        messages = [
+            m async for m in Message.objects.filter(
+                agent__project_id=project_id,
+            ).select_related("agent").order_by("created_at")
+        ]
+        events = [
+            e async for e in AgentEvent.objects.filter(
+                agent__project_id=project_id,
+            ).select_related("agent").order_by("created_at")
+        ]
+        session_results = [
+            sr async for sr in SessionResult.objects.filter(
+                agent__project_id=project_id,
+            ).order_by("created_at")
+        ]
 
-        # Buffer: fetch more raw records than limit to account for the
-        # N:M ratio of messages → feed items (one message may produce
-        # multiple feed items, or zero for tool_result-only messages).
-        fetch_limit = limit * 4
-
-        msg_qs = Message.objects.filter(
-            agent__project_id=project_id,
-        ).select_related("agent")
-        evt_qs = AgentEvent.objects.filter(
-            agent__project_id=project_id,
-        ).select_related("agent")
-        sr_qs = SessionResult.objects.filter(
-            agent__project_id=project_id,
-        )
-
-        if before_dt:
-            msg_qs = msg_qs.filter(created_at__lt=before_dt)
-            evt_qs = evt_qs.filter(created_at__lt=before_dt)
-            sr_qs = sr_qs.filter(created_at__lt=before_dt)
-
-        # Fetch newest records (desc), then reverse for oldest-first transform
-        messages = [m async for m in msg_qs.order_by("-created_at")[:fetch_limit]]
-        messages.reverse()
-        events = [e async for e in evt_qs.order_by("-created_at")[:fetch_limit]]
-        events.reverse()
-        session_results = [sr async for sr in sr_qs.order_by("created_at")]
-
-        feed = messages_to_feed(messages, events, session_results)
-
-        # Take the last `limit` items (newest in the transformed set)
-        has_more = len(feed) > limit
-        page = feed[-limit:] if has_more else feed
-        end_cursor = page[0].timestamp.isoformat() if page else None
-
-        return FeedConnectionType(
-            items=page,
-            has_more=has_more,
-            end_cursor=end_cursor,
-        )
+        return messages_to_feed(messages, events, session_results)
 
     @strawberry.field
     def available_models(self) -> list[ModelEntryType]:

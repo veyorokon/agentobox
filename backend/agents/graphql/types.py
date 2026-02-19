@@ -111,14 +111,6 @@ class FeedItemType:
     target_agent_ids: list[str] | None = None
 
 
-@strawberry.type
-class FeedConnectionType:
-    """Cursor-paginated wrapper around feed items."""
-
-    items: list[FeedItemType]
-    has_more: bool
-    end_cursor: str | None = None  # ISO timestamp of oldest item
-
 
 @strawberry_django.type(models.ProjectSecret)
 class ProjectSecretType:
