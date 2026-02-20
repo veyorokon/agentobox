@@ -80,9 +80,9 @@ Displays a single agent with:
 **Status colors (CSS custom properties):**
 - `deploying` → `--agent-deploying`
 - `running` → `--agent-active`
-- `idle` → `--agent-idle`
-- `stopped` → `--agent-dead`
-- `error` → `--agent-error`
+- `idle` → `--agent-active` (dimmed)
+- `stopped` → `--muted-foreground`
+- `error` → `--agent-dead`
 
 ### StatusBadge
 

@@ -225,7 +225,7 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
                       </ContextMenuItem>
                     </>
                   )}
-                  {/* Error: Restart (hard), separator, Kill */}
+                  {/* Error: Restart (hard), separator, Kill, Remove */}
                   {agent.status === 'error' && (
                     <>
                       <ContextMenuItem
@@ -243,6 +243,14 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
                       >
                         <Square className="w-3 h-3" />
                         Kill
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        variant="destructive"
+                        onClick={() => removeAgent(agent.id)}
+                        className="gap-2 text-[10px]"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        Remove
                       </ContextMenuItem>
                     </>
                   )}

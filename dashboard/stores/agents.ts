@@ -8,7 +8,7 @@ interface AgentsState {
   agents: Record<string, AgentSummary>;
   sortedAgents: AgentSummary[];
   agentColors: Record<string, string>;
-  stats: { running: number; idle: number; totalCost: number };
+  stats: { running: number; idle: number; error: number; deploying: number; totalCost: number };
   fetching: boolean;
 
   setAgents: (raw: Agent[]) => void;
@@ -29,6 +29,8 @@ function computeStats(agents: AgentSummary[]) {
   return {
     running: agents.filter((a) => a.status === 'running').length,
     idle: agents.filter((a) => a.status === 'idle').length,
+    error: agents.filter((a) => a.status === 'error').length,
+    deploying: agents.filter((a) => a.status === 'deploying').length,
     totalCost: agents.reduce((sum, a) => sum + Number(a.sessionCostUsd || 0), 0),
   };
 }
@@ -51,7 +53,7 @@ export const useAgentsStore = create<AgentsState>()(
       agents: {},
       sortedAgents: [],
       agentColors: {},
-      stats: { running: 0, idle: 0, totalCost: 0 },
+      stats: { running: 0, idle: 0, error: 0, deploying: 0, totalCost: 0 },
       fetching: false,
 
       setAgents: (raw) => {
@@ -94,7 +96,7 @@ export const useAgentsStore = create<AgentsState>()(
             agents: {},
             sortedAgents: [],
             agentColors: {},
-            stats: { running: 0, idle: 0, totalCost: 0 },
+            stats: { running: 0, idle: 0, error: 0, deploying: 0, totalCost: 0 },
             fetching: false,
           },
           false,

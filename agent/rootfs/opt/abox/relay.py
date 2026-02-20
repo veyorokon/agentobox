@@ -10,7 +10,7 @@ Two output paths:
     Batched (50-100ms): system, assistant, user, result events
         -> POST /agents/<id>/stream (persisted by backend)
     Real-time: stream_event (from --include-partial-messages)
-        -> POST /agents/<id>/stream/live (ephemeral, WebSocket passthrough)
+        -> POST /agents/<id>/stream (same endpoint, not batched)
 
 Synthetic events (not from Claude):
     process_exit: {type: "system", subtype: "process_exit", exit_code, stderr}

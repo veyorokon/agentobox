@@ -7,6 +7,7 @@ export function formatTime(dateStr: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+/** Map agent status to a semantic CSS color variable. */
 export function statusDotColor(status: string): string {
   switch (status) {
     case 'deploying': return 'var(--agent-deploying)';
@@ -16,6 +17,31 @@ export function statusDotColor(status: string): string {
     case 'error': return 'var(--agent-dead)';
     default: return 'var(--muted-foreground)';
   }
+}
+
+const STATUS_KEYWORDS: Record<string, string> = {
+  deployed: 'deploying',
+  deploying: 'deploying',
+  running: 'running',
+  idle: 'idle',
+  stopped: 'stopped',
+  error: 'error',
+};
+
+/**
+ * Extract a semantic color from a status-event summary string.
+ * Handles both single-word ("Deployed", "Idle") and transition
+ * formats ("running → idle") by taking the last recognized status keyword.
+ */
+export function statusColorFromSummary(summary: string): string {
+  const lower = summary.toLowerCase();
+  // For transitions like "running → idle", take the target (last match)
+  const words = lower.split(/[\s→\->/]+/);
+  for (let i = words.length - 1; i >= 0; i--) {
+    const mapped = STATUS_KEYWORDS[words[i]];
+    if (mapped) return statusDotColor(mapped);
+  }
+  return statusDotColor('');
 }
 
 export { hasToolContent as hasExpansionData } from '@/components/v2/tool-expansion';

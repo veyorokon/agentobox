@@ -148,8 +148,14 @@ export function StatusBar() {
           </div>
         ) : (
           <>
+            {stats.error > 0 && (
+              <StatusSegment count={stats.error} label="error" color="var(--agent-dead)" />
+            )}
             {stats.running > 0 && (
               <StatusSegment count={stats.running} label="running" color="var(--agent-active)" pulse />
+            )}
+            {stats.deploying > 0 && (
+              <StatusSegment count={stats.deploying} label="deploying" color="var(--agent-deploying)" pulse />
             )}
             {stats.idle > 0 && (
               <StatusSegment count={stats.idle} label="idle" color="var(--muted-foreground)" />

@@ -6,6 +6,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
 import { useFeedStore } from '@/stores/feed';
 import type { AgentSummary, TaskItem, TimelineEvent } from '@/lib/mock-v2-data';
+import { statusDotColor, statusColorFromSummary } from '@/components/v2/feed/helpers';
 
 const LANE_HEIGHT = 56;
 const HEADER_HEIGHT = 28;
@@ -156,8 +157,9 @@ export function SwimLanes() {
                   <span
                     className="w-2 h-2 rounded-full flex-shrink-0"
                     style={{
-                      background: color,
-                      boxShadow: agent.status === 'running' ? `0 0 4px ${color}` : 'none',
+                      background: statusDotColor(agent.status),
+                      boxShadow: agent.status === 'running' ? `0 0 4px ${statusDotColor(agent.status)}` : 'none',
+                      opacity: agent.status === 'idle' ? 0.5 : agent.status === 'stopped' ? 0.4 : 1,
                     }}
                   />
                   <span
@@ -391,6 +393,7 @@ export function SwimLanes() {
                       }
 
                       // status event — small dot below baseline
+                      const statusColor = statusColorFromSummary(event.summary);
                       return (
                         <div
                           key={event.id}
@@ -402,11 +405,11 @@ export function SwimLanes() {
                             width: 5,
                             height: 5,
                             borderRadius: '50%',
-                            background: color,
-                            opacity: 0.3,
+                            background: statusColor,
+                            opacity: 0.5,
                           }}
                           onMouseEnter={(e) =>
-                            setTooltip({ text: `${event.agentName}: ${event.summary}`, color, x: e.clientX, y: e.clientY })
+                            setTooltip({ text: `${event.agentName}: ${event.summary}`, color: statusColor, x: e.clientX, y: e.clientY })
                           }
                           onMouseMove={(e) =>
                             setTooltip((prev) => prev ? { ...prev, x: e.clientX, y: e.clientY } : null)

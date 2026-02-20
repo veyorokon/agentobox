@@ -306,7 +306,9 @@ export type StreamDeltaEventType =
 
 export type StreamDeltaPayload =
   | { type: 'text_delta'; text: string }
-  | { type: 'input_json_delta'; partial_json: string };
+  | { type: 'input_json_delta'; partial_json: string }
+  | { type: 'thinking_delta'; thinking: string }
+  | { type: 'signature_delta'; signature: string };
 
 export interface StreamDelta {
   eventType: StreamDeltaEventType;
@@ -315,7 +317,7 @@ export interface StreamDelta {
   /** Delta payload — text chunk or tool input JSON fragment. */
   delta?: StreamDeltaPayload;
   /** Content block type, present on content_block_start events. */
-  contentBlock?: { type: 'text' | 'tool_use'; id?: string; name?: string };
+  contentBlock?: { type: 'text' | 'tool_use' | 'thinking' | 'redacted_thinking'; id?: string; name?: string };
 }
 
 
