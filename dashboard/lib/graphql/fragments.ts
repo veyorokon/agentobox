@@ -9,6 +9,7 @@ export const AGENT_FIELDS_FRAGMENT = gql`
     sandboxId
     vncUrl
     status
+    phase
     teamName
     sessionId
     model

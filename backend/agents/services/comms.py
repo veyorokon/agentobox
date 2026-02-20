@@ -70,7 +70,7 @@ def _atomic_enqueue(agent_id: str, input_msg: dict) -> Agent:
         # STOPPED/ERROR: handled by auto-restart before this point.
         if agent.status == AgentStatus.IDLE:
             agent.status = AgentStatus.RUNNING
-        agent.save(update_fields=["pending_input", "status"])
+        agent.save(update_fields=["pending_input", "status", "updated_at"])
     return agent
 
 
@@ -296,6 +296,42 @@ async def broadcast_message(
 
     op_log.info("broadcast_sent", targets=target_names)
     return True
+
+
+async def set_agent_mode(agent_id: str, mode: str) -> Agent:
+    """
+    Queue a permission mode change for an agent's Claude Code session.
+
+    Mode switching works via soft restart: the relay SIGINTs Claude,
+    then respawns with --resume <session_id> --permission-mode <mode>.
+    The pending_mode field is delivered via piggyback.
+
+    Valid modes: default, plan, acceptEdits, bypassPermissions, dontAsk
+
+    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
+    """
+    VALID_MODES = {"default", "plan", "acceptEdits", "bypassPermissions", "dontAsk"}
+    op_log = log.bind(agent_id=agent_id, mode=mode)
+
+    if mode not in VALID_MODES:
+        raise ValueError(f"Invalid permission mode: {mode}. Must be one of: {', '.join(sorted(VALID_MODES))}")
+
+    agent = await Agent.objects.aget(id=agent_id)
+
+    if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
+        op_log.warning("set_mode_skipped", status=agent.status)
+        raise ValueError(f"Agent must be running or idle to change mode (current: {agent.status})")
+
+    agent.pending_mode = mode
+    await agent.asave(update_fields=["pending_mode"])
+
+    await broadcast_agent_event(
+        agent, "mode_change",
+        {"mode": mode},
+        summary=f"{agent.name} switching to {mode} mode",
+    )
+    op_log.info("mode_change_enqueued")
+    return agent
 
 
 async def interrupt_agent(agent_id: str) -> bool:

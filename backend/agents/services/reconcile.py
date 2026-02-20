@@ -31,6 +31,7 @@ log = structlog.get_logger("agents.reconcile")
 INTERVAL_S = 30
 HEARTBEAT_STALE_S = 30
 DEPLOY_GRACE_S = 120
+ERROR_REAP_GRACE_S = 60
 
 _task: asyncio.Task | None = None
 
@@ -68,6 +69,7 @@ async def reconcile_agents():
     await _detect_dead_containers()
     await _detect_stale_heartbeats(now)
     await _detect_stuck_deploys(now)
+    await _reap_errored_agents(now)
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +85,15 @@ def _get_agents(**filters):
 def _mark_error(agent_id):
     agent = Agent.objects.get(id=agent_id)
     agent.status = AgentStatus.ERROR
-    agent.save(update_fields=["status"])
+    agent.save(update_fields=["status", "updated_at"])
+    return agent
+
+
+@_db
+def _mark_stopped(agent_id):
+    agent = Agent.objects.get(id=agent_id)
+    agent.status = AgentStatus.STOPPED
+    agent.save(update_fields=["status", "updated_at"])
     return agent
 
 
@@ -208,6 +218,46 @@ async def _detect_stuck_deploys(now):
         await broadcast_agent_update(agent)
         log.info(
             "stuck_deploy_detected",
+            agent_id=str(agent.id),
+            agent_name=agent.name,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step 5: Auto-reap errored agents
+# ---------------------------------------------------------------------------
+
+async def _reap_errored_agents(now):
+    """Terminate and stop agents stuck in ERROR beyond ERROR_REAP_GRACE_S.
+
+    Logs are already persisted (events in DB, process_exit with stderr), so
+    keeping dead containers alive wastes resources. The grace period ensures
+    final relay events have time to flush before cleanup.
+
+    Runtime-agnostic: uses each agent's own runtime for sandbox termination.
+    """
+    from agents.runtimes import get_runtime
+
+    reap_cutoff = now - timedelta(seconds=ERROR_REAP_GRACE_S)
+    errored_agents = await _get_agents(
+        status=AgentStatus.ERROR,
+        updated_at__lt=reap_cutoff,
+    )
+
+    for agent in errored_agents:
+        if agent.sandbox_id:
+            try:
+                runtime = get_runtime(agent.runtime)
+                await runtime.terminate(agent.sandbox_id)
+            except Exception:
+                log.exception(
+                    "error_reap_terminate_failed",
+                    agent_id=str(agent.id),
+                )
+        agent = await _mark_stopped(agent.id)
+        await broadcast_agent_update(agent)
+        log.info(
+            "error_agent_reaped",
             agent_id=str(agent.id),
             agent_name=agent.name,
         )

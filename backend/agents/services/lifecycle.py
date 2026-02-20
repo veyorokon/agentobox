@@ -110,7 +110,7 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
     agent.relay_token = relay_token
-    agent.save(update_fields=["sandbox_id", "vnc_url", "status", "team_name", "parent_session_id", "relay_token"])
+    agent.save(update_fields=["sandbox_id", "vnc_url", "status", "team_name", "parent_session_id", "relay_token", "updated_at"])
     return agent
 
 
@@ -118,7 +118,7 @@ def _save_agent_failed(agent_id):
     """Sync helper: mark agent as error."""
     agent = Agent.objects.get(id=agent_id)
     agent.status = AgentStatus.ERROR
-    agent.save(update_fields=["status"])
+    agent.save(update_fields=["status", "updated_at"])
     return agent
 
 
@@ -510,7 +510,7 @@ def _atomic_reset_for_restart(agent_id):
             "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
             "last_heartbeat_at", "pending_input", "pending_signal",
             "runtime", "model", "mcp_servers", "workspace_path",
-            "volume_mounts", "instructions", "role",
+            "volume_mounts", "instructions", "role", "updated_at",
         ])
 
     return agent, old_sandbox_id, old_runtime, resume_session_id, config

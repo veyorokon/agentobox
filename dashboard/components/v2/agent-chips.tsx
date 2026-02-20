@@ -1,6 +1,6 @@
 'use client';
 
-import { Plus, Crown, Code2, Image, RotateCw, Square, Play, Eraser, Trash2, Monitor, Settings2 } from 'lucide-react';
+import { Plus, Crown, Code2, Image, RotateCw, Square, Play, Eraser, Trash2, Monitor, Settings2, Eye, Pencil } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
 import { useFeedStore } from '@/stores/feed';
@@ -13,8 +13,9 @@ import {
   ContextMenuSeparator,
 } from '@/components/ui/context-menu';
 import type { FeedItem } from '@/lib/mock-v2-data';
+import type { AgentPhase } from '@/types';
 
-function chipDotStyle(status: string): React.CSSProperties {
+function chipDotStyle(status: string, phase: AgentPhase = ''): React.CSSProperties {
   switch (status) {
     case 'deploying':
       return {
@@ -23,6 +24,13 @@ function chipDotStyle(status: string): React.CSSProperties {
         animation: 'border-pulse 1.5s ease-in-out infinite',
       };
     case 'running':
+      if (phase === 'thinking') {
+        return {
+          background: 'var(--agent-thinking)',
+          boxShadow: '0 0 6px var(--agent-thinking)',
+          animation: 'border-pulse 1s ease-in-out infinite',
+        };
+      }
       return {
         background: 'var(--agent-active)',
         boxShadow: '0 0 6px var(--agent-active)',
@@ -127,7 +135,7 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
   const agents = useAgentsStore((s) => s.sortedAgents);
   const colorMap = useAgentsStore((s) => s.agentColors);
   const feedItems = useFeedStore((s) => s.items);
-  const { restartAgent, hardRestartAgent, startAgent, clearAgentSession, killAgent, removeAgent } = useAgentActions();
+  const { restartAgent, hardRestartAgent, startAgent, clearAgentSession, killAgent, removeAgent, setAgentMode } = useAgentActions();
 
   const pendingQuestionAgents = getAgentsWithPendingQuestions(feedItems);
 
@@ -183,12 +191,24 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
                   {/* Status dot */}
                   <span
                     className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={chipDotStyle(agent.status)}
+                    style={chipDotStyle(agent.status, agent.phase)}
                   />
                   {isLead && (
                     <Crown className="w-2.5 h-2.5 flex-shrink-0" style={{ color, opacity: 0.7 }} />
                   )}
                   {agent.name}
+                  {agent.permissionMode === 'plan' && (
+                    <span
+                      className="text-[7px] font-bold uppercase tracking-wider px-1 rounded-sm flex-shrink-0"
+                      style={{
+                        background: 'color-mix(in srgb, var(--warning, #eab308) 20%, transparent)',
+                        color: 'var(--warning, #eab308)',
+                        lineHeight: '1.4',
+                      }}
+                    >
+                      Plan
+                    </span>
+                  )}
                   <Monitor
                     className="w-2.5 h-2.5 flex-shrink-0"
                     style={{ opacity: isSelected ? 0.5 : 0.2 }}
@@ -197,9 +217,27 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
               </ContextMenuTrigger>
               {(isAlive || isDead || agent.status === 'deploying') && (
                 <ContextMenuContent className="min-w-[120px] font-mono text-[10px]">
-                  {/* Alive: Restart (soft), Clear, separator, Kill */}
+                  {/* Alive: Mode toggle, Restart (soft), Clear, separator, Kill */}
                   {isAlive && (
                     <>
+                      {agent.permissionMode === 'plan' ? (
+                        <ContextMenuItem
+                          onClick={() => setAgentMode(agent.id, 'default')}
+                          className="gap-2 text-[10px]"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          Code Mode
+                        </ContextMenuItem>
+                      ) : (
+                        <ContextMenuItem
+                          onClick={() => setAgentMode(agent.id, 'plan')}
+                          className="gap-2 text-[10px]"
+                        >
+                          <Eye className="w-3 h-3" />
+                          Plan Mode
+                        </ContextMenuItem>
+                      )}
+                      <ContextMenuSeparator />
                       <ContextMenuItem
                         onClick={() => restartAgent(agent.id)}
                         className="gap-2 text-[10px]"

@@ -50,6 +50,7 @@
   --agent-blocked: #f59e0b;
   --agent-goal-changed: #f472b6;
   --agent-dead: #ef4444;
+  --agent-thinking: #f59e0b;
 
   /* Agent UI */
   --agent-border: rgba(0, 0, 0, 0.2);
@@ -111,6 +112,7 @@
   --agent-blocked: #f59e0b;
   --agent-goal-changed: #f472b6;
   --agent-dead: #ef4444;
+  --agent-thinking: #f59e0b;
 
   --agent-border: rgba(255, 255, 255, 0.2);
   --agent-border-active: #39ff14;
@@ -169,6 +171,7 @@
   --agent-blocked: #DFA05D;
   --agent-goal-changed: #c77986;
   --agent-dead: #AC5045;
+  --agent-thinking: #DFA05D;
 
   --agent-border: rgba(232, 216, 201, 0.2);
   --agent-border-active: #658761;
@@ -228,6 +231,7 @@
   --agent-blocked: #f6c177;
   --agent-goal-changed: #ea9a97;
   --agent-dead: #eb6f92;
+  --agent-thinking: #f6c177;
 
   --agent-border: rgba(224, 222, 244, 0.2);
   --agent-border-active: #c4a7e7;
@@ -286,6 +290,7 @@
   --agent-blocked: #ebcb8b;
   --agent-goal-changed: #d08770;
   --agent-dead: #bf616a;
+  --agent-thinking: #ebcb8b;
 
   --agent-border: rgba(192, 197, 206, 0.2);
   --agent-border-active: #8fa1b3;
@@ -348,6 +353,7 @@
   --color-agent-blocked: var(--agent-blocked);
   --color-agent-goal-changed: var(--agent-goal-changed);
   --color-agent-dead: var(--agent-dead);
+  --color-agent-thinking: var(--agent-thinking);
   --color-agent-border: var(--agent-border);
   --color-agent-border-active: var(--agent-border-active);
   --color-agent-glow: var(--agent-glow);

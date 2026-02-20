@@ -176,6 +176,15 @@ export const UPDATE_AGENT_CONFIG_MUTATION = gql`
   }
 `;
 
+export const SET_AGENT_MODE_MUTATION = gql`
+  mutation SetAgentMode($agentId: ID!, $mode: String!) {
+    setAgentMode(agentId: $agentId, mode: $mode) {
+      id
+      permissionMode
+    }
+  }
+`;
+
 export const SET_PROJECT_THEME_MUTATION = gql`
   mutation SetProjectTheme($input: SetProjectThemeInput!) {
     setProjectTheme(input: $input)

@@ -18,11 +18,14 @@ export type AgentStatus =
   | 'stopped'
   | 'error';
 
+export type AgentPhase = '' | 'thinking' | 'responding' | 'tool-input' | 'tool-use';
+
 export interface Agent {
   id: string;
   name: string;
   role: 'lead' | 'worker';
   status: AgentStatus;
+  phase: AgentPhase;
   vncUrl: string;
   sandboxId: string;
   runtime: string;

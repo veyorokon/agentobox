@@ -17,13 +17,13 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 
 @sync_to_async(thread_sensitive=False)
 def _atomic_drain_piggyback(agent_id):
-    """Drain pending_input and pending_signal under a row lock.
+    """Drain pending_input, pending_signal, and pending_mode under a row lock.
 
     Uses select_for_update() inside transaction.atomic() to prevent
     concurrent _atomic_enqueue from committing between read and clear,
     which would silently lose enqueued messages.
 
-    Returns (pending_input, pending_signal).
+    Returns (pending_input, pending_signal, pending_mode).
     """
     from agents.models import Agent
 
@@ -32,13 +32,18 @@ def _atomic_drain_piggyback(agent_id):
 
         pending_input = agent.pending_input or []
         pending_signal = agent.pending_signal or ""
+        pending_mode = agent.pending_mode or ""
 
         agent.pending_input = []
         agent.pending_signal = ""
+        agent.pending_mode = ""
         agent.last_heartbeat_at = timezone.now()
-        agent.save(update_fields=["pending_input", "pending_signal", "last_heartbeat_at"])
+        agent.save(update_fields=[
+            "pending_input", "pending_signal", "pending_mode",
+            "last_heartbeat_at", "updated_at",
+        ])
 
-    return pending_input, pending_signal
+    return pending_input, pending_signal, pending_mode
 
 
 @csrf_exempt
@@ -80,19 +85,22 @@ async def stream_events(request, agent_id):
     if events:
         await process_stream_events(agent, events)
 
-    # Atomically drain pending_input and pending_signal under row lock.
-    # This prevents _atomic_enqueue from committing a message between
-    # our read and clear, which would silently lose that message.
-    pending_input, pending_signal = await _atomic_drain_piggyback(agent_id)
+    # Atomically drain pending_input, pending_signal, and pending_mode under
+    # row lock. This prevents _atomic_enqueue from committing a message
+    # between our read and clear, which would silently lose that message.
+    pending_input, pending_signal, pending_mode = await _atomic_drain_piggyback(agent_id)
 
     # Build piggyback response
-    response = {"ack": True, "pending_input": None, "pending_signal": None}
+    response = {"ack": True, "pending_input": None, "pending_signal": None, "pending_mode": None}
 
     if pending_input:
         response["pending_input"] = pending_input
 
     if pending_signal:
         response["pending_signal"] = pending_signal
+
+    if pending_mode:
+        response["pending_mode"] = pending_mode
 
     return JsonResponse(response)
 

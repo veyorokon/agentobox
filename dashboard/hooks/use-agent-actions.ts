@@ -13,6 +13,7 @@ import {
   ANSWER_QUESTION_MUTATION,
   UPDATE_AGENT_INSTRUCTIONS_MUTATION,
   UPDATE_AGENT_CONFIG_MUTATION,
+  SET_AGENT_MODE_MUTATION,
 } from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
 import type { ContentBlock } from '@/components/v2/composer';
@@ -27,6 +28,7 @@ export function useAgentActions() {
   const [, executeAnswerQuestion] = useMutation(ANSWER_QUESTION_MUTATION);
   const [, executeUpdateInstructions] = useMutation(UPDATE_AGENT_INSTRUCTIONS_MUTATION);
   const [, executeUpdateConfig] = useMutation(UPDATE_AGENT_CONFIG_MUTATION);
+  const [, executeSetMode] = useMutation(SET_AGENT_MODE_MUTATION);
 
   const restartAgent = useCallback(
     async (agentId: string) => {
@@ -161,6 +163,18 @@ export function useAgentActions() {
     [executeUpdateConfig]
   );
 
+  const setAgentMode = useCallback(
+    async (agentId: string, mode: string) => {
+      const { error } = await executeSetMode({ agentId, mode });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success(`Switching to ${mode} mode...`);
+    },
+    [executeSetMode]
+  );
+
   return {
     restartAgent,
     hardRestartAgent,
@@ -172,5 +186,6 @@ export function useAgentActions() {
     answerQuestion,
     updateInstructions,
     updateAgentConfig,
+    setAgentMode,
   };
 }

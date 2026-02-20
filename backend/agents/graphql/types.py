@@ -224,6 +224,7 @@ class AgentType:
     sandbox_id: auto
     vnc_url: auto
     status: auto
+    phase: auto
     team_name: auto
     parent_session_id: auto
     session_id: auto

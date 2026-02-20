@@ -63,7 +63,7 @@ MAX_BATCH_SIZE = 2000
 # ---------------------------------------------------------------------------
 
 
-def build_claude_cmd(resume_session_id: str = "") -> list[str]:
+def build_claude_cmd(resume_session_id: str = "", permission_mode: str = "") -> list[str]:
     """
     Build the Claude CLI command with stream-json flags and team agent flags.
 
@@ -73,6 +73,9 @@ def build_claude_cmd(resume_session_id: str = "") -> list[str]:
             conversation context. Preferred over --continue because --continue
             picks the most recent session on disk, which may be stale from a
             previous container lifecycle (volume-persisted .claude dir).
+        permission_mode: If non-empty, adds --permission-mode <mode> to set
+            the Claude Code permission mode (plan, default, acceptEdits, etc.).
+            Used for mode cycling via dashboard.
 
     Flag reference from docs/ARCHITECTURE.md, "All Spawn Flags".
     Team flags from env vars set by backend's _provision_agent().
@@ -81,12 +84,16 @@ def build_claude_cmd(resume_session_id: str = "") -> list[str]:
         "claude", "-p",
         "--output-format", "stream-json",
         "--input-format", "stream-json",
+        "--include-partial-messages",
         "--verbose",
         "--dangerously-skip-permissions",
     ]
 
     if resume_session_id:
         cmd.extend(["--resume", resume_session_id])
+
+    if permission_mode:
+        cmd.extend(["--permission-mode", permission_mode])
 
     agent_name = os.environ.get("AGENT_NAME", "")
     team_name = os.environ.get("TEAM_NAME", "")
@@ -187,6 +194,7 @@ class Relay:
         self.shutting_down = False
         self.restart_requested = False
         self.clear_requested = False
+        self.next_permission_mode: str = ""
 
     async def run(self):
         """Entry point — spawn Claude with restart loop for soft restarts.
@@ -202,9 +210,14 @@ class Relay:
         """
         # Check env for resume session from hard restart (container reprovision)
         resume_session_id = os.environ.get("RESUME_SESSION_ID", "")
+        # Initial permission mode from env (set by backend provisioning)
+        permission_mode = os.environ.get("PERMISSION_MODE", "")
 
         while True:
-            cmd = build_claude_cmd(resume_session_id=resume_session_id)
+            cmd = build_claude_cmd(
+                resume_session_id=resume_session_id,
+                permission_mode=permission_mode,
+            )
             log.info("Spawning: %s", " ".join(cmd))
 
             try:
@@ -263,6 +276,11 @@ class Relay:
                     log.info("Soft restart: respawning with --resume %s", self.session_id)
                 else:
                     log.info("Soft restart: no session_id captured, starting fresh")
+                # Apply pending permission mode change
+                if self.next_permission_mode:
+                    permission_mode = self.next_permission_mode
+                    self.next_permission_mode = ""
+                    log.info("Permission mode for next spawn: %s", permission_mode)
                 # Reset state for new subprocess
                 self.proc = None
                 self.stderr_output = ""
@@ -393,6 +411,18 @@ class Relay:
                     await self._write_stdin(msg)
             elif isinstance(pending_input, dict):
                 await self._write_stdin(pending_input)
+
+        # Handle pending mode change (triggers restart with new --permission-mode)
+        pending_mode = resp.get("pending_mode")
+        if pending_mode and self.proc:
+            log.info(
+                "Mode change requested: %s (pid=%d, session=%s)",
+                pending_mode, self.proc.pid, self.session_id or "none",
+            )
+            self.next_permission_mode = pending_mode
+            self.restart_requested = True
+            self.proc.send_signal(signal.SIGINT)
+            return  # Don't process pending_signal — restart handles it
 
         # Handle pending signal
         pending_signal = resp.get("pending_signal")

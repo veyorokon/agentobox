@@ -175,6 +175,13 @@ class AgentMutation:
         return await clear_agent_session(agent_id)
 
     @strawberry.mutation
+    async def set_agent_mode(self, agent_id: ID, mode: str, info: strawberry.types.Info) -> AgentType:
+        from agents.services.comms import set_agent_mode
+
+        await authorize_agent(info, agent_id)
+        return await set_agent_mode(agent_id, mode)
+
+    @strawberry.mutation
     async def send_message(self, input: SendMessageInput, info: strawberry.types.Info) -> bool:
         from agents.services.comms import send_message
 

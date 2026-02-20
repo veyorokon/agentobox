@@ -103,12 +103,17 @@ class Agent(models.Model):
     pending_input = models.JSONField(default=list, blank=True)
     # Queued signal for relay piggyback (e.g. "SIGINT")
     pending_signal = models.CharField(max_length=20, blank=True)
+    # Queued permission mode change for relay piggyback (e.g. "plan")
+    pending_mode = models.CharField(max_length=30, blank=True)
     # Auth token for relay -> backend communication
     relay_token = models.CharField(max_length=64, blank=True)
+    # Current activity phase from stream_event (thinking, responding, tool-input, tool-use)
+    phase = models.CharField(max_length=20, blank=True, default="")
     # Relay health inference — stale > 10s = down
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]

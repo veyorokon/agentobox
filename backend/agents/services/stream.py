@@ -88,6 +88,8 @@ async def _process_one(agent: Agent, event: dict) -> None:
         await _handle_user(agent, event)
     elif event_type == "result":
         await _handle_result(agent, event)
+    elif event_type == "stream_event":
+        await _handle_stream_event(agent, event)
 
 
 async def _handle_system(agent: Agent, event: dict) -> None:
@@ -108,6 +110,8 @@ async def _handle_system(agent: Agent, event: dict) -> None:
     subtype = event.get("subtype", "")
 
     if subtype == "init":
+        update_fields = []
+
         if not agent.capabilities:
             agent.capabilities = {
                 "tools": event.get("tools", []),
@@ -115,19 +119,37 @@ async def _handle_system(agent: Agent, event: dict) -> None:
                 "model": event.get("model", ""),
                 "version": event.get("claude_code_version", ""),
             }
-            await agent.asave(update_fields=["capabilities"])
-            await broadcast_agent_update(agent)
+            update_fields.append("capabilities")
 
         # Update session_id from init event
         session_id = event.get("session_id", "")
         if session_id and session_id != agent.session_id:
             agent.session_id = session_id
-            await agent.asave(update_fields=["session_id"])
+            update_fields.append("session_id")
+
+        # Track permissionMode from init event
+        perm_mode = event.get("permissionMode", "")
+        if perm_mode and perm_mode != agent.permission_mode:
+            agent.permission_mode = perm_mode
+            update_fields.append("permission_mode")
+
+        if update_fields:
+            await agent.asave(update_fields=update_fields)
+            await broadcast_agent_update(agent)
+
+    elif subtype == "status":
+        # system/status events emit permissionMode changes
+        perm_mode = event.get("permissionMode", "")
+        if perm_mode and perm_mode != agent.permission_mode:
+            agent.permission_mode = perm_mode
+            await agent.asave(update_fields=["permission_mode"])
+            await broadcast_agent_update(agent)
 
     elif subtype == "process_exit":
         exit_code = event.get("exit_code", -1)
         agent.status = AgentStatus.STOPPED if exit_code == 0 else AgentStatus.ERROR
-        await agent.asave(update_fields=["status"])
+        agent.phase = ""
+        await agent.asave(update_fields=["status", "phase"])
         await broadcast_agent_update(agent)
         log.info(
             "process_exit",
@@ -289,10 +311,11 @@ async def _handle_result(agent: Agent, event: dict) -> None:
         permission_denials=event.get("permission_denials", []),
     )
 
-    # Update agent's running session cost and mark idle (turn complete)
+    # Update agent's running session cost, clear phase, and mark idle (turn complete)
     agent.session_cost_usd = event.get("total_cost_usd", 0)
     agent.status = AgentStatus.IDLE
-    await agent.asave(update_fields=["session_cost_usd", "status"])
+    agent.phase = ""
+    await agent.asave(update_fields=["session_cost_usd", "status", "phase"])
     await broadcast_agent_update(agent)
 
     # Assign turn_number to messages from this session that don't have one yet
@@ -300,3 +323,41 @@ async def _handle_result(agent: Agent, event: dict) -> None:
     await Message.objects.filter(
         agent=agent, session_id=session_id, turn_number=0
     ).aupdate(turn_number=num_turns)
+
+
+async def _handle_stream_event(agent: Agent, event: dict) -> None:
+    """
+    Extract phase transitions from stream_event envelopes.
+
+    stream_event wraps Anthropic SSE events from --include-partial-messages.
+    We only care about content_block_start (to detect thinking/responding/tool-input)
+    and message_stop (to detect tool execution phase).
+
+    Phase values:
+        thinking   — content_block_start with type=thinking|redacted_thinking
+        responding — content_block_start with type=text
+        tool-input — content_block_start with type=tool_use|server_tool_use|mcp_tool_use
+        tool-use   — message_stop (Claude finished, tools executing)
+
+    Only writes to DB on actual phase change to avoid spamming updates.
+    """
+    inner = event.get("event", {})
+    inner_type = inner.get("type", "")
+
+    new_phase = ""
+    if inner_type == "content_block_start":
+        block_type = inner.get("content_block", {}).get("type", "")
+        if block_type in ("thinking", "redacted_thinking"):
+            new_phase = "thinking"
+        elif block_type == "text":
+            new_phase = "responding"
+        elif block_type in ("tool_use", "server_tool_use", "mcp_tool_use"):
+            new_phase = "tool-input"
+    elif inner_type == "message_stop":
+        new_phase = "tool-use"
+
+    # Only write to DB on actual phase change
+    if new_phase and new_phase != agent.phase:
+        agent.phase = new_phase
+        await agent.asave(update_fields=["phase"])
+        await broadcast_agent_update(agent)
