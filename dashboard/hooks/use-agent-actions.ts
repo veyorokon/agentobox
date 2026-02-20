@@ -16,6 +16,7 @@ import {
   SET_AGENT_MODE_MUTATION,
 } from '@/lib/graphql/mutations';
 import { logger } from '@/lib/observability';
+import { useAgentsStore } from '@/stores/agents';
 import type { ContentBlock } from '@/components/v2/composer';
 
 export function useAgentActions() {
@@ -103,7 +104,7 @@ export function useAgentActions() {
   );
 
   const sendMessage = useCallback(
-    async (agentIds: string[], content: ContentBlock[]) => {
+    async (agentIds: string[], content: ContentBlock[]): Promise<{ ok: boolean; error?: string }> => {
       const textBlock = content.find(
         (b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text'
       );
@@ -117,7 +118,10 @@ export function useAgentActions() {
       const { error } = await executeBroadcast({ input });
       if (error) {
         logger.error('agent-actions', 'sendMessage failed', { error: error.message, agentIds });
+        toast.error('Message failed to send');
+        return { ok: false, error: error.message };
       }
+      return { ok: true };
     },
     [executeBroadcast]
   );
@@ -165,10 +169,29 @@ export function useAgentActions() {
 
   const setAgentMode = useCallback(
     async (agentId: string, mode: string) => {
-      const { error } = await executeSetMode({ agentId, mode });
+      // Guard: skip if already in the requested mode
+      const agents = useAgentsStore.getState().agents;
+      const agent = agents[agentId];
+      if (agent?.permissionMode === mode) return;
+
+      // Optimistic update — chip reflects mode immediately
+      if (agent) {
+        useAgentsStore.getState().updateAgent({ ...agent, permissionMode: mode });
+      }
+      const { data, error } = await executeSetMode({ agentId, mode });
       if (error) {
+        // Revert on error
+        if (agent) {
+          useAgentsStore.getState().updateAgent(agent);
+        }
         toast.error(error.message);
         return;
+      }
+      // Apply the mutation response to the store so the DB-authoritative
+      // agent (with all fields) replaces the optimistic partial update.
+      // This prevents stale subscription data from overwriting the mode.
+      if (data?.setAgentMode) {
+        useAgentsStore.getState().updateAgent(data.setAgentMode);
       }
       toast.success(`Switching to ${mode} mode...`);
     },

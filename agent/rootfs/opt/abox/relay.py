@@ -286,7 +286,10 @@ class Relay:
                     permission_mode = self.next_permission_mode
                     self.next_permission_mode = ""
                     log.info("Permission mode for next spawn: %s", permission_mode)
-                # Reset state for new subprocess
+                # Reset state for new subprocess.
+                # Clear session_id so the new process's session_id is captured
+                # from its first event (--resume may create a new session_id).
+                self.session_id = ""
                 self.proc = None
                 self.stderr_output = ""
                 self.shutting_down = False

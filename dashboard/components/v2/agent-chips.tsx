@@ -1,17 +1,12 @@
 'use client';
 
-import { Plus, Crown, Code2, Image, RotateCw, Square, Play, Eraser, Trash2, Monitor, Settings2, Eye, Pencil } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Plus, Crown, Code2, Image, RotateCw, Square, Play, Eraser, Trash2, Settings2, Eye, Pencil } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
 import { useFeedStore } from '@/stores/feed';
 import { useAgentActions } from '@/hooks/use-agent-actions';
-import {
-  ContextMenu,
-  ContextMenuTrigger,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-} from '@/components/ui/context-menu';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import type { FeedItem } from '@/lib/mock-v2-data';
 import type { AgentPhase } from '@/types';
 
@@ -139,6 +134,17 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
 
   const pendingQuestionAgents = getAgentsWithPendingQuestions(feedItems);
 
+  // Track which agent's actions popover is open (null = none)
+  const [actionsAgentId, setActionsAgentId] = useState<string | null>(null);
+
+  const closeActions = useCallback(() => setActionsAgentId(null), []);
+
+  // Action helper — execute callback then close popover
+  const doAction = useCallback((fn: () => void) => {
+    fn();
+    setActionsAgentId(null);
+  }, []);
+
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {/* All chip */}
@@ -168,13 +174,23 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
         const hasPendingQuestion = pendingQuestionAgents.has(agent.id);
         const isAlive = ['running', 'idle'].includes(agent.status);
         const isDead = ['error', 'stopped'].includes(agent.status);
+        const hasActions = isAlive || isDead || agent.status === 'deploying';
+        const actionsOpen = actionsAgentId === agent.id;
 
         return (
           <div key={agent.id} className="relative">
-            <ContextMenu>
-              <ContextMenuTrigger asChild>
+            <Popover
+              open={actionsOpen}
+              onOpenChange={(open) => { if (!open) setActionsAgentId(null); }}
+            >
+              <PopoverAnchor asChild>
                 <button
                   onClick={() => setSelectedAgent(isSelected ? null : agent.id)}
+                  onContextMenu={(e) => {
+                    if (!hasActions) return;
+                    e.preventDefault();
+                    setActionsAgentId(actionsOpen ? null : agent.id);
+                  }}
                   className="flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider transition-all select-none"
                   data-augmented-ui="tl-clip br-clip border"
                   style={{
@@ -209,124 +225,124 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
                       Plan
                     </span>
                   )}
-                  <Monitor
-                    className="w-2.5 h-2.5 flex-shrink-0"
-                    style={{ opacity: isSelected ? 0.5 : 0.2 }}
-                  />
                 </button>
-              </ContextMenuTrigger>
-              {(isAlive || isDead || agent.status === 'deploying') && (
-                <ContextMenuContent className="min-w-[120px] font-mono text-[10px]">
-                  {/* Alive: Mode toggle, Restart (soft), Clear, separator, Kill */}
-                  {isAlive && (
-                    <>
-                      {agent.permissionMode === 'plan' ? (
-                        <ContextMenuItem
-                          onClick={() => setAgentMode(agent.id, 'default')}
-                          className="gap-2 text-[10px]"
-                        >
-                          <Pencil className="w-3 h-3" />
-                          Code Mode
-                        </ContextMenuItem>
-                      ) : (
-                        <ContextMenuItem
-                          onClick={() => setAgentMode(agent.id, 'plan')}
-                          className="gap-2 text-[10px]"
-                        >
-                          <Eye className="w-3 h-3" />
-                          Plan Mode
-                        </ContextMenuItem>
-                      )}
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        onClick={() => restartAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <RotateCw className="w-3 h-3" />
-                        Restart
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={() => clearAgentSession(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <Eraser className="w-3 h-3" />
-                        Clear
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        variant="destructive"
-                        onClick={() => killAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <Square className="w-3 h-3" />
-                        Kill
-                      </ContextMenuItem>
-                    </>
-                  )}
-                  {/* Error: Restart (hard), separator, Kill, Remove */}
-                  {agent.status === 'error' && (
-                    <>
-                      <ContextMenuItem
-                        onClick={() => hardRestartAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <RotateCw className="w-3 h-3" />
-                        Restart
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        variant="destructive"
-                        onClick={() => killAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <Square className="w-3 h-3" />
-                        Kill
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        variant="destructive"
-                        onClick={() => removeAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Remove
-                      </ContextMenuItem>
-                    </>
-                  )}
-                  {/* Stopped: Start, separator, Remove */}
-                  {agent.status === 'stopped' && (
-                    <>
-                      <ContextMenuItem
-                        onClick={() => startAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <Play className="w-3 h-3" />
-                        Start
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        variant="destructive"
-                        onClick={() => removeAgent(agent.id)}
-                        className="gap-2 text-[10px]"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Remove
-                      </ContextMenuItem>
-                    </>
-                  )}
-                  {/* Deploying: only Kill */}
-                  {agent.status === 'deploying' && (
-                    <ContextMenuItem
-                      variant="destructive"
-                      onClick={() => killAgent(agent.id)}
-                      className="gap-2 text-[10px]"
-                    >
-                      <Square className="w-3 h-3" />
-                      Kill
-                    </ContextMenuItem>
-                  )}
-                </ContextMenuContent>
+              </PopoverAnchor>
+
+              {/* Actions popover — augmented-ui styled, replaces context menu */}
+              {hasActions && (
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  sideOffset={6}
+                  className="border-none rounded-none shadow-none p-0 bg-transparent w-auto overflow-visible"
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                >
+                  <div
+                    className="min-w-[120px] p-1 space-y-0.5"
+                    data-augmented-ui="tl-clip br-clip border"
+                    style={{
+                      '--aug-tl': '6px',
+                      '--aug-br': '6px',
+                      '--aug-border-all': '1px',
+                      '--aug-border-bg': color,
+                      background: 'var(--surface)',
+                    } as React.CSSProperties}
+                  >
+                    {/* Alive: Mode toggle, Restart (soft), Clear, Kill */}
+                    {isAlive && (
+                      <>
+                        {agent.permissionMode === 'plan' ? (
+                          <ActionItem
+                            icon={<Pencil className="w-3 h-3" />}
+                            label="Code Mode"
+                            color={color}
+                            onClick={() => doAction(() => setAgentMode(agent.id, 'default'))}
+                          />
+                        ) : (
+                          <ActionItem
+                            icon={<Eye className="w-3 h-3" />}
+                            label="Plan Mode"
+                            color={color}
+                            onClick={() => doAction(() => setAgentMode(agent.id, 'plan'))}
+                          />
+                        )}
+                        <ActionSeparator />
+                        <ActionItem
+                          icon={<RotateCw className="w-3 h-3" />}
+                          label="Restart"
+                          color={color}
+                          onClick={() => doAction(() => restartAgent(agent.id))}
+                        />
+                        <ActionItem
+                          icon={<Eraser className="w-3 h-3" />}
+                          label="Clear"
+                          color={color}
+                          onClick={() => doAction(() => clearAgentSession(agent.id))}
+                        />
+                        <ActionSeparator />
+                        <ActionItem
+                          icon={<Square className="w-3 h-3" />}
+                          label="Kill"
+                          color="var(--destructive, #ef4444)"
+                          onClick={() => doAction(() => killAgent(agent.id))}
+                        />
+                      </>
+                    )}
+                    {/* Error: Restart (hard), Kill, Remove */}
+                    {agent.status === 'error' && (
+                      <>
+                        <ActionItem
+                          icon={<RotateCw className="w-3 h-3" />}
+                          label="Restart"
+                          color={color}
+                          onClick={() => doAction(() => hardRestartAgent(agent.id))}
+                        />
+                        <ActionSeparator />
+                        <ActionItem
+                          icon={<Square className="w-3 h-3" />}
+                          label="Kill"
+                          color="var(--destructive, #ef4444)"
+                          onClick={() => doAction(() => killAgent(agent.id))}
+                        />
+                        <ActionItem
+                          icon={<Trash2 className="w-3 h-3" />}
+                          label="Remove"
+                          color="var(--destructive, #ef4444)"
+                          onClick={() => doAction(() => removeAgent(agent.id))}
+                        />
+                      </>
+                    )}
+                    {/* Stopped: Start, Remove */}
+                    {agent.status === 'stopped' && (
+                      <>
+                        <ActionItem
+                          icon={<Play className="w-3 h-3" />}
+                          label="Start"
+                          color={color}
+                          onClick={() => doAction(() => startAgent(agent.id))}
+                        />
+                        <ActionSeparator />
+                        <ActionItem
+                          icon={<Trash2 className="w-3 h-3" />}
+                          label="Remove"
+                          color="var(--destructive, #ef4444)"
+                          onClick={() => doAction(() => removeAgent(agent.id))}
+                        />
+                      </>
+                    )}
+                    {/* Deploying: only Kill */}
+                    {agent.status === 'deploying' && (
+                      <ActionItem
+                        icon={<Square className="w-3 h-3" />}
+                        label="Kill"
+                        color="var(--destructive, #ef4444)"
+                        onClick={() => doAction(() => killAgent(agent.id))}
+                      />
+                    )}
+                  </div>
+                </PopoverContent>
               )}
-            </ContextMenu>
+            </Popover>
 
             {/* Pending question badge — outside augmented-ui to avoid clip-path */}
             {hasPendingQuestion && (
@@ -363,5 +379,39 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
         <Plus className="w-3.5 h-3.5" />
       </button>
     </div>
+  );
+}
+
+// ── Action popover items ──
+
+function ActionItem({
+  icon,
+  label,
+  color,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  color: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-2 w-full px-2 py-1 text-[10px] font-mono font-bold uppercase tracking-wider rounded-sm transition-colors hover:bg-foreground/5"
+      style={{ color }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function ActionSeparator() {
+  return (
+    <div
+      className="h-px mx-1 my-0.5"
+      style={{ background: 'color-mix(in srgb, var(--foreground) 6%, transparent)' }}
+    />
   );
 }

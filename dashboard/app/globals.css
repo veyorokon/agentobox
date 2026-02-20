@@ -636,6 +636,21 @@
 }
 
 /* ============================================
+   Transmission strip — message delivery status
+   ============================================ */
+
+@keyframes tx-pulse {
+  0%, 100% { border-left-color: transparent; }
+  50% { border-left-color: inherit; }
+}
+
+@keyframes tx-confirmed {
+  0% { opacity: 1; }
+  60% { opacity: 0.6; }
+  100% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
+}
+
+/* ============================================
    Landing page
    ============================================ */
 
@@ -670,6 +685,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Context menu pointer-event guard is handled in JS (context-menu.tsx)
+   via onPointerUp interception for the first 200ms after mount. */
 
 /* Global pointer cursor for interactive elements */
 button, [role="button"] {

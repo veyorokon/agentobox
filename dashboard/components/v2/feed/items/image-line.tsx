@@ -48,9 +48,11 @@ export function ImageLine({
       >
         {align === 'left' && (
           <span
-            className="w-1 h-1 rounded-full flex-shrink-0"
-            style={{ background: agentColor, opacity: 0.8 }}
-          />
+            className="text-[9px] font-mono font-bold flex-shrink-0"
+            style={{ color: agentColor, opacity: 0.8 }}
+          >
+            {agentName}
+          </span>
         )}
         <ImageIcon
           className="w-2.5 h-2.5 flex-shrink-0"
@@ -67,9 +69,11 @@ export function ImageLine({
         </span>
         {align === 'right' && (
           <span
-            className="w-1 h-1 rounded-full flex-shrink-0"
-            style={{ background: agentColor, opacity: 0.8 }}
-          />
+            className="text-[9px] font-mono font-bold flex-shrink-0"
+            style={{ color: agentColor, opacity: 0.8 }}
+          >
+            {agentName}
+          </span>
         )}
       </div>
 

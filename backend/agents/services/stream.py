@@ -127,23 +127,31 @@ async def _handle_system(agent: Agent, event: dict) -> None:
             agent.session_id = session_id
             update_fields.append("session_id")
 
-        # Track permissionMode from init event
-        perm_mode = event.get("permissionMode", "")
-        if perm_mode and perm_mode != agent.permission_mode:
-            agent.permission_mode = perm_mode
-            update_fields.append("permission_mode")
+        # permissionMode is NOT read from system/init because --resume
+        # can report a stale or default mode that overwrites the real
+        # value set by set_agent_mode().  The authoritative source is:
+        #   - set_agent_mode() -> writes permission_mode directly
+        # system/status events are accepted only when no pending_mode
+        # is in flight (see status handler below).
 
         if update_fields:
             await agent.asave(update_fields=update_fields)
             await broadcast_agent_update(agent)
 
     elif subtype == "status":
-        # system/status events emit permissionMode changes
+        # system/status events can carry permissionMode. However, during a
+        # dashboard-initiated mode change, the dying Claude process may emit
+        # a status event with the OLD permission mode, racing with the new
+        # value set by set_agent_mode(). Guard: re-read the agent from DB
+        # and only accept the status event's value if no pending_mode is
+        # queued (meaning no dashboard-initiated change is in flight).
         perm_mode = event.get("permissionMode", "")
         if perm_mode and perm_mode != agent.permission_mode:
-            agent.permission_mode = perm_mode
-            await agent.asave(update_fields=["permission_mode"])
-            await broadcast_agent_update(agent)
+            fresh = await Agent.objects.aget(id=agent.id)
+            if perm_mode != fresh.permission_mode and not fresh.pending_mode:
+                agent.permission_mode = perm_mode
+                await agent.asave(update_fields=["permission_mode"])
+                await broadcast_agent_update(agent)
 
     elif subtype == "process_exit":
         exit_code = event.get("exit_code", -1)

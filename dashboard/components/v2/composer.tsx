@@ -8,6 +8,7 @@ import { useAgentsStore } from '@/stores/agents';
 import { useAgentActions } from '@/hooks/use-agent-actions';
 import { AgentChipBar } from '@/components/v2/agent-chips';
 import { ConfigPopover } from '@/components/v2/config-popover';
+import { TransmissionStrip, type PendingMessage } from '@/components/v2/transmission-strip';
 import { Popover, PopoverAnchor } from '@/components/ui/popover';
 
 export type ContentBlock =
@@ -35,6 +36,7 @@ export function Composer() {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
@@ -137,7 +139,7 @@ export function Composer() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     if (!hasContent) return;
     if (targetIds.length === 0) return;
 
@@ -157,7 +159,17 @@ export function Composer() {
       content.push({ type: 'text', text });
     }
 
-    sendMessage(targetIds, content);
+    // Create pending message in transmission strip
+    const pendingId = crypto.randomUUID();
+    const pending: PendingMessage = {
+      id: pendingId,
+      text: text || '(image)',
+      targetIds: [...targetIds],
+      targetNames: targetAgents.map((a) => a.name),
+      targetColor,
+      status: 'sending',
+    };
+    setPendingMessages((prev) => [...prev, pending]);
 
     // Push text to history (skip if duplicate of last entry)
     if (text && (historyRef.current.length === 0 || historyRef.current[historyRef.current.length - 1] !== text)) {
@@ -166,11 +178,29 @@ export function Composer() {
     historyIndexRef.current = -1;
     draftRef.current = '';
 
-    // Reset
+    // Clear input — message is now visible in the transmission strip
     setMsgInput('');
     attachments.forEach((a) => URL.revokeObjectURL(a.preview));
     setAttachments([]);
-  }, [hasContent, attachments, msgInput, targetIds, sendMessage]);
+
+    // Fire mutation
+    const { ok, error } = await sendMessage(targetIds, content);
+
+    if (ok) {
+      // Mark queued, then auto-remove after animation
+      setPendingMessages((prev) =>
+        prev.map((m) => (m.id === pendingId ? { ...m, status: 'queued' as const } : m))
+      );
+      setTimeout(() => {
+        setPendingMessages((prev) => prev.filter((m) => m.id !== pendingId));
+      }, 2000);
+    } else {
+      // Mark failed — stays in strip until retry or discard
+      setPendingMessages((prev) =>
+        prev.map((m) => (m.id === pendingId ? { ...m, status: 'failed' as const, error } : m))
+      );
+    }
+  }, [hasContent, attachments, msgInput, targetIds, targetAgents, targetColor, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -293,6 +323,44 @@ export function Composer() {
     });
   }, []);
 
+  // Transmission strip handlers
+  const handleTxRetry = useCallback(async (pendingId: string) => {
+    const msg = pendingMessages.find((m) => m.id === pendingId);
+    if (!msg) return;
+
+    setPendingMessages((prev) =>
+      prev.map((m) => (m.id === pendingId ? { ...m, status: 'sending' as const, error: undefined } : m))
+    );
+
+    const content: ContentBlock[] = [{ type: 'text', text: msg.text }];
+    const { ok, error } = await sendMessage(msg.targetIds, content);
+
+    if (ok) {
+      setPendingMessages((prev) =>
+        prev.map((m) => (m.id === pendingId ? { ...m, status: 'queued' as const } : m))
+      );
+      setTimeout(() => {
+        setPendingMessages((prev) => prev.filter((m) => m.id !== pendingId));
+      }, 2000);
+    } else {
+      setPendingMessages((prev) =>
+        prev.map((m) => (m.id === pendingId ? { ...m, status: 'failed' as const, error } : m))
+      );
+    }
+  }, [pendingMessages, sendMessage]);
+
+  const handleTxDiscard = useCallback((pendingId: string) => {
+    setPendingMessages((prev) => prev.filter((m) => m.id !== pendingId));
+  }, []);
+
+  const handleTxEdit = useCallback((pendingId: string) => {
+    const msg = pendingMessages.find((m) => m.id === pendingId);
+    if (!msg) return;
+    setMsgInput(msg.text);
+    setPendingMessages((prev) => prev.filter((m) => m.id !== pendingId));
+    textareaRef.current?.focus();
+  }, [pendingMessages]);
+
   return (
     <div
       className="relative z-10 px-4 pb-3 pt-6 flex-shrink-0 -mt-6"
@@ -352,6 +420,14 @@ export function Composer() {
                 </span>
               )}
             </div>
+
+            {/* Transmission strip — pending message delivery status */}
+            <TransmissionStrip
+              messages={pendingMessages}
+              onRetry={handleTxRetry}
+              onDiscard={handleTxDiscard}
+              onEdit={handleTxEdit}
+            />
 
             {/* Attachment thumbnails */}
             {attachments.length > 0 && (

@@ -322,9 +322,24 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         op_log.warning("set_mode_skipped", status=agent.status)
         raise ValueError(f"Agent must be running or idle to change mode (current: {agent.status})")
 
-    agent.pending_mode = mode
-    await agent.asave(update_fields=["pending_mode"])
+    # Idempotency: skip if the mode change is redundant.
+    # Case 1: same mode already pending (mutation double-fired before piggyback drained)
+    # Case 2: already in this mode and no mode change in flight
+    # This prevents duplicate feed entries and unnecessary restarts.
+    already_pending = agent.pending_mode == mode
+    already_active = agent.permission_mode == mode and not agent.pending_mode
+    if already_pending or already_active:
+        op_log.info("mode_change_noop", current=agent.permission_mode, pending=agent.pending_mode)
+        return agent
 
+    agent.pending_mode = mode
+    agent.permission_mode = mode
+    await agent.asave(update_fields=["pending_mode", "permission_mode"])
+
+    # Broadcast agent update so the subscription delivers the new
+    # permission_mode immediately (replaces the frontend's optimistic update
+    # with the DB-authoritative value).
+    await broadcast_agent_update(agent)
     await broadcast_agent_event(
         agent, "mode_change",
         {"mode": mode},

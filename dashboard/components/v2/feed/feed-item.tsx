@@ -164,6 +164,7 @@ export const FeedItem = memo(function FeedItem({ item, agentColor, isLead, color
         <FeedRow time={time} cost={item.cumulativeCostUsd}>
           <SystemLine
             text={item.text ?? 'System event'}
+            agentName={item.agentName}
             agentColor={agentColor}
           />
         </FeedRow>

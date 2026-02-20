@@ -38,12 +38,6 @@ export function TeamMessageLine({
         }}
         onClick={() => needsExpand && setExpanded((v) => !v)}
       >
-        {/* Sender dot */}
-        <span
-          className="w-1 h-1 rounded-full flex-shrink-0"
-          style={{ background: senderColor, opacity: 0.8 }}
-        />
-
         {/* sender -> recipient */}
         <span
           className="text-[9px] font-mono font-bold flex-shrink-0"
