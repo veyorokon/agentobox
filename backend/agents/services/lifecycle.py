@@ -1,5 +1,4 @@
 import asyncio
-import re
 import secrets
 
 import structlog
@@ -11,15 +10,16 @@ from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
 from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
+from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 
-
-def _sanitize_name(value: str) -> str:
-    """Strip HTML tags and trim whitespace from a name."""
-    return re.sub(r"<[^>]*>", "", value).strip()
-
 log = structlog.get_logger("agents.lifecycle")
+
+
+def _shell_escape(val: str) -> str:
+    """Escape a value for safe use inside single quotes in shell."""
+    return val.replace("'", "'\\''")
 
 
 async def create_agent(
@@ -293,23 +293,23 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Build relay environment variables
         # The relay reads these to spawn Claude with correct flags and POST events
         relay_env_lines = [
-            f'export AGENT_ID="{agent_id}"',
-            f'export AGENT_NAME="{agent.name}"',
-            f'export TEAM_NAME="{team_name}"',
-            f'export PARENT_SESSION_ID="{parent_session_id}"',
-            f'export ABOX_CALLBACK_URL="{callback_url}"',
-            f'export RELAY_AUTH_TOKEN="{relay_token}"',
-            f'export ANTHROPIC_API_KEY="{api_key}"',
-            f'export CLAUDE_MODEL="{agent.model}"',
+            f"export AGENT_ID='{_shell_escape(agent_id)}'",
+            f"export AGENT_NAME='{_shell_escape(agent.name)}'",
+            f"export TEAM_NAME='{_shell_escape(team_name)}'",
+            f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
+            f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
+            f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
+            f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
+            f"export CLAUDE_MODEL='{_shell_escape(agent.model)}'",
         ]
 
         # Pass resume session so relay can --resume the prior conversation
         if resume_session_id:
-            relay_env_lines.append(f'export RESUME_SESSION_ID="{resume_session_id}"')
+            relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
 
         # Always set MCP config path (abox-coord is always present)
         # provision.py writes .mcp.json to /home/agent/ (not work_dir)
-        relay_env_lines.append('export MCP_CONFIG="/home/agent/.mcp.json"')
+        relay_env_lines.append("export MCP_CONFIG='/home/agent/.mcp.json'")
 
         relay_env_content = "\n".join(relay_env_lines) + "\n"
         await runtime.write_file(
@@ -519,7 +519,12 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     agent.volume_mounts = volume_mounts
     agent.instructions = instructions
     agent.role = role
-    await agent.asave()
+    await agent.asave(update_fields=[
+        "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
+        "last_heartbeat_at", "pending_input", "pending_signal",
+        "runtime", "model", "mcp_servers", "workspace_path",
+        "volume_mounts", "instructions", "role",
+    ])
 
     # Resolve project secrets for this agent
     from projects.models import Project

@@ -15,7 +15,10 @@ class ProjectQuery:
         return [p async for p in Project.objects.filter(owner=user)]
 
     @strawberry.field
-    async def project(self, id: ID) -> ProjectType | None:
+    async def project(self, id: ID, info: Info) -> ProjectType | None:
         from projects.models import Project
 
-        return await Project.objects.filter(id=id).afirst()
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            return None
+        return await Project.objects.filter(id=id, owner=user).afirst()

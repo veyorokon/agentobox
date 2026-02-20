@@ -1,9 +1,8 @@
-from datetime import timedelta
-
 import strawberry
-from django.utils import timezone
 from strawberry import ID
 
+from agents.graphql.auth import authorize_agent, authorize_project
+from agents.models import Agent
 from agents.graphql.types import (
     AgentEventType,
     AgentType,
@@ -14,23 +13,16 @@ from agents.graphql.types import (
     TimelineEntryType,
 )
 
-# Agents with no heartbeat for this long are marked as error
-STALE_HEARTBEAT_SECONDS = 30
+MAX_TIMELINE_FETCH = 500
 
 
 @strawberry.type
 class AgentQuery:
     @strawberry.field
-    async def agents(self, project_id: ID) -> list[AgentType]:
-        from agents.models import Agent, AgentStatus
+    async def agents(self, project_id: ID, info: strawberry.types.Info) -> list[AgentType]:
+        from agents.models import Agent
 
-        # Lazy reap: mark agents with stale heartbeats as error
-        stale = timezone.now() - timedelta(seconds=STALE_HEARTBEAT_SECONDS)
-        await Agent.objects.filter(
-            project_id=project_id,
-            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
-            last_heartbeat_at__lt=stale,
-        ).aupdate(status=AgentStatus.ERROR)
+        await authorize_project(info, project_id)
 
         return [
             a async for a in Agent.objects.filter(
@@ -39,17 +31,17 @@ class AgentQuery:
         ]
 
     @strawberry.field
-    async def agent(self, agent_id: ID) -> AgentType | None:
-        from agents.models import Agent
-
+    async def agent(self, agent_id: ID, info: strawberry.types.Info) -> AgentType | None:
         try:
-            return await Agent.objects.aget(id=agent_id)
+            return await authorize_agent(info, agent_id)
         except Agent.DoesNotExist:
             return None
 
     @strawberry.field
-    async def events(self, project_id: ID, limit: int = 100) -> list[AgentEventType]:
+    async def events(self, project_id: ID, info: strawberry.types.Info, limit: int = 100) -> list[AgentEventType]:
         from agents.models import AgentEvent
+
+        await authorize_project(info, project_id)
 
         return [
             e async for e in AgentEvent.objects.filter(
@@ -59,7 +51,7 @@ class AgentQuery:
 
     @strawberry.field
     async def timeline(
-        self, project_id: ID, limit: int = 200, offset: int = 0,
+        self, project_id: ID, info: strawberry.types.Info, limit: int = 200, offset: int = 0,
     ) -> list[TimelineEntryType]:
         """
         Unified timeline: Messages + AgentEvents for a project, sorted newest-first.
@@ -68,7 +60,9 @@ class AgentQuery:
         """
         from agents.models import AgentEvent, Message
 
-        fetch_limit = limit + offset
+        await authorize_project(info, project_id)
+
+        fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
 
         messages = [
             m async for m in Message.objects.filter(
@@ -115,7 +109,7 @@ class AgentQuery:
 
     @strawberry.field
     async def agent_feed(
-        self, agent_id: ID, limit: int = 200, offset: int = 0,
+        self, agent_id: ID, info: strawberry.types.Info, limit: int = 200, offset: int = 0,
     ) -> list[FeedItemType]:
         """
         Processed activity feed for a single agent.
@@ -131,52 +125,59 @@ class AgentQuery:
         total at that point in time, derived from per-turn SessionResult rows.
         For aggregate project cost, sum across agents on the frontend.
         """
-        from agents.models import Agent, AgentEvent, Message, SessionResult
+        from agents.models import AgentEvent, Message, SessionResult
         from agents.services.feed_transform import messages_to_feed
 
-        agent = await Agent.objects.aget(id=agent_id)
+        agent = await authorize_agent(info, agent_id)
+        fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
         messages = [
             m async for m in Message.objects.filter(
                 agent=agent,
-            ).select_related("agent").order_by("created_at")
+            ).select_related("agent").order_by("created_at")[:fetch_limit]
         ]
         events = [
             e async for e in AgentEvent.objects.filter(
                 agent=agent,
-            ).select_related("agent").order_by("created_at")
+            ).select_related("agent").order_by("created_at")[:fetch_limit]
         ]
         session_results = [
             sr async for sr in SessionResult.objects.filter(
                 agent=agent,
-            ).order_by("created_at")
+            ).order_by("created_at")[:fetch_limit]
         ]
 
         feed = messages_to_feed(messages, events, session_results)
         return feed[offset:offset + limit]
 
     @strawberry.field
-    async def project_feed(self, project_id: ID) -> list[FeedItemType]:
+    async def project_feed(
+        self, project_id: ID, info: strawberry.types.Info, limit: int = 500, offset: int = 0,
+    ) -> list[FeedItemType]:
         """Full activity feed for all agents in a project, oldest first."""
         from agents.models import AgentEvent, Message, SessionResult
         from agents.services.feed_transform import messages_to_feed
 
+        await authorize_project(info, project_id)
+
+        fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
         messages = [
             m async for m in Message.objects.filter(
                 agent__project_id=project_id,
-            ).select_related("agent").order_by("created_at")
+            ).select_related("agent").order_by("created_at")[:fetch_limit]
         ]
         events = [
             e async for e in AgentEvent.objects.filter(
                 agent__project_id=project_id,
-            ).select_related("agent").order_by("created_at")
+            ).select_related("agent").order_by("created_at")[:fetch_limit]
         ]
         session_results = [
             sr async for sr in SessionResult.objects.filter(
                 agent__project_id=project_id,
-            ).order_by("created_at")
+            ).order_by("created_at")[:fetch_limit]
         ]
 
-        return messages_to_feed(messages, events, session_results)
+        feed = messages_to_feed(messages, events, session_results)
+        return feed[offset:offset + limit]
 
     @strawberry.field
     def available_models(self) -> list[ModelEntryType]:
@@ -197,9 +198,11 @@ class AgentQuery:
         ]
 
     @strawberry.field
-    async def project_secrets(self, project_id: ID) -> list[ProjectSecretType]:
+    async def project_secrets(self, project_id: ID, info: strawberry.types.Info) -> list[ProjectSecretType]:
         """List project secrets (key names and scoping only, never values)."""
         from agents.models import ProjectSecret
+
+        await authorize_project(info, project_id)
 
         return [
             s async for s in ProjectSecret.objects.filter(

@@ -17,17 +17,27 @@ from django.conf import settings
 log = structlog.get_logger("agents.media")
 
 
+_s3_client = None
+
+
 def _get_s3_client():
-    """Create S3 client. boto3 reads AWS_* env vars automatically."""
-    return boto3.client("s3")
+    """Get or create cached S3 client. boto3 reads AWS_* env vars automatically."""
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3")
+    return _s3_client
 
 
 def _ensure_bucket(client):
     """Create bucket if it doesn't exist (idempotent, needed for LocalStack)."""
     try:
         client.head_bucket(Bucket=settings.MEDIA_BUCKET)
-    except client.exceptions.ClientError:
-        client.create_bucket(Bucket=settings.MEDIA_BUCKET)
+    except client.exceptions.ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code in ("404", "NoSuchBucket"):
+            client.create_bucket(Bucket=settings.MEDIA_BUCKET)
+        else:
+            raise
 
 
 def _ext_from_media_type(media_type: str) -> str:

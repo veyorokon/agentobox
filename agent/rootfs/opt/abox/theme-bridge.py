@@ -37,5 +37,5 @@ while True:
             with open(THEME_PATH) as f:
                 tokens = json.load(f)
             send_message({"tokens": tokens})
-        except Exception:
-            send_message({"tokens": None})
+        except Exception as e:
+            send_message({"tokens": None, "error": str(e)})

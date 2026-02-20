@@ -1,9 +1,14 @@
+import structlog
+
 import strawberry
 from asgiref.sync import sync_to_async
 from strawberry import ID
 from strawberry.scalars import JSON
 
+from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
 from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType
+
+log = structlog.get_logger("agents.mutations")
 
 
 @strawberry.input
@@ -88,9 +93,11 @@ class ScopeSecretInput:
 @strawberry.type
 class AgentMutation:
     @strawberry.mutation
-    async def create_agent(self, input: CreateAgentInput) -> AgentType:
+    async def create_agent(self, input: CreateAgentInput, info: strawberry.types.Info) -> AgentType:
         from agents.services.lifecycle import create_agent
         from agents.services.provision import resolve_mcp_servers
+
+        await authorize_project(info, input.project_id)
 
         # mcp_servers can be a list of names (resolved via registry) or a full dict
         mcp_config = None
@@ -126,51 +133,59 @@ class AgentMutation:
         )
 
     @strawberry.mutation
-    async def kill_agent(self, agent_id: ID) -> bool:
+    async def kill_agent(self, agent_id: ID, info: strawberry.types.Info) -> bool:
         from agents.services.lifecycle import kill_agent
 
+        await authorize_agent(info, agent_id)
         return await kill_agent(agent_id)
 
     @strawberry.mutation
-    async def remove_agent(self, agent_id: ID) -> bool:
+    async def remove_agent(self, agent_id: ID, info: strawberry.types.Info) -> bool:
         from agents.services.lifecycle import remove_agent
 
+        await authorize_agent(info, agent_id)
         return await remove_agent(agent_id)
 
     @strawberry.mutation
-    async def hard_restart_agent(self, agent_id: ID) -> AgentType:
+    async def hard_restart_agent(self, agent_id: ID, info: strawberry.types.Info) -> AgentType:
         from agents.services.lifecycle import hard_restart_agent
 
+        await authorize_agent(info, agent_id)
         return await hard_restart_agent(agent_id)
 
     @strawberry.mutation
-    async def interrupt_agent(self, agent_id: ID) -> bool:
+    async def interrupt_agent(self, agent_id: ID, info: strawberry.types.Info) -> bool:
         from agents.services.comms import interrupt_agent
 
+        await authorize_agent(info, agent_id)
         return await interrupt_agent(agent_id)
 
     @strawberry.mutation
-    async def restart_agent(self, agent_id: ID) -> bool:
+    async def restart_agent(self, agent_id: ID, info: strawberry.types.Info) -> bool:
         from agents.services.comms import restart_agent
 
+        await authorize_agent(info, agent_id)
         return await restart_agent(agent_id)
 
     @strawberry.mutation
-    async def clear_agent_session(self, agent_id: ID) -> bool:
+    async def clear_agent_session(self, agent_id: ID, info: strawberry.types.Info) -> bool:
         from agents.services.comms import clear_agent_session
 
+        await authorize_agent(info, agent_id)
         return await clear_agent_session(agent_id)
 
     @strawberry.mutation
-    async def send_message(self, input: SendMessageInput) -> bool:
+    async def send_message(self, input: SendMessageInput, info: strawberry.types.Info) -> bool:
         from agents.services.comms import send_message
 
+        await authorize_agent(info, input.agent_id)
         return await send_message(input.agent_id, input.message, input.content)
 
     @strawberry.mutation
-    async def broadcast_message(self, input: BroadcastMessageInput) -> bool:
+    async def broadcast_message(self, input: BroadcastMessageInput, info: strawberry.types.Info) -> bool:
         from agents.services.comms import broadcast_message
 
+        await authorize_agents(info, input.agent_ids)
         return await broadcast_message(
             [str(aid) for aid in input.agent_ids],
             input.message,
@@ -178,18 +193,19 @@ class AgentMutation:
         )
 
     @strawberry.mutation
-    async def answer_question(self, input: AnswerQuestionInput) -> bool:
+    async def answer_question(self, input: AnswerQuestionInput, info: strawberry.types.Info) -> bool:
         from agents.services.comms import answer_question
 
+        await authorize_agent(info, input.agent_id)
         return await answer_question(input.agent_id, input.tool_use_id, input.answer_text)
 
     @strawberry.mutation
-    async def update_agent_instructions(self, input: UpdateAgentInstructionsInput) -> AgentType:
+    async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:
         from agents.models import Agent, AgentStatus
         from agents.runtimes import get_runtime
         from agents.services.provision import _build_claude_md
 
-        agent = await Agent.objects.select_related("project").aget(id=input.agent_id)
+        agent = await authorize_agent(info, input.agent_id)
         agent.instructions = input.instructions
         await agent.asave(update_fields=["instructions"])
 
@@ -227,18 +243,18 @@ class AgentMutation:
                     "/home/agent/CLAUDE.md",
                 )
             except Exception:
-                pass  # Agent may be stopped — DB is updated, will take effect on restart
+                log.warning("claude_md_write_failed", agent=agent.name, exc_info=True)
 
         return agent
 
     @strawberry.mutation
-    async def rate_agent(self, input: RateFeedbackInput) -> AgentFeedbackType | None:
+    async def rate_agent(self, input: RateFeedbackInput, info: strawberry.types.Info) -> AgentFeedbackType | None:
         from agents.models import Agent, AgentFeedback
 
         if input.rating not in (1, 2, 3):
             raise ValueError("rating must be 1, 2, or 3")
 
-        agent = await Agent.objects.aget(id=input.agent_id)
+        agent = await authorize_agent(info, input.agent_id)
 
         # Toggle: if same agent+rating exists, delete it (undo)
         existing = await AgentFeedback.objects.filter(agent=agent).afirst()
@@ -260,12 +276,12 @@ class AgentMutation:
         )
 
     @strawberry.mutation
-    async def update_agent_config(self, input: UpdateAgentConfigInput) -> AgentType:
+    async def update_agent_config(self, input: UpdateAgentConfigInput, info: strawberry.types.Info) -> AgentType:
         from agents.models import Agent
         from agents.services.lifecycle import hard_restart_agent
         from agents.services.provision import resolve_mcp_servers
 
-        agent = await Agent.objects.select_related("project").aget(id=input.agent_id)
+        agent = await authorize_agent(info, input.agent_id)
 
         if input.model is not None:
             agent.model = input.model
@@ -354,11 +370,16 @@ class AgentMutation:
         )
 
         if input.agent_ids:
+            unique_ids = list({str(aid) for aid in input.agent_ids})
             agents = [
                 a async for a in Agent.objects.filter(
-                    id__in=[str(aid) for aid in input.agent_ids]
+                    id__in=unique_ids,
+                    project_id=input.project_id,
+                    project__owner=user,
                 )
             ]
+            if len(agents) != len(unique_ids):
+                raise PermissionError("One or more agents not found or not owned by user")
             await secret.scoped_agents.aset(agents)
         else:
             await secret.scoped_agents.aclear()
@@ -391,4 +412,4 @@ async def _push_secrets_for_project(project) -> None:
                     runtime, agent.sandbox_id, agent, secret_envs,
                 )
         except Exception:
-            pass  # Best-effort
+            op_log.warning("secret_push_failed", agent=agent.name, exc_info=True)

@@ -237,15 +237,3 @@ async def team_status() -> list[dict]:
     return agents
 
 
-@mcp.tool
-async def team_create(name: str, description: str = "") -> dict:
-    """Create a named team (not yet implemented).
-
-    Args:
-        name: Name for the new team.
-        description: Optional team description.
-    """
-    raise ToolError(
-        "team_create is not yet implemented"
-        " — teams are currently implicit per-project"
-    )

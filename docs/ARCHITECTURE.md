@@ -142,6 +142,24 @@ The relay writes any `pending_input` items to Claude's stdin. When Claude is idl
 
 **File:** `backend/agents/services/comms.py` — builds piggyback responses. `backend/agents/views.py` — `/agents/stream` endpoint.
 
+### Context Injection via Piggyback
+
+The piggyback channel can deliver structured context updates — not just user messages. Claude is trained to treat `<system-reminder>` tags as authoritative system-level context. By wrapping structured information in these tags and delivering via `pending_input`, the backend can inject context mid-session without interrupting the agent's workflow.
+
+**Use cases:**
+
+| Injection | Trigger | Content |
+|-----------|---------|---------|
+| Instruction update | `update_agent_instructions` mutation | "Your instructions were updated. Re-read CLAUDE.md." |
+| Secret availability | `set_secret` / `delete_secret` mutation | "New secret available: `KEY_NAME`. Access via `$KEY_NAME`." |
+| Teammate status | Agent status change broadcast | "Teammate status: backend=running, qa=idle, frontend=stopped" |
+| Tool/MCP changes | MCP config update + restart | "MCP server `playwright` added. Available after restart." |
+| Scope change | Task reassignment | "New task assigned: [description]" with context |
+
+**Format:** Deliver as a user-role message with content wrapped in `<system-reminder>` tags. Claude treats these as system-level context rather than conversational input — it processes the information without treating it as a user question requiring a response.
+
+**Not yet implemented.** Currently only user messages and tool_results flow through `pending_input`. Context injection is a future enhancement that leverages the existing transport.
+
 ## Event Processing
 
 ### Event Types

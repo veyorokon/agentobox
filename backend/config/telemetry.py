@@ -2,6 +2,7 @@ import atexit
 import logging.handlers
 import os
 import queue
+import re
 import tomllib
 from pathlib import Path
 
@@ -33,11 +34,14 @@ def _get_version():
         return "unknown"
 
 
+_VERSION = _get_version()
+
+
 def add_service_metadata(logger, method_name, event_dict):
     """Add service metadata to every log entry."""
     event_dict["service"] = {
         "name": "agentobox-backend",
-        "version": _get_version(),  # Dynamic
+        "version": _VERSION,
     }
     event_dict["deployment"] = {
         "environment": os.getenv("ENVIRONMENT", "dev"),
@@ -97,7 +101,6 @@ def truncate_graphql_request(logger, method_name, event_dict):
         # Keep method + path + operation name hint, drop the query noise
         method_path = request.split("?", 1)[0]
         # Try to extract operationName from the query string
-        import re
         op_match = re.search(r"operationName=([^&]+)", request)
         op_name = op_match.group(1) if op_match else "unknown"
         event_dict["request"] = f"{method_path} [{op_name}]"
@@ -253,18 +256,11 @@ class GraphQLLoggingExtension:
         return _next(root, info, *args, **kwargs)
 
 
-# Keys whose values should be redacted in GraphQL operation logs
-_SENSITIVE_KEYS = frozenset({
-    "password", "token", "secret", "value", "encrypted_value",
-    "api_key", "apiKey", "authorization",
-})
-
-
 def _redact_variables(variables: dict) -> dict:
     """Shallow-redact sensitive variable values."""
     redacted = {}
     for key, val in variables.items():
-        if key.lower() in _SENSITIVE_KEYS or any(s in key.lower() for s in ("password", "secret", "token")):
+        if any(s in key.lower() for s in ("password", "secret", "token", "api_key", "apikey", "_key", "authorization", "encrypted")):
             redacted[key] = "***"
         elif isinstance(val, dict):
             redacted[key] = _redact_variables(val)

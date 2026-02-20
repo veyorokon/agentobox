@@ -538,13 +538,13 @@ def _extract_plan_steps(text: str | None) -> list[str] | None:
         stripped = line.strip()
         # Match "1. ...", "- ...", "* ..."
         if stripped and (
-            (len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)") or
+            re.match(r"^\d+[.)]\s", stripped) or
             stripped.startswith("- ") or
             stripped.startswith("* ")
         ):
             # Remove the bullet/number prefix
             if stripped[0].isdigit():
-                step = stripped.split(".", 1)[-1].strip() if "." in stripped[:3] else stripped[2:].strip()
+                step = re.sub(r"^\d+[.)]\s*", "", stripped)
             else:
                 step = stripped[2:]
             if step:

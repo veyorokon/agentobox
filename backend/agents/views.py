@@ -1,3 +1,4 @@
+import hmac
 import json
 import os
 
@@ -39,7 +40,7 @@ async def stream_events(request, agent_id):
     except Agent.DoesNotExist:
         return JsonResponse({"error": "agent not found"}, status=404)
 
-    if not agent.relay_token or token != agent.relay_token:
+    if not agent.relay_token or not hmac.compare_digest(token, agent.relay_token):
         return JsonResponse({"error": "unauthorized"}, status=401)
 
     # Parse event batch (may be empty for heartbeat)
@@ -84,8 +85,11 @@ async def upload_file(request, agent_id):
     from agents.runtimes import get_runtime
 
     try:
-        agent = await Agent.objects.aget(id=agent_id)
+        agent = await Agent.objects.select_related("project").aget(id=agent_id)
     except Agent.DoesNotExist:
+        return JsonResponse({"error": "agent not found"}, status=404)
+
+    if agent.project.owner_id != user.pk:
         return JsonResponse({"error": "agent not found"}, status=404)
 
     if not agent.sandbox_id:

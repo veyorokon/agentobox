@@ -31,6 +31,12 @@ def _normalize_content(content: list) -> list:
         source.pop("media_type", None)
 
         if not url.startswith("https://"):
+            # Only allow fetching from known internal hosts (SSRF prevention)
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            if parsed.hostname not in ("localhost", "localstack", "127.0.0.1"):
+                log.warning("url_fetch_blocked", url=url, reason="untrusted_host")
+                continue
             # Rewrite localhost -> Docker service name so backend container
             # can reach LocalStack
             fetch_url = url.replace("localhost:", "localstack:", 1)
@@ -234,15 +240,14 @@ async def broadcast_message(
         api_parts = parts
         text_summary = message
 
-    # Resolve all agents first to collect names
-    agents: list[Agent] = []
+    # Resolve all agents in a single query
+    agents: list[Agent] = [
+        a async for a in Agent.objects.filter(id__in=agent_ids)
+    ]
+    found_ids = {str(a.id) for a in agents}
     for aid in agent_ids:
-        try:
-            agent = await Agent.objects.aget(id=aid)
-        except Agent.DoesNotExist:
+        if aid not in found_ids:
             op_log.warning("agent_not_found", agent_id=aid)
-            continue
-        agents.append(agent)
 
     if not agents:
         return False

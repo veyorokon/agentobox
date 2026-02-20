@@ -20,7 +20,7 @@ class DockerRuntime:
         self._client = docker.from_env()
 
     def _run_sync(self, fn, *args, **kwargs):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
     async def create(

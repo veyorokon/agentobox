@@ -16,11 +16,10 @@ Flow:
 import uuid
 
 import structlog
-from asgiref.sync import sync_to_async
-from django.db import transaction
 
 from agents.models import Agent, AgentStatus, Message
 from agents.services.broadcast import broadcast_agent_update, broadcast_stream_message
+from agents.services.comms import _atomic_enqueue
 
 log = structlog.get_logger("agents.interagent")
 
@@ -84,18 +83,3 @@ async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> No
     # Atomic enqueue + wake idle agents
     target = await _atomic_enqueue(str(target.id), input_msg)
     await broadcast_agent_update(target)
-
-
-@sync_to_async
-def _atomic_enqueue(agent_id: str, input_msg: dict) -> Agent:
-    """Append to pending_input under a row lock to prevent concurrent clobber."""
-    with transaction.atomic():
-        agent = Agent.objects.select_for_update().get(id=agent_id)
-        pending = agent.pending_input or []
-        pending.append(input_msg)
-        agent.pending_input = pending
-
-        if agent.status == AgentStatus.IDLE:
-            agent.status = AgentStatus.RUNNING
-        agent.save(update_fields=["pending_input", "status"])
-    return agent

@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -73,9 +74,13 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
     "lodash": "^4.17.23",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",

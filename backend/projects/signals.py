@@ -32,12 +32,26 @@ def auto_deploy_team_lead(sender, instance, created, **kwargs):
         template = TEAM_CONFIGS["solo"]
         lead_config = template["agents"][0]
 
-        # Create team lead agent with template config
-        async_to_sync(_create_team_lead)(
-            project_id=str(project.id),
-            config=lead_config,
-            op_log=op_log,
-        )
+        # Check if we're inside an existing event loop (e.g. ASGI)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already in async context — schedule as a task
+            loop.create_task(_create_team_lead(
+                project_id=str(project.id),
+                config=lead_config,
+                op_log=op_log,
+            ))
+        else:
+            # Sync context — safe to use async_to_sync
+            async_to_sync(_create_team_lead)(
+                project_id=str(project.id),
+                config=lead_config,
+                op_log=op_log,
+            )
 
     except Exception:
         op_log.exception("auto_deploy_team_lead_failed")

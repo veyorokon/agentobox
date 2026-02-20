@@ -16,9 +16,7 @@ VALID_THEME_KEYS = frozenset({
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
-def _sanitize_name(value: str) -> str:
-    """Strip HTML tags and trim whitespace from a name."""
-    return re.sub(r"<[^>]*>", "", value).strip()
+from agents.utils import sanitize_name as _sanitize_name
 
 
 @strawberry.input

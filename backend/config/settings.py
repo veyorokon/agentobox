@@ -119,6 +119,8 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
 # --- Agent Runtime ---
 
 AGENT_IMAGE = env("AGENT_IMAGE")

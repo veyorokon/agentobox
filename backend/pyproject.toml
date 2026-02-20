@@ -30,4 +30,18 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-django>=4.9.0",
+    "pytest-asyncio>=0.24.0",
+    "factory-boy>=3.3.1",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = [
+    "agents",
+    "projects",
+    "accounts",
+    "config",
 ]

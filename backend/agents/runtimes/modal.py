@@ -77,7 +77,12 @@ class ModalRuntime:
         await process.wait.aio()
         output = await process.stdout.read.aio()
 
-        op.info("exec_done", elapsed_s=round(time.monotonic() - t0, 2))
+        elapsed = round(time.monotonic() - t0, 2)
+        if process.returncode and process.returncode != 0:
+            op.warning("exec_failed", exit_code=process.returncode, elapsed_s=elapsed,
+                       output=output[:500] if output else "")
+        else:
+            op.info("exec_done", elapsed_s=elapsed)
         return output
 
     async def write_file(

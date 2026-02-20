@@ -20,7 +20,6 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 
 from agents.models import Agent, AgentStatus
-from agents.runtimes.docker import DockerRuntime
 from agents.services.broadcast import broadcast_agent_update
 
 log = structlog.get_logger("agents.reconcile")
@@ -87,7 +86,8 @@ def _mark_error(agent_id):
 @_db
 def _reap_orphans_sync():
     """Remove containers labeled agentobox.managed=true with no matching active agent."""
-    client = docker.from_env()
+    from agents.runtimes import get_runtime
+    client = get_runtime("docker")._client
     try:
         containers = client.containers.list(
             filters={"label": "agentobox.managed=true"}
@@ -123,7 +123,8 @@ async def _reap_orphans():
 
 async def _detect_dead_containers():
     """Mark agents ERROR when their Docker container is exited/dead/missing."""
-    runtime = DockerRuntime()
+    from agents.runtimes import get_runtime
+    runtime = get_runtime("docker")
     agents = await _get_agents(
         runtime="docker",
         status__in=[AgentStatus.IDLE, AgentStatus.RUNNING],
@@ -174,7 +175,8 @@ async def _detect_stale_heartbeats(now):
 async def _detect_stuck_deploys(now):
     """Mark DEPLOYING agents ERROR when they exceed DEPLOY_GRACE_S with no heartbeat."""
     deploy_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
-    runtime = DockerRuntime()
+    from agents.runtimes import get_runtime
+    runtime = get_runtime("docker")
 
     stuck_agents = await _get_agents(
         runtime="docker",

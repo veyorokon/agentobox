@@ -62,6 +62,7 @@ BATCH_INTERVAL_S = 0.075  # 75ms batch window
 HEARTBEAT_INTERVAL_S = 2.0
 MAX_RETRY_DELAY_S = 30.0
 RETRY_BASE_DELAY_S = 1.0
+MAX_BATCH_SIZE = 2000
 
 # ---------------------------------------------------------------------------
 # Claude spawn command
@@ -348,7 +349,7 @@ class Relay:
             await asyncio.sleep(HEARTBEAT_INTERVAL_S)
             # Only heartbeat if no recent events (flusher handles active periods)
             if time.monotonic() - self.last_event_time > HEARTBEAT_INTERVAL_S:
-                resp = post_events([])
+                resp = await asyncio.to_thread(post_events, [])
                 if resp:
                     await self._handle_piggyback(resp)
 
@@ -360,13 +361,17 @@ class Relay:
             events = self.batch[:]
             self.batch.clear()
 
-        resp = post_events(events)
+        resp = await asyncio.to_thread(post_events, events)
         if resp:
             await self._handle_piggyback(resp)
         elif events:
             # Re-enqueue on failure so events aren't lost
             async with self.batch_lock:
                 self.batch = events + self.batch
+                if len(self.batch) > MAX_BATCH_SIZE:
+                    dropped = len(self.batch) - MAX_BATCH_SIZE
+                    self.batch = self.batch[-MAX_BATCH_SIZE:]
+                    log.warning("Batch overflow: dropped %d oldest events", dropped)
 
     async def _handle_piggyback(self, resp: dict):
         """
