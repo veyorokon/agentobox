@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 export type RightTab = 'timeline' | 'files' | 'screen';
+export type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
 interface DashboardStore {
   selectedAgentId: string | null;
@@ -10,6 +11,7 @@ interface DashboardStore {
   expandImages: boolean;
   deployDialogOpen: boolean;
   secretsDialogOpen: boolean;
+  connectionStatus: ConnectionStatus;
 
   setSelectedAgent: (id: string | null) => void;
   setScrollToFeedId: (id: string | null) => void;
@@ -18,6 +20,7 @@ interface DashboardStore {
   toggleExpandImages: () => void;
   setDeployDialogOpen: (open: boolean) => void;
   setSecretsDialogOpen: (open: boolean) => void;
+  setConnectionStatus: (status: ConnectionStatus) => void;
 }
 
 export const useDashboardStore = create<DashboardStore>()((set) => ({
@@ -28,6 +31,7 @@ export const useDashboardStore = create<DashboardStore>()((set) => ({
   expandImages: true,
   deployDialogOpen: false,
   secretsDialogOpen: false,
+  connectionStatus: 'offline',
 
   setSelectedAgent: (id) => set({ selectedAgentId: id }),
   setScrollToFeedId: (id) => set({ scrollToFeedId: id }),
@@ -36,4 +40,5 @@ export const useDashboardStore = create<DashboardStore>()((set) => ({
   toggleExpandImages: () => set((s) => ({ expandImages: !s.expandImages })),
   setDeployDialogOpen: (open) => set({ deployDialogOpen: open }),
   setSecretsDialogOpen: (open) => set({ secretsDialogOpen: open }),
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
 }));

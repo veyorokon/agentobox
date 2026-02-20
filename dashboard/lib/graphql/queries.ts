@@ -1,4 +1,5 @@
 import { gql } from 'urql';
+import { AGENT_FIELDS_FRAGMENT } from './fragments';
 
 export const ME_QUERY = gql`
   query Me {
@@ -23,26 +24,10 @@ export const PROJECTS_QUERY = gql`
 export const AGENTS_QUERY = gql`
   query Agents($projectId: ID!) {
     agents(projectId: $projectId) {
-      id
-      name
-      role
-      runtime
-      sandboxId
-      vncUrl
-      status
-      teamName
-      sessionId
-      model
-      cwd
-      permissionMode
-      mcpServers
-      workspacePath
-      instructions
-      sessionCostUsd
-      capabilities
-      createdAt
+      ...AgentFields
     }
   }
+  ${AGENT_FIELDS_FRAGMENT}
 `;
 
 export const PROJECT_SECRETS_QUERY = gql`

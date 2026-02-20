@@ -14,6 +14,7 @@ import {
   UPDATE_AGENT_INSTRUCTIONS_MUTATION,
   UPDATE_AGENT_CONFIG_MUTATION,
 } from '@/lib/graphql/mutations';
+import { logger } from '@/lib/observability';
 import type { ContentBlock } from '@/components/v2/composer';
 
 export function useAgentActions() {
@@ -28,55 +29,79 @@ export function useAgentActions() {
   const [, executeUpdateConfig] = useMutation(UPDATE_AGENT_CONFIG_MUTATION);
 
   const restartAgent = useCallback(
-    (agentId: string) => {
-      executeRestart({ agentId });
+    async (agentId: string) => {
+      const { error } = await executeRestart({ agentId });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Restarting...');
     },
     [executeRestart]
   );
 
   const hardRestartAgent = useCallback(
-    (agentId: string) => {
-      executeHardRestart({ agentId });
+    async (agentId: string) => {
+      const { error } = await executeHardRestart({ agentId });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Restarting...');
     },
     [executeHardRestart]
   );
 
   const startAgent = useCallback(
-    (agentId: string) => {
-      executeHardRestart({ agentId });
+    async (agentId: string) => {
+      const { error } = await executeHardRestart({ agentId });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Starting...');
     },
     [executeHardRestart]
   );
 
   const clearAgentSession = useCallback(
-    (agentId: string) => {
-      executeClearSession({ agentId });
+    async (agentId: string) => {
+      const { error } = await executeClearSession({ agentId });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Session cleared');
     },
     [executeClearSession]
   );
 
   const killAgent = useCallback(
-    (agentId: string) => {
-      executeKill({ agentId });
+    async (agentId: string) => {
+      const { error } = await executeKill({ agentId });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Stopping agent...');
     },
     [executeKill]
   );
 
   const removeAgent = useCallback(
-    (agentId: string) => {
-      executeRemove({ agentId });
+    async (agentId: string) => {
+      const { error } = await executeRemove({ agentId });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Agent removed');
     },
     [executeRemove]
   );
 
   const sendMessage = useCallback(
-    (agentIds: string[], content: ContentBlock[]) => {
+    async (agentIds: string[], content: ContentBlock[]) => {
       const textBlock = content.find(
         (b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text'
       );
@@ -87,21 +112,31 @@ export function useAgentActions() {
         ? { agentIds, message, content }
         : { agentIds, message };
 
-      executeBroadcast({ input });
+      const { error } = await executeBroadcast({ input });
+      if (error) {
+        logger.error('agent-actions', 'sendMessage failed', { error: error.message, agentIds });
+      }
     },
     [executeBroadcast]
   );
 
   const answerQuestion = useCallback(
-    (agentId: string, toolUseId: string, answerText: string) => {
-      executeAnswerQuestion({ input: { agentId, toolUseId, answerText } });
+    async (agentId: string, toolUseId: string, answerText: string) => {
+      const { error } = await executeAnswerQuestion({ input: { agentId, toolUseId, answerText } });
+      if (error) {
+        logger.error('agent-actions', 'answerQuestion failed', { error: error.message, agentId, toolUseId });
+      }
     },
     [executeAnswerQuestion]
   );
 
   const updateInstructions = useCallback(
-    (agentId: string, instructions: string) => {
-      executeUpdateInstructions({ input: { agentId, instructions } });
+    async (agentId: string, instructions: string) => {
+      const { error } = await executeUpdateInstructions({ input: { agentId, instructions } });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
       toast.success('Instructions saved');
     },
     [executeUpdateInstructions]

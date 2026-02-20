@@ -172,12 +172,25 @@ def start_queue_listener():
     # Create console handler with ProcessorFormatter
     console_handler = logging.StreamHandler()
 
-    # Apply ProcessorFormatter to render queued event_dicts as JSON
-    # No foreign_pre_chain needed - structlog logs are already processed
+    # Apply ProcessorFormatter to render queued event_dicts as JSON.
+    # structlog logs arrive pre-processed (via wrap_for_formatter).
+    # Foreign (stdlib) logs need the pre_chain to add structlog fields.
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.JSONRenderer(),
+            orjson_renderer,
+        ],
+        foreign_pre_chain=[
+            structlog.contextvars.merge_contextvars,
+            merge_agent_context,
+            truncate_graphql_request,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            extract_otel_exception_fields,
+            structlog.processors.format_exc_info,
+            copy_exception_to_stacktrace,
         ],
     )
     console_handler.setFormatter(formatter)

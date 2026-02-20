@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { toast } from 'sonner';
 import { Send, Paperclip, X, Loader2 } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
@@ -229,8 +230,8 @@ export function Composer() {
         });
 
         if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          console.error('Upload failed:', err);
+          await resp.json().catch(() => ({}));
+          toast.error(`Upload failed: ${file.name}`);
           continue;
         }
 

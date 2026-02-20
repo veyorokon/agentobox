@@ -1,4 +1,5 @@
 import { gql } from 'urql';
+import { AGENT_FIELDS_FRAGMENT } from './fragments';
 
 export const LOGIN_MUTATION = gql`
   mutation Login($input: LoginInput!) {
@@ -39,25 +40,10 @@ export const CREATE_PROJECT_MUTATION = gql`
 export const CREATE_AGENT_MUTATION = gql`
   mutation CreateAgent($input: CreateAgentInput!) {
     createAgent(input: $input) {
-      id
-      name
-      runtime
-      sandboxId
-      vncUrl
-      status
-      teamName
-      sessionId
-      model
-      cwd
-      permissionMode
-      mcpServers
-      workspacePath
-      instructions
-      sessionCostUsd
-      capabilities
-      createdAt
+      ...AgentFields
     }
   }
+  ${AGENT_FIELDS_FRAGMENT}
 `;
 
 export const SET_SECRET_MUTATION = gql`

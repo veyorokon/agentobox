@@ -1,28 +1,13 @@
 import { gql } from 'urql';
+import { AGENT_FIELDS_FRAGMENT } from './fragments';
 
 export const AGENT_UPDATED_SUBSCRIPTION = gql`
   subscription AgentUpdated($projectId: ID!) {
     agentUpdated(projectId: $projectId) {
-      id
-      name
-      role
-      runtime
-      sandboxId
-      vncUrl
-      status
-      teamName
-      sessionId
-      model
-      cwd
-      permissionMode
-      mcpServers
-      workspacePath
-      instructions
-      sessionCostUsd
-      capabilities
-      createdAt
+      ...AgentFields
     }
   }
+  ${AGENT_FIELDS_FRAGMENT}
 `;
 
 export const MESSAGE_RECEIVED_SUBSCRIPTION = gql`

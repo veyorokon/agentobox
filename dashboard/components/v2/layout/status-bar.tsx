@@ -25,6 +25,7 @@ export function StatusBar() {
   const setCurrentProject = useProjectsStore((s) => s.setCurrentProject);
   const logout = useAuthStore((s) => s.logout);
   const setSecretsDialogOpen = useDashboardStore((s) => s.setSecretsDialogOpen);
+  const connectionStatus = useDashboardStore((s) => s.connectionStatus);
 
   const [, setProjectTheme] = useMutation(SET_PROJECT_THEME_MUTATION);
 
@@ -170,8 +171,43 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* Right: user + secrets + theme */}
+      {/* Right: connection + user + secrets + theme */}
       <div className="flex items-center gap-3">
+        {connectionStatus === 'connected' ? (
+          <div className="flex items-center gap-1.5" title="WebSocket connected">
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{ background: 'var(--agent-active)' }}
+            />
+            <span className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--agent-active)', opacity: 0.6 }}>
+              live
+            </span>
+          </div>
+        ) : connectionStatus === 'reconnecting' ? (
+          <div className="flex items-center gap-1.5" title="WebSocket reconnecting...">
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse"
+              style={{ background: 'var(--warning, #eab308)' }}
+            />
+            <span className="text-[9px] font-mono uppercase tracking-wider animate-pulse" style={{ color: 'var(--warning, #eab308)' }}>
+              reconnecting
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5" title="WebSocket offline">
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{ background: 'var(--destructive)' }}
+            />
+            <span className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--destructive)' }}>
+              offline
+            </span>
+          </div>
+        )}
+        <span
+          className="w-1 h-1 rounded-full flex-shrink-0"
+          style={{ background: 'var(--muted-foreground)', opacity: 0.3 }}
+        />
         <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-wider">
           {username}
         </span>

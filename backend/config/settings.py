@@ -185,7 +185,7 @@ LOGGING = {
         },
     },
     "root": {
-        "handlers": ["console"],  # TODO: Add queue handler after resolving ProcessorFormatter compat
+        "handlers": ["queue"],
         "level": "INFO",
     },
     # Keep noisy libraries quiet

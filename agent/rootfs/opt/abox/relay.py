@@ -29,22 +29,16 @@ import signal
 import sys
 import time
 from urllib.request import Request, urlopen
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 LOG_FORMAT = "[relay] %(asctime)s %(levelname)s %(message)s"
 LOG_DATEFMT = "%H:%M:%S"
-LOG_FILE = "/tmp/abox-relay.log"
 
 logging.basicConfig(
     level=logging.INFO,
     format=LOG_FORMAT,
     datefmt=LOG_DATEFMT,
 )
-
-# Add file handler so logs persist beyond tmux scroll buffer
-_file_handler = logging.FileHandler(LOG_FILE)
-_file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT))
-logging.getLogger().addHandler(_file_handler)
 
 log = logging.getLogger("abox-relay")
 
@@ -155,6 +149,12 @@ def post_events(events: list[dict]) -> dict | None:
         try:
             with urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read())
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:200]
+            log.warning("POST failed (attempt %d/3): HTTP %d: %s", attempt + 1, exc.code, body)
+            if attempt < 2:
+                time.sleep(delay)
+                delay = min(delay * 2, MAX_RETRY_DELAY_S)
         except (URLError, OSError) as exc:
             log.warning("POST failed (attempt %d/3): %s", attempt + 1, exc)
             if attempt < 2:

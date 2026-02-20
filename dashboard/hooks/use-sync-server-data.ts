@@ -11,6 +11,7 @@ import {
   MESSAGE_RECEIVED_SUBSCRIPTION,
   NEW_EVENT_SUBSCRIPTION,
 } from '@/lib/graphql/subscriptions';
+import { logger } from '@/lib/observability';
 import type { GqlFeedItem } from '@/lib/feed-adapter';
 import type { Agent } from '@/types';
 
@@ -68,25 +69,25 @@ export function useSyncServerData() {
 
   useEffect(() => {
     if (feedData?.projectFeed && !feedInitLoaded) {
-      console.log(`[sync] feed initial load: ${feedData.projectFeed.length} items`);
+      logger.debug('sync', 'feed initial load', { itemCount: feedData.projectFeed.length });
       useFeedStore.getState().setItems(feedData.projectFeed as GqlFeedItem[]);
       setFeedInitLoaded(true);
     } else if (feedData?.projectFeed && feedInitLoaded) {
-      console.log(`[sync] feed useQuery re-fired (BLOCKED by gate) — ${feedData.projectFeed.length} items`);
+      logger.debug('sync', 'feed useQuery re-fired (BLOCKED by gate)', { itemCount: feedData.projectFeed.length });
     }
   }, [feedData, feedInitLoaded]);
 
   // ── Imperative: fetch latest and merge (for subscriptions) ──
   const fetchLatest = useCallback(async () => {
     if (!projectId) return;
-    console.log('[sync] fetchLatest triggered (subscription → network-only query)');
+    logger.debug('sync', 'fetchLatest triggered (subscription -> network-only query)');
     const result = await client.query(
       PROJECT_FEED_QUERY,
       { projectId },
       { requestPolicy: 'network-only' },
     ).toPromise();
     if (result.data?.projectFeed) {
-      console.log(`[sync] fetchLatest got ${result.data.projectFeed.length} items → mergeLatest`);
+      logger.debug('sync', 'fetchLatest got items -> mergeLatest', { itemCount: result.data.projectFeed.length });
       useFeedStore.getState().mergeLatest(result.data.projectFeed as GqlFeedItem[]);
     }
   }, [client, projectId]);
@@ -120,7 +121,7 @@ export function useSyncServerData() {
 
   useEffect(() => {
     if (msgSubData) {
-      console.log('[sync] messageReceived subscription fired');
+      logger.debug('sync', 'messageReceived subscription fired');
       debouncedFetchLatest();
     }
   }, [msgSubData, debouncedFetchLatest]);
@@ -132,7 +133,7 @@ export function useSyncServerData() {
 
   useEffect(() => {
     if (eventSubData) {
-      console.log('[sync] newEvent subscription fired');
+      logger.debug('sync', 'newEvent subscription fired');
       debouncedFetchLatest();
     }
   }, [eventSubData, debouncedFetchLatest]);

@@ -9,6 +9,7 @@ import {
 import { cacheExchange } from '@urql/exchange-graphcache';
 import { createClient as createWSClient } from 'graphql-ws';
 import { logger } from '@/lib/observability';
+import { useDashboardStore } from '@/stores/dashboard';
 
 const GRAPHQL_HTTP =
   process.env.NEXT_PUBLIC_GRAPHQL_HTTP ?? 'http://localhost:8000/graphql';
@@ -35,8 +36,14 @@ const wsClient = createWSClient({
     await new Promise((resolve) => setTimeout(resolve, delay));
   },
   on: {
-    connected: () => logger.debug('ws', 'WebSocket connected'),
-    closed: (event) => logger.warn('ws', 'WebSocket closed', { code: (event as CloseEvent)?.code }),
+    connected: () => {
+      logger.debug('ws', 'WebSocket connected');
+      useDashboardStore.getState().setConnectionStatus('connected');
+    },
+    closed: (event) => {
+      logger.warn('ws', 'WebSocket closed', { code: (event as CloseEvent)?.code });
+      useDashboardStore.getState().setConnectionStatus('reconnecting');
+    },
   },
 });
 
