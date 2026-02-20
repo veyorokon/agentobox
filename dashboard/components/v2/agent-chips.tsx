@@ -12,7 +12,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from '@/components/ui/context-menu';
-import type { MockFeedItem } from '@/lib/mock-v2-data';
+import type { FeedItem } from '@/lib/mock-v2-data';
 
 function chipDotStyle(status: string): React.CSSProperties {
   switch (status) {
@@ -58,7 +58,7 @@ function chipDotStyle(status: string): React.CSSProperties {
 }
 
 // Check which agent IDs have unanswered questions
-function getAgentsWithPendingQuestions(feedItems: MockFeedItem[]): Set<string> {
+function getAgentsWithPendingQuestions(feedItems: FeedItem[]): Set<string> {
   const agentIds = new Set<string>();
   for (const item of feedItems) {
     if (item.kind !== 'question' || !item.questions) continue;

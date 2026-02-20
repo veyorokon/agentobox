@@ -233,26 +233,15 @@ class AgentMutation:
 
     @strawberry.mutation
     async def rate_agent(self, input: RateFeedbackInput) -> AgentFeedbackType | None:
-        from agents.models import Agent, AgentFeedback, AgentMessage
+        from agents.models import Agent, AgentFeedback
 
         if input.rating not in (1, 2, 3):
             raise ValueError("rating must be 1, 2, or 3")
 
         agent = await Agent.objects.aget(id=input.agent_id)
 
-        # Resolve message FK — skip if synthetic ID (e.g. "evt-123" from event stream)
-        message = None
-        message_id_int = None
-        if input.message_id:
-            try:
-                message_id_int = int(input.message_id)
-                message = await AgentMessage.objects.aget(id=message_id_int)
-            except (ValueError, AgentMessage.DoesNotExist):
-                pass  # Synthetic or missing ID — proceed without message FK
-
-        # Toggle: if same agent+message+rating exists, delete it (undo)
-        lookup = {"agent": agent, "message": message}
-        existing = await AgentFeedback.objects.filter(**lookup).afirst()
+        # Toggle: if same agent+rating exists, delete it (undo)
+        existing = await AgentFeedback.objects.filter(agent=agent).afirst()
         if existing:
             if existing.rating == input.rating:
                 await existing.adelete()
@@ -265,7 +254,6 @@ class AgentMutation:
 
         return await AgentFeedback.objects.acreate(
             agent=agent,
-            message=message,
             session_id=agent.session_id,
             rating=input.rating,
             comment=input.comment,

@@ -18,12 +18,12 @@ See: docs/ARCHITECTURE.md, "Streaming Callbacks" (AppendContent pattern)
 
 import structlog
 from asgiref.sync import sync_to_async
+from django.db import transaction
 from django.utils import timezone
 
 from agents.models import Agent, AgentStatus, Message, SessionResult
 from agents.services.broadcast import broadcast_agent_update, broadcast_stream_message
 from agents.services.media import externalize_image_block
-from agents.services.interagent import route_inter_agent_messages, route_task_operations
 
 log = structlog.get_logger("agents.stream")
 
@@ -136,6 +136,32 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         )
 
 
+@sync_to_async(thread_sensitive=False)
+def _atomic_upsert_parts(agent, message_id, defaults, new_parts, usage, stop_reason):
+    """Append content parts to an assistant Message under a row lock.
+
+    Prevents the read-modify-write race where concurrent batches both read
+    the same parts list, append different new_parts, and one save clobbers
+    the other's appended content.
+    """
+    with transaction.atomic():
+        message, created = Message.objects.get_or_create(
+            agent=agent,
+            message_id=message_id,
+            defaults=defaults,
+        )
+        # Re-fetch with lock — even on create, a concurrent batch may have
+        # already appended parts between our get_or_create and this lock.
+        message = Message.objects.select_for_update().get(id=message.id)
+        message.parts = (message.parts or []) + new_parts
+        if usage:
+            message.usage = usage
+        if stop_reason:
+            message.stop_reason = stop_reason
+        message.save(update_fields=["parts", "usage", "stop_reason", "updated_at"])
+    return message
+
+
 async def _handle_assistant(agent: Agent, event: dict) -> None:
     """
     Handle assistant events: upsert Message by message_id, APPEND content parts.
@@ -163,7 +189,13 @@ async def _handle_assistant(agent: Agent, event: dict) -> None:
     if not message_id:
         return
 
-    message, created = await Message.objects.aget_or_create(
+    new_parts = await sync_to_async(_externalize_media)(msg_data.get("content", []))
+    usage = msg_data.get("usage")
+    stop_reason = msg_data.get("stop_reason")
+
+    # Atomic upsert — row lock prevents concurrent batches from clobbering
+    # each other's appended parts (read-modify-write race on JSONField).
+    message = await _atomic_upsert_parts(
         agent=agent,
         message_id=message_id,
         defaults={
@@ -173,20 +205,10 @@ async def _handle_assistant(agent: Agent, event: dict) -> None:
             "parts": [],
             "parent_tool_use_id": event.get("parent_tool_use_id") or "",
         },
+        new_parts=new_parts,
+        usage=usage,
+        stop_reason=stop_reason,
     )
-
-    # APPEND new content parts — never replace
-    new_parts = await sync_to_async(_externalize_media)(msg_data.get("content", []))
-    message.parts = message.parts + new_parts
-    message.usage = msg_data.get("usage") or message.usage
-    message.stop_reason = msg_data.get("stop_reason") or message.stop_reason
-    await message.asave(update_fields=["parts", "usage", "stop_reason", "updated_at"])
-
-    # Route inter-agent messages (SendMessage tool calls)
-    await route_inter_agent_messages(agent, new_parts)
-
-    # Sync task operations to DB (TaskCreate/TaskUpdate tool calls)
-    await route_task_operations(agent, new_parts)
 
     # Update agent status to running
     if agent.status != AgentStatus.RUNNING:

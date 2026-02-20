@@ -56,9 +56,9 @@ Container                              Backend (Django)
 │     (pending_input, signal)│        │     → upsert Message     │
 │   relay writes to stdin   │        │     → upsert SessionResult│
 │                           │        │     → route interagent    │
-│ Hooks (PreToolUse)        │        │     → broadcast via WS    │
-│   pre-tool-use.py ────────────────→│ POST /agents/.../hook     │
-│   ← feedback (exit 2)    │        │                          │
+│ MCP Coordination Tools    │        │     → broadcast via WS    │
+│   abox-coord ─────────────────────→│ /mcp (FastMCP)            │
+│   ← tool response         │        │                          │
 └───────────────────────────┘        └──────────┬───────────────┘
                                                 │
                                      ┌──────────▼──────────┐
@@ -197,59 +197,11 @@ system/init (session start)
 
 ## Control Plane Patterns
 
-### Decision Tree
+### MCP Coordination Tools
 
-```
-Does local execution cause harm?
-  YES → PreToolUse hook (block + redirect)
-  NO  → Does the backend need to know?
-    YES → Stream observation (sync after execution)
-    NO  → Do nothing
-```
+Agents use MCP tools from `abox-coord` for all coordination. These are real tool calls that go through the MCP coordination server mounted at `/mcp`. No hooks, no file-based config, no stream observation needed.
 
-### Mechanism 1: PreToolUse Hooks (Block + Redirect)
-
-**When:** Local execution is actively harmful and must be prevented.
-
-**How:** Claude Code fires a PreToolUse hook before tool execution. The hook script reads stdin (JSON with `tool_name` and `tool_input`), decides whether to intercept, and exits with code 2 to block execution and inject feedback.
-
-**Exit codes:**
-- `0` — allow (tool executes normally)
-- `2` — feedback mode (stderr content injected as system message, tool blocked)
-- Other — non-blocking error (logged, does not affect agent)
-
-**Current interception:** `Task` with `team_name` parameter (teammate spawning).
-
-```
-Agent calls Task(team_name="my-team", name="helper")
-  ├─ PreToolUse hook fires → pre-tool-use.py reads stdin JSON
-  ├─ Detects team_name in tool_input → POSTs to backend hook endpoint
-  ├─ Backend creates a real container via create_agent()
-  └─ Hook returns exit code 2 + "Deploying teammate..." feedback
-     └─ Claude receives feedback, continues working (doesn't block)
-```
-
-**Files:**
-- `agent/rootfs/opt/abox/hooks/pre-tool-use.py` — Hook script in container
-- `backend/agents/services/provision.py` — Hook config in `_build_settings_json()`
-- `backend/agents/views.py` — `hook_create_teammate` endpoint
-
-### Mechanism 2: Stream Observation (Sync After Execution)
-
-**When:** Local execution is correct, but the backend needs to mirror the state.
-
-**How:** Claude executes the tool locally. The stream-json relay sends assistant events to the backend. We scan content parts for specific tool_use calls and sync to the database as a side-effect.
-
-**Current observations:**
-- `SendMessage` — route to target agent via pending_input (`interagent.py`)
-- `TaskCreate` / `TaskUpdate` — sync to AgentTask records (`interagent.py`)
-
-### Adding New Interceptions
-
-1. Ask: does local execution cause harm?
-2. If YES: add a PreToolUse hook case in `pre-tool-use.py` + backend endpoint
-3. If NO but backend needs data: add observation in `interagent.py` + call from `stream.py`
-4. If NO and backend doesn't need data: do nothing
+Tools: `teammate_message`, `teammate_broadcast`, `teammate_spawn`, `task_add`, `task_claim`, `task_complete`, `task_list`, `team_status`.
 
 ## Distributed Bridge
 
@@ -301,7 +253,6 @@ Messages are appended to `pending_input` under a database row lock (`select_for_
 | `session_id` | Current Claude session (from system/init) |
 | `capabilities` | Tools, MCP servers, model, version (from system/init) |
 | `pending_input` | Queue of stream-json messages for relay piggyback |
-| `pending_inbox` | Queue of inter-agent inbox messages for relay |
 | `pending_signal` | Queued signal (e.g., "SIGINT", "restart", "clear") for relay |
 | `relay_token` | Auth token for relay → backend |
 | `last_heartbeat_at` | Relay health inference (stale > 10s = down) |
@@ -370,10 +321,6 @@ Synced from stream observation when agents call `TaskCreate`/`TaskUpdate`.
 
 Lifecycle events for the dashboard feed (created, stopped, restarted, provision_failed).
 
-### AgentMessage (Deprecated)
-
-Kept only for `AgentFeedback` FK. Will be removed in a future migration.
-
 ### ProjectSecret
 
 Fernet-encrypted secrets at project level. Scoped to specific agents via `scoped_agents` M2M, or delivered to all agents if unscoped.
@@ -430,18 +377,13 @@ create_agent()
   │    ├─ Write shared secrets env file + source from .bashrc
   │    ├─ provision_workspace()
   │    │    ├─ Write /home/agent/CLAUDE.md (project context, instructions, team roster)
-  │    │    ├─ Write /home/agent/.claude/settings.json (hooks, apiKeyHelper)
-  │    │    ├─ Write /home/agent/.mcp.json (MCP servers with secrets in env blocks)
+  │    │    ├─ Write /home/agent/.claude/settings.json (apiKeyHelper)
+  │    │    ├─ Write /home/agent/.mcp.json (abox-coord + user MCP servers with secrets)
   │    │    ├─ Write /home/agent/.claude.json (onboarding complete, key approved)
   │    │    ├─ Provision API key helper (tmpfs + script)
   │    │    └─ Provision scoped sudo (package-manager-only)
-  │    ├─ provision_team_config()
-  │    │    ├─ Write ~/.claude/teams/{team}/config.json (member roster)
-  │    │    ├─ Write ~/.claude/teams/{team}/inboxes/{agent}.json (empty inbox)
-  │    │    └─ Create ~/.claude/tasks/{team}/ directory
   │    ├─ Write /home/agent/.relay_env (relay environment variables)
   │    └─ Launch relay via: tmux new-session -d -s claude -x 200 -y 50
-  └─ Background: update_team_configs() → push roster to all running agents
 ```
 
 ### Security
@@ -461,50 +403,7 @@ Two types in `provision.py`:
 
 Each registry entry has: `command`, `args`, `compat` (image variants), and optional `instructions` (injected into CLAUDE.md).
 
-### Team Config Updates
-
-When a new agent is created, `update_team_configs()` pushes updated `config.json` to all running agents so they can discover the new teammate via SendMessage.
-
-## Hook Reference
-
-### Hook Events
-
-| Event | When | Key Fields |
-|-------|------|------------|
-| PreToolUse | Before any tool runs | `tool_name`, `tool_input`, `tool_use_id` |
-| PostToolUse | After tool completes | `tool_name`, `tool_input`, `tool_response`, `tool_use_id` |
-| Stop | Agent considers stopping | `reason` |
-| SessionStart | Session begins | `source`, `model` |
-| SessionEnd | Session ends | `reason` |
-| TeammateIdle | Teammate becomes idle | `teammate_name`, `team_name` |
-| TaskCompleted | Task marked complete | `task_id`, `task_subject`, `teammate_name`, `team_name` |
-| SubagentStart | Subagent spawned | `agent_id`, `agent_type` |
-| SubagentStop | Subagent stopping | `agent_id`, `agent_type`, `agent_transcript_path` |
-| PreCompact | Before context compaction | (none extra) |
-
-### Hook Input Format
-
-All hooks receive JSON via stdin with common fields:
-
-```json
-{
-  "session_id": "uuid",
-  "transcript_path": "/path/to/session.jsonl",
-  "cwd": "/working/dir",
-  "hook_event_name": "PreToolUse",
-  "permission_mode": "bypassPermissions"
-}
-```
-
-Plus event-specific fields (e.g., `tool_name` + `tool_input` for PreToolUse).
-
-### Hook Config
-
-Hooks are configured in `.claude/settings.json` via `_build_settings_json()` in `provision.py`. Currently only `PreToolUse` on `Task` tool is configured.
-
-Matcher syntax: `"Task"` (exact), `"Read|Write|Edit"` (OR), `"*"` (wildcard), `"mcp__.*__delete.*"` (regex).
-
-## The MCP Coordination Server (Target)
+## The MCP Coordination Server
 
 The core new component — an MCP server that any agent runtime can consume. This is the path from "CC-only coordination" to "runtime-agnostic coordination."
 
@@ -599,32 +498,7 @@ async def team_status() -> dict:
 
 ### Auth
 
-Bearer token auth using the same `relay_token` generated at provisioning. Validated via ASGI middleware or FastMCP dependency before any tool executes. Same token the relay uses for stream POSTs — no new auth mechanism.
-
-### What Changes
-
-- SendMessage routing moves from stream observation to explicit MCP tool calls
-- Task management becomes first-class (not observed from CC's internal TaskCreate)
-- Team spawning moves from PreToolUse hook interception to MCP tool
-- The relay/piggyback pattern remains for event streaming — MCP handles coordination, relay handles observability
-
-### What Stays the Same
-
-- Data model (Agent, Message, SessionResult, AgentTask, AgentEvent)
-- Event processing pipeline (stream.py)
-- Dashboard and subscriptions
-- Runtime protocol (Docker/Modal)
-- Provisioning flow
-- Security model
-
-### Migration Path
-
-1. **Add FastMCP to backend** — mount at `/mcp` in `asgi.py`, define tools in `coordination/mcp.py`
-2. **Wire into provisioning** — add `abox-coord` to `.mcp.json` in `_build_mcp_json()`. Agents get both CC native tools and MCP coordination tools.
-3. **Update agent CLAUDE.md** — instruct agents to prefer MCP coordination tools over CC native `SendMessage`/`TaskCreate`
-4. **Deprecate old paths** — remove stream observation routing for SendMessage/TaskCreate in `interagent.py` and PreToolUse hook for Task spawning
-
-Each step is independently deployable. Nothing breaks between steps.
+Bearer token auth using the same `relay_token` generated at provisioning. Each tool calls `_authenticate()` which extracts the Bearer token from HTTP headers via `get_http_headers()` and looks up the Agent by `relay_token`. Same token the relay uses for stream POSTs — no new auth mechanism.
 
 ## Key Services
 
@@ -653,27 +527,24 @@ Stream event processing — the main data pipeline.
 
 ### interagent.py
 
-Inter-agent message routing and task observation.
+Inter-agent message delivery.
 
 | Function | Purpose |
 |----------|---------|
-| `route_inter_agent_messages()` | Scan for SendMessage tool_use, route to target agent |
-| `route_task_operations()` | Scan for TaskCreate/TaskUpdate, sync to AgentTask |
 | `_deliver_to_stdin()` | Format team message as stream-json input, atomically enqueue in pending_input |
+| `_handle_broadcast()` | Deliver message to all teammates in the project |
 | `_atomic_enqueue()` | Append to pending_input under row lock |
 
 ### provision.py
 
-Workspace setup and team config.
+Workspace setup.
 
 | Function | Purpose |
 |----------|---------|
 | `provision_workspace()` | Write CLAUDE.md, settings.json, .mcp.json, .claude.json, security hardening |
-| `provision_team_config()` | Create config.json, inboxes, task dir inside container |
-| `update_team_configs()` | Push updated config.json to all running agents |
 | `_build_claude_md()` | Generate agent CLAUDE.md with project context, instructions, team roster |
-| `_build_settings_json()` | Generate settings with hook config and apiKeyHelper |
-| `_build_mcp_json()` | Generate .mcp.json with secrets injected into env blocks |
+| `_build_settings_json()` | Generate settings with apiKeyHelper |
+| `_build_mcp_json()` | Generate .mcp.json with abox-coord + user MCP servers |
 | `push_secrets_to_agent()` | Hot-reload secrets on running agent |
 
 ### comms.py
@@ -694,16 +565,14 @@ Transforms stream events and lifecycle events into `FeedItem` objects for the da
 
 2. **Message delivery not guaranteed** — `pending_input` piggyback has no delivery confirmation. If the relay misses a response (network blip, timeout), the message is lost. Backend clears `pending_input` after including it in a response. No retry queue.
 
-3. **AgentMessage deprecated but referenced** — `AgentMessage` model is deprecated but `AgentFeedback` still has a FK to it. Needs a migration to drop the FK and remove the model.
-
-4. **Feed scroll refinements** — Recent commits (`36f1d44`, `3c18de5`, `41793d2`) stabilized scroll-to-bottom with height-based approach + pinned-state tracking. Stable but may need tuning for edge cases (long tool outputs, rapid message bursts).
+3. **Feed scroll refinements** — Recent commits (`36f1d44`, `3c18de5`, `41793d2`) stabilized scroll-to-bottom with height-based approach + pinned-state tracking. Stable but may need tuning for edge cases (long tool outputs, rapid message bursts).
 
 ## Roadmap
 
-1. **MCP coordination server** — Runtime-agnostic coordination tools (the new component described above)
-2. **Reliability fixes** — Heartbeat reconciliation, message delivery guarantees (retry queue for pending_input)
-3. **Feed/UI stabilization** — Edge case scroll fixes, performance with large feeds
-4. **Agent CLAUDE.md formalization** — Structured injection of project context, role instructions, and coordination protocol
+1. ~~**MCP coordination server**~~ — Done. `backend/coordination/server.py` mounted at `/mcp`.
+2. ~~**Remove old patterns**~~ — Done. Removed PreToolUse hooks, file-based team config, stream observation routing.
+3. **Reliability fixes** — Heartbeat reconciliation, message delivery guarantees (retry queue for pending_input)
+4. **Feed/UI stabilization** — Edge case scroll fixes, performance with large feeds
 5. **Casebase** — Session storage + retrieval for institutional memory (from FOUNDATIONS.md open questions)
 
 ## File Reference
@@ -713,20 +582,20 @@ Transforms stream events and lifecycle events into `FeedItem` objects for the da
 | `backend/agents/models.py` | Agent, Message, SessionResult, AgentTask, AgentEvent, ProjectSecret models |
 | `backend/agents/services/lifecycle.py` | create_agent, kill_agent, remove_agent, hard_restart_agent |
 | `backend/agents/services/stream.py` | Stream event processing pipeline |
-| `backend/agents/services/interagent.py` | Inter-agent message routing + task observation |
-| `backend/agents/services/provision.py` | Workspace setup, settings, CLAUDE.md, team config, MCP registry |
+| `backend/agents/services/interagent.py` | Inter-agent message delivery |
+| `backend/agents/services/provision.py` | Workspace setup, settings, CLAUDE.md, MCP registry |
 | `backend/agents/services/comms.py` | Message persistence + piggyback response building |
 | `backend/agents/services/broadcast.py` | WebSocket push to dashboard |
 | `backend/agents/services/feed_transform.py` | Stream event → FeedItem transform |
 | `backend/agents/services/media.py` | S3 image externalization from base64 |
 | `backend/agents/services/reconcile.py` | Agent state reconciliation |
 | `backend/agents/services/secrets.py` | Secret encryption/decryption |
-| `backend/agents/views.py` | GraphQL mutations + hook callback endpoints |
+| `backend/agents/views.py` | Relay stream endpoint + file uploads |
+| `backend/coordination/server.py` | MCP coordination server (teammate, task, team tools) |
 | `backend/agents/runtimes/base.py` | Runtime protocol (create, terminate, exec, write_file) |
 | `backend/agents/runtimes/docker.py` | Docker runtime implementation |
 | `backend/agents/runtimes/modal.py` | Modal runtime implementation |
 | `agent/rootfs/opt/abox/relay.py` | In-container relay process |
-| `agent/rootfs/opt/abox/hooks/pre-tool-use.py` | PreToolUse hook script |
 
 ## Archived Docs
 

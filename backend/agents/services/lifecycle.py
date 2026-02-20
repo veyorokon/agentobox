@@ -10,7 +10,7 @@ from agents.models import Agent, AgentStatus
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
-from agents.services.provision import provision_team_config, provision_workspace, resolve_mcp_servers, update_team_configs, write_secrets_env, write_theme_files
+from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 
@@ -96,9 +96,6 @@ async def create_agent(
     asyncio.create_task(
         _provision_agent(agent, project, runtime_name, op_log, secret_envs)
     )
-
-    # Update team config in all existing agents so they can discover the new agent
-    asyncio.create_task(update_team_configs(project))
 
     return agent
 
@@ -213,11 +210,6 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 mount_path="/opt/abox/relay.py",
                 host_path=f"{rootfs_path}/opt/abox/relay.py",
             ))
-            mounts.append(VolumeMount(
-                name="dev-hooks",
-                mount_path="/opt/abox/hooks",
-                host_path=f"{rootfs_path}/opt/abox/hooks",
-            ))
 
         sandbox = await runtime.create(agent.name, env, volumes=mounts or None)
         sandbox_id = sandbox.id
@@ -291,11 +283,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             agent_name=agent.name,
             team_members=team_members,
             team_name=team_name,
+            relay_token=relay_token,
+            callback_url=callback_url,
         )
-        await provision_team_config(
-            runtime, sandbox.id, team_name, all_agents, agent.name,
-        )
-
         # Write theme tokens if project has them
         if project.theme_tokens:
             await write_theme_files(runtime, sandbox.id, project.theme_tokens)
@@ -317,9 +307,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if resume_session_id:
             relay_env_lines.append(f'export RESUME_SESSION_ID="{resume_session_id}"')
 
-        # Add MCP config path if agent has MCP servers
-        if agent.mcp_servers:
-            relay_env_lines.append(f'export MCP_CONFIG="{work_dir}/.mcp.json"')
+        # Always set MCP config path (abox-coord is always present)
+        # provision.py writes .mcp.json to /home/agent/ (not work_dir)
+        relay_env_lines.append('export MCP_CONFIG="/home/agent/.mcp.json"')
 
         relay_env_content = "\n".join(relay_env_lines) + "\n"
         await runtime.write_file(
@@ -455,11 +445,6 @@ async def remove_agent(agent_id: str) -> bool:
 
     await agent.adelete()
 
-    # Update team configs so remaining agents stop seeing this one
-    from projects.models import Project
-    project = await Project.objects.aget(id=project_id)
-    asyncio.create_task(update_team_configs(project))
-
     op_log.info("agent_removed")
     clear_agent_context()
     return True
@@ -526,7 +511,6 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     agent.relay_token = ""
     agent.last_heartbeat_at = None
     agent.pending_input = []
-    agent.pending_inbox = []
     agent.pending_signal = ""
     agent.runtime = runtime_name
     agent.model = model

@@ -101,9 +101,6 @@ class Agent(models.Model):
     capabilities = models.JSONField(null=True, blank=True)
     # Queue of messages for relay piggyback (list of JSON dicts)
     pending_input = models.JSONField(default=list, blank=True)
-    # Queue of inter-agent inbox messages for relay piggyback
-    # Relay writes these to ~/.claude/teams/{team}/inboxes/{agent}.json
-    pending_inbox = models.JSONField(default=list, blank=True)
     # Queued signal for relay piggyback (e.g. "SIGINT")
     pending_signal = models.CharField(max_length=20, blank=True)
     # Auth token for relay -> backend communication
@@ -137,22 +134,6 @@ class AgentEvent(models.Model):
 
     def __str__(self):
         return f"{self.event_type} → {self.agent.name} ({self.created_at:%H:%M})"
-
-
-class AgentMessage(models.Model):
-    """Deprecated: kept only for AgentFeedback FK. Will be removed in a future migration."""
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="messages")
-    direction = models.CharField(
-        max_length=10, choices=[("inbound", "Inbound"), ("outbound", "Outbound")]
-    )
-    content = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["created_at"]
-
-    def __str__(self):
-        return f"{self.direction} → {self.agent.name} ({self.created_at:%H:%M})"
 
 
 class Message(models.Model):
@@ -279,9 +260,6 @@ class AgentTask(models.Model):
 class AgentFeedback(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="feedback")
-    message = models.ForeignKey(
-        AgentMessage, on_delete=models.CASCADE, null=True, blank=True, related_name="feedback"
-    )
     session_id = models.CharField(max_length=255, blank=True)
     rating = models.IntegerField()
     comment = models.TextField(blank=True)

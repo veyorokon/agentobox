@@ -2,11 +2,11 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { buildAgentColorMap } from '@/lib/agent-colors';
 import type { Agent } from '@/types';
-import type { MockAgent } from '@/lib/mock-v2-data';
+import type { AgentSummary } from '@/lib/mock-v2-data';
 
 interface AgentsState {
-  agents: Record<string, MockAgent>;
-  sortedAgents: MockAgent[];
+  agents: Record<string, AgentSummary>;
+  sortedAgents: AgentSummary[];
   agentColors: Record<string, string>;
   stats: { running: number; idle: number; totalCost: number };
   fetching: boolean;
@@ -17,7 +17,7 @@ interface AgentsState {
   reset: () => void;
 }
 
-function sortAgents(agents: MockAgent[]): MockAgent[] {
+function sortAgents(agents: AgentSummary[]): AgentSummary[] {
   return [...agents].sort((a, b) => {
     if (a.role === 'lead' && b.role !== 'lead') return -1;
     if (b.role === 'lead' && a.role !== 'lead') return 1;
@@ -25,7 +25,7 @@ function sortAgents(agents: MockAgent[]): MockAgent[] {
   });
 }
 
-function computeStats(agents: MockAgent[]) {
+function computeStats(agents: AgentSummary[]) {
   return {
     running: agents.filter((a) => a.status === 'running').length,
     idle: agents.filter((a) => a.status === 'idle').length,
@@ -55,9 +55,9 @@ export const useAgentsStore = create<AgentsState>()(
       fetching: false,
 
       setAgents: (raw) => {
-        const agents: Record<string, MockAgent> = {};
-        for (const a of raw as MockAgent[]) agents[a.id] = a;
-        const sorted = sortAgents(raw as MockAgent[]);
+        const agents: Record<string, AgentSummary> = {};
+        for (const a of raw as AgentSummary[]) agents[a.id] = a;
+        const sorted = sortAgents(raw as AgentSummary[]);
         set(
           {
             agents,
@@ -72,7 +72,7 @@ export const useAgentsStore = create<AgentsState>()(
 
       updateAgent: (agent) => {
         const prev = get().agents;
-        const updated = { ...prev, [agent.id]: agent as MockAgent };
+        const updated = { ...prev, [agent.id]: agent as AgentSummary };
         const all = Object.values(updated);
         const sorted = sortAgents(all);
         set(
@@ -83,7 +83,7 @@ export const useAgentsStore = create<AgentsState>()(
             stats: computeStats(all),
           },
           false,
-          `agents/updateAgent:${(agent as MockAgent).name}`,
+          `agents/updateAgent:${(agent as AgentSummary).name}`,
         );
       },
 

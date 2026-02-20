@@ -6,7 +6,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
 import { useFeedStore } from '@/stores/feed';
 import { FeedItem } from './feed-item';
-import type { MockFeedItem, MockAgent } from '@/lib/mock-v2-data';
+import type { FeedItem as FeedItemData, AgentSummary } from '@/lib/mock-v2-data';
 
 // Speaker-change spacing: kinds that get extra gap around them
 const DIVIDER_KINDS = new Set(['task-start', 'task-end']);
@@ -31,11 +31,11 @@ export function SummaryFeed() {
   const colorMap = useAgentsStore((s) => s.agentColors);
 
   // Build lookup maps — but store in refs so renderItem callback stays stable
-  const agentsMapRef = useRef<Record<string, MockAgent>>({});
+  const agentsMapRef = useRef<Record<string, AgentSummary>>({});
   const colorMapRef = useRef<Record<string, string>>({});
 
   agentsMapRef.current = useMemo(() => {
-    const m: Record<string, MockAgent> = {};
+    const m: Record<string, AgentSummary> = {};
     for (const a of agents) m[a.id] = a;
     return m;
   }, [agents]);
@@ -52,7 +52,7 @@ export function SummaryFeed() {
   }, [items, selectedAgentId]);
 
   // Store filtered in a ref so the stable renderItem callback can peek at neighbours
-  const filteredRef = useRef<MockFeedItem[]>(filtered);
+  const filteredRef = useRef<FeedItemData[]>(filtered);
   filteredRef.current = filtered;
 
   // ── Scroll-lock: bypass Virtuoso's followOutput entirely ──
@@ -111,7 +111,7 @@ export function SummaryFeed() {
   // Stable callback — reads agent data from refs, not from closure deps.
   // FeedItem is React.memo'd so existing items won't re-render even if this fires.
   const renderItem = useCallback(
-    (index: number, item: MockFeedItem) => {
+    (index: number, item: FeedItemData) => {
       const agent = agentsMapRef.current[item.agentId];
       const color = colorMapRef.current[item.agentId] ?? 'var(--muted-foreground)';
 

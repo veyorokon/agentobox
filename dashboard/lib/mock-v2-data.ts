@@ -13,14 +13,14 @@ import { getAgentColor } from '@/lib/agent-colors';
 
 // ── Agent definitions ──
 
-export interface MockAgent extends Agent {}
+export interface AgentSummary extends Agent {}
 
 const now = Date.now();
 function minsAgo(m: number): string {
   return new Date(now - m * 60_000).toISOString();
 }
 
-export const MOCK_AGENTS: MockAgent[] = [
+export const MOCK_AGENTS: AgentSummary[] = [
   {
     id: 'a1',
     name: 'lead',
@@ -140,7 +140,7 @@ export const MOCK_AGENTS: MockAgent[] = [
   },
 ];
 
-export const MOCK_AGENTS_MAP: Record<string, MockAgent> = Object.fromEntries(
+export const MOCK_AGENTS_MAP: Record<string, AgentSummary> = Object.fromEntries(
   MOCK_AGENTS.map((a) => [a.id, a])
 );
 
@@ -230,7 +230,7 @@ export interface FileTreeStats {
   conflictCount: number;
 }
 
-export interface MockFeedItem {
+export interface FeedItem {
   id: string;
   kind: FeedItemKind;
   agentId: string;
@@ -273,7 +273,7 @@ export interface MockFeedItem {
   planSteps?: string[];
   /** For task-start / task-end — task subject line */
   taskDividerSubject?: string;
-  /** For task-start / task-end — reference to the TimelineTask id */
+  /** For task-start / task-end — reference to the TaskItem id */
   taskDividerId?: string;
   /** For task-start / task-end — short present-continuous label for timeline pills */
   taskDividerActiveForm?: string;
@@ -287,8 +287,8 @@ function feedItem(
   agentId: string,
   agentName: string,
   minutesAgo: number,
-  extra: Partial<MockFeedItem> = {}
-): MockFeedItem {
+  extra: Partial<FeedItem> = {}
+): FeedItem {
   return {
     id: `f-${_id++}`,
     kind,
@@ -303,8 +303,8 @@ function feedItem(
 /**
  * Returns feed items sorted newest-first (reversed for display: oldest at top).
  */
-export function generateMockFeed(): MockFeedItem[] {
-  const items: MockFeedItem[] = [
+export function generateMockFeed(): FeedItem[] {
+  const items: FeedItem[] = [
     // === 45 min ago: Session start ===
     feedItem('system', 'a1', 'lead', 45, { text: 'Session started' }),
     feedItem('status', 'a1', 'lead', 45, { fromStatus: 'deploying', toStatus: 'running' }),
@@ -542,7 +542,7 @@ export function generateMockFeed(): MockFeedItem[] {
   ];
 
   // Inject task-start / task-end dividers from timeline tasks
-  const tasks = generateTimelineTasks();
+  const tasks = generateTaskItems();
   for (const task of tasks) {
     items.push(
       feedItem('task-start', task.agentId, task.agentName, task.startMinsAgo, {
@@ -601,7 +601,7 @@ export function generateMockFeed(): MockFeedItem[] {
 
 // ── Timeline data (task-based blocks + point events) ──
 
-export interface TimelineTask {
+export interface TaskItem {
   id: string;
   agentId: string;
   agentName: string;
@@ -627,7 +627,7 @@ export interface TimelineEvent {
   summary: string;
 }
 
-export function generateTimelineTasks(): TimelineTask[] {
+export function generateTaskItems(): TaskItem[] {
   return [
     // ── Lead ──
     { id: 'tt-1', agentId: 'a1', agentName: 'lead', subject: 'Coordinate sprint kickoff', activeForm: 'Coordinating', startMinsAgo: 45, endMinsAgo: 37, status: 'completed' },
@@ -651,7 +651,7 @@ export function generateTimelineTasks(): TimelineTask[] {
 }
 
 /** Build file tree from feed activity items */
-export function generateMockFileTree(feedItems: MockFeedItem[]): { tree: FileTreeNode[]; stats: FileTreeStats } {
+export function generateMockFileTree(feedItems: FeedItem[]): { tree: FileTreeNode[]; stats: FileTreeStats } {
   const fileMap = new Map<string, { agents: Map<string, FileTreeAgent>; isNew: boolean }>();
 
   for (const item of feedItems) {

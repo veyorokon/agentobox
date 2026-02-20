@@ -18,10 +18,10 @@ import { PlanItem } from './items/plan-item';
 import { TaskDivider } from './items/task-divider';
 import { TeamMessageLine } from './items/team-message-line';
 import { ImageLine } from './items/image-line';
-import type { MockFeedItem } from '@/lib/mock-v2-data';
+import type { FeedItem as FeedItemData } from '@/lib/mock-v2-data';
 
 interface FeedItemProps {
-  item: MockFeedItem;
+  item: FeedItemData;
   agentColor: string;
   isLead: boolean;
   colorMap?: Record<string, string>;

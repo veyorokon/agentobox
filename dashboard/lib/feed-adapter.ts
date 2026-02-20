@@ -1,17 +1,17 @@
 /**
- * Adapter: GraphQL FeedItemType → MockFeedItem shape.
+ * Adapter: GraphQL FeedItemType → FeedItem shape.
  *
- * Zero component changes required — all v2 components consume MockFeedItem.
+ * Zero component changes required — all v2 components consume FeedItem.
  * This module maps the real GraphQL response into that exact shape.
  */
 
 import type {
-  MockFeedItem,
+  FeedItem,
   FeedItemKind,
   ToolUseDetail,
   AgentQuestion,
   QuestionAnswer,
-  TimelineTask,
+  TaskItem,
   TimelineEvent,
   TimelineEventKind,
 } from '@/lib/mock-v2-data';
@@ -122,9 +122,9 @@ function minsAgoFromTimestamp(ts: string): number {
 }
 
 /**
- * Adapt a single GraphQL FeedItem to MockFeedItem shape.
+ * Adapt a single GraphQL FeedItem to FeedItem shape.
  */
-export function adaptFeedItem(item: GqlFeedItem): MockFeedItem {
+export function adaptFeedItem(item: GqlFeedItem): FeedItem {
   return {
     id: item.id,
     kind: KIND_MAP[item.kind] ?? ('system' as FeedItemKind),
@@ -146,7 +146,7 @@ export function adaptFeedItem(item: GqlFeedItem): MockFeedItem {
     answers: item.answers?.map((a) => a ? adaptAnswer(a) : undefined),
     toolUseId: item.toolUseId ?? undefined,
     memoryContent: item.memoryContent ?? undefined,
-    planStatus: (item.planStatus as MockFeedItem['planStatus']) ?? undefined,
+    planStatus: (item.planStatus as FeedItem['planStatus']) ?? undefined,
     planSummary: item.planSummary ?? undefined,
     planSteps: item.planSteps ?? undefined,
     taskDividerSubject: item.taskDividerSubject ?? undefined,
@@ -160,15 +160,15 @@ export function adaptFeedItem(item: GqlFeedItem): MockFeedItem {
  * Adapt an array of GraphQL feed items. Returns items sorted oldest-first
  * (matching mock data convention — largest minsAgo first).
  */
-export function adaptFeedItems(items: GqlFeedItem[]): MockFeedItem[] {
+export function adaptFeedItems(items: GqlFeedItem[]): FeedItem[] {
   return items.map(adaptFeedItem);
   // GraphQL already returns sorted by timestamp (oldest first from feed_transform)
 }
 
 /**
- * Derive TimelineTask[] and TimelineEvent[] from adapted feed items.
+ * Derive TaskItem[] and TimelineEvent[] from adapted feed items.
  *
- * Replaces generateTimelineTasks() / generateTimelineEvents() for live data.
+ * Replaces generateTaskItems() / generateTimelineEvents() for live data.
  *
  * - task-start → open task (in_progress)
  * - task-end with matching taskDividerId → closes the task (completed)
@@ -176,11 +176,11 @@ export function adaptFeedItems(items: GqlFeedItem[]): MockFeedItem[] {
  * - error items → timeline events
  * - user-message items → timeline events
  */
-export function adaptFeedToTimeline(items: MockFeedItem[]): {
-  tasks: TimelineTask[];
+export function adaptFeedToTimeline(items: FeedItem[]): {
+  tasks: TaskItem[];
   events: TimelineEvent[];
 } {
-  const taskMap = new Map<string, TimelineTask>();
+  const taskMap = new Map<string, TaskItem>();
   const events: TimelineEvent[] = [];
   let taskCounter = 0;
   let eventCounter = 0;

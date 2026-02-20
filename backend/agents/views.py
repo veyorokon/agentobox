@@ -56,67 +56,20 @@ async def stream_events(request, agent_id):
     agent.last_heartbeat_at = timezone.now()
 
     # Build piggyback response
-    response = {"ack": True, "pending_input": None, "pending_signal": None, "pending_inbox": None}
+    response = {"ack": True, "pending_input": None, "pending_signal": None}
 
     if agent.pending_input:
         response["pending_input"] = agent.pending_input
         agent.pending_input = []
 
-    if agent.pending_inbox:
-        response["pending_inbox"] = agent.pending_inbox
-        agent.pending_inbox = []
-
     if agent.pending_signal:
         response["pending_signal"] = agent.pending_signal
         agent.pending_signal = ""
 
-    await agent.asave(update_fields=["pending_input", "pending_inbox", "pending_signal", "last_heartbeat_at"])
+    await agent.asave(update_fields=["pending_input", "pending_signal", "last_heartbeat_at"])
 
     return JsonResponse(response)
 
-
-@csrf_exempt
-@require_POST
-async def hook_create_teammate(request, agent_id):
-    """
-    Called by the PreToolUse hook when a team lead calls Task(team_name).
-    Creates a new agent container as a teammate of the requesting agent.
-
-    Auth: X-Relay-Token (same as stream_events).
-    See: docs/ARCHITECTURE.md
-    """
-    from agents.models import Agent
-    from agents.services.lifecycle import create_agent
-
-    token = request.headers.get("X-Relay-Token", "")
-    try:
-        leader = await Agent.objects.select_related("project").aget(id=agent_id)
-    except Agent.DoesNotExist:
-        return JsonResponse({"error": "agent not found"}, status=404)
-
-    if not leader.relay_token or token != leader.relay_token:
-        return JsonResponse({"error": "unauthorized"}, status=401)
-
-    body = json.loads(request.body)
-    name = body.get("name", "teammate")
-    prompt = body.get("prompt", "")
-    model = body.get("model") or leader.model
-
-    try:
-        agent = await create_agent(
-            project_id=str(leader.project_id),
-            name=name,
-            runtime_name=leader.runtime,
-            model=model,
-            workspace_path=leader.workspace_path,
-            instructions=prompt,
-            role="worker",
-            volume_mounts=leader.volume_mounts,
-        )
-    except ValueError as e:
-        return JsonResponse({"error": str(e)}, status=400)
-
-    return JsonResponse({"ok": True, "agent_id": str(agent.id), "name": agent.name})
 
 
 @csrf_exempt

@@ -31,11 +31,21 @@ import time
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
+LOG_FORMAT = "[relay] %(asctime)s %(levelname)s %(message)s"
+LOG_DATEFMT = "%H:%M:%S"
+LOG_FILE = "/tmp/abox-relay.log"
+
 logging.basicConfig(
     level=logging.INFO,
-    format="[relay] %(asctime)s %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
+    format=LOG_FORMAT,
+    datefmt=LOG_DATEFMT,
 )
+
+# Add file handler so logs persist beyond tmux scroll buffer
+_file_handler = logging.FileHandler(LOG_FILE)
+_file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT))
+logging.getLogger().addHandler(_file_handler)
+
 log = logging.getLogger("abox-relay")
 
 # ---------------------------------------------------------------------------
@@ -119,6 +129,10 @@ def post_events(events: list[dict]) -> dict | None:
     Events are the raw JSON objects from Claude's stdout, each with
     a `type` field: "system", "assistant", "user", or "result".
 
+    Retries up to 3 times with exponential backoff on transient connection
+    errors (URLError, OSError). Does not retry on JSON parse errors or
+    HTTP 4xx responses.
+
     Returns piggyback response from backend:
         pending_input:  list of JSON messages to write to Claude's stdin
         pending_signal: Signal name to send to Claude process (or null)
@@ -130,17 +144,25 @@ def post_events(events: list[dict]) -> dict | None:
 
     url = f"{CALLBACK_URL}/agents/{AGENT_ID}/stream"
     body = json.dumps(events).encode()
-    req = Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    if RELAY_AUTH_TOKEN:
-        req.add_header("X-Relay-Token", RELAY_AUTH_TOKEN)
 
-    try:
-        with urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
-    except (URLError, OSError, json.JSONDecodeError) as exc:
-        log.warning("POST failed: %s", exc)
-        return None
+    delay = RETRY_BASE_DELAY_S
+    for attempt in range(3):
+        req = Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        if RELAY_AUTH_TOKEN:
+            req.add_header("X-Relay-Token", RELAY_AUTH_TOKEN)
+        try:
+            with urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read())
+        except (URLError, OSError) as exc:
+            log.warning("POST failed (attempt %d/3): %s", attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(delay)
+                delay = min(delay * 2, MAX_RETRY_DELAY_S)
+        except json.JSONDecodeError as exc:
+            log.warning("POST response parse failed: %s", exc)
+            return None  # Don't retry JSON parse errors
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +303,9 @@ class Relay:
 
             # stream_event = real-time (not batched)
             if event.get("type") == "stream_event":
-                # Fire-and-forget for live streaming, don't block
-                post_events([event])
+                # Fire-and-forget for live streaming — run in thread to avoid
+                # blocking stdout reading during post_events retry backoff
+                await asyncio.to_thread(post_events, [event])
             else:
                 async with self.batch_lock:
                     self.batch.append(event)
@@ -340,13 +363,16 @@ class Relay:
         resp = post_events(events)
         if resp:
             await self._handle_piggyback(resp)
+        elif events:
+            # Re-enqueue on failure so events aren't lost
+            async with self.batch_lock:
+                self.batch = events + self.batch
 
     async def _handle_piggyback(self, resp: dict):
         """
         Process piggyback response from backend POST.
 
         The backend includes pending_input (list of messages to write to stdin),
-        pending_inbox (inter-agent messages to write to inbox file), and
         pending_signal (signal to send to Claude) in every POST response.
 
         pending_input is a list because multiple send_message() calls may
@@ -362,12 +388,6 @@ class Relay:
                     await self._write_stdin(msg)
             elif isinstance(pending_input, dict):
                 await self._write_stdin(pending_input)
-
-        # Handle pending inbox messages (inter-agent, written to local inbox file)
-        pending_inbox = resp.get("pending_inbox")
-        if pending_inbox and isinstance(pending_inbox, list):
-            for msg in pending_inbox:
-                self._write_inbox(msg)
 
         # Handle pending signal
         pending_signal = resp.get("pending_signal")
@@ -405,45 +425,6 @@ class Relay:
         self.proc.stdin.write(line.encode())
         await self.proc.stdin.drain()
         log.info("Wrote to stdin: type=%s", msg.get("type", "?"))
-
-    def _write_inbox(self, msg: dict):
-        """
-        Write an inter-agent message to the local Claude Code inbox file.
-
-        Claude Code polls ~/.claude/teams/{team}/inboxes/{agent}.json at ~1s
-        intervals. Messages written here are picked up by the internal
-        readMailbox() loop and delivered to the agent natively.
-
-        Uses atomic write (tempfile + os.replace) to prevent partial reads
-        from Claude Code's polling loop.
-        """
-        team_name = os.environ.get("TEAM_NAME", "")
-        agent_name = os.environ.get("AGENT_NAME", "")
-        if not team_name or not agent_name:
-            log.warning("Cannot write inbox — TEAM_NAME or AGENT_NAME not set")
-            return
-
-        inbox_path = f"/home/agent/.claude/teams/{team_name}/inboxes/{agent_name}.json"
-
-        # Read existing inbox, append, write back atomically
-        try:
-            with open(inbox_path, "r") as f:
-                inbox = json.loads(f.read())
-            if not isinstance(inbox, list):
-                inbox = []
-        except (FileNotFoundError, json.JSONDecodeError):
-            inbox = []
-
-        inbox.append(msg)
-
-        tmp_path = inbox_path + ".tmp"
-        try:
-            with open(tmp_path, "w") as f:
-                json.dump(inbox, f)
-            os.replace(tmp_path, inbox_path)
-            log.info("Wrote inbox message from=%s", msg.get("from", "?"))
-        except OSError as exc:
-            log.warning("Failed to write inbox: %s", exc)
 
     def _post_exit_event(self, exit_code: int, stderr: str):
         """

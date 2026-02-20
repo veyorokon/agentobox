@@ -10,7 +10,7 @@ log = structlog.get_logger("agents.provision")
 
 # Path where the API key helper script lives in the container
 API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
-# tmpfs path for the API key (root:root 0400)
+# tmpfs path for the API key (root:agent 0440)
 API_KEY_TMPFS_PATH = "/run/secrets/anthropic_key"
 
 
@@ -28,6 +28,8 @@ async def provision_workspace(
     agent_name: str = "",
     team_members: list[dict] | None = None,
     team_name: str = "",
+    relay_token: str = "",
+    callback_url: str = "",
 ) -> None:
     """
     Write CLAUDE.md, .claude/settings.json, .mcp.json, and security
@@ -79,9 +81,16 @@ async def provision_workspace(
         f"{claude_dir}/settings.json",
     )
 
-    # MCP servers go in .mcp.json with env blocks for secrets
-    if mcp_servers:
-        mcp_config = _build_mcp_json(mcp_servers, secret_envs=secret_envs)
+    # MCP servers go in .mcp.json with env blocks for secrets.
+    # Always write when relay_token is set (abox-coord is always injected).
+    coord_server = (
+        _build_coord_server_config(callback_url, relay_token)
+        if relay_token and callback_url else None
+    )
+    if mcp_servers or coord_server:
+        mcp_config = _build_mcp_json(
+            mcp_servers, secret_envs=secret_envs, coord_server=coord_server,
+        )
         await runtime.write_file(
             sandbox_id,
             mcp_config.encode("utf-8"),
@@ -126,7 +135,7 @@ async def _provision_api_key_helper(
     instead of from an env var.
 
     File layout:
-        /run/secrets/anthropic_key  (root:root 0400) — the key
+        /run/secrets/anthropic_key  (root:agent 0440) — the key
         /opt/abox/api-key-helper.sh (root:root 0555) — cat helper
     """
     if not api_key:
@@ -144,7 +153,7 @@ async def _provision_api_key_helper(
     await runtime.write_file(sandbox_id, api_key.encode("utf-8"), API_KEY_TMPFS_PATH)
     await runtime.exec(
         sandbox_id,
-        ["bash", "-c", f"chown root:root {API_KEY_TMPFS_PATH} && chmod 0400 {API_KEY_TMPFS_PATH}"],
+        ["bash", "-c", f"chown root:agent {API_KEY_TMPFS_PATH} && chmod 0440 {API_KEY_TMPFS_PATH}"],
         user="root",
     )
 
@@ -212,8 +221,9 @@ async def _provision_scoped_sudo(
 # ---------------------------------------------------------------------------
 
 def _build_mcp_json(
-    mcp_servers: dict,
+    mcp_servers: dict | None = None,
     secret_envs: dict[str, str] | None = None,
+    coord_server: dict | None = None,
 ) -> str:
     """
     Build .mcp.json content with secrets injected into every server's env block.
@@ -225,15 +235,31 @@ def _build_mcp_json(
     Args:
         mcp_servers: {name: {command, args, ...}} — resolved MCP config
         secret_envs: flat {KEY: VALUE} — decrypted project secrets
+        coord_server: HTTP MCP config for the abox-coord server
     """
     servers = {}
-    for name, config in mcp_servers.items():
-        entry = {"command": config["command"], "args": config["args"]}
-        if secret_envs:
-            entry["env"] = dict(secret_envs)
-        servers[name] = entry
+    if mcp_servers:
+        for name, config in mcp_servers.items():
+            entry = {"command": config["command"], "args": config["args"]}
+            if secret_envs:
+                entry["env"] = dict(secret_envs)
+            servers[name] = entry
+
+    if coord_server:
+        servers["abox-coord"] = coord_server
 
     return json.dumps({"mcpServers": servers}, indent=2)
+
+
+def _build_coord_server_config(callback_url: str, relay_token: str) -> dict:
+    """Build the abox-coord HTTP MCP server config for .mcp.json."""
+    return {
+        "type": "http",
+        "url": f"{callback_url}/mcp",
+        "headers": {
+            "Authorization": f"Bearer {relay_token}",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +313,10 @@ def _build_claude_md(
         AI agent teams. Key things to know:
 
         - Your container has a full Linux desktop (X11), browser, and terminal
-        - A relay process runs alongside you, streaming your activity to the backend
-          — your tool calls, messages, and outputs are visible in the dashboard
-        - Hooks intercept certain actions (like teammate creation) and route them
-          through the platform instead of executing locally
+        - A relay process streams your activity to the backend — your tool calls,
+          messages, and outputs are visible in the dashboard
+        - The **abox-coord** MCP server provides team tools: messaging, tasks,
+          spawning teammates. Use these instead of file-based team tools.
         - Your workspace is a shared volume — file changes are visible to the host
           and other agents immediately
     """))
@@ -343,61 +369,45 @@ def _build_claude_md(
             ## Communication
 
             Messages from teammates arrive as regular user turns prefixed with the
-            sender's name, e.g. `[Team message from team-lead]: ...`. You do NOT
-            need to poll files, check inboxes, or read config.json — messages are
+            sender's name, e.g. `[Team message from team-lead]: ...`. Messages are
             delivered to you automatically via stdin.
 
-            To send messages, use the `SendMessage` tool:
-            - `type: "message"` + `recipient: "<name>"` — Direct message
-            - `type: "broadcast"` — Message all teammates (use sparingly)
-            - `type: "shutdown_request"` + `recipient: "<name>"` — Request shutdown
+            To send messages, use the **abox-coord** MCP tools:
+            - `teammate_message(recipient, content)` — Direct message to a teammate
+            - `teammate_broadcast(content)` — Message all teammates (use sparingly)
 
             Always refer to teammates by their **name** (e.g. "backend", "frontend").
         """))
 
     # --- 8. Coordination (lead only) ---
     if is_lead and team_members:
-        # 8a. Task Management
         sections.append(textwrap.dedent("""\
             ## Coordination
 
             ### Task Management
 
-            As team lead, use these tools to coordinate work:
+            Use the **abox-coord** MCP tools to coordinate work:
 
-            - `TaskCreate` — Create tasks for teammates
-            - `TaskUpdate` — Assign owners, update status, set dependencies
-            - `TaskList` — View all tasks and progress
-            - `TaskGet` — Full details of a specific task
+            - `task_add(subject, description)` — Create a task
+            - `task_claim(task_id)` — Claim a task and start working
+            - `task_complete(task_id)` — Mark a task as done
+            - `task_list()` — See all tasks and their status
+            - `team_status()` — See all active agents and their state
 
-            Workflow: create tasks, assign via `TaskUpdate` with owner param,
-            monitor with `TaskList`, coordinate via `SendMessage` as needed.
-        """))
-
-        # 8b. Spawning Teammates
-        tn = team_name or project.name.lower().replace(" ", "-")
-        sections.append(textwrap.dedent(f"""\
             ### Spawning Teammates
 
-            To create a new agent on the team, use the Task tool with `team_name`:
+            To create a new agent, use the `teammate_spawn` MCP tool:
 
-                Task(
-                    team_name="{tn}",
-                    name="<role-name>",
-                    prompt="<responsibilities and initial task>"
-                )
+                teammate_spawn(name="<role>", instructions="<responsibilities>")
 
             This deploys a new container agent that:
             - Boots in ~30-60 seconds
             - Shares your workspace (same mounted directory)
-            - Joins the team — message it via SendMessage(recipient="<name>")
+            - Joins the team — message it via `teammate_message`
             - Persists until stopped from the dashboard
 
             **Important:**
             - Do NOT create `.claude/agents/` files — they don't work in this environment
-            - `Task(team_name=...)` → persistent container teammate (parallel, own context)
-            - `Task(...)` without team_name → ephemeral local subtask (runs inside your
-              container, blocks until done, then disappears)
             - Each teammate is a separate container. Spawn when parallel work or
               specialization justifies the overhead.
         """))
@@ -407,14 +417,14 @@ def _build_claude_md(
         sections.append(textwrap.dedent("""\
             ## Tasks
 
-            You may receive tasks from the team lead. Use these tools to manage your work:
+            Use the **abox-coord** MCP tools to manage your work:
 
-            - `TaskList` — See tasks assigned to you
-            - `TaskGet` — Read full task details and requirements
-            - `TaskUpdate` — Mark tasks in_progress when starting, completed when done
+            - `task_list()` — See tasks assigned to you
+            - `task_claim(task_id)` — Claim a task and start working
+            - `task_complete(task_id)` — Mark a task as done
 
-            When you finish a task, mark it completed and check TaskList for the next one.
-            If you're blocked, message the team lead via SendMessage.
+            When you finish a task, mark it completed and check `task_list` for the
+            next one. If you're blocked, message the team lead via `teammate_message`.
         """))
 
     # --- 10. How the System Works ---
@@ -425,13 +435,9 @@ def _build_claude_md(
         messages, outputs) to the agentobox backend. This is transparent — you don't
         need to do anything special. The dashboard shows your activity in real-time.
 
-        **Hooks** intercept specific tool calls and route them through the platform:
-        - `Task` with `team_name` parameter → intercepted, creates a real container
-          agent instead of a local subprocess
-        - All other tools execute normally inside your container
-
-        **Team config** lives at `~/.claude/teams/` — the platform manages this
-        automatically. Don't modify these files manually.
+        The **abox-coord** MCP server provides team coordination tools (messaging,
+        tasks, spawning). These tools talk directly to the backend — no file-based
+        config or hook interception needed.
     """))
 
     # --- 11. MCP Tools ---
@@ -596,103 +602,6 @@ MCP_REGISTRY = {
 }
 
 
-async def provision_team_config(
-    runtime: Runtime,
-    sandbox_id: str,
-    team_name: str,
-    agents: list,
-    current_agent_name: str,
-) -> None:
-    """
-    Create Claude Code team infrastructure inside the container.
-
-    Creates:
-        ~/.claude/teams/{team}/config.json  — member roster
-        ~/.claude/teams/{team}/inboxes/     — per-agent inbox directory
-        ~/.claude/tasks/{team}/             — shared task directory
-
-    Claude Code's native team system is entirely file-based. Each agent polls
-    its own inbox file (~1s interval) for incoming messages. The config.json
-    lists all team members so agents can discover each other for SendMessage.
-
-    This is called during provisioning AND when team membership changes (new
-    agent created) so all running agents have an up-to-date roster.
-    """
-    home = "/home/agent"
-    team_dir = f"{home}/.claude/teams/{team_name}"
-    tasks_dir = f"{home}/.claude/tasks/{team_name}"
-
-    await runtime.exec(sandbox_id, ["mkdir", "-p", f"{team_dir}/inboxes"])
-    await runtime.exec(sandbox_id, ["mkdir", "-p", tasks_dir])
-
-    # Build config.json with all team members
-    members = []
-    for agent in agents:
-        workspace = "/home/agent/workspace" if agent.workspace_path else "/home/agent"
-        members.append({
-            "agentId": f"{agent.name}@{team_name}",
-            "name": agent.name,
-            "agentType": "general-purpose",
-            "model": agent.model or "claude-sonnet-4-5-20250929",
-            "cwd": workspace,
-        })
-
-    config = json.dumps({"members": members}, indent=2)
-    await runtime.write_file(
-        sandbox_id,
-        config.encode("utf-8"),
-        f"{team_dir}/config.json",
-    )
-
-    # Create empty inbox for this agent (Claude Code expects a JSON array)
-    inbox_path = f"{team_dir}/inboxes/{current_agent_name}.json"
-    await runtime.write_file(sandbox_id, b"[]", inbox_path)
-
-    log.info(
-        "team_config_provisioned",
-        team=team_name,
-        agent=current_agent_name,
-        members=len(members),
-    )
-
-
-async def update_team_configs(project) -> None:
-    """
-    Update team config in all running agents when team membership changes.
-
-    Called after create_agent to ensure all existing agents can discover
-    the new teammate via SendMessage.
-    """
-    from asgiref.sync import sync_to_async
-    from agents.models import Agent, AgentStatus
-    from agents.runtimes import get_runtime
-
-    # thread_sensitive=False because this runs inside asyncio.create_task
-    # where the request's CurrentThreadExecutor is gone
-    agents = await sync_to_async(
-        lambda: list(
-            Agent.objects.filter(project=project)
-            .exclude(status__in=[AgentStatus.STOPPED, AgentStatus.ERROR])
-        ),
-        thread_sensitive=False,
-    )()
-    team_name = project.name.lower().replace(" ", "-")
-
-    for agent in agents:
-        if not agent.sandbox_id:
-            continue
-        try:
-            runtime = get_runtime(agent.runtime)
-            await provision_team_config(
-                runtime, agent.sandbox_id, team_name, agents, agent.name,
-            )
-        except Exception:
-            log.warning(
-                "team_config_update_failed",
-                agent=agent.name,
-                sandbox_id=agent.sandbox_id,
-            )
-
 
 def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
     """Resolve a list of MCP names to their full config from the registry.
@@ -775,10 +684,22 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
     2. Writes /mnt/abox-state/secrets/env for immediate shell access
     3. Sets pending_signal="restart" so relay soft-restarts Claude with --continue
     """
+    from django.conf import settings as django_settings
+
     workspace = "/home/agent"
 
-    if agent.mcp_servers:
-        mcp_config = _build_mcp_json(agent.mcp_servers, secret_envs=secret_envs)
+    # Rebuild coord server config if agent has a relay_token
+    coord_server = None
+    if agent.relay_token:
+        callback_url = getattr(django_settings, "ABOX_CALLBACK_URL", "")
+        if callback_url:
+            coord_server = _build_coord_server_config(callback_url, agent.relay_token)
+
+    if agent.mcp_servers or coord_server:
+        mcp_config = _build_mcp_json(
+            agent.mcp_servers, secret_envs=secret_envs,
+            coord_server=coord_server,
+        )
         await runtime.write_file(
             sandbox_id,
             mcp_config.encode("utf-8"),
@@ -801,19 +722,6 @@ def _build_settings_json(api_key: str = "") -> str:
         "theme": "dark",
         "defaultMode": "bypassPermissions",
         "enableAllProjectMcpServers": True,
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Task",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "python3 /opt/abox/hooks/pre-tool-use.py",
-                        }
-                    ],
-                }
-            ],
-        },
     }
     # Use apiKeyHelper instead of env var for API key (Layer 1)
     if api_key:

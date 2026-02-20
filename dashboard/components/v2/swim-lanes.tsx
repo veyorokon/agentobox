@@ -5,7 +5,7 @@ import { MessageSquare, CheckCircle2, Loader } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useAgentsStore } from '@/stores/agents';
 import { useFeedStore } from '@/stores/feed';
-import type { MockAgent, TimelineTask, TimelineEvent } from '@/lib/mock-v2-data';
+import type { AgentSummary, TaskItem, TimelineEvent } from '@/lib/mock-v2-data';
 
 const LANE_HEIGHT = 56;
 const HEADER_HEIGHT = 28;
@@ -64,7 +64,7 @@ export function SwimLanes() {
 
   // Group by agent
   const tasksByAgent = useMemo(() => {
-    const map = new Map<string, TimelineTask[]>();
+    const map = new Map<string, TaskItem[]>();
     for (const agent of agents) map.set(agent.id, []);
     for (const task of tasks) map.get(task.agentId)?.push(task);
     return map;
@@ -79,7 +79,7 @@ export function SwimLanes() {
 
   // Handle task click — find closest feed item and scroll to it
   const handleTaskClick = useCallback(
-    (task: TimelineTask) => {
+    (task: TaskItem) => {
       const targetMinsAgo = task.endMinsAgo ?? task.startMinsAgo;
       let closest: { id: string; diff: number } | null = null;
       for (const item of feedItems) {

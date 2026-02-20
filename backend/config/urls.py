@@ -3,7 +3,7 @@ from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 from strawberry.django.views import AsyncGraphQLView
 
-from agents.views import hook_create_teammate, stream_events, upload_file, upload_media
+from agents.views import stream_events, upload_file, upload_media
 from config.health import health
 from schema import schema
 
@@ -14,5 +14,4 @@ urlpatterns = [
     path("media/upload", upload_media, name="media-upload"),
     path("agents/<uuid:agent_id>/upload", upload_file, name="agent-upload"),
     path("agents/<uuid:agent_id>/stream", stream_events, name="agent-stream"),
-    path("agents/<uuid:agent_id>/hook/create-teammate", hook_create_teammate, name="hook-create-teammate"),
 ]

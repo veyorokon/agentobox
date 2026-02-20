@@ -268,7 +268,7 @@ async def broadcast_message(
         )
         if needs_restart:
             op_log.info("auto_restarting_agent", agent_id=str(agent.id))
-            agent = await restart_agent(str(agent.id))
+            agent = await hard_restart_agent(str(agent.id))
 
         # Store Message with broadcast metadata (for feed dedup)
         msg_record = await Message.objects.acreate(

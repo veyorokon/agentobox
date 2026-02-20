@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { adaptFeedItems, adaptFeedToTimeline } from '@/lib/feed-adapter';
 import type { GqlFeedItem } from '@/lib/feed-adapter';
-import type { MockFeedItem, TimelineTask, TimelineEvent } from '@/lib/mock-v2-data';
+import type { FeedItem, TaskItem, TimelineEvent } from '@/lib/mock-v2-data';
 
 interface FeedState {
-  items: MockFeedItem[];
-  timeline: { tasks: TimelineTask[]; events: TimelineEvent[] };
+  items: FeedItem[];
+  timeline: { tasks: TaskItem[]; events: TimelineEvent[] };
   fetching: boolean;
 
   /** Initial load — replaces everything. */
