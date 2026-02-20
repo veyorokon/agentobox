@@ -144,7 +144,7 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
       {/* All chip */}
       <button
         onClick={() => setSelectedAgent(null)}
-        className="flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider transition-all"
+        className="flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider transition-all select-none"
         data-augmented-ui="tl-clip br-clip border"
         style={{
           '--aug-tl': '4px',
@@ -175,7 +175,7 @@ export function AgentChipBar({ onOpenConfig }: { onOpenConfig?: () => void }) {
               <ContextMenuTrigger asChild>
                 <button
                   onClick={() => setSelectedAgent(isSelected ? null : agent.id)}
-                  className="flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider transition-all"
+                  className="flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider transition-all select-none"
                   data-augmented-ui="tl-clip br-clip border"
                   style={{
                     '--aug-tl': '4px',

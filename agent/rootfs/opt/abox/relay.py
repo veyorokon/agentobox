@@ -86,14 +86,19 @@ def build_claude_cmd(resume_session_id: str = "", permission_mode: str = "") -> 
         "--input-format", "stream-json",
         "--include-partial-messages",
         "--verbose",
-        "--dangerously-skip-permissions",
     ]
+
+    # --dangerously-skip-permissions and --permission-mode are mutually
+    # exclusive.  The skip flag overrides any permission mode, so when a
+    # specific mode is requested (e.g. "plan") we must omit it.  When no
+    # mode is set the agent runs fully autonomous (sandboxed).
+    if permission_mode:
+        cmd.extend(["--permission-mode", permission_mode])
+    else:
+        cmd.append("--dangerously-skip-permissions")
 
     if resume_session_id:
         cmd.extend(["--resume", resume_session_id])
-
-    if permission_mode:
-        cmd.extend(["--permission-mode", permission_mode])
 
     agent_name = os.environ.get("AGENT_NAME", "")
     team_name = os.environ.get("TEAM_NAME", "")
