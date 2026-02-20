@@ -5,6 +5,7 @@ import { useQuery, useSubscription, useClient } from 'urql';
 import { useProjectsStore } from '@/stores/projects';
 import { useAgentsStore } from '@/stores/agents';
 import { useFeedStore } from '@/stores/feed';
+import { useDashboardStore } from '@/stores/dashboard';
 import { AGENTS_QUERY, PROJECT_FEED_QUERY } from '@/lib/graphql/queries';
 import {
   AGENT_UPDATED_SUBSCRIPTION,
@@ -137,6 +138,46 @@ export function useSyncServerData() {
       debouncedFetchLatest();
     }
   }, [eventSubData, debouncedFetchLatest]);
+
+  // ── Reconnection catch-up ──
+  // When the WebSocket reconnects after a disconnection, events and agent
+  // updates that occurred during the gap are missed. Detect the transition
+  // from 'reconnecting' to 'connected' and refetch everything.
+  const connectionStatus = useDashboardStore((s) => s.connectionStatus);
+  const prevConnectionStatus = useRef(connectionStatus);
+
+  useEffect(() => {
+    if (
+      prevConnectionStatus.current === 'reconnecting' &&
+      connectionStatus === 'connected' &&
+      projectId
+    ) {
+      logger.debug('sync', 'WebSocket reconnected — refetching missed data');
+
+      // Reset gates so the next useQuery results re-apply to stores
+      setAgentsInitLoaded(false);
+      setFeedInitLoaded(false);
+
+      // Imperative refetch of agents (subscription only handles individual
+      // updates, not a full catch-up after reconnection)
+      client
+        .query(AGENTS_QUERY, { projectId }, { requestPolicy: 'network-only' })
+        .toPromise()
+        .then((result) => {
+          if (result.data?.agents) {
+            logger.debug('sync', 'reconnect agents refetch', {
+              count: result.data.agents.length,
+            });
+            useAgentsStore.getState().setAgents(result.data.agents as Agent[]);
+            setAgentsInitLoaded(true);
+          }
+        });
+
+      // Imperative refetch of feed (mergeLatest preserves scroll position)
+      fetchLatest();
+    }
+    prevConnectionStatus.current = connectionStatus;
+  }, [connectionStatus, projectId, client, fetchLatest]);
 
   // Reset stores on project change
   const prevProjectId = useRef(projectId);

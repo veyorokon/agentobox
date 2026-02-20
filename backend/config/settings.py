@@ -84,7 +84,13 @@ ASGI_APPLICATION = "config.asgi.application"
 
 # --- Database ---
 
-DATABASES = {"default": env.db("DATABASE_URL", default="sqlite:///db.sqlite3")}
+DATABASES = {
+    "default": {
+        **env.db("DATABASE_URL", default="sqlite:///db.sqlite3"),
+        "CONN_MAX_AGE": 600,  # 10 minutes — reuse connections
+        "CONN_HEALTH_CHECKS": True,  # Validate before reuse
+    }
+}
 
 # --- Channels ---
 

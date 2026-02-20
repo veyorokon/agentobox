@@ -1,8 +1,12 @@
 """
-Background reconciliation loop for Docker agents.
+Background reconciliation loop for agents.
 
 Detects orphaned containers, dead containers, stale heartbeats, and stuck
 deploys — then cleans up. Runs inside the backend process (no extra services).
+
+Heartbeat staleness and stuck-deploy detection are runtime-agnostic (cover both
+Docker and Modal agents). Orphan reaping and dead-container detection remain
+Docker-only since they use the Docker API directly.
 
 Started lazily from stream_events() on the first relay heartbeat.
 
@@ -47,13 +51,17 @@ async def _loop():
     while True:
         await asyncio.sleep(INTERVAL_S)
         try:
-            await reconcile_docker_agents()
+            await reconcile_agents()
         except Exception:
             log.exception("reconciliation_failed")
 
 
-async def reconcile_docker_agents():
-    """Single reconciliation pass for Docker agents."""
+async def reconcile_agents():
+    """Single reconciliation pass for all agents.
+
+    Heartbeat staleness and stuck-deploy detection cover all runtimes.
+    Orphan reaping and dead-container detection are Docker-only.
+    """
     now = timezone.now()
 
     await _reap_orphans()
@@ -149,10 +157,12 @@ async def _detect_dead_containers():
 # ---------------------------------------------------------------------------
 
 async def _detect_stale_heartbeats(now):
-    """Mark agents ERROR when relay hasn't posted a heartbeat in >HEARTBEAT_STALE_S."""
+    """Mark agents ERROR when relay hasn't posted a heartbeat in >HEARTBEAT_STALE_S.
+
+    Runtime-agnostic: applies to both Docker and Modal agents.
+    """
     stale_cutoff = now - timedelta(seconds=HEARTBEAT_STALE_S)
     stale_agents = await _get_agents(
-        runtime="docker",
         status__in=[AgentStatus.IDLE, AgentStatus.RUNNING],
         last_heartbeat_at__isnull=False,
         last_heartbeat_at__lt=stale_cutoff,
@@ -173,13 +183,15 @@ async def _detect_stale_heartbeats(now):
 # ---------------------------------------------------------------------------
 
 async def _detect_stuck_deploys(now):
-    """Mark DEPLOYING agents ERROR when they exceed DEPLOY_GRACE_S with no heartbeat."""
+    """Mark DEPLOYING agents ERROR when they exceed DEPLOY_GRACE_S with no heartbeat.
+
+    Runtime-agnostic: applies to both Docker and Modal agents.
+    Uses each agent's own runtime for sandbox termination.
+    """
     deploy_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
     from agents.runtimes import get_runtime
-    runtime = get_runtime("docker")
 
     stuck_agents = await _get_agents(
-        runtime="docker",
         status=AgentStatus.DEPLOYING,
         created_at__lt=deploy_cutoff,
         last_heartbeat_at__isnull=True,
@@ -188,6 +200,7 @@ async def _detect_stuck_deploys(now):
     for agent in stuck_agents:
         if agent.sandbox_id:
             try:
+                runtime = get_runtime(agent.runtime)
                 await runtime.terminate(agent.sandbox_id)
             except Exception:
                 log.exception("stuck_deploy_cleanup_failed", agent_id=str(agent.id))

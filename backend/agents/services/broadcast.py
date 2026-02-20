@@ -25,19 +25,22 @@ async def _broadcast_timeline_entry(
     """Push a TimelineEntry to the project's timeline_stream subscription."""
     channel_layer = get_channel_layer()
     group = _group_name(str(agent.project_id), "timeline")
-    await channel_layer.group_send(
-        group,
-        {
-            "type": "timeline.entry",
-            "entry_type": entry_type,
-            "source_id": source_id,
-            "agent_id": str(agent.id),
-            "agent_name": agent.name,
-            "summary": summary,
-            "data": data or {},
-            "created_at": created_at,
-        },
-    )
+    try:
+        await channel_layer.group_send(
+            group,
+            {
+                "type": "timeline.entry",
+                "entry_type": entry_type,
+                "source_id": source_id,
+                "agent_id": str(agent.id),
+                "agent_name": agent.name,
+                "summary": summary,
+                "data": data or {},
+                "created_at": created_at,
+            },
+        )
+    except Exception:
+        log.warning("broadcast_failed", group=group, exc_info=True)
 
 
 async def broadcast_agent_update(agent: Agent) -> None:
@@ -48,19 +51,23 @@ async def broadcast_agent_update(agent: Agent) -> None:
     """
     channel_layer = get_channel_layer()
     group = _group_name(str(agent.project_id), "agents")
-    await channel_layer.group_send(
-        group,
-        {
-            "type": "agent.update",
-            "agent_id": str(agent.id),
-        },
-    )
-    log.info(
-        "broadcast_agent_update",
-        group=group,
-        agent_id=str(agent.id),
-        status=agent.status,
-    )
+    try:
+        await channel_layer.group_send(
+            group,
+            {
+                "type": "agent.update",
+                "agent_id": str(agent.id),
+            },
+        )
+    except Exception:
+        log.warning("broadcast_failed", group=group, exc_info=True)
+    else:
+        log.info(
+            "broadcast_agent_update",
+            group=group,
+            agent_id=str(agent.id),
+            status=agent.status,
+        )
 
     # Detect status change and emit a status event
     old_status = getattr(agent, "_original_status", None)
@@ -95,24 +102,28 @@ async def broadcast_agent_event(
     channel_layer = get_channel_layer()
     group = _group_name(str(agent.project_id), "events")
     created_at_str = event.created_at.isoformat()
-    await channel_layer.group_send(
-        group,
-        {
-            "type": "agent.event",
-            "event_id": event.id,
-            "event_type": event_type,
-            "data": data,
-            "agent_id": str(agent.id),
-            "agent_name": agent.name,
-            "created_at": created_at_str,
-        },
-    )
-    log.info(
-        "broadcast_agent_event",
-        group=group,
-        event_type=event_type,
-        agent_id=str(agent.id),
-    )
+    try:
+        await channel_layer.group_send(
+            group,
+            {
+                "type": "agent.event",
+                "event_id": event.id,
+                "event_type": event_type,
+                "data": data,
+                "agent_id": str(agent.id),
+                "agent_name": agent.name,
+                "created_at": created_at_str,
+            },
+        )
+    except Exception:
+        log.warning("broadcast_failed", group=group, exc_info=True)
+    else:
+        log.info(
+            "broadcast_agent_event",
+            group=group,
+            event_type=event_type,
+            agent_id=str(agent.id),
+        )
 
     # Also push to the unified timeline stream
     await _broadcast_timeline_entry(
@@ -132,22 +143,26 @@ async def broadcast_stream_message(agent: Agent, message: Message) -> None:
     """
     channel_layer = get_channel_layer()
     group = _group_name(str(agent.project_id), "messages")
-    await channel_layer.group_send(
-        group,
-        {
-            "type": "stream.message",
-            "message_id": message.id,
-            "agent_id": str(agent.id),
-            "agent_name": agent.name,
-        },
-    )
-    log.debug(
-        "broadcast_stream_message",
-        group=group,
-        message_id=message.id,
-        agent_id=str(agent.id),
-        role=message.role,
-    )
+    try:
+        await channel_layer.group_send(
+            group,
+            {
+                "type": "stream.message",
+                "message_id": message.id,
+                "agent_id": str(agent.id),
+                "agent_name": agent.name,
+            },
+        )
+    except Exception:
+        log.warning("broadcast_failed", group=group, exc_info=True)
+    else:
+        log.debug(
+            "broadcast_stream_message",
+            group=group,
+            message_id=message.id,
+            agent_id=str(agent.id),
+            role=message.role,
+        )
 
     # Also push to the unified timeline stream
     created_at_str = message.created_at.isoformat() if message.created_at else ""

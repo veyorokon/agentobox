@@ -4,6 +4,7 @@ import secrets
 import structlog
 from asgiref.sync import sync_to_async
 from django.conf import settings
+from django.db import transaction
 
 from agents.models import Agent, AgentStatus
 from agents.runtimes import get_runtime
@@ -318,6 +319,16 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             "/home/agent/.relay_env",
         )
 
+        # Save relay_token and sandbox details BEFORE launching relay.
+        # The relay POSTs to /agents/<id>/stream/ immediately on startup,
+        # authenticated via X-Relay-Token. If the token isn't in DB yet,
+        # early relay POSTs get 401.
+        agent = await _save_provisioned(
+            agent_id, sandbox.id, sandbox.vnc_url,
+            team_name, parent_session_id, relay_token,
+        )
+        await broadcast_agent_update(agent)
+
         # Launch relay process via tmux (so it's visible in VNC)
         relay_cmd = (
             f"cd {work_dir} && source /home/agent/.relay_env"
@@ -331,13 +342,6 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         op_log.info("relay_launched", team_name=team_name, parent_session_id=parent_session_id)
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
-
-        # Save relay_token on agent for stream endpoint auth
-        agent = await _save_provisioned(
-            agent_id, sandbox.id, sandbox.vnc_url,
-            team_name, parent_session_id, relay_token,
-        )
-        await broadcast_agent_update(agent)
 
         op_log.info("agent_provisioned", agent_id=agent_id)
 
@@ -450,6 +454,68 @@ async def remove_agent(agent_id: str) -> bool:
     return True
 
 
+@sync_to_async(thread_sensitive=False)
+def _atomic_reset_for_restart(agent_id):
+    """Lock the agent row and reset state to DEPLOYING for a hard restart.
+
+    Uses select_for_update() to prevent two concurrent hard_restart_agent
+    calls from both reading the agent, both terminating the container,
+    both provisioning new ones — orphaning the first container.
+
+    Returns (agent, old_sandbox_id, old_runtime, resume_session_id, config)
+    or None if agent is already DEPLOYING (no-op).
+    """
+    with transaction.atomic():
+        agent = Agent.objects.select_for_update().get(id=agent_id)
+
+        # Guard: if already deploying, another restart won the race
+        if agent.status == AgentStatus.DEPLOYING:
+            return None
+
+        # Capture values needed for teardown/reprovisioning
+        old_sandbox_id = agent.sandbox_id
+        old_runtime = agent.runtime
+        resume_session_id = agent.session_id
+
+        # Extract config from snapshot
+        config = agent.config_snapshot or {}
+        runtime_name = config.get("runtime", agent.runtime)
+        model = config.get("model", agent.model)
+        mcp_servers = config.get("mcp_servers", agent.mcp_servers)
+        workspace_path = config.get("workspace_path", agent.workspace_path)
+        volume_mounts = config.get("volume_mounts", agent.volume_mounts)
+        instructions = config.get("instructions", agent.instructions)
+        role = config.get("role", agent.role)
+
+        # Reset agent state to DEPLOYING — clear stale session data.
+        # pending_input is cleared because old messages belong to the previous
+        # session and have no context in the new one. The caller (e.g.
+        # broadcast_message) enqueues the new message AFTER restart returns.
+        agent.status = AgentStatus.DEPLOYING
+        agent.sandbox_id = ""
+        agent.vnc_url = ""
+        agent.session_id = ""
+        agent.relay_token = ""
+        agent.last_heartbeat_at = None
+        agent.pending_input = []
+        agent.pending_signal = ""
+        agent.runtime = runtime_name
+        agent.model = model
+        agent.mcp_servers = mcp_servers
+        agent.workspace_path = workspace_path
+        agent.volume_mounts = volume_mounts
+        agent.instructions = instructions
+        agent.role = role
+        agent.save(update_fields=[
+            "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
+            "last_heartbeat_at", "pending_input", "pending_signal",
+            "runtime", "model", "mcp_servers", "workspace_path",
+            "volume_mounts", "instructions", "role",
+        ])
+
+    return agent, old_sandbox_id, old_runtime, resume_session_id, config
+
+
 async def hard_restart_agent(agent_id: str) -> Agent:
     """
     Hard restart: kill container + reprovision with context preservation.
@@ -457,74 +523,47 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     Terminates the existing container, resets the agent's state, and provisions
     a new container with the same configuration that was used at creation time.
     Captures the current session_id so the new container can --resume it.
+
+    Uses select_for_update() to prevent concurrent restarts from orphaning
+    containers.
     """
     from config.telemetry import bind_agent_context, clear_agent_context
 
     op_log = log.bind(agent_id=agent_id)
     op_log.info("restarting_agent")
 
+    # Atomically lock, read, and reset agent state.
+    # If the agent is already DEPLOYING, another restart won the race.
     try:
-        agent = await Agent.objects.aget(id=agent_id)
+        result = await _atomic_reset_for_restart(agent_id)
     except Agent.DoesNotExist:
         op_log.warning("agent_not_found")
         raise ValueError(f"Agent {agent_id} not found")
+
+    if result is None:
+        op_log.info("restart_skipped_already_deploying", agent_id=agent_id)
+        agent = await Agent.objects.aget(id=agent_id)
+        return agent
+
+    agent, old_sandbox_id, old_runtime, resume_session_id, config = result
+    runtime_name = config.get("runtime", old_runtime)
 
     # Bind agent context for this operation
     bind_agent_context(
         agent_id=agent_id,
         agent_name=agent.name,
-        sandbox_id=agent.sandbox_id,
+        sandbox_id=old_sandbox_id,
         project_id=str(agent.project_id),
     )
 
-    # Kill existing container if running
-    if agent.sandbox_id:
+    # Kill existing container if running (outside the lock — no DB contention)
+    if old_sandbox_id:
         try:
-            runtime = get_runtime(agent.runtime)
-            await runtime.terminate(agent.sandbox_id)
-            op_log.info("container_terminated", sandbox_id=agent.sandbox_id)
+            runtime = get_runtime(old_runtime)
+            await runtime.terminate(old_sandbox_id)
+            op_log.info("container_terminated", sandbox_id=old_sandbox_id)
         except Exception:
-            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
-
-    # Extract config from snapshot
-    config = agent.config_snapshot or {}
-    runtime_name = config.get("runtime", agent.runtime)
-    model = config.get("model", agent.model)
-    mcp_servers = config.get("mcp_servers", agent.mcp_servers)
-    workspace_path = config.get("workspace_path", agent.workspace_path)
-    volume_mounts = config.get("volume_mounts", agent.volume_mounts)
-    instructions = config.get("instructions", agent.instructions)
-    role = config.get("role", agent.role)
-
-    # Capture session_id for resume BEFORE clearing — the new container
-    # will --resume this session to preserve conversation context.
-    resume_session_id = agent.session_id
-
-    # Reset agent state to DEPLOYING — clear stale session data.
-    # pending_input is cleared because old messages belong to the previous
-    # session and have no context in the new one. The caller (e.g.
-    # broadcast_message) enqueues the new message AFTER restart returns.
-    agent.status = AgentStatus.DEPLOYING
-    agent.sandbox_id = ""
-    agent.vnc_url = ""
-    agent.session_id = ""
-    agent.relay_token = ""
-    agent.last_heartbeat_at = None
-    agent.pending_input = []
-    agent.pending_signal = ""
-    agent.runtime = runtime_name
-    agent.model = model
-    agent.mcp_servers = mcp_servers
-    agent.workspace_path = workspace_path
-    agent.volume_mounts = volume_mounts
-    agent.instructions = instructions
-    agent.role = role
-    await agent.asave(update_fields=[
-        "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-        "last_heartbeat_at", "pending_input", "pending_signal",
-        "runtime", "model", "mcp_servers", "workspace_path",
-        "volume_mounts", "instructions", "role",
-    ])
+            op_log.exception("terminate_sandbox_failed", sandbox_id=old_sandbox_id)
 
     # Resolve project secrets for this agent
     from projects.models import Project

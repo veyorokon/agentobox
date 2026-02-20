@@ -3,6 +3,7 @@ import json
 import os
 
 from asgiref.sync import sync_to_async
+from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -12,6 +13,32 @@ from accounts.auth import authenticate_request
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@sync_to_async(thread_sensitive=False)
+def _atomic_drain_piggyback(agent_id):
+    """Drain pending_input and pending_signal under a row lock.
+
+    Uses select_for_update() inside transaction.atomic() to prevent
+    concurrent _atomic_enqueue from committing between read and clear,
+    which would silently lose enqueued messages.
+
+    Returns (pending_input, pending_signal).
+    """
+    from agents.models import Agent
+
+    with transaction.atomic():
+        agent = Agent.objects.select_for_update().get(id=agent_id)
+
+        pending_input = agent.pending_input or []
+        pending_signal = agent.pending_signal or ""
+
+        agent.pending_input = []
+        agent.pending_signal = ""
+        agent.last_heartbeat_at = timezone.now()
+        agent.save(update_fields=["pending_input", "pending_signal", "last_heartbeat_at"])
+
+    return pending_input, pending_signal
 
 
 @csrf_exempt
@@ -53,21 +80,19 @@ async def stream_events(request, agent_id):
     if events:
         await process_stream_events(agent, events)
 
-    # Update heartbeat timestamp (relay health inference)
-    agent.last_heartbeat_at = timezone.now()
+    # Atomically drain pending_input and pending_signal under row lock.
+    # This prevents _atomic_enqueue from committing a message between
+    # our read and clear, which would silently lose that message.
+    pending_input, pending_signal = await _atomic_drain_piggyback(agent_id)
 
     # Build piggyback response
     response = {"ack": True, "pending_input": None, "pending_signal": None}
 
-    if agent.pending_input:
-        response["pending_input"] = agent.pending_input
-        agent.pending_input = []
+    if pending_input:
+        response["pending_input"] = pending_input
 
-    if agent.pending_signal:
-        response["pending_signal"] = agent.pending_signal
-        agent.pending_signal = ""
-
-    await agent.asave(update_fields=["pending_input", "pending_signal", "last_heartbeat_at"])
+    if pending_signal:
+        response["pending_signal"] = pending_signal
 
     return JsonResponse(response)
 
