@@ -148,6 +148,7 @@ MEDIA_CDN_URL = env("MEDIA_CDN_URL", default="")
 
 import structlog  # noqa: E402
 from config.telemetry import (  # noqa: E402
+    RawQueueHandler,
     copy_exception_to_stacktrace,
     extract_otel_exception_fields,
     get_log_queue,
@@ -186,7 +187,7 @@ LOGGING = {
             "formatter": "json",
         },
         "queue": {
-            "class": "logging.handlers.QueueHandler",
+            "()": RawQueueHandler,
             "queue": get_log_queue(),
         },
     },

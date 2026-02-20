@@ -154,6 +154,20 @@ def get_log_queue():
     return _log_queue
 
 
+class RawQueueHandler(logging.handlers.QueueHandler):
+    """QueueHandler that skips formatting to preserve structlog's dict-based record.msg.
+
+    The default QueueHandler.prepare() calls self.format(record), which converts
+    record.msg to a string via the default formatter. This breaks ProcessorFormatter
+    downstream in the QueueListener, which expects record.msg to be a dict
+    (as set by structlog's wrap_for_formatter). By returning the record unmodified,
+    the QueueListener's handler can apply ProcessorFormatter to the raw record.
+    """
+
+    def prepare(self, record):
+        return record
+
+
 def start_queue_listener():
     """
     Start background thread to process log queue.
