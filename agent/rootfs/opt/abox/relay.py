@@ -3,22 +3,25 @@
 abox-relay: In-container relay process for Claude Code stream-json integration.
 
 Spawns Claude with --output-format stream-json, reads structured events from
-stdout, batches them, and POSTs to the Agentobox backend. Receives pending
-messages/signals via piggyback pattern in POST responses.
+stdout, and sends them to the Agentobox backend over WebSocket.
 
-Two output paths:
-    Batched (50-100ms): system, assistant, user, result events
-        -> POST /agents/<id>/stream (persisted by backend)
-    Real-time: stream_event (from --include-partial-messages)
-        -> POST /agents/<id>/stream (same endpoint, not batched)
+    WebSocket (ws://backend/ws/relay/<agent_id>/?token=<relay_token>):
+        upstream:   every stdout line from Claude → ws.send(json) verbatim
+        downstream: commands from backend (input, signal, mode) → route to stdin/process
+
+This relay is a DUMB PIPE. It forwards ALL stream-json events without filtering,
+batching, or transformation. The backend decides what to store and how to process it.
+
+Why no filtering: every event type Anthropic adds to stream-json is automatically
+captured without relay code changes. Thinking content, tool progress, rate limits,
+content deltas — all forwarded verbatim.
+
+Why no batching: WebSockets have no per-message overhead worth batching for.
+Events flow at wire speed.
 
 Synthetic events (not from Claude):
     process_exit: {type: "system", subtype: "process_exit", exit_code, stderr}
-        Emitted when Claude process terminates. Includes exit code and
-        captured stderr for crash diagnosis.
-
-See: docs/ARCHITECTURE.md, "Relay Process"
-See: docs/ARCHITECTURE.md, "Piggyback Pattern"
+        Emitted when Claude process terminates.
 """
 
 import asyncio
@@ -27,9 +30,8 @@ import logging
 import os
 import signal
 import sys
-import time
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+
+import websockets
 
 LOG_FORMAT = "[relay] %(asctime)s %(levelname)s %(message)s"
 LOG_DATEFMT = "%H:%M:%S"
@@ -43,7 +45,7 @@ logging.basicConfig(
 log = logging.getLogger("abox-relay")
 
 # ---------------------------------------------------------------------------
-# Configuration from environment
+# Configuration
 # ---------------------------------------------------------------------------
 
 AGENT_ID = os.environ.get("AGENT_ID", "")
@@ -51,12 +53,9 @@ CALLBACK_URL = os.environ.get("ABOX_CALLBACK_URL", "").rstrip("/")
 RELAY_AUTH_TOKEN = os.environ.get("RELAY_AUTH_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# Relay tuning
-BATCH_INTERVAL_S = 0.075  # 75ms batch window
-HEARTBEAT_INTERVAL_S = 2.0
-MAX_RETRY_DELAY_S = 30.0
-RETRY_BASE_DELAY_S = 1.0
-MAX_BATCH_SIZE = 2000
+# WebSocket reconnect
+WS_RECONNECT_DELAY_S = 1.0
+WS_MAX_RECONNECT_DELAY_S = 30.0
 
 # ---------------------------------------------------------------------------
 # Claude spawn command
@@ -64,22 +63,7 @@ MAX_BATCH_SIZE = 2000
 
 
 def build_claude_cmd(resume_session_id: str = "", permission_mode: str = "") -> list[str]:
-    """
-    Build the Claude CLI command with stream-json flags and team agent flags.
-
-    Args:
-        resume_session_id: If non-empty, adds --resume <id> so Claude loads
-            the prior session's messages. Used after soft restart to preserve
-            conversation context. Preferred over --continue because --continue
-            picks the most recent session on disk, which may be stale from a
-            previous container lifecycle (volume-persisted .claude dir).
-        permission_mode: If non-empty, adds --permission-mode <mode> to set
-            the Claude Code permission mode (plan, default, acceptEdits, etc.).
-            Used for mode cycling via dashboard.
-
-    Flag reference from docs/ARCHITECTURE.md, "All Spawn Flags".
-    Team flags from env vars set by backend's _provision_agent().
-    """
+    """Build the Claude CLI command with stream-json flags and team agent flags."""
     cmd = [
         "claude", "-p",
         "--output-format", "stream-json",
@@ -88,10 +72,6 @@ def build_claude_cmd(resume_session_id: str = "", permission_mode: str = "") -> 
         "--verbose",
     ]
 
-    # --dangerously-skip-permissions and --permission-mode are mutually
-    # exclusive.  The skip flag overrides any permission mode, so when a
-    # specific mode is requested (e.g. "plan") we must omit it.  When no
-    # mode is set the agent runs fully autonomous (sandboxed).
     if permission_mode:
         cmd.extend(["--permission-mode", permission_mode])
     else:
@@ -125,57 +105,83 @@ def build_claude_cmd(resume_session_id: str = "", permission_mode: str = "") -> 
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers (stdlib only — no external dependencies)
+# WebSocket transport
 # ---------------------------------------------------------------------------
 
 
-def post_events(events: list[dict]) -> dict | None:
+class WSTransport:
+    """WebSocket connection to the backend relay endpoint.
+
+    Handles connect, reconnect, send, and receive. No fallback —
+    if WS is down, events are lost until reconnection succeeds.
     """
-    POST a batch of Claude Code stream-json events to the backend.
 
-    Events are the raw JSON objects from Claude's stdout, each with
-    a `type` field: "system", "assistant", "user", or "result".
+    def __init__(self):
+        self.ws = None
+        self._connected = False
+        self._reconnect_delay = WS_RECONNECT_DELAY_S
 
-    Retries up to 3 times with exponential backoff on transient connection
-    errors (URLError, OSError). Does not retry on JSON parse errors or
-    HTTP 4xx responses.
+    def _ws_url(self) -> str:
+        """Build WS URL from HTTP callback URL."""
+        base = CALLBACK_URL.replace("http://", "ws://").replace("https://", "wss://")
+        return f"{base}/ws/relay/{AGENT_ID}/?token={RELAY_AUTH_TOKEN}"
 
-    Returns piggyback response from backend:
-        pending_input:  list of JSON messages to write to Claude's stdin
-        pending_signal: Signal name to send to Claude process (or null)
-
-    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-    """
-    if not CALLBACK_URL:
-        return None
-
-    url = f"{CALLBACK_URL}/agents/{AGENT_ID}/stream"
-    body = json.dumps(events).encode()
-
-    delay = RETRY_BASE_DELAY_S
-    for attempt in range(3):
-        req = Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if RELAY_AUTH_TOKEN:
-            req.add_header("X-Relay-Token", RELAY_AUTH_TOKEN)
+    async def connect(self) -> bool:
+        """Connect to the backend WS endpoint. Returns True on success."""
         try:
-            with urlopen(req, timeout=10) as resp:
-                return json.loads(resp.read())
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:200]
-            log.warning("POST failed (attempt %d/3): HTTP %d: %s", attempt + 1, exc.code, body)
-            if attempt < 2:
-                time.sleep(delay)
-                delay = min(delay * 2, MAX_RETRY_DELAY_S)
-        except (URLError, OSError) as exc:
-            log.warning("POST failed (attempt %d/3): %s", attempt + 1, exc)
-            if attempt < 2:
-                time.sleep(delay)
-                delay = min(delay * 2, MAX_RETRY_DELAY_S)
-        except json.JSONDecodeError as exc:
-            log.warning("POST response parse failed: %s", exc)
-            return None  # Don't retry JSON parse errors
-    return None
+            self.ws = await websockets.connect(
+                self._ws_url(),
+                ping_interval=20,
+                ping_timeout=10,
+            )
+            self._connected = True
+            self._reconnect_delay = WS_RECONNECT_DELAY_S
+            log.info("WebSocket connected")
+            return True
+        except Exception as exc:
+            log.warning("WebSocket connect failed: %s", exc)
+            self._connected = False
+            return False
+
+    async def reconnect(self) -> bool:
+        """Reconnect with exponential backoff."""
+        await asyncio.sleep(self._reconnect_delay)
+        self._reconnect_delay = min(self._reconnect_delay * 2, WS_MAX_RECONNECT_DELAY_S)
+        return await self.connect()
+
+    async def send(self, event: dict) -> bool:
+        """Send an event via WS. Returns False if WS is unavailable."""
+        if not self._connected or not self.ws:
+            return False
+        try:
+            await self.ws.send(json.dumps(event))
+            return True
+        except Exception:
+            self._connected = False
+            return False
+
+    async def recv(self) -> dict | None:
+        """Receive a command from the backend. Returns None on disconnect."""
+        if not self._connected or not self.ws:
+            return None
+        try:
+            data = await self.ws.recv()
+            return json.loads(data)
+        except Exception:
+            self._connected = False
+            return None
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    async def close(self):
+        if self.ws:
+            try:
+                await self.ws.close()
+            except Exception:
+                pass
+            self._connected = False
 
 
 # ---------------------------------------------------------------------------
@@ -184,39 +190,28 @@ def post_events(events: list[dict]) -> dict | None:
 
 
 class Relay:
-    """
-    Main relay process. Manages Claude subprocess lifecycle, stdout/stderr
-    reading, event batching, backend communication, and piggyback delivery.
-    """
+    """Main relay process. Manages Claude lifecycle, event forwarding, and command routing."""
 
     def __init__(self):
         self.proc: asyncio.subprocess.Process | None = None
         self.session_id: str = ""
         self.stderr_output: str = ""
-        self.batch: list[dict] = []
-        self.batch_lock = asyncio.Lock()
-        self.last_event_time: float = 0.0
         self.shutting_down = False
         self.restart_requested = False
         self.clear_requested = False
         self.next_permission_mode: str = ""
+        self.ws = WSTransport()
 
     async def run(self):
-        """Entry point — spawn Claude with restart loop for soft restarts.
-
-        On normal exit: flush events, post process_exit, return.
-        On soft restart (pending_signal="restart"): respawn Claude with
-        --resume <session_id> to preserve conversation context. MCP servers
-        re-init from updated .mcp.json on restart.
-
-        On first launch after a hard restart, RESUME_SESSION_ID env var
-        carries the prior session_id so context is preserved across
-        container reprovisioning.
-        """
-        # Check env for resume session from hard restart (container reprovision)
+        """Entry point — spawn Claude with restart loop for soft restarts."""
         resume_session_id = os.environ.get("RESUME_SESSION_ID", "")
-        # Initial permission mode from env (set by backend provisioning)
         permission_mode = os.environ.get("PERMISSION_MODE", "")
+
+        # Connect to backend — retry until connected
+        connected = await self.ws.connect()
+        while not connected:
+            log.warning("WS not connected, retrying...")
+            connected = await self.ws.reconnect()
 
         while True:
             cmd = build_claude_cmd(
@@ -235,7 +230,7 @@ class Relay:
                 )
             except FileNotFoundError:
                 log.error("claude binary not found")
-                self._post_exit_event(127, "claude: command not found")
+                await self._post_exit_event(127, "claude: command not found")
                 return
 
             log.info("Claude started, pid=%d", self.proc.pid)
@@ -243,15 +238,13 @@ class Relay:
             tasks = [
                 asyncio.create_task(self._read_stdout(), name="stdout"),
                 asyncio.create_task(self._read_stderr(), name="stderr"),
-                asyncio.create_task(self._batch_flusher(), name="flusher"),
-                asyncio.create_task(self._heartbeat(), name="heartbeat"),
+                asyncio.create_task(self._ws_downstream(), name="ws_downstream"),
             ]
 
             await self.proc.wait()
             exit_code = self.proc.returncode
             log.info("Claude exited, code=%d", exit_code)
 
-            # Give readers a moment to finish draining
             self.shutting_down = True
             await asyncio.sleep(0.2)
 
@@ -259,19 +252,13 @@ class Relay:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Flush remaining events before deciding next action
-            await self._flush_batch()
-
             if self.clear_requested:
-                # Clear: wipe session and restart fresh (no --resume)
                 self.clear_requested = False
                 self.restart_requested = False
                 resume_session_id = ""
                 self.session_id = ""
                 log.info("Clear: respawning fresh (no resume)")
-                self.proc = None
-                self.stderr_output = ""
-                self.shutting_down = False
+                self._reset_state()
                 continue
 
             if self.restart_requested:
@@ -280,34 +267,52 @@ class Relay:
                     resume_session_id = self.session_id
                     log.info("Soft restart: respawning with --resume %s", self.session_id)
                 else:
-                    log.info("Soft restart: no session_id captured, starting fresh")
-                # Apply pending permission mode change
+                    log.info("Soft restart: no session_id, starting fresh")
                 if self.next_permission_mode:
                     permission_mode = self.next_permission_mode
                     self.next_permission_mode = ""
                     log.info("Permission mode for next spawn: %s", permission_mode)
-                # Reset state for new subprocess.
-                # Clear session_id so the new process's session_id is captured
-                # from its first event (--resume may create a new session_id).
                 self.session_id = ""
-                self.proc = None
-                self.stderr_output = ""
-                self.shutting_down = False
+                self._reset_state()
                 continue
 
             # Normal exit
-            self._post_exit_event(exit_code, self.stderr_output)
+            await self._post_exit_event(exit_code, self.stderr_output)
             break
 
-    async def _read_stdout(self):
+        await self.ws.close()
+
+    def _reset_state(self):
+        """Reset state between Claude respawns."""
+        self.proc = None
+        self.stderr_output = ""
+        self.shutting_down = False
+
+    async def _send_event(self, event: dict):
+        """Send an event to the backend via WS.
+
+        If the send fails, attempt reconnect and retry once.
+        If that also fails, log the error — no silent swallowing.
         """
-        Read Claude's stdout line-by-line. Each line is a JSON event.
+        sent = await self.ws.send(event)
+        if sent:
+            return
 
-        stream_event types (from --include-partial-messages) are forwarded
-        immediately (not batched) for live typing display.
-        All other types are collected into the batch buffer.
+        # WS failed — try reconnect once
+        log.warning("WS send failed, attempting reconnect")
+        reconnected = await self.ws.reconnect()
+        if reconnected:
+            sent = await self.ws.send(event)
+            if sent:
+                return
 
-        See: docs/ARCHITECTURE.md, "Output Event Stream"
+        log.error("Event lost — WS send failed after reconnect: type=%s", event.get("type", "?"))
+
+    async def _read_stdout(self):
+        """Read Claude stdout line-by-line, forward each event verbatim.
+
+        No filtering. No batching. Every line goes straight to the backend.
+        The relay is a dumb pipe.
         """
         assert self.proc and self.proc.stdout
         while True:
@@ -328,21 +333,10 @@ class Relay:
                 self.session_id = event["session_id"]
                 log.info("Session ID: %s", self.session_id)
 
-            # stream_event = real-time (not batched)
-            if event.get("type") == "stream_event":
-                # Fire-and-forget for live streaming — run in thread to avoid
-                # blocking stdout reading during post_events retry backoff
-                await asyncio.to_thread(post_events, [event])
-            else:
-                async with self.batch_lock:
-                    self.batch.append(event)
-                    self.last_event_time = time.monotonic()
+            await self._send_event(event)
 
     async def _read_stderr(self):
-        """
-        Read Claude's stderr and accumulate for process_exit event.
-        Stderr contains errors/warnings not in the stream-json output.
-        """
+        """Read Claude stderr for crash diagnostics."""
         assert self.proc and self.proc.stderr
         chunks = []
         while True:
@@ -353,114 +347,65 @@ class Relay:
             chunks.append(text)
             if text.strip():
                 log.warning("Claude stderr: %s", text.strip()[:500])
-        self.stderr_output = "".join(chunks)[-4096:]  # Keep last 4KB
+        self.stderr_output = "".join(chunks)[-4096:]
 
-    async def _batch_flusher(self):
-        """
-        Flush batched events to backend every BATCH_INTERVAL_S (75ms).
-        Only flushes if there are events in the buffer.
-        """
+    # ── WS downstream: receive commands from backend ──
+
+    async def _ws_downstream(self):
+        """Listen for commands from the backend over WebSocket."""
         while not self.shutting_down:
-            await asyncio.sleep(BATCH_INTERVAL_S)
-            await self._flush_batch()
+            cmd = await self.ws.recv()
+            if cmd is None:
+                # Disconnected — try reconnect
+                log.warning("WS disconnected, attempting reconnect")
+                reconnected = await self.ws.reconnect()
+                if not reconnected:
+                    log.error("WS reconnect failed — downstream commands will not be received")
+                    # Keep trying in the background
+                    while not self.shutting_down:
+                        await asyncio.sleep(WS_RECONNECT_DELAY_S)
+                        if await self.ws.reconnect():
+                            log.info("WS reconnected")
+                            break
+                continue
 
-    async def _heartbeat(self):
-        """
-        Send empty heartbeat POST every HEARTBEAT_INTERVAL_S when idle
-        to poll for pending input/signals via piggyback.
+            await self._handle_command(cmd)
 
-        See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-        """
-        while not self.shutting_down:
-            await asyncio.sleep(HEARTBEAT_INTERVAL_S)
-            # Only heartbeat if no recent events (flusher handles active periods)
-            if time.monotonic() - self.last_event_time > HEARTBEAT_INTERVAL_S:
-                resp = await asyncio.to_thread(post_events, [])
-                if resp:
-                    await self._handle_piggyback(resp)
+    async def _handle_command(self, cmd: dict):
+        """Route a command from the backend to the appropriate action."""
+        cmd_type = cmd.get("type", "")
 
-    async def _flush_batch(self):
-        """Flush the current event batch to the backend and handle piggyback response."""
-        async with self.batch_lock:
-            if not self.batch:
-                return
-            events = self.batch[:]
-            self.batch.clear()
+        if cmd_type == "input":
+            payload = cmd.get("payload")
+            if payload and self.proc and self.proc.stdin:
+                await self._write_stdin(payload)
 
-        resp = await asyncio.to_thread(post_events, events)
-        if resp:
-            await self._handle_piggyback(resp)
-        elif events:
-            # Re-enqueue on failure so events aren't lost
-            async with self.batch_lock:
-                self.batch = events + self.batch
-                if len(self.batch) > MAX_BATCH_SIZE:
-                    dropped = len(self.batch) - MAX_BATCH_SIZE
-                    self.batch = self.batch[-MAX_BATCH_SIZE:]
-                    log.warning("Batch overflow: dropped %d oldest events", dropped)
+        elif cmd_type == "signal":
+            sig = cmd.get("signal", "")
+            if sig == "clear" and self.proc:
+                log.info("Clear requested via WS")
+                self.clear_requested = True
+                self.proc.send_signal(signal.SIGINT)
+            elif sig == "restart" and self.proc:
+                log.info("Restart requested via WS")
+                self.restart_requested = True
+                self.proc.send_signal(signal.SIGINT)
+            elif sig == "SIGINT" and self.proc:
+                log.info("SIGINT requested via WS")
+                self.proc.send_signal(signal.SIGINT)
 
-    async def _handle_piggyback(self, resp: dict):
-        """
-        Process piggyback response from backend POST.
+        elif cmd_type == "mode":
+            mode = cmd.get("mode", "")
+            if mode and self.proc:
+                log.info("Mode change via WS: %s", mode)
+                self.next_permission_mode = mode
+                self.restart_requested = True
+                self.proc.send_signal(signal.SIGINT)
 
-        The backend includes pending_input (list of messages to write to stdin),
-        pending_signal (signal to send to Claude) in every POST response.
-
-        pending_input is a list because multiple send_message() calls may
-        queue up between relay POSTs.
-
-        See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-        """
-        # Handle pending input messages
-        pending_input = resp.get("pending_input")
-        if pending_input and self.proc and self.proc.stdin:
-            if isinstance(pending_input, list):
-                for msg in pending_input:
-                    await self._write_stdin(msg)
-            elif isinstance(pending_input, dict):
-                await self._write_stdin(pending_input)
-
-        # Handle pending mode change (triggers restart with new --permission-mode)
-        pending_mode = resp.get("pending_mode")
-        if pending_mode and self.proc:
-            log.info(
-                "Mode change requested: %s (pid=%d, session=%s)",
-                pending_mode, self.proc.pid, self.session_id or "none",
-            )
-            self.next_permission_mode = pending_mode
-            self.restart_requested = True
-            self.proc.send_signal(signal.SIGINT)
-            return  # Don't process pending_signal — restart handles it
-
-        # Handle pending signal
-        pending_signal = resp.get("pending_signal")
-        if pending_signal == "clear" and self.proc:
-            log.info(
-                "Clear requested, sending SIGINT (pid=%d, session=%s)",
-                self.proc.pid, self.session_id or "none",
-            )
-            self.clear_requested = True
-            self.proc.send_signal(signal.SIGINT)
-        elif pending_signal == "restart" and self.proc:
-            log.info(
-                "Restart requested, sending SIGINT (pid=%d, session=%s)",
-                self.proc.pid, self.session_id or "none",
-            )
-            self.restart_requested = True
-            self.proc.send_signal(signal.SIGINT)
-        elif pending_signal == "SIGINT" and self.proc:
-            log.info("Sending SIGINT to Claude (pid=%d)", self.proc.pid)
-            self.proc.send_signal(signal.SIGINT)
+    # ── Shared helpers ──
 
     async def _write_stdin(self, msg: dict):
-        """
-        Write a JSON message to Claude's stdin.
-
-        Input must follow the stream-json input format:
-            {"type": "user", "message": {"role": "user", "content": [...]}}
-
-        See: docs/ARCHITECTURE.md, "Input Format"
-        """
+        """Write a JSON message to Claude's stdin."""
         if not self.proc or not self.proc.stdin:
             log.warning("Cannot write to stdin — process not running")
             return
@@ -469,19 +414,8 @@ class Relay:
         await self.proc.stdin.drain()
         log.info("Wrote to stdin: type=%s", msg.get("type", "?"))
 
-    def _post_exit_event(self, exit_code: int, stderr: str):
-        """
-        Post synthetic process_exit event to backend.
-
-        This event is NOT from Claude's stream-json output — it's created
-        by the relay when the Claude process terminates.
-
-        Schema:
-            {type: "system", subtype: "process_exit", exit_code, stderr,
-             session_id, agent_id}
-
-        See: docs/ARCHITECTURE.md, "system/process_exit"
-        """
+    async def _post_exit_event(self, exit_code: int, stderr: str):
+        """Post synthetic process_exit event."""
         event = {
             "type": "system",
             "subtype": "process_exit",
@@ -491,7 +425,7 @@ class Relay:
             "agent_id": AGENT_ID,
         }
         log.info("Posting process_exit (code=%d)", exit_code)
-        post_events([event])
+        await self._send_event(event)
 
 
 # ---------------------------------------------------------------------------
@@ -501,8 +435,6 @@ class Relay:
 
 def setup_signal_handlers(relay: Relay):
     """Forward SIGTERM/SIGINT to Claude for graceful shutdown."""
-    loop = asyncio.get_event_loop()
-
     def handler(signum, _frame):
         sig_name = signal.Signals(signum).name
         log.info("Received %s, forwarding SIGINT to Claude", sig_name)
@@ -523,7 +455,8 @@ def main():
         log.error("AGENT_ID not set")
         sys.exit(1)
     if not CALLBACK_URL:
-        log.warning("ABOX_CALLBACK_URL not set — events will not be forwarded")
+        log.error("ABOX_CALLBACK_URL not set — cannot connect to backend")
+        sys.exit(1)
 
     log.info("abox-relay starting (agent=%s)", AGENT_ID)
 

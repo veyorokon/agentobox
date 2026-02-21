@@ -94,23 +94,16 @@ class Agent(models.Model):
     )
     config_snapshot = models.JSONField(default=dict, blank=True)
 
-    # Stream-JSON relay fields
-    # Running session cost from SessionResult.total_cost_usd
+    # Materialized view of agent state — updated as side effects of
+    # StreamEvent processing. These are denormalized for fast reads;
+    # the source of truth is the StreamEvent log.
     session_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
-    # Tools, MCP servers, model, version from system/init event
     capabilities = models.JSONField(null=True, blank=True)
-    # Queue of messages for relay piggyback (list of JSON dicts)
-    pending_input = models.JSONField(default=list, blank=True)
-    # Queued signal for relay piggyback (e.g. "SIGINT")
-    pending_signal = models.CharField(max_length=20, blank=True)
-    # Queued permission mode change for relay piggyback (e.g. "plan")
-    pending_mode = models.CharField(max_length=30, blank=True)
-    # Auth token for relay -> backend communication
-    relay_token = models.CharField(max_length=64, blank=True)
     # Current activity phase from stream_event (thinking, responding, tool-input, tool-use)
     phase = models.CharField(max_length=20, blank=True, default="")
-    # Relay health inference — stale > 10s = down
-    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+
+    # Auth token for WebSocket relay connection (generated during provisioning)
+    relay_token = models.CharField(max_length=64, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -127,72 +120,46 @@ class Agent(models.Model):
         return f"{self.name} ({self.status})"
 
 
-class AgentEvent(models.Model):
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="events")
+
+class StreamEvent(models.Model):
+    """Append-only event log. Replaces Message + AgentEvent.
+
+    Every stream-json event from the relay, every dashboard-initiated
+    message, every status transition = one row. No upserts, no row locks.
+
+    This is deliberately a dumb append-only log. The relay forwards ALL
+    Claude Code stream-json events verbatim — no filtering, no batching,
+    no transformation. Intelligence lives in the read path (feed_transform)
+    and the client (rendering), not the write path.
+
+    Why store everything:
+    - Thinking content, tool progress, rate limits, content deltas —
+      all captured automatically without code changes when Anthropic
+      adds new event types to stream-json.
+    - The data field is the RAW event dict. No normalization, no schema.
+      We are an event log, not a relational model.
+
+    message_id groups content parts of the same logical message
+    (multiple assistant events share an Anthropic message ID).
+    Empty for standalone events (status, error, result).
+    """
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="stream_events")
+    session_id = models.CharField(max_length=100, db_index=True)
     event_type = models.CharField(max_length=50)
+    message_id = models.CharField(max_length=100, blank=True, db_index=True)
     data = models.JSONField(default=dict)
-    summary = models.CharField(max_length=200, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["created_at"]
         indexes = [
             models.Index(fields=["agent", "created_at"]),
+            models.Index(fields=["agent", "session_id", "created_at"]),
         ]
 
     def __str__(self):
         return f"{self.event_type} → {self.agent.name} ({self.created_at:%H:%M})"
 
-
-class Message(models.Model):
-    """
-    Mirrors Claude Code's stream-json assistant/user events.
-
-    Each stdout event with type="assistant" or type="user" becomes one Message.
-    The `parts` field stores message.content[] verbatim — the same typed array
-    format used by the Anthropic Messages API and Claude Code's internal
-    MessageContent type.
-
-    CRITICAL: Assistant events carry 1 content part each. Parts are APPENDED
-    to the existing list, not replaced. Same pattern as Crush's AppendContent().
-
-    Field mapping from Claude Code stream-json:
-        message_id  <- event.message.id (stable across incremental updates)
-        session_id  <- event.session_id
-        role        <- event.message.role ("assistant" | "user")
-        model       <- event.message.model
-        parts       <- event.message.content[] (ContentPart[])
-        usage       <- event.message.usage (token counts with cache breakdown)
-        stop_reason <- event.message.stop_reason ("end_turn" | "tool_use" | "max_tokens")
-        parent_tool_use_id <- event.parent_tool_use_id (non-null for subagent responses)
-
-    See: docs/ARCHITECTURE.md, "Data Model"
-    See: docs/ARCHITECTURE.md, "Message Model" (pattern origin)
-    """
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="stream_messages")
-    message_id = models.CharField(max_length=100, db_index=True)
-    session_id = models.CharField(max_length=100, db_index=True)
-    role = models.CharField(max_length=10)  # assistant, user
-    model = models.CharField(max_length=100, blank=True)
-    parts = models.JSONField(default=list)
-    usage = models.JSONField(null=True, blank=True)
-    parent_tool_use_id = models.CharField(max_length=100, blank=True)
-    stop_reason = models.CharField(max_length=20, blank=True)
-    turn_number = models.IntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["created_at"]
-        indexes = [
-            models.Index(fields=["agent", "session_id", "turn_number"]),
-        ]
-        constraints = [
-            models.UniqueConstraint(fields=["agent", "message_id"], name="unique_agent_message_id"),
-        ]
-
-    def __str__(self):
-        return f"{self.role} {self.message_id[:12]} → {self.agent.name}"
 
 
 class SessionResult(models.Model):

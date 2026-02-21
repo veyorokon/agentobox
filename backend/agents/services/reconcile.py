@@ -1,14 +1,12 @@
 """
 Background reconciliation loop for agents.
 
-Detects orphaned containers, dead containers, stale heartbeats, and stuck
-deploys — then cleans up. Runs inside the backend process (no extra services).
+Detects orphaned containers, dead containers, and stuck deploys — then
+cleans up. Runs inside the backend process (no extra services).
 
-Heartbeat staleness and stuck-deploy detection are runtime-agnostic (cover both
-Docker and Modal agents). Orphan reaping and dead-container detection remain
-Docker-only since they use the Docker API directly.
-
-Started lazily from stream_events() on the first relay heartbeat.
+With the WebSocket relay, heartbeat-based staleness detection is replaced
+by WS disconnect events. This loop handles cases where containers die
+without a clean disconnect.
 
 NOTE: This runs inside asyncio.create_task() where Django's
 CurrentThreadExecutor is unavailable. All ORM calls MUST use
@@ -29,7 +27,6 @@ from agents.services.broadcast import broadcast_agent_update
 log = structlog.get_logger("agents.reconcile")
 
 INTERVAL_S = 30
-HEARTBEAT_STALE_S = 30
 DEPLOY_GRACE_S = 120
 ERROR_REAP_GRACE_S = 60
 
@@ -58,16 +55,11 @@ async def _loop():
 
 
 async def reconcile_agents():
-    """Single reconciliation pass for all agents.
-
-    Heartbeat staleness and stuck-deploy detection cover all runtimes.
-    Orphan reaping and dead-container detection are Docker-only.
-    """
+    """Single reconciliation pass for all agents."""
     now = timezone.now()
 
     await _reap_orphans()
     await _detect_dead_containers()
-    await _detect_stale_heartbeats(now)
     await _detect_stuck_deploys(now)
     await _reap_errored_agents(now)
 
@@ -163,39 +155,12 @@ async def _detect_dead_containers():
 
 
 # ---------------------------------------------------------------------------
-# Step 3: Detect stale heartbeats
-# ---------------------------------------------------------------------------
-
-async def _detect_stale_heartbeats(now):
-    """Mark agents ERROR when relay hasn't posted a heartbeat in >HEARTBEAT_STALE_S.
-
-    Runtime-agnostic: applies to both Docker and Modal agents.
-    """
-    stale_cutoff = now - timedelta(seconds=HEARTBEAT_STALE_S)
-    stale_agents = await _get_agents(
-        status__in=[AgentStatus.IDLE, AgentStatus.RUNNING],
-        last_heartbeat_at__isnull=False,
-        last_heartbeat_at__lt=stale_cutoff,
-    )
-
-    for agent in stale_agents:
-        agent = await _mark_error(agent.id)
-        await broadcast_agent_update(agent)
-        log.info(
-            "stale_heartbeat_detected",
-            agent_id=str(agent.id),
-            agent_name=agent.name,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Step 4: Detect stuck deploys
+# Step 3: Detect stuck deploys
 # ---------------------------------------------------------------------------
 
 async def _detect_stuck_deploys(now):
-    """Mark DEPLOYING agents ERROR when they exceed DEPLOY_GRACE_S with no heartbeat.
+    """Mark DEPLOYING agents ERROR when they exceed DEPLOY_GRACE_S.
 
-    Runtime-agnostic: applies to both Docker and Modal agents.
     Uses each agent's own runtime for sandbox termination.
     """
     deploy_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
@@ -204,7 +169,6 @@ async def _detect_stuck_deploys(now):
     stuck_agents = await _get_agents(
         status=AgentStatus.DEPLOYING,
         created_at__lt=deploy_cutoff,
-        last_heartbeat_at__isnull=True,
     )
 
     for agent in stuck_agents:
@@ -224,7 +188,7 @@ async def _detect_stuck_deploys(now):
 
 
 # ---------------------------------------------------------------------------
-# Step 5: Auto-reap errored agents
+# Step 4: Auto-reap errored agents
 # ---------------------------------------------------------------------------
 
 async def _reap_errored_agents(now):
@@ -233,8 +197,6 @@ async def _reap_errored_agents(now):
     Logs are already persisted (events in DB, process_exit with stderr), so
     keeping dead containers alive wastes resources. The grace period ensures
     final relay events have time to flush before cleanup.
-
-    Runtime-agnostic: uses each agent's own runtime for sandbox termination.
     """
     from agents.runtimes import get_runtime
 

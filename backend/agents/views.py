@@ -1,11 +1,7 @@
-import hmac
-import json
 import os
 
 from asgiref.sync import sync_to_async
-from django.db import transaction
 from django.http import JsonResponse
-from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
@@ -13,97 +9,6 @@ from accounts.auth import authenticate_request
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
-
-
-@sync_to_async(thread_sensitive=False)
-def _atomic_drain_piggyback(agent_id):
-    """Drain pending_input, pending_signal, and pending_mode under a row lock.
-
-    Uses select_for_update() inside transaction.atomic() to prevent
-    concurrent _atomic_enqueue from committing between read and clear,
-    which would silently lose enqueued messages.
-
-    Returns (pending_input, pending_signal, pending_mode).
-    """
-    from agents.models import Agent
-
-    with transaction.atomic():
-        agent = Agent.objects.select_for_update().get(id=agent_id)
-
-        pending_input = agent.pending_input or []
-        pending_signal = agent.pending_signal or ""
-        pending_mode = agent.pending_mode or ""
-
-        agent.pending_input = []
-        agent.pending_signal = ""
-        agent.pending_mode = ""
-        agent.last_heartbeat_at = timezone.now()
-        agent.save(update_fields=[
-            "pending_input", "pending_signal", "pending_mode",
-            "last_heartbeat_at", "updated_at",
-        ])
-
-    return pending_input, pending_signal, pending_mode
-
-
-@csrf_exempt
-@require_POST
-async def stream_events(request, agent_id):
-    """
-    Receive batched stream-json events from the relay process.
-
-    Authenticated via X-Relay-Token header (per-agent token generated
-    during provisioning). Returns piggyback response with pending_input
-    and pending_signal for relay to deliver to Claude.
-
-    See: docs/ARCHITECTURE.md, "/agents/stream Endpoint"
-    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-    """
-    from agents.models import Agent
-    from agents.services.reconcile import ensure_running
-    from agents.services.stream import process_stream_events
-
-    ensure_running()
-
-    # Authenticate via relay token
-    token = request.headers.get("X-Relay-Token", "")
-    try:
-        agent = await Agent.objects.aget(id=agent_id)
-    except Agent.DoesNotExist:
-        return JsonResponse({"error": "agent not found"}, status=404)
-
-    if not agent.relay_token or not hmac.compare_digest(token, agent.relay_token):
-        return JsonResponse({"error": "unauthorized"}, status=401)
-
-    # Parse event batch (may be empty for heartbeat)
-    try:
-        events = json.loads(request.body) if request.body else []
-    except (json.JSONDecodeError, ValueError):
-        return JsonResponse({"error": "invalid json"}, status=400)
-
-    # Process events
-    if events:
-        await process_stream_events(agent, events)
-
-    # Atomically drain pending_input, pending_signal, and pending_mode under
-    # row lock. This prevents _atomic_enqueue from committing a message
-    # between our read and clear, which would silently lose that message.
-    pending_input, pending_signal, pending_mode = await _atomic_drain_piggyback(agent_id)
-
-    # Build piggyback response
-    response = {"ack": True, "pending_input": None, "pending_signal": None, "pending_mode": None}
-
-    if pending_input:
-        response["pending_input"] = pending_input
-
-    if pending_signal:
-        response["pending_signal"] = pending_signal
-
-    if pending_mode:
-        response["pending_mode"] = pending_mode
-
-    return JsonResponse(response)
-
 
 
 @csrf_exempt

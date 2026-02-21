@@ -122,31 +122,6 @@ export interface User {
   email: string
 }
 
-export interface Message {
-  id: string
-  messageId: string
-  sessionId: string
-  role: string
-  model: string
-  parts: unknown[]
-  usage: Record<string, unknown> | null
-  parentToolUseId: string
-  stopReason: string
-  turnNumber: number
-  createdAt: string
-  updatedAt: string
-  agentId: string
-}
-
-export interface AgentEvent {
-  id: string
-  eventType: string
-  data: Record<string, unknown>
-  summary: string
-  createdAt: string
-  agentId: string
-  agentName: string
-}
 
 export interface TimelineEntry {
   id: string

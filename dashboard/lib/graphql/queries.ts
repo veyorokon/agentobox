@@ -2,7 +2,6 @@ import { gql } from "@apollo/client"
 import {
   AGENT_FIELDS,
   FEED_ITEM_FIELDS,
-  TIMELINE_FIELDS,
 } from "./fragments"
 
 export const ME_QUERY = gql`
@@ -77,12 +76,4 @@ export const PROJECT_FEED_QUERY = gql`
   }
 `
 
-export const TIMELINE_QUERY = gql`
-  ${TIMELINE_FIELDS}
-  query Timeline($projectId: ID!, $limit: Int, $offset: Int) {
-    timeline(projectId: $projectId, limit: $limit, offset: $offset) {
-      ...TimelineFields
-    }
-  }
-`
 

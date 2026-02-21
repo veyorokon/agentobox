@@ -1,0 +1,328 @@
+
+type AgentFeedbackType {
+  id: UUID!
+  rating: Int!
+  comment: String!
+  sessionId: String!
+  createdAt: DateTime!
+  agentId: String!
+}
+
+type AgentQuestionType {
+  question: String!
+  header: String!
+  options: [QuestionOptionType!]!
+  multiSelect: Boolean!
+}
+
+type AgentType {
+  id: UUID!
+  name: String!
+  runtime: String!
+  sandboxId: String!
+  vncUrl: String!
+  status: String!
+  phase: String!
+  teamName: String!
+  parentSessionId: String!
+  sessionId: String!
+  model: String!
+  cwd: String!
+  permissionMode: String!
+  mcpServers: JSON!
+  workspacePath: String!
+  volumeMounts: JSON!
+  instructions: String!
+  role: String!
+  sessionCostUsd: Decimal!
+  capabilities: JSON
+  createdAt: DateTime!
+  sessionResult: SessionResultType
+  feedback(limit: Int! = 50, offset: Int! = 0): [AgentFeedbackType!]!
+}
+
+input AnswerQuestionInput {
+  agentId: ID!
+  toolUseId: String!
+  answerText: String!
+}
+
+type AuthPayload {
+  user: UserType!
+  token: String!
+}
+
+input BroadcastMessageInput {
+  agentIds: [ID!]!
+  message: String! = ""
+  content: JSON = null
+}
+
+input CreateAgentInput {
+  projectId: ID!
+  name: String!
+  runtime: String! = "modal"
+  model: String! = "claude-sonnet-4-5-20250929"
+  mcpServers: JSON = null
+  workspacePath: String! = ""
+  volumeMounts: [VolumeMountInput!] = null
+  instructions: String! = ""
+  role: String! = "worker"
+}
+
+input CreateProjectInput {
+  name: String!
+  description: String! = ""
+}
+
+"""Date with time (isoformat)"""
+scalar DateTime
+
+"""Decimal (fixed-point)"""
+scalar Decimal
+
+enum FeedItemKind {
+  USER_MESSAGE
+  AGENT_TEXT
+  ACTIVITY
+  STATUS
+  TASK
+  SYSTEM
+  ERROR
+  QUESTION
+  MEMORY
+  PLAN
+  TASK_START
+  TASK_END
+  TEAM_MESSAGE
+}
+
+type FeedItemType {
+  id: String!
+  kind: FeedItemKind!
+  agentId: String!
+  agentName: String!
+  timestamp: DateTime!
+  text: String
+  imageUrls: [String!]
+  targetName: String
+  tools: [ToolUseItemType!]
+  fromStatus: String
+  toStatus: String
+  taskSummary: String
+  errorText: String
+  cumulativeCostUsd: Float
+  questions: [AgentQuestionType!]
+  memoryContent: String
+  planStatus: String
+  planSummary: String
+  planSteps: [String!]
+  taskDividerSubject: String
+  taskDividerId: String
+  taskDividerActiveForm: String
+  answers: [QuestionAnswerType]
+  toolUseId: String
+  senderName: String
+  targetAgentIds: [String!]
+  sessionResult: SessionResultType
+}
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf).
+"""
+scalar JSON @specifiedBy(url: "https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf")
+
+input LoginInput {
+  username: String!
+  password: String!
+}
+
+type McpRegistryEntryType {
+  name: String!
+  compat: [String!]!
+}
+
+type ModelEntryType {
+  value: String!
+  label: String!
+}
+
+type Mutation {
+  login(input: LoginInput!): AuthPayload!
+  register(input: RegisterInput!): AuthPayload!
+  createApiKey: String!
+  createProject(input: CreateProjectInput!): ProjectType!
+  updateProject(input: UpdateProjectInput!): ProjectType!
+  archiveProject(id: ID!): ProjectType!
+  unarchiveProject(id: ID!): ProjectType!
+  deleteProject(id: ID!): Boolean!
+  stopAllAgents(projectId: ID!): Int!
+  setProjectTheme(input: SetProjectThemeInput!): Boolean!
+  createAgent(input: CreateAgentInput!): AgentType!
+  killAgent(agentId: ID!): Boolean!
+  removeAgent(agentId: ID!): Boolean!
+  hardRestartAgent(agentId: ID!): AgentType!
+  interruptAgent(agentId: ID!): Boolean!
+  restartAgent(agentId: ID!): Boolean!
+  clearAgentSession(agentId: ID!): Boolean!
+  setAgentMode(agentId: ID!, mode: String!): AgentType!
+  sendMessage(input: SendMessageInput!): Boolean!
+  broadcastMessage(input: BroadcastMessageInput!): Boolean!
+  answerQuestion(input: AnswerQuestionInput!): Boolean!
+  updateAgentInstructions(input: UpdateAgentInstructionsInput!): AgentType!
+  rateAgent(input: RateFeedbackInput!): AgentFeedbackType
+  updateAgentConfig(input: UpdateAgentConfigInput!): AgentType!
+  setSecret(input: SetSecretInput!): ProjectSecretType!
+  deleteSecret(projectId: ID!, key: String!): Boolean!
+  scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
+}
+
+type ProjectSecretType {
+  id: UUID!
+  key: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  projectId: String!
+  scopedAgentIds: [String!]!
+}
+
+type ProjectType {
+  id: UUID!
+  name: String!
+  description: String!
+  settings: JSON!
+  createdAt: DateTime!
+  archivedAt: DateTime
+}
+
+type Query {
+  me: UserType
+  projects(includeArchived: Boolean! = false): [ProjectType!]!
+  project(id: ID!): ProjectType
+  agents(projectId: ID!): [AgentType!]!
+  agent(agentId: ID!): AgentType
+  timeline(projectId: ID!, limit: Int! = 200, offset: Int! = 0): [TimelineEntryType!]!
+  agentFeed(agentId: ID!, limit: Int! = 200, offset: Int! = 0): [FeedItemType!]!
+  projectFeed(projectId: ID!, limit: Int! = 500, offset: Int! = 0): [FeedItemType!]!
+  availableModels: [ModelEntryType!]!
+  mcpRegistry: [McpRegistryEntryType!]!
+  projectSecrets(projectId: ID!): [ProjectSecretType!]!
+}
+
+type QuestionAnswerType {
+  selectedIndices: [Int!]!
+  otherText: String
+}
+
+type QuestionOptionType {
+  label: String!
+  description: String!
+}
+
+input RateFeedbackInput {
+  agentId: ID!
+  messageId: ID = null
+  rating: Int!
+  comment: String! = ""
+}
+
+input RegisterInput {
+  username: String!
+  email: String!
+  password: String!
+}
+
+input ScopeSecretInput {
+  projectId: ID!
+  key: String!
+  agentIds: [ID!]!
+}
+
+input SendMessageInput {
+  agentId: ID!
+  message: String! = ""
+  content: JSON = null
+}
+
+type SessionResultType {
+  id: ID!
+  sessionId: String!
+  isError: Boolean!
+  totalCostUsd: Decimal!
+  durationMs: Int!
+  durationApiMs: Int!
+  numTurns: Int!
+  modelUsage: JSON!
+  permissionDenials: JSON!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  agentId: String!
+}
+
+input SetProjectThemeInput {
+  projectId: ID!
+  tokens: JSON!
+}
+
+input SetSecretInput {
+  projectId: ID!
+  key: String!
+  value: String!
+}
+
+type Subscription {
+  agentUpdated(projectId: ID!): AgentType!
+  eventStream(projectId: ID!): TimelineEntryType!
+}
+
+type TimelineEntryType {
+  id: String!
+  entryType: String!
+  agentId: String!
+  agentName: String!
+  summary: String
+  data: JSON!
+  createdAt: DateTime!
+}
+
+type ToolUseItemType {
+  name: String!
+  input: JSON!
+  result: JSON!
+  isError: Boolean!
+}
+
+scalar UUID
+
+input UpdateAgentConfigInput {
+  agentId: ID!
+  model: String = null
+  role: String = null
+  mcpRegistryNames: [String!] = null
+  mcpCustomServers: JSON = null
+}
+
+input UpdateAgentInstructionsInput {
+  agentId: ID!
+  instructions: String!
+}
+
+input UpdateProjectInput {
+  id: ID!
+  name: String = null
+  description: String = null
+  settings: JSON = null
+}
+
+type UserType {
+  id: ID!
+  username: String!
+  email: String!
+}
+
+input VolumeMountInput {
+  name: String!
+  mountPath: String!
+  hostPath: String! = ""
+  readOnly: Boolean! = false
+}

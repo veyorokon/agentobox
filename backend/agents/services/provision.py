@@ -677,12 +677,10 @@ async def write_theme_files(runtime: Runtime, sandbox_id: str, tokens: dict[str,
 
 async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret_envs: dict[str, str]) -> None:
     """
-    Hot-reload secrets on a running agent by rewriting files and triggering
-    a soft restart via pending_signal.
+    Hot-reload secrets on a running agent by rewriting files.
 
     1. Rewrites .mcp.json with updated env blocks (MCP servers re-init on restart)
     2. Writes /mnt/abox-state/secrets/env for immediate shell access
-    3. Sets pending_signal="restart" so relay soft-restarts Claude with --continue
     """
     from django.conf import settings as django_settings
 

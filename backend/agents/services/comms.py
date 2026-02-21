@@ -1,11 +1,25 @@
+"""
+Agent communication: send messages, signals, and mode changes.
+
+Commands are delivered to agents via WebSocket push through the relay's
+persistent connection. Each command goes through:
+
+    1. Create StreamEvent (append-only log)
+    2. Broadcast to dashboard subscribers
+    3. Push command to relay via Channels group_send
+
+The relay consumer (consumers.py) receives group_send messages on the
+relay_{agent_id} group and forwards them to the relay process over WebSocket.
+"""
+
+import copy
 import uuid
 
 import structlog
-from asgiref.sync import sync_to_async
-from django.db import transaction
+from channels.layers import get_channel_layer
 
-from agents.models import Agent, AgentStatus, Message
-from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update, broadcast_stream_message
+from agents.models import Agent, AgentStatus, StreamEvent
+from agents.services.broadcast import broadcast_agent_update, broadcast_event
 
 log = structlog.get_logger("agents.comms")
 
@@ -15,11 +29,10 @@ def _normalize_content(content: list) -> list:
 
     - URL sources: strip media_type (only valid for base64).
     - Non-HTTPS URLs (LocalStack in dev): convert to base64 inline so
-      the API can read them. The backend can reach LocalStack even though
-      Anthropic's servers can't.
+      the API can read them.
     """
     import base64
-    import mimetypes
+    from urllib.parse import urlparse
     from urllib.request import urlopen
 
     for block in content:
@@ -31,14 +44,10 @@ def _normalize_content(content: list) -> list:
         source.pop("media_type", None)
 
         if not url.startswith("https://"):
-            # Only allow fetching from known internal hosts (SSRF prevention)
-            from urllib.parse import urlparse
             parsed = urlparse(url)
             if parsed.hostname not in ("localhost", "localstack", "127.0.0.1"):
                 log.warning("url_fetch_blocked", url=url, reason="untrusted_host")
                 continue
-            # Rewrite localhost -> Docker service name so backend container
-            # can reach LocalStack
             fetch_url = url.replace("localhost:", "localstack:", 1)
             try:
                 resp = urlopen(fetch_url, timeout=10)
@@ -55,46 +64,21 @@ def _normalize_content(content: list) -> list:
     return content
 
 
-@sync_to_async
-def _atomic_enqueue(agent_id: str, input_msg: dict) -> Agent:
-    """Append to pending_input under a row lock to prevent concurrent clobber."""
-    with transaction.atomic():
-        agent = Agent.objects.select_for_update().get(id=agent_id)
-        pending = agent.pending_input or []
-        pending.append(input_msg)
-        agent.pending_input = pending
+async def _push_to_relay(agent_id: str, command: dict) -> None:
+    """Push a command to the relay via Channels group_send.
 
-        # Only promote to RUNNING if agent is IDLE (relay is alive to deliver).
-        # DEPLOYING: leave it — relay will transition when it connects.
-        # RUNNING: already processing, just enqueue.
-        # STOPPED/ERROR: handled by auto-restart before this point.
-        if agent.status == AgentStatus.IDLE:
-            agent.status = AgentStatus.RUNNING
-        agent.save(update_fields=["pending_input", "status", "updated_at"])
-    return agent
+    The RelayConsumer receives this on the relay_{agent_id} group
+    and forwards it to the relay process over WebSocket.
+    """
+    channel_layer = get_channel_layer()
+    await channel_layer.group_send(
+        f"relay_{agent_id}",
+        {"type": "relay.command", "command": command},
+    )
 
 
 async def send_message(agent_id: str, message: str, content: list | None = None) -> bool:
-    """
-    Enqueue a message for delivery to an agent's Claude Code session.
-
-    Instead of tmux send-keys, this enqueues the message as a stream-json
-    input object in agent.pending_input (a list). The relay picks it up
-    via the piggyback pattern in the next POST response cycle.
-
-    Uses select_for_update() to prevent concurrent appends from losing
-    messages (read-modify-write on JSONField without a lock is racy).
-
-    When `content` is provided (list of Anthropic content blocks), it's
-    used directly as parts/content. Otherwise, `message` is wrapped as
-    a single text block.
-
-    Input format (stream-json stdin):
-        {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}
-
-    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-    See: docs/ARCHITECTURE.md, "Input Format"
-    """
+    """Send a message to an agent's Claude Code session."""
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -103,73 +87,51 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         op_log.warning("agent_not_found")
         return False
 
-    # Auto-restart dead agents — reprovision before enqueuing
+    # Auto-restart dead agents
     needs_restart = (
         agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
         or (agent.status != AgentStatus.DEPLOYING and not agent.sandbox_id)
     )
     if needs_restart:
         from agents.services.lifecycle import hard_restart_agent
-
         op_log.info("auto_restarting_agent", current_status=agent.status)
         agent = await hard_restart_agent(str(agent_id))
-        # Agent is now DEPLOYING. Message will be enqueued below.
-        # pending_input survives restart — relay delivers when ready.
 
     # Build parts from content blocks or plain text
     if content:
-        import copy
         parts = content
-        text_summary = next(
-            (b["text"] for b in parts if b.get("type") == "text"), message
-        )
-        # Normalize a copy for the relay — original stays intact for storage/feed
         api_parts = _normalize_content(copy.deepcopy(parts))
     else:
         parts = [{"type": "text", "text": message}]
         api_parts = parts
-        text_summary = message
 
-    # Store user message in stream Message model so the frontend sees it
-    # (uses original parts with URLs so feed_transform can extract image_urls)
-    msg_record = await Message.objects.acreate(
+    # Store as StreamEvent so the feed sees it
+    stream_event = await StreamEvent.objects.acreate(
         agent=agent,
-        message_id=f"user_{uuid.uuid4().hex[:16]}",
         session_id=agent.session_id or "",
-        role="user",
-        parts=parts,
-        turn_number=0,
+        event_type="user",
+        message_id=f"user_{uuid.uuid4().hex[:16]}",
+        data={
+            "type": "user",
+            "message": {"role": "user", "content": parts},
+            "session_id": agent.session_id or "",
+        },
     )
-    await broadcast_stream_message(agent, msg_record)
+    await broadcast_event(agent, stream_event)
 
-    # Build stream-json input object (uses normalized parts for the API)
+    # Push to relay via WebSocket
     input_msg = {
         "type": "user",
-        "message": {
-            "role": "user",
-            "content": api_parts,
-        },
+        "message": {"role": "user", "content": api_parts},
     }
+    await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
-    # Atomic append — lock the row to prevent concurrent writes from
-    # clobbering each other's pending_input entries.
-    agent = await _atomic_enqueue(agent_id, input_msg)
-    await broadcast_agent_update(agent)
-
-    op_log.info("message_enqueued")
+    op_log.info("message_sent")
     return True
 
 
 async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> bool:
-    """
-    Send a tool_result for an AskUserQuestion back to the agent.
-
-    Builds a stream-json input with the tool_result content block and
-    enqueues it via the same piggyback pattern as send_message.
-
-    The answer is also stored as a Message so feed_transform can resolve
-    the question as answered (tool_results index).
-    """
+    """Send a tool_result for an AskUserQuestion back to the agent."""
     op_log = log.bind(agent_id=agent_id, tool_use_id=tool_use_id)
 
     try:
@@ -180,27 +142,23 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
 
     parts = [{"type": "tool_result", "tool_use_id": tool_use_id, "content": answer_text}]
 
-    # Store in Message model so feed_transform resolves the answer
-    msg_record = await Message.objects.acreate(
+    # Store as StreamEvent
+    stream_event = await StreamEvent.objects.acreate(
         agent=agent,
-        message_id=f"answer_{uuid.uuid4().hex[:16]}",
         session_id=agent.session_id or "",
-        role="user",
-        parts=parts,
-        turn_number=0,
-    )
-    await broadcast_stream_message(agent, msg_record)
-
-    # Enqueue for relay delivery
-    input_msg = {
-        "type": "user",
-        "message": {
-            "role": "user",
-            "content": parts,
+        event_type="user",
+        message_id=f"answer_{uuid.uuid4().hex[:16]}",
+        data={
+            "type": "user",
+            "message": {"role": "user", "content": parts},
+            "session_id": agent.session_id or "",
         },
-    }
-    agent = await _atomic_enqueue(agent_id, input_msg)
-    await broadcast_agent_update(agent)
+    )
+    await broadcast_event(agent, stream_event)
+
+    # Push to relay via WebSocket
+    input_msg = {"type": "user", "message": {"role": "user", "content": parts}}
+    await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
     op_log.info("question_answered")
     return True
@@ -209,16 +167,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
 async def broadcast_message(
     agent_ids: list[str], message: str, content: list | None = None,
 ) -> bool:
-    """
-    Send a message to one or more agents, producing a single consolidated
-    feed item instead of N duplicates.
-
-    Transport: N separate enqueues (one per agent) — each agent gets the
-    message in its pending_input for relay delivery.
-
-    Presentation: One user-message feed item via broadcast metadata in
-    Message.parts — feed_transform deduplicates by broadcast_id.
-    """
+    """Send a message to multiple agents with broadcast dedup metadata."""
     from agents.services.lifecycle import hard_restart_agent
 
     if not agent_ids:
@@ -227,23 +176,14 @@ async def broadcast_message(
     broadcast_id = uuid.uuid4().hex[:16]
     op_log = log.bind(broadcast_id=broadcast_id, agent_count=len(agent_ids))
 
-    # Build content parts
     if content:
-        import copy
         parts = content
-        text_summary = next(
-            (b["text"] for b in parts if b.get("type") == "text"), message
-        )
         api_parts = _normalize_content(copy.deepcopy(parts))
     else:
         parts = [{"type": "text", "text": message}]
         api_parts = parts
-        text_summary = message
 
-    # Resolve all agents in a single query
-    agents: list[Agent] = [
-        a async for a in Agent.objects.filter(id__in=agent_ids)
-    ]
+    agents: list[Agent] = [a async for a in Agent.objects.filter(id__in=agent_ids)]
     found_ids = {str(a.id) for a in agents}
     for aid in agent_ids:
         if aid not in found_ids:
@@ -255,8 +195,6 @@ async def broadcast_message(
     target_names = [a.name for a in agents]
     target_ids = [str(a.id) for a in agents]
 
-    # Broadcast metadata — stored in Message.parts so feed_transform can
-    # deduplicate. Stripped before relay delivery.
     broadcast_meta = {
         "type": "_broadcast",
         "broadcast_id": broadcast_id,
@@ -266,7 +204,6 @@ async def broadcast_message(
     parts_with_meta = [*parts, broadcast_meta]
 
     for agent in agents:
-        # Auto-restart dead agents
         needs_restart = (
             agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
             or (agent.status != AgentStatus.DEPLOYING and not agent.sandbox_id)
@@ -275,90 +212,68 @@ async def broadcast_message(
             op_log.info("auto_restarting_agent", agent_id=str(agent.id))
             agent = await hard_restart_agent(str(agent.id))
 
-        # Store Message with broadcast metadata (for feed dedup)
-        msg_record = await Message.objects.acreate(
+        # Store with broadcast metadata for feed dedup
+        stream_event = await StreamEvent.objects.acreate(
             agent=agent,
-            message_id=f"user_{broadcast_id}_{agent.id}",
             session_id=agent.session_id or "",
-            role="user",
-            parts=parts_with_meta,
-            turn_number=0,
+            event_type="user",
+            message_id=f"user_{broadcast_id}_{agent.id}",
+            data={
+                "type": "user",
+                "message": {"role": "user", "content": parts_with_meta},
+                "session_id": agent.session_id or "",
+            },
         )
-        await broadcast_stream_message(agent, msg_record)
+        await broadcast_event(agent, stream_event)
 
-        # Enqueue for relay delivery (normalized parts, no broadcast metadata)
-        input_msg = {
-            "type": "user",
-            "message": {"role": "user", "content": api_parts},
-        }
-        agent = await _atomic_enqueue(str(agent.id), input_msg)
-        await broadcast_agent_update(agent)
+        # Push to relay via WebSocket
+        input_msg = {"type": "user", "message": {"role": "user", "content": api_parts}}
+        await _push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
 
     op_log.info("broadcast_sent", targets=target_names)
     return True
 
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
-    """
-    Queue a permission mode change for an agent's Claude Code session.
-
-    Mode switching works via soft restart: the relay SIGINTs Claude,
-    then respawns with --resume <session_id> --permission-mode <mode>.
-    The pending_mode field is delivered via piggyback.
-
-    Valid modes: default, plan, acceptEdits, bypassPermissions, dontAsk
-
-    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-    """
+    """Change an agent's permission mode via relay restart."""
     VALID_MODES = {"default", "plan", "acceptEdits", "bypassPermissions", "dontAsk"}
     op_log = log.bind(agent_id=agent_id, mode=mode)
 
     if mode not in VALID_MODES:
-        raise ValueError(f"Invalid permission mode: {mode}. Must be one of: {', '.join(sorted(VALID_MODES))}")
+        raise ValueError(f"Invalid permission mode: {mode}")
 
     agent = await Agent.objects.aget(id=agent_id)
 
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
-        op_log.warning("set_mode_skipped", status=agent.status)
-        raise ValueError(f"Agent must be running or idle to change mode (current: {agent.status})")
+        raise ValueError(f"Agent must be running or idle (current: {agent.status})")
 
-    # Idempotency: skip if the mode change is redundant.
-    # Case 1: same mode already pending (mutation double-fired before piggyback drained)
-    # Case 2: already in this mode and no mode change in flight
-    # This prevents duplicate feed entries and unnecessary restarts.
-    already_pending = agent.pending_mode == mode
-    already_active = agent.permission_mode == mode and not agent.pending_mode
-    if already_pending or already_active:
-        op_log.info("mode_change_noop", current=agent.permission_mode, pending=agent.pending_mode)
+    if agent.permission_mode == mode:
+        op_log.info("mode_change_noop")
         return agent
 
-    agent.pending_mode = mode
     agent.permission_mode = mode
-    await agent.asave(update_fields=["pending_mode", "permission_mode"])
+    await agent.asave(update_fields=["permission_mode"])
 
-    # Broadcast agent update so the subscription delivers the new
-    # permission_mode immediately (replaces the frontend's optimistic update
-    # with the DB-authoritative value).
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(
-        agent, "mode_change",
-        {"mode": mode},
-        summary=f"{agent.name} switching to {mode} mode",
+
+    # Store mode change as StreamEvent
+    stream_event = await StreamEvent.objects.acreate(
+        agent=agent,
+        session_id=agent.session_id or "",
+        event_type="mode_change",
+        data={"mode": mode},
     )
-    op_log.info("mode_change_enqueued")
+    await broadcast_event(agent, stream_event)
+
+    # Push to relay via WebSocket
+    await _push_to_relay(agent_id, {"type": "mode", "mode": mode})
+
+    op_log.info("mode_change_sent")
     return agent
 
 
 async def interrupt_agent(agent_id: str) -> bool:
-    """
-    Queue a SIGINT signal for an agent's Claude Code session.
-
-    Instead of tmux C-c, this sets agent.pending_signal = "SIGINT".
-    The relay picks it up via the piggyback pattern in the next
-    heartbeat or POST response.
-
-    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-    """
+    """Send SIGINT to an agent's Claude Code session."""
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -367,27 +282,24 @@ async def interrupt_agent(agent_id: str) -> bool:
         op_log.warning("agent_not_found")
         return False
 
-    agent.pending_signal = "SIGINT"
-    await agent.asave(update_fields=["pending_signal"])
+    # Store as StreamEvent
+    stream_event = await StreamEvent.objects.acreate(
+        agent=agent,
+        session_id=agent.session_id or "",
+        event_type="interrupted",
+        data={},
+    )
+    await broadcast_event(agent, stream_event)
 
-    await broadcast_agent_event(agent, "interrupted", {}, summary=f"{agent.name} interrupted")
-    op_log.info("interrupt_enqueued")
+    # Push to relay via WebSocket
+    await _push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
+
+    op_log.info("interrupt_sent")
     return True
 
 
 async def restart_agent(agent_id: str) -> bool:
-    """
-    Queue a soft restart for an agent's Claude Code session.
-
-    Sets agent.pending_signal = "restart". The relay picks it up via
-    piggyback, sends SIGINT to Claude for graceful shutdown, then
-    respawns with --resume to preserve conversation context.
-
-    MCP servers re-init from the updated .mcp.json on restart,
-    picking up any new secrets.
-
-    See: docs/ARCHITECTURE.md, "Piggyback Pattern"
-    """
+    """Soft restart an agent's Claude Code session."""
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -400,22 +312,24 @@ async def restart_agent(agent_id: str) -> bool:
         op_log.warning("restart_skipped", status=agent.status)
         return False
 
-    agent.pending_signal = "restart"
-    await agent.asave(update_fields=["pending_signal"])
+    # Store as StreamEvent
+    stream_event = await StreamEvent.objects.acreate(
+        agent=agent,
+        session_id=agent.session_id or "",
+        event_type="restarting",
+        data={},
+    )
+    await broadcast_event(agent, stream_event)
 
-    await broadcast_agent_event(agent, "restarting", {}, summary=f"{agent.name} restarting")
-    op_log.info("restart_enqueued")
+    # Push to relay via WebSocket
+    await _push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
+
+    op_log.info("restart_sent")
     return True
 
 
 async def clear_agent_session(agent_id: str) -> bool:
-    """
-    Clear an agent's conversation history and restart fresh.
-
-    Deletes session project data from the persistent volume, resets
-    session tracking, and triggers a soft restart so the agent picks
-    up fresh state. Maps to Claude Code's /clear command.
-    """
+    """Clear an agent's conversation history and restart fresh."""
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -428,7 +342,7 @@ async def clear_agent_session(agent_id: str) -> bool:
         op_log.warning("clear_session_skipped", status=agent.status)
         return False
 
-    # Clear session project data from volume
+    # Clear session files from container
     from agents.runtimes import get_runtime
     agent_state_dir = f"/mnt/abox-state/agents/{agent.id}/.claude"
     try:
@@ -440,15 +354,20 @@ async def clear_agent_session(agent_id: str) -> bool:
     except Exception:
         op_log.exception("clear_session_files_failed")
 
-    # Clear session_id on model
     agent.session_id = ""
     await agent.asave(update_fields=["session_id"])
 
-    # Use "clear" signal (not "restart") so the relay resets its in-memory
-    # session_id and respawns Claude fresh instead of --resume.
-    agent.pending_signal = "clear"
-    await agent.asave(update_fields=["pending_signal"])
+    # Store as StreamEvent
+    stream_event = await StreamEvent.objects.acreate(
+        agent=agent,
+        session_id="",
+        event_type="cleared",
+        data={},
+    )
+    await broadcast_event(agent, stream_event)
 
-    await broadcast_agent_event(agent, "cleared", {}, summary=f"{agent.name} session cleared")
+    # Push to relay via WebSocket
+    await _push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
+
     op_log.info("session_cleared")
     return True

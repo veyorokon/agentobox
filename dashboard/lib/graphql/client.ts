@@ -177,6 +177,7 @@ const apolloClient = new ApolloClient({
     typePolicies: {
       AgentType: { keyFields: ["id"] },
       FeedItemType: { keyFields: ["id"] },
+      TimelineEntryType: { keyFields: ["id"] },
     },
   }),
 })

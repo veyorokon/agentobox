@@ -1,28 +1,30 @@
 """
-Process Claude Code stream-json events from the relay.
+Process Claude Code stream-json events into the append-only StreamEvent log.
 
-Routes each event type to the appropriate handler:
-    system/init       -> upsert agent.capabilities
-    system/process_exit -> update agent.status (stopped or error)
-    assistant         -> upsert Message by message_id (APPEND parts)
-    user              -> create Message for tool_result (idempotent by event uuid)
-    result            -> upsert SessionResult (cumulative cost/usage)
+This is the write path. It is deliberately simple:
 
-CRITICAL: Assistant events carry 1 content part each. Parts are APPENDED
-to the Message, not replaced. See the "Content Part Accumulation" comment
-on docs/ISSUE-36-BACKEND.md.
+    1. Store the raw event verbatim as a StreamEvent row (INSERT, never UPDATE)
+    2. Broadcast to dashboard subscribers
+    3. Update materialized fields on the Agent model (status, phase, cost, etc.)
 
-See: docs/ARCHITECTURE.md, "Event Processing Logic"
-See: docs/ARCHITECTURE.md, "Streaming Callbacks" (AppendContent pattern)
+No upserts. No row locks. No content part accumulation. No dual-table routing.
+The old write path had select_for_update() to accumulate parts on a Message row —
+that complexity is gone. Each event from the relay is one INSERT.
+
+Why store raw: the relay forwards ALL stream-json events without filtering.
+Thinking content, tool progress, rate limits, content deltas — everything
+Anthropic adds to stream-json is automatically captured. The data field is
+the raw event dict, verbatim. We are an event log, not a relational model.
+
+Intelligence lives in the read path (feed_transform) which reconstructs
+logical messages by grouping StreamEvents by message_id.
 """
 
 import structlog
 from asgiref.sync import sync_to_async
-from django.db import transaction
-from django.utils import timezone
 
-from agents.models import Agent, AgentStatus, Message, SessionResult
-from agents.services.broadcast import broadcast_agent_update, broadcast_stream_message
+from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
+from agents.services.broadcast import broadcast_agent_update, broadcast_event
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("agents.stream")
@@ -45,264 +47,74 @@ def _externalize_media(parts: list[dict]) -> list[dict]:
     return result
 
 
-async def process_stream_events(agent: Agent, events: list[dict]) -> None:
+def _extract_message_id(event: dict) -> str:
+    """Pull the stable message_id from an event, if present.
+
+    assistant/user events carry it in event.message.id.
+    Standalone events (system, result, stream_event) have no message_id.
     """
-    Process a batch of Claude Code stream-json events from the relay.
+    msg = event.get("message")
+    if isinstance(msg, dict):
+        return msg.get("id", "")
+    return ""
 
-    Events are the raw JSON objects from Claude's stdout, each with
-    a `type` field: "system", "assistant", "user", or "result".
 
-    See: docs/ARCHITECTURE.md, "Event Processing Logic"
+async def process_stream_event(agent_id: str, event: dict) -> None:
+    """Every event from relay → INSERT StreamEvent + broadcast + side effects.
+
+    This is the entire write path. One function. No routing, no branching
+    by event type for storage — every event gets stored the same way.
+    Side effects (agent model updates) are the only type-specific logic.
     """
-    for event in events:
-        try:
-            await _process_one(agent, event)
-        except Exception:
-            log.exception(
-                "stream_event_processing_failed",
-                agent_id=str(agent.id),
-                event_type=event.get("type"),
-            )
-
-
-async def _process_one(agent: Agent, event: dict) -> None:
-    """
-    Route a single Claude Code stream-json event to the appropriate handler.
-
-    Event types (from Claude Code stdout):
-        system    -> init (capabilities), process_exit (relay synthetic)
-        assistant -> upsert Message (text and/or tool_use content parts)
-        user      -> create Message (tool_result content parts)
-        result    -> upsert SessionResult (cumulative cost/usage)
-
-    See: docs/ARCHITECTURE.md, "Event Processing Logic"
-    See: docs/ARCHITECTURE.md, "Turn Lifecycle"
-    """
+    agent = await Agent.objects.aget(id=agent_id)
     event_type = event.get("type", "")
+    session_id = event.get("session_id", "")
 
-    if event_type == "system":
-        await _handle_system(agent, event)
-    elif event_type == "assistant":
-        await _handle_assistant(agent, event)
-    elif event_type == "user":
-        await _handle_user(agent, event)
-    elif event_type == "result":
-        await _handle_result(agent, event)
-    elif event_type == "stream_event":
-        await _handle_stream_event(agent, event)
+    # Externalize base64 images in assistant/user events before storage
+    # so we don't bloat the DB with inline image data.
+    if event_type in ("assistant", "user"):
+        msg_data = event.get("message", {})
+        content = msg_data.get("content", [])
+        if content:
+            externalized = await sync_to_async(_externalize_media)(content)
+            # Mutate the event dict — this is our copy, not the relay's
+            event = {**event, "message": {**msg_data, "content": externalized}}
 
-
-async def _handle_system(agent: Agent, event: dict) -> None:
-    """
-    Handle system events: init (capabilities) and process_exit (relay synthetic).
-
-    system/init:
-        Upsert agent.capabilities from first init event per session.
-        Fields: tools, mcp_servers, model, claude_code_version.
-
-    system/process_exit:
-        Update agent.status based on exit code.
-        exit_code == 0 -> stopped (clean exit)
-        exit_code != 0 -> error (crash)
-
-    See: docs/ARCHITECTURE.md, "system/init", "system/process_exit"
-    """
-    subtype = event.get("subtype", "")
-
-    if subtype == "init":
-        update_fields = []
-
-        if not agent.capabilities:
-            agent.capabilities = {
-                "tools": event.get("tools", []),
-                "mcp_servers": event.get("mcp_servers", []),
-                "model": event.get("model", ""),
-                "version": event.get("claude_code_version", ""),
-            }
-            update_fields.append("capabilities")
-
-        # Update session_id from init event
-        session_id = event.get("session_id", "")
-        if session_id and session_id != agent.session_id:
-            agent.session_id = session_id
-            update_fields.append("session_id")
-
-        # permissionMode is NOT read from system/init because --resume
-        # can report a stale or default mode that overwrites the real
-        # value set by set_agent_mode().  The authoritative source is:
-        #   - set_agent_mode() -> writes permission_mode directly
-        # system/status events are accepted only when no pending_mode
-        # is in flight (see status handler below).
-
-        if update_fields:
-            await agent.asave(update_fields=update_fields)
-            await broadcast_agent_update(agent)
-
-    elif subtype == "status":
-        # system/status events can carry permissionMode. However, during a
-        # dashboard-initiated mode change, the dying Claude process may emit
-        # a status event with the OLD permission mode, racing with the new
-        # value set by set_agent_mode(). Guard: re-read the agent from DB
-        # and only accept the status event's value if no pending_mode is
-        # queued (meaning no dashboard-initiated change is in flight).
-        perm_mode = event.get("permissionMode", "")
-        if perm_mode and perm_mode != agent.permission_mode:
-            fresh = await Agent.objects.aget(id=agent.id)
-            if perm_mode != fresh.permission_mode and not fresh.pending_mode:
-                agent.permission_mode = perm_mode
-                await agent.asave(update_fields=["permission_mode"])
-                await broadcast_agent_update(agent)
-
-    elif subtype == "process_exit":
-        exit_code = event.get("exit_code", -1)
-        agent.status = AgentStatus.STOPPED if exit_code == 0 else AgentStatus.ERROR
-        agent.phase = ""
-        await agent.asave(update_fields=["status", "phase"])
-        await broadcast_agent_update(agent)
-        log.info(
-            "process_exit",
-            agent_id=str(agent.id),
-            exit_code=exit_code,
-        )
-
-
-@sync_to_async(thread_sensitive=False)
-def _atomic_upsert_parts(agent, message_id, defaults, new_parts, usage, stop_reason):
-    """Append content parts to an assistant Message under a row lock.
-
-    Prevents the read-modify-write race where concurrent batches both read
-    the same parts list, append different new_parts, and one save clobbers
-    the other's appended content.
-    """
-    with transaction.atomic():
-        message, created = Message.objects.get_or_create(
-            agent=agent,
-            message_id=message_id,
-            defaults=defaults,
-        )
-        # Re-fetch with lock — even on create, a concurrent batch may have
-        # already appended parts between our get_or_create and this lock.
-        message = Message.objects.select_for_update().get(id=message.id)
-        message.parts = (message.parts or []) + new_parts
-        if usage:
-            message.usage = usage
-        if stop_reason:
-            message.stop_reason = stop_reason
-        message.save(update_fields=["parts", "usage", "stop_reason", "updated_at"])
-    return message
-
-
-async def _handle_assistant(agent: Agent, event: dict) -> None:
-    """
-    Handle assistant events: upsert Message by message_id, APPEND content parts.
-
-    CRITICAL: Claude sends each content block as a separate event with the
-    same message_id (text first, then each tool_use individually). We must
-    APPEND parts, not replace — same pattern Crush uses with
-    AppendContent()/AddToolCall().
-
-    Field mapping:
-        message_id  <- event.message.id
-        session_id  <- event.session_id
-        role        <- "assistant"
-        model       <- event.message.model
-        parts       <- event.message.content[] (APPENDED)
-        usage       <- event.message.usage (overwritten — latest is most complete)
-        stop_reason <- event.message.stop_reason (overwritten when non-null)
-        parent_tool_use_id <- event.parent_tool_use_id
-
-    See: docs/ARCHITECTURE.md, "assistant event"
-    See: docs/ARCHITECTURE.md, "Streaming Callbacks"
-    """
-    msg_data = event.get("message", {})
-    message_id = msg_data.get("id", "")
-    if not message_id:
-        return
-
-    new_parts = await sync_to_async(_externalize_media)(msg_data.get("content", []))
-    usage = msg_data.get("usage")
-    stop_reason = msg_data.get("stop_reason")
-
-    # Atomic upsert — row lock prevents concurrent batches from clobbering
-    # each other's appended parts (read-modify-write race on JSONField).
-    message = await _atomic_upsert_parts(
+    # 1. Store verbatim — true event sourcing, no filtering, no transformation
+    stream_event = await StreamEvent.objects.acreate(
         agent=agent,
-        message_id=message_id,
-        defaults={
-            "session_id": event.get("session_id", ""),
-            "role": "assistant",
-            "model": msg_data.get("model", ""),
-            "parts": [],
-            "parent_tool_use_id": event.get("parent_tool_use_id") or "",
-        },
-        new_parts=new_parts,
-        usage=usage,
-        stop_reason=stop_reason,
+        session_id=session_id,
+        event_type=event_type,
+        message_id=_extract_message_id(event),
+        data=event,
     )
 
-    # Update agent status to running
+    # 2. Broadcast to dashboard subscribers
+    await broadcast_event(agent, stream_event)
+
+    # 3. Agent model side effects (materialized view updates)
+    # These update denormalized fields on Agent for fast dashboard reads.
+    # The StreamEvent log is the source of truth; these are just caches.
+    if event_type == "assistant":
+        await _maybe_set_running(agent)
+    elif event_type == "result":
+        await _handle_result(agent, event)
+    elif event_type == "system":
+        await _handle_system(agent, event)
+    elif event_type == "stream_event":
+        await _handle_phase(agent, event)
+
+
+async def _maybe_set_running(agent: Agent) -> None:
+    """Promote agent to RUNNING on first assistant event."""
     if agent.status != AgentStatus.RUNNING:
         agent.status = AgentStatus.RUNNING
         await agent.asave(update_fields=["status"])
         await broadcast_agent_update(agent)
 
-    await broadcast_stream_message(agent, message)
-
-
-async def _handle_user(agent: Agent, event: dict) -> None:
-    """
-    Handle user events: create Message for tool_result.
-
-    Each tool_result arrives as a separate event. Use the event's uuid
-    as message_id (not tool_use_id) for idempotency on relay retry.
-    get_or_create for safety.
-
-    Field mapping:
-        message_id  <- event.uuid (unique per event, idempotent on retry)
-        session_id  <- event.session_id
-        role        <- "user"
-        parts       <- event.message.content[] (tool_result content parts)
-
-    See: docs/ARCHITECTURE.md, "user event"
-    """
-    msg_data = event.get("message", {})
-    content = await sync_to_async(_externalize_media)(msg_data.get("content", []))
-    event_uuid = event.get("uuid", "")
-    if not event_uuid:
-        return
-
-    message, created = await Message.objects.aget_or_create(
-        agent=agent,
-        message_id=event_uuid,
-        defaults={
-            "session_id": event.get("session_id", ""),
-            "role": "user",
-            "parts": content,
-        },
-    )
-
-    if created:
-        await broadcast_stream_message(agent, message)
-
 
 async def _handle_result(agent: Agent, event: dict) -> None:
-    """
-    Handle result events: insert SessionResult per turn.
-
-    `result` fires per-turn with cumulative totals. Each turn gets its
-    own row so we have a full cost timeline for point-in-time display.
-
-    Field mapping:
-        is_error         <- event.is_error
-        total_cost_usd   <- event.total_cost_usd (cumulative across turns)
-        duration_ms      <- event.duration_ms (total wall time)
-        duration_api_ms  <- event.duration_api_ms (API time only)
-        num_turns        <- event.num_turns (conversation depth)
-        model_usage      <- event.modelUsage (per-model cost/token breakdown)
-        permission_denials <- event.permission_denials
-
-    See: docs/ARCHITECTURE.md, "result event"
-    """
+    """Insert SessionResult + update agent cost/status on turn completion."""
     session_id = event.get("session_id", "")
     if not session_id:
         return
@@ -319,34 +131,59 @@ async def _handle_result(agent: Agent, event: dict) -> None:
         permission_denials=event.get("permission_denials", []),
     )
 
-    # Update agent's running session cost, clear phase, and mark idle (turn complete)
     agent.session_cost_usd = event.get("total_cost_usd", 0)
     agent.status = AgentStatus.IDLE
     agent.phase = ""
     await agent.asave(update_fields=["session_cost_usd", "status", "phase"])
     await broadcast_agent_update(agent)
 
-    # Assign turn_number to messages from this session that don't have one yet
-    num_turns = event.get("num_turns", 1)
-    await Message.objects.filter(
-        agent=agent, session_id=session_id, turn_number=0
-    ).aupdate(turn_number=num_turns)
+
+async def _handle_system(agent: Agent, event: dict) -> None:
+    """Update agent state from system events (init, status, process_exit)."""
+    subtype = event.get("subtype", "")
+
+    if subtype == "init":
+        update_fields = []
+
+        if not agent.capabilities:
+            agent.capabilities = {
+                "tools": event.get("tools", []),
+                "mcp_servers": event.get("mcp_servers", []),
+                "model": event.get("model", ""),
+                "version": event.get("claude_code_version", ""),
+            }
+            update_fields.append("capabilities")
+
+        session_id = event.get("session_id", "")
+        if session_id and session_id != agent.session_id:
+            agent.session_id = session_id
+            update_fields.append("session_id")
+
+        if update_fields:
+            await agent.asave(update_fields=update_fields)
+            await broadcast_agent_update(agent)
+
+    elif subtype == "status":
+        # Update permission mode from Claude's status event
+        perm_mode = event.get("permissionMode", "")
+        if perm_mode and perm_mode != agent.permission_mode:
+            agent.permission_mode = perm_mode
+            await agent.asave(update_fields=["permission_mode"])
+            await broadcast_agent_update(agent)
+
+    elif subtype == "process_exit":
+        exit_code = event.get("exit_code", -1)
+        agent.status = AgentStatus.STOPPED if exit_code == 0 else AgentStatus.ERROR
+        agent.phase = ""
+        await agent.asave(update_fields=["status", "phase"])
+        await broadcast_agent_update(agent)
+        log.info("process_exit", agent_id=str(agent.id), exit_code=exit_code)
 
 
-async def _handle_stream_event(agent: Agent, event: dict) -> None:
-    """
-    Extract phase transitions from stream_event envelopes.
+async def _handle_phase(agent: Agent, event: dict) -> None:
+    """Extract phase transitions from stream_event envelopes.
 
-    stream_event wraps Anthropic SSE events from --include-partial-messages.
-    We only care about content_block_start (to detect thinking/responding/tool-input)
-    and message_stop (to detect tool execution phase).
-
-    Phase values:
-        thinking   — content_block_start with type=thinking|redacted_thinking
-        responding — content_block_start with type=text
-        tool-input — content_block_start with type=tool_use|server_tool_use|mcp_tool_use
-        tool-use   — message_stop (Claude finished, tools executing)
-
+    Phase values: thinking, responding, tool-input, tool-use.
     Only writes to DB on actual phase change to avoid spamming updates.
     """
     inner = event.get("event", {})
@@ -364,7 +201,6 @@ async def _handle_stream_event(agent: Agent, event: dict) -> None:
     elif inner_type == "message_stop":
         new_phase = "tool-use"
 
-    # Only write to DB on actual phase change
     if new_phase and new_phase != agent.phase:
         agent.phase = new_phase
         await agent.asave(update_fields=["phase"])

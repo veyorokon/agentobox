@@ -11,6 +11,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django_asgi_app = get_asgi_application()
 
 from agents.services.mcp_coord import mcp  # noqa: E402
+from agents.consumers import RelayConsumer  # noqa: E402
 from schema import schema  # noqa: E402
 from strawberry.channels.handlers.ws_handler import GraphQLWSConsumer  # noqa: E402
 
@@ -95,6 +96,12 @@ application = ProtocolTypeRouter(
                     re_path(
                         r"^graphql$",
                         LoggingGraphQLWSConsumer.as_asgi(schema=schema),
+                    ),
+                    # Relay WebSocket — bidirectional channel for stream events
+                    # and commands (replaces HTTP POST + piggyback pattern)
+                    re_path(
+                        r"^ws/relay/(?P<agent_id>[0-9a-f-]+)/$",
+                        RelayConsumer.as_asgi(),
                     ),
                 ]
             )

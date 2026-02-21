@@ -3,7 +3,7 @@
 import { useQuery, useSubscription } from "@apollo/client"
 import { useCallback, useRef } from "react"
 import { AGENT_FEED_QUERY, PROJECT_FEED_QUERY } from "@/lib/graphql/queries"
-import { TIMELINE_STREAM_SUBSCRIPTION } from "@/lib/graphql/subscriptions"
+import { EVENT_STREAM_SUBSCRIPTION } from "@/lib/graphql/subscriptions"
 import { FEED_ITEM_FIELDS } from "@/lib/graphql/fragments"
 import type { FeedItem, TimelineEntry } from "@/types"
 
@@ -46,6 +46,7 @@ function timelineToFeedItem(entry: TimelineEntry): FeedItem {
     toolUseId: (d.toolUseId as string) ?? null,
     senderName: (d.senderName as string) ?? null,
     targetAgentIds: (d.targetAgentIds as string[]) ?? null,
+    sessionResult: (d.sessionResult as FeedItem["sessionResult"]) ?? null,
   } as FeedItem & { __typename: string }
 }
 
@@ -87,12 +88,12 @@ export function useFeed(opts: {
   offsetRef.current = items.length
 
   // Subscribe to real-time timeline updates and merge into feed cache
-  useSubscription(TIMELINE_STREAM_SUBSCRIPTION, {
+  useSubscription(EVENT_STREAM_SUBSCRIPTION, {
     variables: { projectId: opts.projectId! },
     skip: !opts.projectId,
     onData: ({ client, data: subData }) => {
       const entry: TimelineEntry | undefined =
-        subData.data?.timelineStream
+        subData.data?.eventStream
       if (!entry) return
 
       // If viewing an agent feed, only include entries for that agent
@@ -100,30 +101,28 @@ export function useFeed(opts: {
 
       const feedItem = timelineToFeedItem(entry)
 
-      // Write the item into the normalized cache
-      client.cache.writeFragment({
-        fragment: FEED_ITEM_FIELDS,
-        data: feedItem,
-      })
+      // Append to the correct feed query's cached result.
+      // writeFragment inside the modifier returns a cache Reference that
+      // Apollo can track; the dedup check prevents duplicates.
+      const queryToUpdate = isAgentFeed ? AGENT_FEED_QUERY : PROJECT_FEED_QUERY
+      const queryVars = isAgentFeed
+        ? { agentId: opts.agentId, limit, offset: 0 }
+        : { projectId: opts.projectId, limit, offset: 0 }
 
-      // Append to the correct feed query result
-      const modifier = (existing: readonly any[] = [], { readField }: any) => {
-        // Deduplicate — don't add if already present
-        const alreadyExists = existing.some(
-          (ref: any) => readField("id", ref) === entry.id
-        )
-        if (alreadyExists) return existing
-
-        const newRef = client.cache.writeFragment({
-          fragment: FEED_ITEM_FIELDS,
-          data: feedItem,
-        })
-        return [...existing, newRef]
-      }
-
-      client.cache.modify({
-        fields: { [feedKey]: modifier } as any,
-      })
+      client.cache.updateQuery(
+        { query: queryToUpdate, variables: queryVars },
+        (prev: any) => {
+          if (!prev) return prev
+          const existing: any[] = prev[feedKey] ?? []
+          if (existing.some((item: any) => item.id === entry.id)) return prev
+          // Write the new item into the normalized cache
+          client.cache.writeFragment({
+            fragment: FEED_ITEM_FIELDS,
+            data: feedItem,
+          })
+          return { [feedKey]: [...existing, feedItem] }
+        },
+      )
     },
   })
 

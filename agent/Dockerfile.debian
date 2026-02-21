@@ -23,6 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && dbus-uuidgen > /etc/machine-id \
     && rm -rf /var/lib/apt/lists/*
 
+# --- Python websockets (relay WS transport) ---
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
+    && pip3 install --break-system-packages websockets \
+    && apt-get purge -y python3-pip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- Node.js ---
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \

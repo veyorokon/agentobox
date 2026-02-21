@@ -1,15 +1,15 @@
 """
 Inter-agent message delivery through the Agentobox backend.
 
-Messages are delivered to target agents via the pending_input (stdin)
-piggyback pattern. The MCP coordination server's teammate_message and
-teammate_broadcast tools call into this module directly.
+Messages are delivered to target agents via WebSocket relay push.
+The MCP coordination server's teammate_message and teammate_broadcast
+tools call into this module directly.
 
 Flow:
     1. Agent calls teammate_message MCP tool
     2. _deliver_to_stdin() formats message as stream-json input
-    3. Message enqueued in target agent's pending_input
-    4. Target relay picks up pending_input via piggyback response
+    3. StreamEvent created for feed visibility
+    4. Command pushed to relay via WebSocket
     5. Relay writes to Claude's stdin -> agent receives it immediately
 """
 
@@ -17,9 +17,9 @@ import uuid
 
 import structlog
 
-from agents.models import Agent, AgentStatus, Message
-from agents.services.broadcast import broadcast_agent_update, broadcast_stream_message
-from agents.services.comms import _atomic_enqueue
+from agents.models import Agent, AgentStatus, StreamEvent
+from agents.services.broadcast import broadcast_event
+from agents.services.comms import _push_to_relay
 
 log = structlog.get_logger("agents.interagent")
 
@@ -50,36 +50,31 @@ async def _handle_broadcast(
 
 
 async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> None:
-    """
-    Deliver an inter-agent message via pending_input (stdin).
+    """Deliver an inter-agent message via relay WebSocket push.
 
     Formats the message as a stream-json user input so the relay writes it
-    to Claude's stdin. Claude processes it immediately as a user turn.
-    The prefix identifies it as a team message so the agent knows the source.
+    to Claude's stdin. The prefix identifies it as a team message.
     """
     team_msg = f"[Team message from {sender_name}]: {content}"
     parts = [{"type": "text", "text": team_msg}]
 
-    # Store Message so the dashboard feed shows inbound team messages
-    msg_record = await Message.objects.acreate(
+    # Store as StreamEvent so the dashboard feed shows inbound team messages
+    stream_event = await StreamEvent.objects.acreate(
         agent=target,
-        message_id=f"team_{uuid.uuid4().hex[:16]}",
         session_id=target.session_id or "",
-        role="user",
-        parts=parts,
-        turn_number=0,
+        event_type="user",
+        message_id=f"team_{uuid.uuid4().hex[:16]}",
+        data={
+            "type": "user",
+            "message": {"role": "user", "content": parts},
+            "session_id": target.session_id or "",
+        },
     )
-    await broadcast_stream_message(target, msg_record)
+    await broadcast_event(target, stream_event)
 
-    # Build stream-json stdin input
+    # Push to relay via WebSocket
     input_msg = {
         "type": "user",
-        "message": {
-            "role": "user",
-            "content": parts,
-        },
+        "message": {"role": "user", "content": parts},
     }
-
-    # Atomic enqueue + wake idle agents
-    target = await _atomic_enqueue(str(target.id), input_msg)
-    await broadcast_agent_update(target)
+    await _push_to_relay(str(target.id), {"type": "input", "payload": input_msg})

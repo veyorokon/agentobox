@@ -6,7 +6,6 @@ from strawberry import ID
 from agents.graphql.auth import authorize_agent, authorize_project
 from agents.models import Agent
 from agents.graphql.types import (
-    AgentEventType,
     AgentType,
     FeedItemType,
     McpRegistryEntryType,
@@ -45,123 +44,67 @@ class AgentQuery:
             return None
 
     @strawberry.field
-    async def events(self, project_id: ID, info: strawberry.types.Info, limit: int = 100) -> list[AgentEventType]:
-        from agents.models import AgentEvent
-
-        await authorize_project(info, project_id)
-
-        return [
-            e async for e in AgentEvent.objects.filter(
-                agent__project_id=project_id
-            ).select_related("agent").order_by("-created_at")[:limit]
-        ]
-
-    @strawberry.field
     async def timeline(
         self, project_id: ID, info: strawberry.types.Info, limit: int = 200, offset: int = 0,
     ) -> list[TimelineEntryType]:
-        """
-        Unified timeline: Messages + AgentEvents for a project, sorted newest-first.
+        """Unified timeline from StreamEvent log, sorted newest-first.
 
-        Replaces the need to call per-agent message queries + separate events queries.
+        Single table source — no more merging Message + AgentEvent.
         """
-        from agents.models import AgentEvent, Message
+        from agents.models import StreamEvent
 
         await authorize_project(info, project_id)
 
         fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
 
-        # Run both queries concurrently
-        messages, events = await asyncio.gather(
-            _collect_qs(
-                Message.objects.filter(
-                    agent__project_id=project_id,
-                ).select_related("agent").order_by("-created_at")[:fetch_limit]
-            ),
-            _collect_qs(
-                AgentEvent.objects.filter(
-                    agent__project_id=project_id,
-                ).select_related("agent").order_by("-created_at")[:fetch_limit]
-            ),
+        events = await _collect_qs(
+            StreamEvent.objects.filter(
+                agent__project_id=project_id,
+            ).select_related("agent").order_by("-created_at")[:fetch_limit]
         )
 
         entries: list[TimelineEntryType] = []
-        for m in messages:
-            entries.append(TimelineEntryType(
-                id=f"msg_{m.id}",
-                entry_type="message",
-                agent_id=str(m.agent_id),
-                agent_name=m.agent.name,
-                summary=None,
-                data={
-                    "role": m.role,
-                    "parts": m.parts,
-                    "message_id": m.message_id,
-                    "turn_number": m.turn_number,
-                    "session_id": m.session_id,
-                },
-                created_at=m.created_at,
-            ))
         for e in events:
             entries.append(TimelineEntryType(
                 id=f"evt_{e.id}",
                 entry_type=e.event_type,
                 agent_id=str(e.agent_id),
                 agent_name=e.agent.name,
-                summary=e.summary or None,
+                summary=None,
                 data=e.data,
                 created_at=e.created_at,
             ))
 
-        entries.sort(key=lambda x: x.created_at, reverse=True)
         return entries[offset:offset + limit]
 
     @strawberry.field
     async def agent_feed(
         self, agent_id: ID, info: strawberry.types.Info, limit: int = 200, offset: int = 0,
     ) -> list[FeedItemType]:
-        """
-        Processed activity feed for a single agent.
+        """Processed activity feed for a single agent.
 
-        Transforms raw Messages + AgentEvents into typed FeedItemType items
-        matching the v2 dashboard's feed shape. Unlike the raw `timeline` query
-        (which returns unprocessed Messages/Events), this classifies each item
-        by kind (agent-text, activity, question, plan, etc.), parses tool
-        inputs/results into structured fields, and injects point-in-time
-        cumulative cost from the SessionResult timeline.
-
-        Cost model: cumulative_cost_usd on each item is the agent's running
-        total at that point in time, derived from per-turn SessionResult rows.
-        For aggregate project cost, sum across agents on the frontend.
+        Reads from StreamEvent + SessionResult only (2 tables, was 3).
         """
-        from agents.models import AgentEvent, Message, SessionResult
-        from agents.services.feed_transform import messages_to_feed
+        from agents.models import SessionResult, StreamEvent
+        from agents.services.feed_transform import stream_events_to_feed
 
         agent = await authorize_agent(info, agent_id)
         fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
 
-        # Run all three queries concurrently instead of sequentially
-        messages, events, session_results = await asyncio.gather(
+        events, session_results = await asyncio.gather(
             _collect_qs(
-                Message.objects.filter(
-                    agent=agent,
-                ).select_related("agent").order_by("created_at")[:fetch_limit]
-            ),
-            _collect_qs(
-                AgentEvent.objects.filter(
+                StreamEvent.objects.filter(
                     agent=agent,
                 ).select_related("agent").order_by("created_at")[:fetch_limit]
             ),
             _collect_qs(
                 SessionResult.objects.filter(
                     agent=agent,
-                ).only(
-                    "agent_id", "total_cost_usd", "created_at",
                 ).order_by("created_at")[:fetch_limit]
             ),
         )
 
-        feed = messages_to_feed(messages, events, session_results)
+        feed = stream_events_to_feed(events, session_results)
         return feed[offset:offset + limit]
 
     @strawberry.field
@@ -169,35 +112,27 @@ class AgentQuery:
         self, project_id: ID, info: strawberry.types.Info, limit: int = 500, offset: int = 0,
     ) -> list[FeedItemType]:
         """Full activity feed for all agents in a project, oldest first."""
-        from agents.models import AgentEvent, Message, SessionResult
-        from agents.services.feed_transform import messages_to_feed
+        from agents.models import SessionResult, StreamEvent
+        from agents.services.feed_transform import stream_events_to_feed
 
         await authorize_project(info, project_id)
 
         fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
 
-        # Run all three queries concurrently instead of sequentially
-        messages, events, session_results = await asyncio.gather(
+        events, session_results = await asyncio.gather(
             _collect_qs(
-                Message.objects.filter(
-                    agent__project_id=project_id,
-                ).select_related("agent").order_by("created_at")[:fetch_limit]
-            ),
-            _collect_qs(
-                AgentEvent.objects.filter(
+                StreamEvent.objects.filter(
                     agent__project_id=project_id,
                 ).select_related("agent").order_by("created_at")[:fetch_limit]
             ),
             _collect_qs(
                 SessionResult.objects.filter(
                     agent__project_id=project_id,
-                ).only(
-                    "agent_id", "total_cost_usd", "created_at",
                 ).order_by("created_at")[:fetch_limit]
             ),
         )
 
-        feed = messages_to_feed(messages, events, session_results)
+        feed = stream_events_to_feed(events, session_results)
         return feed[offset:offset + limit]
 
     @strawberry.field
@@ -220,7 +155,6 @@ class AgentQuery:
 
     @strawberry.field
     async def project_secrets(self, project_id: ID, info: strawberry.types.Info) -> list[ProjectSecretType]:
-        """List project secrets (key names and scoping only, never values)."""
         from agents.models import ProjectSecret
 
         await authorize_project(info, project_id)

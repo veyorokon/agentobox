@@ -9,7 +9,8 @@ from django.db import transaction
 from agents.models import Agent, AgentStatus
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
-from agents.services.broadcast import broadcast_agent_event, broadcast_agent_update
+from agents.models import StreamEvent
+from agents.services.broadcast import broadcast_agent_update, broadcast_event
 from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
 from agents.utils import sanitize_name as _sanitize_name
 
@@ -87,10 +88,11 @@ async def create_agent(
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(
-        agent, "created", {"name": name, "runtime": runtime_name},
-        summary=f"{name} created",
+    evt = await StreamEvent.objects.acreate(
+        agent=agent, session_id="", event_type="created",
+        data={"name": name, "runtime": runtime_name},
     )
+    await broadcast_event(agent, evt)
 
     op_log.info("agent_created", agent_id=str(agent.id))
 
@@ -110,7 +112,10 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
     agent.relay_token = relay_token
-    agent.save(update_fields=["sandbox_id", "vnc_url", "status", "team_name", "parent_session_id", "relay_token", "updated_at"])
+    agent.save(update_fields=[
+        "sandbox_id", "vnc_url", "status", "team_name",
+        "parent_session_id", "relay_token", "updated_at",
+    ])
     return agent
 
 
@@ -358,10 +363,11 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         try:
             agent = await _save_failed(agent_id)
             await broadcast_agent_update(agent)
-            await broadcast_agent_event(
-                agent, "provision_failed", {"error": "Container provisioning failed"},
-                summary=f"{agent.name} failed to provision",
+            evt = await StreamEvent.objects.acreate(
+                agent=agent, session_id="", event_type="provision_failed",
+                data={"error": "Container provisioning failed"},
             )
+            await broadcast_event(agent, evt)
         except Exception:
             op_log.exception("provision_cleanup_db_failed", agent_id=agent_id)
     finally:
@@ -400,7 +406,10 @@ async def kill_agent(agent_id: str) -> bool:
     await agent.asave(update_fields=["status"])
 
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(agent, "stopped", {}, summary=f"{agent.name} stopped")
+    evt = await StreamEvent.objects.acreate(
+        agent=agent, session_id=agent.session_id or "", event_type="stopped", data={},
+    )
+    await broadcast_event(agent, evt)
 
     op_log.info("agent_killed")
     clear_agent_context()
@@ -442,10 +451,11 @@ async def remove_agent(agent_id: str) -> bool:
     agent_name = agent.name
 
     # Broadcast before delete — the event FK needs the agent row to exist
-    await broadcast_agent_event(
-        agent, "removed", {"agent_id": agent_id},
-        summary=f"{agent_name} removed",
+    evt = await StreamEvent.objects.acreate(
+        agent=agent, session_id=agent.session_id or "", event_type="removed",
+        data={"agent_id": agent_id},
     )
+    await broadcast_event(agent, evt)
 
     await agent.adelete()
 
@@ -488,17 +498,11 @@ def _atomic_reset_for_restart(agent_id):
         role = config.get("role", agent.role)
 
         # Reset agent state to DEPLOYING — clear stale session data.
-        # pending_input is cleared because old messages belong to the previous
-        # session and have no context in the new one. The caller (e.g.
-        # broadcast_message) enqueues the new message AFTER restart returns.
         agent.status = AgentStatus.DEPLOYING
         agent.sandbox_id = ""
         agent.vnc_url = ""
         agent.session_id = ""
         agent.relay_token = ""
-        agent.last_heartbeat_at = None
-        agent.pending_input = []
-        agent.pending_signal = ""
         agent.runtime = runtime_name
         agent.model = model
         agent.mcp_servers = mcp_servers
@@ -508,7 +512,6 @@ def _atomic_reset_for_restart(agent_id):
         agent.role = role
         agent.save(update_fields=[
             "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-            "last_heartbeat_at", "pending_input", "pending_signal",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "updated_at",
         ])
@@ -571,10 +574,11 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    await broadcast_agent_event(
-        agent, "restarted", {"agent_id": agent_id},
-        summary=f"{agent.name} restarted",
+    evt = await StreamEvent.objects.acreate(
+        agent=agent, session_id=agent.session_id or "", event_type="restarted",
+        data={"agent_id": agent_id},
     )
+    await broadcast_event(agent, evt)
 
     op_log.info("agent_reset_complete", agent_id=agent_id)
 
