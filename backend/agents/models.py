@@ -136,6 +136,9 @@ class AgentEvent(models.Model):
 
     class Meta:
         ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["agent", "created_at"]),
+        ]
 
     def __str__(self):
         return f"{self.event_type} → {self.agent.name} ({self.created_at:%H:%M})"
@@ -229,6 +232,9 @@ class SessionResult(models.Model):
 
     class Meta:
         ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["agent", "created_at"]),
+        ]
 
     def __str__(self):
         return f"session {self.session_id[:12]} ${self.total_cost_usd} → {self.agent.name}"

@@ -33,7 +33,7 @@ Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before
 ## Architecture
 
 - **backend/**: Django 6.0 + Strawberry GraphQL + Daphne (all environments)
-- **dashboard/**: Next.js + urql + Zustand + augmented-ui
+- **dashboard/**: Next.js + Apollo Client + Zustand + Tailwind CSS v4
 - **agent/**: Alpine + s6-overlay image with AwesomeWM, Firefox, noVNC, Claude Code hooks. Uses `rootfs/` convention — all container files under `agent/rootfs/` at their actual filesystem paths.
 - **Runtimes**: Modal (serverless) or Docker (local)
 

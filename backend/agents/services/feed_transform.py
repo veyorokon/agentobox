@@ -31,10 +31,6 @@ from agents.graphql.types import (
 if TYPE_CHECKING:
     from agents.models import AgentEvent, Message, SessionResult
 
-# Tool names handled specially (not grouped into ACTIVITY)
-_SPECIAL_TOOLS = {"AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "TaskCreate", "TaskUpdate"}
-
-
 def messages_to_feed(
     messages: list[Message],
     events: list[AgentEvent],
