@@ -31,8 +31,8 @@ log = structlog.get_logger("agents.relay_ws")
 class RelayConsumer(AsyncJsonWebsocketConsumer):
     """Bidirectional WebSocket channel between agent relay and backend.
 
-    Auth: relay sends the agent's relay_token as a query param on connect.
-    The token was generated during provisioning and stored on the Agent row.
+    Auth: relay sends Authorization header on WS upgrade (Bearer <relay_token>).
+    Same pattern as HTTP auth — token never appears in URLs or logs.
 
     Groups:
         relay_{agent_id} — backend pushes commands to this group,
@@ -40,27 +40,34 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
     """
 
     async def connect(self):
+        import hmac
+        from agents.models import Agent
+
         self.agent_id = str(self.scope["url_route"]["kwargs"]["agent_id"])
         self.group_name = f"relay_{self.agent_id}"
 
-        # Auth: validate relay token from query string
-        from agents.models import Agent
-        import hmac
-        from urllib.parse import parse_qs
-
-        query_string = self.scope.get("query_string", b"").decode()
-        params = parse_qs(query_string)
-        token = params.get("token", [""])[0]
+        # Extract Bearer token from Authorization header.
+        # scope["headers"] is a list of (name, value) byte tuples from the
+        # HTTP upgrade request — standard pattern, no query string needed.
+        token = ""
+        for name, value in self.scope.get("headers", []):
+            if name == b"authorization":
+                auth_value = value.decode()
+                if auth_value.startswith("Bearer "):
+                    token = auth_value[7:]
+                break
 
         try:
             agent = await Agent.objects.aget(id=self.agent_id)
         except Agent.DoesNotExist:
             log.warning("relay_ws_reject", reason="agent_not_found", agent_id=self.agent_id)
+            await self.accept()
             await self.close(code=4004)
             return
 
-        if not agent.relay_token or not hmac.compare_digest(token, agent.relay_token):
+        if not agent.relay_token or not token or not hmac.compare_digest(token, agent.relay_token):
             log.warning("relay_ws_reject", reason="bad_token", agent_id=self.agent_id)
+            await self.accept()
             await self.close(code=4001)
             return
 

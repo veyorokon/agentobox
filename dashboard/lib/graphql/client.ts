@@ -136,22 +136,28 @@ const httpLink = new HttpLink({
   uri: GRAPHQL_HTTP_URL,
 })
 
+// WS client factory — creates a fresh graphql-ws client.
+// Called on init and again after logout to replace the disposed client.
+function createWsClient(): Client {
+  return createClient({
+    url: GRAPHQL_WS_URL,
+    connectionParams: () => {
+      const token = getToken()
+      return token ? { Authorization: `Bearer ${token}` } : {}
+    },
+    retryAttempts: 20,
+    shouldRetry: () => true,
+    keepAlive: 10_000,
+  })
+}
+
 // Export wsClient so it can be disposed on logout / token change
 export let wsClient: Client | null = null
 
 const wsLink =
   typeof window !== "undefined"
     ? (() => {
-        wsClient = createClient({
-          url: GRAPHQL_WS_URL,
-          connectionParams: () => {
-            const token = getToken()
-            return token ? { Authorization: `Bearer ${token}` } : {}
-          },
-          retryAttempts: 20,
-          shouldRetry: () => true,
-          keepAlive: 10_000,
-        })
+        wsClient = createWsClient()
         return new GraphQLWsLink(wsClient)
       })()
     : null
@@ -192,6 +198,13 @@ export async function resetApolloClient() {
     wsClient.dispose()
   }
   await apolloClient.clearStore()
+  // Hard reload to recreate all module-level singletons.
+  // GraphQLWsLink holds a reference to the original wsClient — once disposed,
+  // it rejects new subscriptions. A page reload is the only clean way to
+  // get a fresh client without a lazy-init refactor.
+  if (typeof window !== "undefined") {
+    window.location.reload()
+  }
 }
 
 export default apolloClient

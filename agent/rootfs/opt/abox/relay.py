@@ -5,7 +5,8 @@ abox-relay: In-container relay process for Claude Code stream-json integration.
 Spawns Claude with --output-format stream-json, reads structured events from
 stdout, and sends them to the Agentobox backend over WebSocket.
 
-    WebSocket (ws://backend/ws/relay/<agent_id>/?token=<relay_token>):
+    WebSocket (ws://backend/ws/relay/<agent_id>/):
+        auth:       Authorization header on WS upgrade (Bearer <relay_token>)
         upstream:   every stdout line from Claude → ws.send(json) verbatim
         downstream: commands from backend (input, signal, mode) → route to stdin/process
 
@@ -30,6 +31,7 @@ import logging
 import os
 import signal
 import sys
+from urllib.parse import urlparse, urlunparse
 
 import websockets
 
@@ -83,7 +85,7 @@ def build_claude_cmd(resume_session_id: str = "", permission_mode: str = "") -> 
     agent_name = os.environ.get("AGENT_NAME", "")
     team_name = os.environ.get("TEAM_NAME", "")
     parent_session_id = os.environ.get("PARENT_SESSION_ID", "")
-    model = os.environ.get("CLAUDE_MODEL", "claude-opus-4-6")
+    model = os.environ.get("CLAUDE_MODEL", "")
 
     if agent_name and team_name:
         cmd.extend([
@@ -122,15 +124,30 @@ class WSTransport:
         self._reconnect_delay = WS_RECONNECT_DELAY_S
 
     def _ws_url(self) -> str:
-        """Build WS URL from HTTP callback URL."""
-        base = CALLBACK_URL.replace("http://", "ws://").replace("https://", "wss://")
-        return f"{base}/ws/relay/{AGENT_ID}/?token={RELAY_AUTH_TOKEN}"
+        """Build WS URL from HTTP callback URL.
+
+        Properly swaps scheme via urlparse rather than naive string replace.
+        """
+        parsed = urlparse(CALLBACK_URL)
+        ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+        ws_parsed = parsed._replace(
+            scheme=ws_scheme,
+            path=f"/ws/relay/{AGENT_ID}/",
+        )
+        return urlunparse(ws_parsed)
 
     async def connect(self) -> bool:
-        """Connect to the backend WS endpoint. Returns True on success."""
+        """Connect to the backend WS endpoint with Authorization header.
+
+        Token is sent as an HTTP header on the WS upgrade request — same
+        pattern as REST auth. Never appears in URLs, logs, or proxy traces.
+        """
         try:
             self.ws = await websockets.connect(
                 self._ws_url(),
+                additional_headers={
+                    "Authorization": f"Bearer {RELAY_AUTH_TOKEN}",
+                },
                 ping_interval=20,
                 ping_timeout=10,
             )

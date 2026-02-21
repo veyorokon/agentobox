@@ -89,7 +89,7 @@ export function useFeed(opts: {
 
   // Subscribe to real-time timeline updates and merge into feed cache
   useSubscription(EVENT_STREAM_SUBSCRIPTION, {
-    variables: { projectId: opts.projectId! },
+    variables: { projectId: opts.projectId ?? "" },
     skip: !opts.projectId,
     onData: ({ client, data: subData }) => {
       const entry: TimelineEntry | undefined =
