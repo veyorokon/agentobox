@@ -1,3 +1,5 @@
+import asyncio
+
 import strawberry
 from strawberry import ID
 
@@ -14,6 +16,11 @@ from agents.graphql.types import (
 )
 
 MAX_TIMELINE_FETCH = 500
+
+
+async def _collect_qs(qs):
+    """Materialize an async Django queryset into a list."""
+    return [obj async for obj in qs]
 
 
 @strawberry.type
@@ -64,17 +71,19 @@ class AgentQuery:
 
         fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
 
-        messages = [
-            m async for m in Message.objects.filter(
-                agent__project_id=project_id,
-            ).select_related("agent").order_by("-created_at")[:fetch_limit]
-        ]
-
-        events = [
-            e async for e in AgentEvent.objects.filter(
-                agent__project_id=project_id,
-            ).select_related("agent").order_by("-created_at")[:fetch_limit]
-        ]
+        # Run both queries concurrently
+        messages, events = await asyncio.gather(
+            _collect_qs(
+                Message.objects.filter(
+                    agent__project_id=project_id,
+                ).select_related("agent").order_by("-created_at")[:fetch_limit]
+            ),
+            _collect_qs(
+                AgentEvent.objects.filter(
+                    agent__project_id=project_id,
+                ).select_related("agent").order_by("-created_at")[:fetch_limit]
+            ),
+        )
 
         entries: list[TimelineEntryType] = []
         for m in messages:
@@ -130,21 +139,27 @@ class AgentQuery:
 
         agent = await authorize_agent(info, agent_id)
         fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
-        messages = [
-            m async for m in Message.objects.filter(
-                agent=agent,
-            ).select_related("agent").order_by("created_at")[:fetch_limit]
-        ]
-        events = [
-            e async for e in AgentEvent.objects.filter(
-                agent=agent,
-            ).select_related("agent").order_by("created_at")[:fetch_limit]
-        ]
-        session_results = [
-            sr async for sr in SessionResult.objects.filter(
-                agent=agent,
-            ).order_by("created_at")[:fetch_limit]
-        ]
+
+        # Run all three queries concurrently instead of sequentially
+        messages, events, session_results = await asyncio.gather(
+            _collect_qs(
+                Message.objects.filter(
+                    agent=agent,
+                ).select_related("agent").order_by("created_at")[:fetch_limit]
+            ),
+            _collect_qs(
+                AgentEvent.objects.filter(
+                    agent=agent,
+                ).select_related("agent").order_by("created_at")[:fetch_limit]
+            ),
+            _collect_qs(
+                SessionResult.objects.filter(
+                    agent=agent,
+                ).only(
+                    "agent_id", "total_cost_usd", "created_at",
+                ).order_by("created_at")[:fetch_limit]
+            ),
+        )
 
         feed = messages_to_feed(messages, events, session_results)
         return feed[offset:offset + limit]
@@ -160,21 +175,27 @@ class AgentQuery:
         await authorize_project(info, project_id)
 
         fetch_limit = min(limit + offset, MAX_TIMELINE_FETCH)
-        messages = [
-            m async for m in Message.objects.filter(
-                agent__project_id=project_id,
-            ).select_related("agent").order_by("created_at")[:fetch_limit]
-        ]
-        events = [
-            e async for e in AgentEvent.objects.filter(
-                agent__project_id=project_id,
-            ).select_related("agent").order_by("created_at")[:fetch_limit]
-        ]
-        session_results = [
-            sr async for sr in SessionResult.objects.filter(
-                agent__project_id=project_id,
-            ).order_by("created_at")[:fetch_limit]
-        ]
+
+        # Run all three queries concurrently instead of sequentially
+        messages, events, session_results = await asyncio.gather(
+            _collect_qs(
+                Message.objects.filter(
+                    agent__project_id=project_id,
+                ).select_related("agent").order_by("created_at")[:fetch_limit]
+            ),
+            _collect_qs(
+                AgentEvent.objects.filter(
+                    agent__project_id=project_id,
+                ).select_related("agent").order_by("created_at")[:fetch_limit]
+            ),
+            _collect_qs(
+                SessionResult.objects.filter(
+                    agent__project_id=project_id,
+                ).only(
+                    "agent_id", "total_cost_usd", "created_at",
+                ).order_by("created_at")[:fetch_limit]
+            ),
+        )
 
         feed = messages_to_feed(messages, events, session_results)
         return feed[offset:offset + limit]

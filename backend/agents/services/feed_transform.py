@@ -16,6 +16,7 @@ and reads from input/result directly.
 from __future__ import annotations
 
 import re
+from heapq import merge as heapmerge
 from typing import TYPE_CHECKING
 
 from agents.graphql.types import (
@@ -39,9 +40,16 @@ def messages_to_feed(
     events: list[AgentEvent],
     session_results: list[SessionResult],
 ) -> list[FeedItemType]:
-    """Convert raw Messages + AgentEvents into sorted FeedItemType list."""
+    """Convert raw Messages + AgentEvents into sorted FeedItemType list.
 
-    # Step 1: Build tool_result index from user-role messages
+    Both ``messages`` and ``events`` must arrive pre-sorted by ``created_at``
+    ascending (the DB queries already guarantee this).  Instead of
+    concatenating into one list and calling ``list.sort()``, we process each
+    source independently (preserving order) then merge the two sorted
+    sequences in O(n+m) via ``heapq.merge``.
+    """
+
+    # ── Step 1: Build tool_result index from user-role messages ──
     tool_results: dict[str, dict] = {}
     for msg in messages:
         if msg.role != "user":
@@ -53,25 +61,25 @@ def messages_to_feed(
                     "is_error": part.get("is_error", False),
                 }
 
-    # Step 2: Process assistant messages
-    items: list[FeedItemType] = []
+    # ── Step 2: Process messages into feed items (preserves input order) ──
+    msg_items: list[FeedItemType] = []
     task_subjects: dict[str, tuple[str, str]] = {}  # tool_use_id → (subject, activeForm)
     seen_broadcasts: set[str] = set()  # broadcast_id dedup
     for msg in messages:
         if msg.role == "user":
-            # Check for user text messages (not tool results)
-            _process_user_message(msg, items, seen_broadcasts)
+            _process_user_message(msg, msg_items, seen_broadcasts)
         elif msg.role == "assistant":
-            _process_assistant_message(msg, tool_results, items, task_subjects)
+            _process_assistant_message(msg, tool_results, msg_items, task_subjects)
 
-    # Step 3: Process AgentEvents
+    # ── Step 3: Process AgentEvents into feed items (preserves input order) ──
+    evt_items: list[FeedItemType] = []
     for event in events:
-        _process_event(event, items)
+        _process_event(event, evt_items)
 
-    # Step 4: Sort by timestamp (oldest first)
-    items.sort(key=lambda x: x.timestamp)
+    # ── Step 4: Merge two pre-sorted streams in O(n+m) ──
+    items = list(heapmerge(msg_items, evt_items, key=lambda x: x.timestamp))
 
-    # Step 5: Merge consecutive ACTIVITY items from the same agent
+    # ── Step 5: Merge consecutive ACTIVITY items from the same agent ──
     merged: list[FeedItemType] = []
     for item in items:
         if (
@@ -102,8 +110,11 @@ def messages_to_feed(
             collapsed.append(item)
     items = collapsed
 
-    # Step 7: Inject point-in-time cumulative costs from SessionResult timeline
+    # ── Step 7: Inject point-in-time cumulative costs from SessionResult timeline ──
     _inject_costs(items, session_results)
+
+    # ── Step 8: Attach session result to TASK_END items ──
+    _attach_session_results(items, session_results)
 
     return items
 
@@ -139,6 +150,37 @@ def _inject_costs(
         # Project-wide cost = sum of all agents' latest costs
         if latest_cost:
             item.cumulative_cost_usd = round(sum(latest_cost.values()), 2)
+
+
+def _attach_session_results(
+    items: list[FeedItemType], session_results: list[SessionResult],
+) -> None:
+    """Attach the latest SessionResult to TASK_END feed items.
+
+    For each TASK_END item, finds the most recent SessionResult for that
+    agent at or before the item's timestamp. This powers the ResultCard
+    in the dashboard showing cost, duration, turns, and model usage.
+    """
+    if not session_results:
+        return
+
+    # Index session results by agent_id, sorted by created_at desc
+    by_agent: dict[str, list[SessionResult]] = {}
+    for sr in session_results:
+        aid = str(sr.agent_id)
+        by_agent.setdefault(aid, []).append(sr)
+    for srs in by_agent.values():
+        srs.sort(key=lambda sr: sr.created_at, reverse=True)
+
+    for item in items:
+        if item.kind != FeedItemKind.TASK_END:
+            continue
+        agent_srs = by_agent.get(item.agent_id, [])
+        # Find the latest SR at or before this item's timestamp
+        for sr in agent_srs:
+            if sr.created_at <= item.timestamp:
+                item.session_result = sr  # type: ignore[assignment]
+                break
 
 
 def _process_user_message(

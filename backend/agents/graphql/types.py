@@ -57,6 +57,30 @@ class QuestionAnswerType:
     other_text: str | None = None
 
 
+@strawberry_django.type(models.SessionResult)
+class SessionResultType:
+    """
+    GraphQL type for session cost/usage from Claude Code's result events.
+
+    See: docs/ARCHITECTURE.md, "result event"
+    """
+    id: auto
+    session_id: auto
+    is_error: auto
+    total_cost_usd: auto
+    duration_ms: auto
+    duration_api_ms: auto
+    num_turns: auto
+    model_usage: auto
+    permission_denials: auto
+    created_at: auto
+    updated_at: auto
+
+    @strawberry.field
+    def agent_id(self) -> str:
+        return str(self.agent_id)  # type: ignore[return-value]
+
+
 @strawberry.type
 class FeedItemType:
     """
@@ -75,7 +99,7 @@ class FeedItemType:
         MEMORY        — memory_content (CLAUDE.md edits)
         PLAN          — plan_status, plan_summary, plan_steps
         TASK_START    — task_divider_subject, task_divider_id
-        TASK_END      — task_divider_subject, task_divider_id
+        TASK_END      — task_divider_subject, task_divider_id, session_result
         TEAM_MESSAGE  — text, sender_name (agent_name = recipient)
         SYSTEM        — text
 
@@ -109,6 +133,7 @@ class FeedItemType:
     tool_use_id: str | None = None
     sender_name: str | None = None
     target_agent_ids: list[str] | None = None
+    session_result: SessionResultType | None = None
 
 
 
@@ -172,30 +197,6 @@ class MessageType:
     parent_tool_use_id: auto
     stop_reason: auto
     turn_number: auto
-    created_at: auto
-    updated_at: auto
-
-    @strawberry.field
-    def agent_id(self) -> str:
-        return str(self.agent_id)  # type: ignore[return-value]
-
-
-@strawberry_django.type(models.SessionResult)
-class SessionResultType:
-    """
-    GraphQL type for session cost/usage from Claude Code's result events.
-
-    See: docs/ARCHITECTURE.md, "result event"
-    """
-    id: auto
-    session_id: auto
-    is_error: auto
-    total_cost_usd: auto
-    duration_ms: auto
-    duration_api_ms: auto
-    num_turns: auto
-    model_usage: auto
-    permission_denials: auto
     created_at: auto
     updated_at: auto
 

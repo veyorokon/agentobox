@@ -4,7 +4,7 @@ import { Menu } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
 import { formatModelName } from "@/lib/format"
 import { Button } from "@/components/ui/button"
-import { AgentActions, type AgentActionsProps } from "@/components/layout/agent-actions"
+import { AgentActions } from "@/components/layout/agent-actions"
 import type { Agent } from "@/types"
 
 type AgentActionHandlers = {
@@ -27,6 +27,7 @@ type HeaderProps = {
 
 const statusColors: Record<string, string> = {
   running: "bg-success-000",
+  idle: "bg-accent-secondary-000",
   waiting: "bg-warning-000",
   error: "bg-danger-000",
   stopped: "bg-text-400",

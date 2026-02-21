@@ -84,6 +84,20 @@ export const FEED_ITEM_FIELDS = gql`
     toolUseId
     senderName
     targetAgentIds
+    sessionResult {
+      id
+      sessionId
+      isError
+      totalCostUsd
+      durationMs
+      durationApiMs
+      numTurns
+      modelUsage
+      permissionDenials
+      createdAt
+      updatedAt
+      agentId
+    }
   }
 `
 

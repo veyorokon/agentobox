@@ -10,6 +10,7 @@ import {
   ApolloLink,
   HttpLink,
   InMemoryCache,
+  Observable,
   split,
 } from "@apollo/client"
 import { onError } from "@apollo/client/link/error"
@@ -85,6 +86,52 @@ const errorLink = onError(({ graphQLErrors, networkError }) => {
   }
 })
 
+
+const loggingLink =
+  process.env.NODE_ENV !== "production"
+    ? new ApolloLink((operation, forward) => {
+        const definition = getMainDefinition(operation.query)
+        const opType =
+          definition.kind === "OperationDefinition"
+            ? definition.operation
+            : "unknown"
+        const opName = operation.operationName || "anonymous"
+
+        if (opType === "subscription") {
+          console.debug(`[GQL] ${opType} ${opName} started`)
+          return new Observable((observer) => {
+            const sub = forward(operation).subscribe({
+              next: (result) => {
+                console.debug(`[GQL] ${opType} ${opName} data received`)
+                observer.next(result)
+              },
+              error: (err) => {
+                console.debug(`[GQL] ${opType} ${opName} error`)
+                observer.error(err)
+              },
+              complete: () => {
+                console.debug(`[GQL] ${opType} ${opName} completed`)
+                observer.complete()
+              },
+            })
+            return () => {
+              console.debug(`[GQL] ${opType} ${opName} unsubscribed`)
+              sub.unsubscribe()
+            }
+          })
+        }
+
+        const start = performance.now()
+        console.debug(`[GQL] ${opType} ${opName} started`)
+        return forward(operation).map((result) => {
+          const duration = Math.round(performance.now() - start)
+          console.debug(`[GQL] ${opType} ${opName} completed in ${duration}ms`)
+          return result
+        })
+      })
+    : // In production, pass through without logging
+      new ApolloLink((operation, forward) => forward(operation))
+
 const httpLink = new HttpLink({
   uri: GRAPHQL_HTTP_URL,
 })
@@ -123,9 +170,9 @@ const splitLink = wsLink
     )
   : httpLink
 
-// Link chain: errorLink first so transport errors bubble up through it
+// Link chain: errorLink → loggingLink → authLink → splitLink
 const apolloClient = new ApolloClient({
-  link: ApolloLink.from([errorLink, authLink, splitLink]),
+  link: ApolloLink.from([errorLink, loggingLink, authLink, splitLink]),
   cache: new InMemoryCache({
     typePolicies: {
       AgentType: { keyFields: ["id"] },
