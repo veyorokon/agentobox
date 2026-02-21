@@ -3,15 +3,17 @@
 import { useRef, useEffect, useCallback } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { FeedItemRouter } from "@/components/feed/feed-item"
+import { EmptyFeed } from "@/components/feed/empty-feed"
 import type { FeedItem } from "@/types"
 
 type FeedContainerProps = {
   items: FeedItem[]
   loading?: boolean
   onLoadMore?: () => void
+  hasAgents?: boolean
 }
 
-export function FeedContainer({ items, loading, onLoadMore }: FeedContainerProps) {
+export function FeedContainer({ items, loading, onLoadMore, hasAgents = false }: FeedContainerProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const isScrollLockedRef = useRef(true)
@@ -72,11 +74,7 @@ export function FeedContainer({ items, loading, onLoadMore }: FeedContainerProps
   }, [onLoadMore])
 
   if (items.length === 0 && !loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <span className="text-text-400 text-sm">No messages yet</span>
-      </div>
-    )
+    return <EmptyFeed hasAgents={hasAgents} />
   }
 
   const virtualItems = virtualizer.getVirtualItems()

@@ -12,9 +12,10 @@ import {
   BROADCAST_MESSAGE_MUTATION,
 } from "@/lib/graphql/mutations"
 import { Header } from "@/components/layout/header"
+import { SessionInfoBar } from "@/components/layout/session-info-bar"
 import { FeedContainer } from "@/components/feed/feed-container"
 import { Composer } from "@/components/composer/composer"
-import type { Project } from "@/types"
+import type { Agent, Project } from "@/types"
 
 export default function ProjectPage() {
   const params = useParams()
@@ -58,6 +59,12 @@ export default function ProjectPage() {
     [agents],
   )
 
+  // Currently selected agent (null when "All")
+  const selectedAgent: Agent | null = useMemo(
+    () => agents.find((a) => a.id === selectedAgentId) ?? null,
+    [agents, selectedAgentId],
+  )
+
   // Send message
   const [sendMessage] = useMutation(SEND_MESSAGE_MUTATION)
   const [broadcastMessage] = useMutation(BROADCAST_MESSAGE_MUTATION)
@@ -94,11 +101,13 @@ export default function ProjectPage() {
         onToggleSidebar={toggleSidebar}
         totalCost={totalCost}
       />
+      <SessionInfoBar agent={selectedAgent} />
 
       <FeedContainer
         items={items}
         loading={loading}
         onLoadMore={loadMore}
+        hasAgents={agents.length > 0}
       />
 
       <Composer

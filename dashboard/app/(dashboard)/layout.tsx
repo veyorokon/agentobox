@@ -8,6 +8,9 @@ import { useUIStore } from "@/stores/ui"
 import { PROJECTS_QUERY } from "@/lib/graphql/queries"
 import { CREATE_PROJECT_MUTATION } from "@/lib/graphql/mutations"
 import { Sidebar } from "@/components/layout/sidebar"
+import { SearchProvider } from "@/components/shared/search-provider"
+import { SearchOverlay } from "@/components/shared/search-overlay"
+import { useAgents } from "@/hooks/use-agents"
 import type { Project } from "@/types"
 
 export default function DashboardLayout({
@@ -47,6 +50,9 @@ export default function DashboardLayout({
 
   const projects: Project[] = projectsData?.projects ?? []
 
+  // Agents for search overlay
+  const { agents } = useAgents(selectedProjectId)
+
   // Auto-select first project if none selected
   useEffect(() => {
     if (!selectedProjectId && projects.length > 0) {
@@ -73,19 +79,23 @@ export default function DashboardLayout({
   if (!mounted || !token) return null
 
   return (
-    <div className="h-screen flex overflow-hidden bg-bg-100">
-      {sidebarOpen && (
-        <Sidebar
-          projects={projects}
-          selectedProjectId={selectedProjectId}
-          onSelectProject={handleSelectProject}
-          onNewProject={handleNewProject}
-          username={user?.username}
-        />
-      )}
-      <div className="flex-1 flex flex-col min-w-0">
-        {children}
+    <SearchProvider>
+      <div className="h-screen flex overflow-hidden bg-bg-100">
+        {sidebarOpen && (
+          <Sidebar
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={handleSelectProject}
+            onNewProject={handleNewProject}
+            username={user?.username}
+            email={user?.email}
+          />
+        )}
+        <div className="flex-1 flex flex-col min-w-0">
+          {children}
+        </div>
+        <SearchOverlay projects={projects} agents={agents} />
       </div>
-    </div>
+    </SearchProvider>
   )
 }

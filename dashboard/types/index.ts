@@ -64,6 +64,7 @@ export interface FeedItem {
   toolUseId: string | null
   senderName: string | null
   targetAgentIds: string[] | null
+  sessionResult: SessionResult | null
 }
 
 export interface Agent {

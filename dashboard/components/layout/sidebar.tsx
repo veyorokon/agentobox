@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarItem } from "@/components/layout/sidebar-item"
+import { UserMenu } from "@/components/layout/user-menu"
+import { useSearch } from "@/components/shared/search-provider"
+import { EmptySidebar } from "@/components/layout/empty-sidebar"
 import type { Project } from "@/types"
 
 type SidebarProps = {
@@ -14,6 +17,7 @@ type SidebarProps = {
   onSelectProject: (id: string) => void
   onNewProject?: (name: string) => void
   username?: string | null
+  email?: string | null
 }
 
 function Sidebar({
@@ -22,10 +26,12 @@ function Sidebar({
   onSelectProject,
   onNewProject,
   username,
+  email,
 }: SidebarProps) {
   const [isCreating, setIsCreating] = useState(false)
   const [newName, setNewName] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
+  const search = useSearch()
 
   useEffect(() => {
     if (isCreating) {
@@ -111,13 +117,15 @@ function Sidebar({
           <span className="text-xs text-text-400 font-medium">Sessions</span>
           <div className="flex items-center gap-1">
             <button
-              className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
-              aria-label="Search (coming soon)"
-              disabled
+              type="button"
+              onClick={() => search.open()}
+              className="p-1 text-text-400 hover:text-text-200 rounded transition-colors"
+              aria-label="Search"
             >
               <Search className="h-3.5 w-3.5" />
             </button>
             <button
+              type="button"
               className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
               aria-label="Filters (coming soon)"
               disabled
@@ -127,24 +135,26 @@ function Sidebar({
           </div>
         </div>
 
-        <ScrollArea className="flex-1 overflow-y-auto">
-          <div className="flex flex-col gap-0.5 pb-2">
-            {projects.map((project) => (
-              <SidebarItem
-                key={project.id}
-                project={project}
-                isActive={project.id === selectedProjectId}
-                onClick={() => onSelectProject(project.id)}
-              />
-            ))}
-          </div>
-        </ScrollArea>
+        {projects.length === 0 ? (
+          <EmptySidebar />
+        ) : (
+          <ScrollArea className="flex-1 overflow-y-auto">
+            <div className="flex flex-col gap-0.5 pb-2">
+              {projects.map((project) => (
+                <SidebarItem
+                  key={project.id}
+                  project={project}
+                  isActive={project.id === selectedProjectId}
+                  onClick={() => onSelectProject(project.id)}
+                />
+              ))}
+            </div>
+          </ScrollArea>
+        )}
 
-        {/* User avatar + settings — bottom of sidebar like Claude Code */}
+        {/* User menu + settings — bottom of sidebar */}
         <div className="px-3 py-2 flex items-center justify-between shrink-0 border-t border-border-300">
-          <div className="h-6 w-6 rounded-full bg-accent-main-000 flex items-center justify-center text-[10px] text-oncolor-100 font-medium uppercase cursor-pointer">
-            {username?.charAt(0) ?? "?"}
-          </div>
+          <UserMenu username={username} email={email} />
           <button
             type="button"
             className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"

@@ -8,6 +8,7 @@ import { PlanMessage } from "@/components/feed/plan-message"
 import { StatusMessage } from "@/components/feed/status-message"
 import { SystemMessage } from "@/components/feed/system-message"
 import { TaskDivider } from "@/components/feed/task-divider"
+import { ResultCard } from "@/components/feed/result-card"
 
 type FeedItemRouterProps = {
   item: FeedItem
@@ -54,8 +55,14 @@ function renderItem(item: FeedItem) {
     case "MEMORY":
       return <MemoryMessage item={item} />
     case "TASK_START":
-    case "TASK_END":
       return <TaskDivider item={item} />
+    case "TASK_END":
+      return (
+        <>
+          {item.sessionResult && <ResultCard result={item.sessionResult} />}
+          <TaskDivider item={item} />
+        </>
+      )
     case "TEAM_MESSAGE":
       return <AssistantMessage item={item} isTeam />
     default:
