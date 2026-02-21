@@ -1,14 +1,14 @@
-import { gql } from 'urql';
-import { AGENT_FIELDS_FRAGMENT } from './fragments';
+import { gql } from "@apollo/client"
+import { AGENT_FIELDS, TIMELINE_FIELDS } from "./fragments"
 
 export const AGENT_UPDATED_SUBSCRIPTION = gql`
+  ${AGENT_FIELDS}
   subscription AgentUpdated($projectId: ID!) {
     agentUpdated(projectId: $projectId) {
       ...AgentFields
     }
   }
-  ${AGENT_FIELDS_FRAGMENT}
-`;
+`
 
 export const MESSAGE_RECEIVED_SUBSCRIPTION = gql`
   subscription MessageReceived($projectId: ID!) {
@@ -24,7 +24,7 @@ export const MESSAGE_RECEIVED_SUBSCRIPTION = gql`
       createdAt
     }
   }
-`;
+`
 
 export const NEW_EVENT_SUBSCRIPTION = gql`
   subscription NewEvent($projectId: ID!) {
@@ -37,4 +37,13 @@ export const NEW_EVENT_SUBSCRIPTION = gql`
       createdAt
     }
   }
-`;
+`
+
+export const TIMELINE_STREAM_SUBSCRIPTION = gql`
+  ${TIMELINE_FIELDS}
+  subscription TimelineStream($projectId: ID!) {
+    timelineStream(projectId: $projectId) {
+      ...TimelineFields
+    }
+  }
+`

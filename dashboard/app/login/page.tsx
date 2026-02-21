@@ -1,236 +1,87 @@
-'use client';
+"use client"
 
-import { useState, useRef, useEffect } from 'react';
-import { useMutation } from 'urql';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
-import { useAuthStore } from '@/stores/auth';
-import { LOGIN_MUTATION, REGISTER_MUTATION } from '@/lib/graphql/mutations';
-
-type Tab = 'login' | 'register';
+import { useState, type FormEvent } from "react"
+import { useAuth } from "@/hooks/use-auth"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 export default function LoginPage() {
-  const router = useRouter();
-  const setAuth = useAuthStore((s) => s.setAuth);
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const { login, loading, error, isAuthenticated } = useAuth()
 
-  const [tab, setTab] = useState<Tab>('login');
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const usernameRef = useRef<HTMLInputElement>(null);
+  if (isAuthenticated) {
+    // Already logged in — will redirect in useAuth, but show nothing while redirecting
+    return null
+  }
 
-  const [, loginMut] = useMutation(LOGIN_MUTATION);
-  const [, registerMut] = useMutation(REGISTER_MUTATION);
-
-  useEffect(() => {
-    usernameRef.current?.focus();
-  }, [tab]);
-
-  const reset = () => {
-    setUsername('');
-    setEmail('');
-    setPassword('');
-  };
-
-  const handleSubmit = async () => {
-    if (!username.trim() || !password.trim()) return;
-
-    if (tab === 'login') {
-      const { data, error } = await loginMut({
-        input: { username: username.trim(), password },
-      });
-      if (error || !data?.login) {
-        toast.error(error?.message ?? 'Invalid credentials');
-        return;
-      }
-      setAuth(data.login.token, data.login.user);
-    } else {
-      if (!email.trim()) return;
-      const { data, error } = await registerMut({
-        input: { username: username.trim(), email: email.trim(), password },
-      });
-      if (error || !data?.register) {
-        toast.error(error?.message ?? 'Registration failed');
-        return;
-      }
-      setAuth(data.register.token, data.register.user);
-    }
-    router.push('/');
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  const tabClass = (t: Tab) =>
-    `px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors ${
-      tab === t ? 'text-accent' : 'text-muted-foreground hover:text-foreground'
-    }`;
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    await login(username, password)
+  }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
-      <div
-        data-augmented-ui="tl-clip tr-clip br-clip bl-clip border"
-        className="w-[400px] bg-card"
-        style={{
-          '--aug-tl': '18px',
-          '--aug-tr': '18px',
-          '--aug-br': '18px',
-          '--aug-bl': '18px',
-          '--aug-border-all': '2px',
-          '--aug-border-bg': 'var(--accent)',
-        } as React.CSSProperties}
-      >
-        <div className="p-6" onKeyDown={handleKeyDown}>
-          {/* Logo */}
-          <div className="flex items-center gap-3 mb-6">
-            <div
-              data-augmented-ui="tl-clip br-clip border"
-              className="w-10 h-10 flex items-center justify-center"
-              style={{
-                '--aug-tl': '7px',
-                '--aug-br': '7px',
-                '--aug-border-all': '2px',
-                '--aug-border-bg': 'var(--accent)',
-              } as React.CSSProperties}
-            >
-              <span className="text-accent font-bold text-lg">A</span>
-            </div>
-            <h1 className="text-lg font-bold text-foreground tracking-tight">
-              agentobox
-            </h1>
-          </div>
+    <div className="min-h-screen flex items-center justify-center bg-bg-100">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-semibold text-text-000">Agentobox</h1>
+          <p className="text-sm text-text-400 mt-1">Sign in to your account</p>
+        </div>
 
-          {/* Tabs */}
-          <div
-            className="flex items-center gap-0 mb-6"
-            style={{ borderBottom: '1px solid var(--border)' }}
-          >
-            <button
-              className={tabClass('login')}
-              onClick={() => { setTab('login'); reset(); }}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label
+              htmlFor="username"
+              className="block text-xs font-medium text-text-300 mb-1.5"
             >
-              <span
-                style={
-                  tab === 'login'
-                    ? { borderBottom: '2px solid var(--accent)', paddingBottom: '6px' }
-                    : undefined
-                }
-              >
-                Login
-              </span>
-            </button>
-            <button
-              className={tabClass('register')}
-              onClick={() => { setTab('register'); reset(); }}
-            >
-              <span
-                style={
-                  tab === 'register'
-                    ? { borderBottom: '2px solid var(--accent)', paddingBottom: '6px' }
-                    : undefined
-                }
-              >
-                Register
-              </span>
-            </button>
-          </div>
-
-          {/* Username */}
-          <div className="mb-4">
-            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
               Username
             </label>
-            <div
-              data-augmented-ui="tl-clip br-clip border"
-              style={{
-                '--aug-tl': '8px',
-                '--aug-br': '8px',
-                '--aug-border-all': '1px',
-                '--aug-border-bg': 'var(--border)',
-              } as React.CSSProperties}
-            >
-              <input
-                ref={usernameRef}
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="veyorokon"
-                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
-              />
-            </div>
+            <Input
+              id="username"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter username"
+              autoComplete="username"
+              required
+            />
           </div>
 
-          {/* Email (register only) */}
-          {tab === 'register' && (
-            <div className="mb-4">
-              <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
-                Email
-              </label>
-              <div
-                data-augmented-ui="tl-clip br-clip border"
-                style={{
-                  '--aug-tl': '8px',
-                  '--aug-br': '8px',
-                  '--aug-border-all': '1px',
-                  '--aug-border-bg': 'var(--border)',
-                } as React.CSSProperties}
-              >
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Password */}
-          <div className="mb-6">
-            <label className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider block mb-1.5">
+          <div>
+            <label
+              htmlFor="password"
+              className="block text-xs font-medium text-text-300 mb-1.5"
+            >
               Password
             </label>
-            <div
-              data-augmented-ui="tl-clip br-clip border"
-              style={{
-                '--aug-tl': '8px',
-                '--aug-br': '8px',
-                '--aug-border-all': '1px',
-                '--aug-border-bg': 'var(--border)',
-              } as React.CSSProperties}
-            >
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="********"
-                className="w-full bg-transparent text-foreground font-mono text-sm px-3 py-2.5 placeholder:text-muted-foreground/40 focus:outline-none"
-              />
-            </div>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter password"
+              autoComplete="current-password"
+              required
+            />
           </div>
 
-          {/* Submit */}
-          <button
-            onClick={handleSubmit}
-            disabled={!username.trim() || !password.trim() || (tab === 'register' && !email.trim())}
-            data-augmented-ui="tl-clip br-clip border"
-            className="w-full px-5 py-2.5 text-accent-foreground font-bold text-xs uppercase tracking-wider bg-accent disabled:opacity-30 disabled:cursor-not-allowed"
-            style={{
-              '--aug-tl': '8px',
-              '--aug-br': '8px',
-              '--aug-border-all': '2px',
-              '--aug-border-bg': 'var(--accent)',
-            } as React.CSSProperties}
+          {error && (
+            <p className="text-sm text-danger-000">
+              {error.message || "Login failed"}
+            </p>
+          )}
+
+          <Button
+            type="submit"
+            variant="accent"
+            size="md"
+            className="w-full"
+            disabled={loading || !username || !password}
           >
-            {tab === 'login' ? 'Sign In' : 'Create Account'}
-          </button>
-        </div>
+            {loading ? "Signing in..." : "Sign in"}
+          </Button>
+        </form>
       </div>
     </div>
-  );
+  )
 }

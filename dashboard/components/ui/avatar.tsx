@@ -1,53 +1,50 @@
-'use client'
+import { cn } from "@/lib/utils"
 
-import * as React from 'react'
-import * as AvatarPrimitive from '@radix-ui/react-avatar'
+const avatarColors = [
+  "bg-accent-main-900/80",
+  "bg-accent-pro-900",
+  "bg-accent-secondary-900",
+  "bg-success-900",
+  "bg-warning-900",
+] as const
 
-import { cn } from '@/lib/utils'
+const sizes = {
+  sm: "h-5 w-5 text-[9px]",
+  md: "h-6 w-6 text-[10px]",
+  lg: "h-8 w-8 text-xs",
+} as const
 
-function Avatar({
-  className,
-  ...props
-}: React.ComponentProps<typeof AvatarPrimitive.Root>) {
+function hashName(name: string): number {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash)
+}
+
+type AvatarProps = {
+  name: string
+  size?: keyof typeof sizes
+  className?: string
+}
+
+function Avatar({ name, size = "md", className }: AvatarProps) {
+  const colorIndex = hashName(name) % avatarColors.length
+  const initial = name.charAt(0).toUpperCase()
+
   return (
-    <AvatarPrimitive.Root
-      data-slot="avatar"
+    <span
       className={cn(
-        'relative flex size-8 shrink-0 overflow-hidden rounded-full',
+        "rounded-full inline-flex items-center justify-center font-medium text-oncolor-100",
+        avatarColors[colorIndex],
+        sizes[size],
         className,
       )}
-      {...props}
-    />
+    >
+      {initial}
+    </span>
   )
 }
 
-function AvatarImage({
-  className,
-  ...props
-}: React.ComponentProps<typeof AvatarPrimitive.Image>) {
-  return (
-    <AvatarPrimitive.Image
-      data-slot="avatar-image"
-      className={cn('aspect-square size-full', className)}
-      {...props}
-    />
-  )
-}
-
-function AvatarFallback({
-  className,
-  ...props
-}: React.ComponentProps<typeof AvatarPrimitive.Fallback>) {
-  return (
-    <AvatarPrimitive.Fallback
-      data-slot="avatar-fallback"
-      className={cn(
-        'bg-muted flex size-full items-center justify-center rounded-full',
-        className,
-      )}
-      {...props}
-    />
-  )
-}
-
-export { Avatar, AvatarImage, AvatarFallback }
+export { Avatar }
+export type { AvatarProps }

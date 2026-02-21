@@ -1,5 +1,10 @@
-import { gql } from 'urql';
-import { AGENT_FIELDS_FRAGMENT } from './fragments';
+import { gql } from "@apollo/client"
+import {
+  AGENT_FIELDS,
+  EVENT_FIELDS,
+  FEED_ITEM_FIELDS,
+  TIMELINE_FIELDS,
+} from "./fragments"
 
 export const ME_QUERY = gql`
   query Me {
@@ -9,7 +14,7 @@ export const ME_QUERY = gql`
       email
     }
   }
-`;
+`
 
 export const PROJECTS_QUERY = gql`
   query Projects {
@@ -19,121 +24,81 @@ export const PROJECTS_QUERY = gql`
       createdAt
     }
   }
-`;
+`
+
+export const PROJECT_QUERY = gql`
+  query Project($id: ID!) {
+    project(id: $id) {
+      id
+      name
+      createdAt
+    }
+  }
+`
 
 export const AGENTS_QUERY = gql`
+  ${AGENT_FIELDS}
   query Agents($projectId: ID!) {
     agents(projectId: $projectId) {
       ...AgentFields
     }
   }
-  ${AGENT_FIELDS_FRAGMENT}
-`;
+`
 
-export const PROJECT_SECRETS_QUERY = gql`
-  query ProjectSecrets($projectId: ID!) {
-    projectSecrets(projectId: $projectId) {
-      id
-      key
-      projectId
-      scopedAgentIds
-      createdAt
-      updatedAt
+export const AGENT_QUERY = gql`
+  ${AGENT_FIELDS}
+  query Agent($agentId: ID!) {
+    agent(agentId: $agentId) {
+      ...AgentFields
     }
   }
-`;
+`
+
+export const AGENT_FEED_QUERY = gql`
+  ${FEED_ITEM_FIELDS}
+  query AgentFeed($agentId: ID!, $limit: Int, $offset: Int) {
+    agentFeed(agentId: $agentId, limit: $limit, offset: $offset) {
+      ...FeedItemFields
+    }
+  }
+`
 
 export const PROJECT_FEED_QUERY = gql`
-  query ProjectFeed($projectId: ID!) {
-    projectFeed(projectId: $projectId) {
-      id
-      kind
-      agentId
-      agentName
-      timestamp
-      text
-      imageUrls
-      targetName
-      targetAgentIds
-      tools {
-        name
-        input
-        result
-        isError
-      }
-      fromStatus
-      toStatus
-      taskSummary
-      errorText
-      cumulativeCostUsd
-      questions {
-        question
-        header
-        options {
-          label
-          description
-        }
-        multiSelect
-      }
-      answers {
-        selectedIndices
-        otherText
-      }
-      toolUseId
-      memoryContent
-      planStatus
-      planSummary
-      planSteps
-      taskDividerSubject
-      taskDividerId
-      taskDividerActiveForm
-      senderName
+  ${FEED_ITEM_FIELDS}
+  query ProjectFeed($projectId: ID!, $limit: Int, $offset: Int) {
+    projectFeed(projectId: $projectId, limit: $limit, offset: $offset) {
+      ...FeedItemFields
     }
   }
-`;
+`
 
-export const AGENT_OPTIONS_QUERY = gql`
-  query AgentOptions {
-    availableModels {
-      value
-      label
+export const EVENTS_QUERY = gql`
+  ${EVENT_FIELDS}
+  query Events($projectId: ID!, $limit: Int) {
+    events(projectId: $projectId, limit: $limit) {
+      ...EventFields
     }
-    mcpRegistry {
+  }
+`
+
+export const TIMELINE_QUERY = gql`
+  ${TIMELINE_FIELDS}
+  query Timeline($projectId: ID!, $limit: Int, $offset: Int) {
+    timeline(projectId: $projectId, limit: $limit, offset: $offset) {
+      ...TimelineFields
+    }
+  }
+`
+
+export const SECRET_GROUPS_QUERY = gql`
+  query SecretGroups($projectId: ID!) {
+    secretGroups(projectId: $projectId) {
+      id
       name
-      compat
+      createdAt
+      updatedAt
+      projectId
+      keys
     }
   }
-`;
-
-export const AGENT_MESSAGES_QUERY = gql`
-  query AgentMessages($agentId: ID!) {
-    agent(agentId: $agentId) {
-      id
-      streamMessages {
-        id
-        messageId
-        agentId
-        sessionId
-        role
-        model
-        parts
-        usage
-        parentToolUseId
-        stopReason
-        turnNumber
-        createdAt
-      }
-      sessionResult {
-        id
-        sessionId
-        isError
-        totalCostUsd
-        durationMs
-        durationApiMs
-        numTurns
-        modelUsage
-        permissionDenials
-      }
-    }
-  }
-`;
+`

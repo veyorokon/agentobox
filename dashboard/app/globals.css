@@ -1,695 +1,156 @@
-@import 'tailwindcss';
-@import 'tw-animate-css';
-@import 'augmented-ui/augmented-ui.min.css';
+@import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
+@theme {
+  /* Accent — brand orange */
+  --color-accent-brand: hsl(15 63.1% 59.6%);
+  --color-accent-main-000: hsl(15 54.2% 51.2%);
+  --color-accent-main-100: hsl(15 63.1% 59.6%);
+  --color-accent-main-200: hsl(15 63.1% 59.6%);
+  --color-accent-main-900: hsl(0 0% 0%);
 
-/* ============================================
-   Semantic token system
-   - Components reference these tokens, never raw colors
-   - Swap themes by changing the values below
-   ============================================ */
+  /* Accent — pro purple */
+  --color-accent-pro-000: hsl(251 84.6% 74.5%);
+  --color-accent-pro-100: hsl(251 40.2% 54.1%);
+  --color-accent-pro-200: hsl(251 40% 45.1%);
+  --color-accent-pro-900: hsl(250 25.3% 19.4%);
 
-:root {
-  /* Core surfaces */
-  --background: #ffffff;
-  --foreground: #0a0a0a;
-  --card: #ffffff;
-  --card-foreground: #0a0a0a;
-  --popover: #ffffff;
-  --popover-foreground: #0a0a0a;
-  --surface: #f5f5f5;
-  --surface-inset: #e5e5e5;
+  /* Accent — secondary blue */
+  --color-accent-secondary-000: hsl(210 65.5% 67.1%);
+  --color-accent-secondary-100: hsl(210 70.9% 51.6%);
+  --color-accent-secondary-200: hsl(210 70.9% 51.6%);
+  --color-accent-secondary-900: hsl(210 55.9% 24.6%);
 
-  /* Brand */
-  --primary: #0a0a0a;
-  --primary-foreground: #fafafa;
-  --secondary: #f5f5f5;
-  --secondary-foreground: #0a0a0a;
-  --accent: #39ff14;
-  --accent-foreground: #0a0a0a;
+  /* Backgrounds */
+  --color-bg-000: hsl(60 2.1% 18.4%);
+  --color-bg-100: hsl(60 2.7% 14.5%);
+  --color-bg-200: hsl(30 3.3% 11.8%);
+  --color-bg-300: hsl(60 2.6% 7.6%);
+  --color-bg-400: hsl(0 0% 0%);
+  --color-bg-500: hsl(0 0% 0%);
 
-  /* States */
-  --muted: #f5f5f5;
-  --muted-foreground: #737373;
-  --destructive: #ef4444;
-  --destructive-foreground: #fafafa;
+  /* Borders */
+  --color-border-100: hsl(51 16.5% 84.5%);
+  --color-border-200: hsl(51 16.5% 84.5%);
+  --color-border-300: hsl(51 16.5% 84.5%);
+  --color-border-400: hsl(51 16.5% 84.5%);
 
-  /* Borders & inputs */
-  --border: #e5e5e5;
-  --border-subtle: rgba(0, 0, 0, 0.1);
-  --input: #e5e5e5;
-  --ring: #a3a3a3;
+  /* Danger / error */
+  --color-danger-000: hsl(0 98.4% 75.1%);
+  --color-danger-100: hsl(0 67% 59.6%);
+  --color-danger-200: hsl(0 67% 59.6%);
+  --color-danger-900: hsl(0 46.5% 27.8%);
 
-  /* Agent status colors */
-  --agent-deploying: #facc15;
-  --agent-active: #39ff14;
-  --agent-conversing: #38bdf8;
-  --agent-needs-info: #a78bfa;
-  --agent-completed: #22c55e;
-  --agent-blocked: #f59e0b;
-  --agent-goal-changed: #f472b6;
-  --agent-dead: #ef4444;
-  --agent-thinking: #f59e0b;
+  /* Success */
+  --color-success-000: hsl(97 59.1% 46.1%);
+  --color-success-100: hsl(97 75% 32.9%);
+  --color-success-200: hsl(97 75% 32.9%);
+  --color-success-900: hsl(127 100% 13.9%);
 
-  /* Agent UI */
-  --agent-border: rgba(0, 0, 0, 0.2);
-  --agent-border-active: #39ff14;
-  --agent-glow: rgba(57, 255, 20, 0.1);
+  /* Warning */
+  --color-warning-000: hsl(40 71% 50%);
+  --color-warning-100: hsl(39 93.4% 35.9%);
+  --color-warning-200: hsl(39 93.4% 35.9%);
+  --color-warning-900: hsl(45 94.8% 15.1%);
 
-  /* Agent identity — OKLCH knobs (hue via golden angle in JS) */
-  --agent-l: 0.55;
-  --agent-c: 0.17;
+  /* Text */
+  --color-text-000: hsl(48 33.3% 97.1%);
+  --color-text-100: hsl(48 33.3% 97.1%);
+  --color-text-200: hsl(50 9% 73.7%);
+  --color-text-300: hsl(50 9% 73.7%);
+  --color-text-400: hsl(48 4.8% 59.2%);
+  --color-text-500: hsl(48 4.8% 59.2%);
 
-  /* Interactive states */
-  --highlight: rgba(0, 0, 0, 0.06);
-  --highlight-foreground: #0a0a0a;
+  /* On-color (text on colored bg) */
+  --color-oncolor-100: hsl(0 0% 100%);
+  --color-oncolor-200: hsl(60 6.7% 97.1%);
+  --color-oncolor-300: hsl(60 6.7% 97.1%);
 
-  /* Scrollbar */
-  --scrollbar-thumb: rgba(0, 0, 0, 0.25);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.45);
+  /* Pictogram */
+  --color-pictogram-100: hsl(48 3.4% 29.2%);
+  --color-pictogram-200: hsl(60 2.5% 23.3%);
+  --color-pictogram-300: hsl(60 2.1% 18.4%);
+  --color-pictogram-400: hsl(60 2.7% 14.5%);
 
-  /* Misc */
-  --radius: 0.625rem;
+  /* Always */
+  --color-always-white: hsl(0 0% 100%);
+  --color-always-black: hsl(0 0% 0%);
+
+  /* Font families */
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
 }
 
-/* ============================================
-   Cyberpunk dark theme (default dark)
-   ============================================ */
-[data-theme="cyberpunk"] {
-  --background: #000000;
-  --foreground: #fafafa;
-  --card: rgba(0, 0, 0, 0.5);
-  --card-foreground: #fafafa;
-  --popover: #0a0a0a;
-  --popover-foreground: #fafafa;
-  --surface: #0a0a0a;
-  --surface-inset: #050505;
-
-  --primary: #fafafa;
-  --primary-foreground: #0a0a0a;
-  --secondary: #1a1a1a;
-  --secondary-foreground: #fafafa;
-  --accent: #39ff14;
-  --accent-foreground: #0a0a0a;
-
-  --muted: #1a1a1a;
-  --muted-foreground: rgba(255, 255, 255, 0.55);
-
-  --destructive: #ef4444;
-  --destructive-foreground: #fafafa;
-
-  --border: rgba(255, 255, 255, 0.1);
-  --border-subtle: rgba(255, 255, 255, 0.05);
-  --input: rgba(255, 255, 255, 0.1);
-  --ring: rgba(255, 255, 255, 0.2);
-
-  --agent-deploying: #facc15;
-  --agent-active: #39ff14;
-  --agent-conversing: #38bdf8;
-  --agent-needs-info: #a78bfa;
-  --agent-completed: #22c55e;
-  --agent-blocked: #f59e0b;
-  --agent-goal-changed: #f472b6;
-  --agent-dead: #ef4444;
-  --agent-thinking: #f59e0b;
-
-  --agent-border: rgba(255, 255, 255, 0.2);
-  --agent-border-active: #39ff14;
-  --agent-glow: rgba(57, 255, 20, 0.1);
-
-  /* Interactive states */
-  --highlight: rgba(57, 255, 20, 0.18);
-  --highlight-foreground: #39ff14;
-
-  /* Scrollbar — neon green tint */
-  --scrollbar-thumb: rgba(57, 255, 20, 0.3);
-  --scrollbar-thumb-hover: rgba(57, 255, 20, 0.55);
-
-  /* Agent identity — OKLCH knobs */
-  --agent-l: 0.78;
-  --agent-c: 0.17;
+* {
+  border-color: color-mix(in srgb, var(--color-border-300) 15%, transparent);
 }
 
-/* ============================================
-   Retro dark theme
-   Palette mix: cream, steel blue, orange, sage, dusty rose
-   ============================================ */
-[data-theme="retro"] {
-  --background: #1a1714;
-  --foreground: #e8d8c9;
-  --card: rgba(26, 23, 20, 0.8);
-  --card-foreground: #e8d8c9;
-  --popover: #1a1714;
-  --popover-foreground: #e8d8c9;
-  --surface: #231f1b;
-  --surface-inset: #151210;
-
-  --primary: #e8d8c9;
-  --primary-foreground: #1a1714;
-  --secondary: #2a2520;
-  --secondary-foreground: #e8d8c9;
-  --accent: #f3701e;
-  --accent-foreground: #1a1714;
-
-  --muted: #2a2520;
-  --muted-foreground: #7b8da8;
-
-  --destructive: #D12128;
-  --destructive-foreground: #e8d8c9;
-
-  --border: rgba(232, 216, 201, 0.12);
-  --border-subtle: rgba(232, 216, 201, 0.06);
-  --input: rgba(232, 216, 201, 0.12);
-  --ring: rgba(232, 216, 201, 0.2);
-
-  --agent-deploying: #DFA05D;
-  --agent-active: #658761;
-  --agent-conversing: #7ba5b5;
-  --agent-needs-info: #967bb6;
-  --agent-completed: #658761;
-  --agent-blocked: #DFA05D;
-  --agent-goal-changed: #c77986;
-  --agent-dead: #AC5045;
-  --agent-thinking: #DFA05D;
-
-  --agent-border: rgba(232, 216, 201, 0.2);
-  --agent-border-active: #658761;
-  --agent-glow: rgba(101, 135, 97, 0.12);
-
-  /* Interactive states */
-  --highlight: rgba(243, 112, 30, 0.20);
-  --highlight-foreground: #f3701e;
-
-  /* Scrollbar — warm orange tint */
-  --scrollbar-thumb: rgba(243, 112, 30, 0.35);
-  --scrollbar-thumb-hover: rgba(243, 112, 30, 0.55);
-
-  /* Agent identity — OKLCH knobs */
-  --agent-l: 0.64;
-  --agent-c: 0.08;
+body {
+  background-color: var(--color-bg-100);
+  color: var(--color-text-100);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ============================================
-   Rose Pine Moon theme
-   Palette: base, surface, overlay, text, subtle, muted,
-            love, gold, foam, iris
-   ============================================ */
-[data-theme="rose-pine"] {
-  --background: #232136;
-  --foreground: #e0def4;
-  --card: rgba(42, 39, 63, 0.8);
-  --card-foreground: #e0def4;
-  --popover: #393552;
-  --popover-foreground: #e0def4;
-  --surface: #2a273f;
-  --surface-inset: #1e1b30;
-
-  --primary: #e0def4;
-  --primary-foreground: #232136;
-  --secondary: #393552;
-  --secondary-foreground: #e0def4;
-  --accent: #c4a7e7;
-  --accent-foreground: #232136;
-
-  --muted: #393552;
-  --muted-foreground: #908caa;
-
-  --destructive: #eb6f92;
-  --destructive-foreground: #e0def4;
-
-  --border: rgba(224, 222, 244, 0.12);
-  --border-subtle: rgba(224, 222, 244, 0.06);
-  --input: rgba(224, 222, 244, 0.12);
-  --ring: rgba(196, 167, 231, 0.3);
-
-  --agent-deploying: #f6c177;
-  --agent-active: #9ccfd8;
-  --agent-conversing: #3e8fb0;
-  --agent-needs-info: #c4a7e7;
-  --agent-completed: #9ccfd8;
-  --agent-blocked: #f6c177;
-  --agent-goal-changed: #ea9a97;
-  --agent-dead: #eb6f92;
-  --agent-thinking: #f6c177;
-
-  --agent-border: rgba(224, 222, 244, 0.2);
-  --agent-border-active: #c4a7e7;
-  --agent-glow: rgba(196, 167, 231, 0.12);
-
-  /* Interactive states */
-  --highlight: rgba(196, 167, 231, 0.22);
-  --highlight-foreground: #c4a7e7;
-
-  /* Scrollbar — soft iris/purple tint */
-  --scrollbar-thumb: rgba(196, 167, 231, 0.35);
-  --scrollbar-thumb-hover: rgba(196, 167, 231, 0.55);
-
-  /* Agent identity — OKLCH knobs */
-  --agent-l: 0.74;
-  --agent-c: 0.10;
+/* Scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-border-400) 40%, transparent) transparent;
 }
 
-/* ============================================
-   Hyper Blyss theme
-   Palette: base16-ocean.dark — muted, cool-toned, blue-grey
-   ============================================ */
-[data-theme="hyper"] {
-  --background: #2b303b;
-  --foreground: #c0c5ce;
-  --card: rgba(43, 48, 59, 0.8);
-  --card-foreground: #c0c5ce;
-  --popover: #343d46;
-  --popover-foreground: #c0c5ce;
-  --surface: #343d46;
-  --surface-inset: #252a33;
-
-  --primary: #c0c5ce;
-  --primary-foreground: #2b303b;
-  --secondary: #3b4252;
-  --secondary-foreground: #c0c5ce;
-  --accent: #8fa1b3;
-  --accent-foreground: #2b303b;
-
-  --muted: #3b4252;
-  --muted-foreground: #8a919c;
-
-  --destructive: #bf616a;
-  --destructive-foreground: #c0c5ce;
-
-  --border: rgba(192, 197, 206, 0.12);
-  --border-subtle: rgba(192, 197, 206, 0.06);
-  --input: rgba(192, 197, 206, 0.12);
-  --ring: rgba(143, 161, 179, 0.3);
-
-  --agent-deploying: #ebcb8b;
-  --agent-active: #a3be8c;
-  --agent-conversing: #8fa1b3;
-  --agent-needs-info: #b48ead;
-  --agent-completed: #a3be8c;
-  --agent-blocked: #ebcb8b;
-  --agent-goal-changed: #d08770;
-  --agent-dead: #bf616a;
-  --agent-thinking: #ebcb8b;
-
-  --agent-border: rgba(192, 197, 206, 0.2);
-  --agent-border-active: #8fa1b3;
-  --agent-glow: rgba(143, 161, 179, 0.12);
-
-  /* Interactive states */
-  --highlight: rgba(143, 161, 179, 0.22);
-  --highlight-foreground: #8fa1b3;
-
-  /* Scrollbar — cool blue-grey tint */
-  --scrollbar-thumb: rgba(143, 161, 179, 0.35);
-  --scrollbar-thumb-hover: rgba(143, 161, 179, 0.55);
-
-  /* Agent identity — OKLCH knobs */
-  --agent-l: 0.72;
-  --agent-c: 0.08;
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-/* ============================================
-   Tailwind theme mapping
-   ============================================ */
-@theme inline {
-  --font-sans: 'Geist', 'Geist Fallback';
-  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
-
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-surface: var(--surface);
-  --color-surface-inset: var(--surface-inset);
-
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-
-  --color-highlight: var(--highlight);
-  --color-highlight-foreground: var(--highlight-foreground);
-
-  --color-border: var(--border);
-  --color-border-subtle: var(--border-subtle);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-
-  --color-agent-deploying: var(--agent-deploying);
-  --color-agent-active: var(--agent-active);
-  --color-agent-conversing: var(--agent-conversing);
-  --color-agent-needs-info: var(--agent-needs-info);
-  --color-agent-completed: var(--agent-completed);
-  --color-agent-blocked: var(--agent-blocked);
-  --color-agent-goal-changed: var(--agent-goal-changed);
-  --color-agent-dead: var(--agent-dead);
-  --color-agent-thinking: var(--agent-thinking);
-  --color-agent-border: var(--agent-border);
-  --color-agent-border-active: var(--agent-border-active);
-  --color-agent-glow: var(--agent-glow);
-
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
-
-/* ============================================
-   Scrollbar theming
-   Thin, themed thumbs on transparent tracks.
-   Uses per-theme --scrollbar-thumb / --scrollbar-thumb-hover variables.
-
-   Strategy:
-   - Firefox: standard scrollbar-color (scoped via @supports so it
-     doesn't override ::-webkit-scrollbar in Chrome/Safari).
-   - Chrome / Safari / Edge: ::-webkit-scrollbar pseudo-elements.
-     Setting scrollbar-color to a non-auto value would override these
-     pseudo-elements (per spec), so we keep it Firefox-only.
-   ============================================ */
-
-/* Firefox — standard properties (Firefox doesn't support ::-webkit-scrollbar) */
-@supports not selector(::-webkit-scrollbar) {
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
-  }
-}
-
-/* WebKit (Chrome, Safari, Edge) — pseudo-element approach */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-}
-::-webkit-scrollbar-corner {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Narrower scrollbar for inner panels (feed, file tree, tool expansion, code blocks) */
-@supports not selector(::-webkit-scrollbar) {
-  .scrollbar-thin {
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
-  }
-}
-.scrollbar-thin::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
-}
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 9999px;
-}
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-400) 40%, transparent);
+  border-radius: 3px;
 }
 
-/* ============================================
-   Animations
-   ============================================ */
-
-@keyframes card-enter {
-  0% {
-    opacity: 0;
-    transform: scale(0.95) translateY(8px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-border-400) 60%, transparent);
 }
 
-@keyframes border-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
-
-.animate-card-enter {
-  animation: card-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.deploying-card::after {
-  animation: border-pulse 2s ease-in-out infinite !important;
-}
-
-.running-card::after {
-  animation: running-border-pulse 3s ease-in-out infinite !important;
-}
-
-@keyframes running-border-pulse {
-  0%, 100% {
-    opacity: 0.5;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* Message entry animation */
-@keyframes msg-enter {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Block breathe animation for active timeline blocks */
-@keyframes block-breathe {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-
-/* Activity line shimmer */
-@keyframes activity-shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-.activity-shimmer {
-  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: activity-shimmer 3s ease-in-out infinite;
-}
-
-/* Waiting dots animation */
-@keyframes waiting-blink {
-  0%, 80%, 100% {
-    opacity: 0.15;
-  }
-  40% {
-    opacity: 0.8;
-  }
-}
-
-/* Panel content fade on tab switch */
-@keyframes panel-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* Lightbox overlay */
-@keyframes lightbox-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes lightbox-scale {
-  from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-/* Screenshot filmstrip thumbnails */
-.screenshot-thumb {
-  border: 1px solid color-mix(in srgb, var(--sc-color, var(--muted-foreground)) 30%, transparent);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.screenshot-thumb:hover {
-  border-color: color-mix(in srgb, var(--sc-color, var(--muted-foreground)) 60%, transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--sc-color, var(--muted-foreground)) 15%, transparent);
-}
-.screenshot-thumb img {
-  filter: brightness(0.85);
-  transition: filter 0.15s ease;
-}
-.screenshot-thumb:hover img {
-  filter: brightness(1);
-}
-
-/* Lightbox navigation buttons */
-.lightbox-nav {
-  color: rgba(255, 255, 255, 0.3);
-  transition: color 0.15s ease;
-}
-.lightbox-nav:hover {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-/* ============================================
-   Dashboard main area
-   ============================================ */
-
-.dashboard-grid {
-  background-image: radial-gradient(var(--muted-foreground) 1px, transparent 1px);
-  background-size: 28px 28px;
-  opacity: 0.15;
-  mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
-}
-
-/* Deploy button hover glow */
-.deploy-btn {
-  position: relative;
-  transition: filter 0.2s ease;
-}
-.deploy-btn:hover {
-  filter: brightness(1.1);
-  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-/* VNC loading: expanding signal rings */
-@keyframes vnc-ring {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.5;
-  }
-  100% {
-    transform: scale(3);
-    opacity: 0;
-  }
-}
-
-@keyframes vnc-glow {
-  0%, 100% {
-    opacity: 0.3;
-    filter: blur(8px);
-  }
-  50% {
-    opacity: 0.6;
-    filter: blur(12px);
-  }
-}
-
-/* Scan-line overlay on VNC area */
-.vnc-scanline {
+/* Dotted grid background for main content area */
+.dotted-grid {
   position: relative;
 }
-.vnc-scanline::before {
-  content: '';
+
+.dotted-grid::before {
+  content: "";
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
-  );
+  background-image: radial-gradient(circle, hsl(48 4.8% 59.2% / 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
   pointer-events: none;
+  z-index: 0;
+}
+
+.dotted-grid > * {
+  position: relative;
   z-index: 1;
 }
 
-/* Empty state blinking cursor */
-.empty-cursor {
+/* Pulsing sparkle dots for thinking/active indicators */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
   display: inline-block;
-  width: 7px;
-  height: 14px;
-  background: var(--accent);
-  opacity: 0.6;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  animation: cursor-blink 1s step-end infinite;
-}
-@keyframes cursor-blink {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0; }
-}
-
-/* ============================================
-   Transmission strip — message delivery status
-   ============================================ */
-
-@keyframes tx-pulse {
-  0%, 100% { border-left-color: transparent; }
-  50% { border-left-color: inherit; }
-}
-
-@keyframes tx-confirmed {
-  0% { opacity: 1; }
-  60% { opacity: 0.6; }
-  100% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
-}
-
-/* ============================================
-   Landing page
-   ============================================ */
-
-.landing-grid {
-  background-image: radial-gradient(var(--border) 1px, transparent 1px);
-  background-size: 32px 32px;
-  opacity: 0.5;
-  mask-image: radial-gradient(ellipse 60% 50% at 50% 40%, black 20%, transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 40%, black 20%, transparent 70%);
-}
-
-.landing-glow {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
-  opacity: 0.04;
-  filter: blur(80px);
-  pointer-events: none;
-  animation: landing-glow-pulse 6s ease-in-out infinite;
-}
-
-@keyframes landing-glow-pulse {
-  0%, 100% { opacity: 0.03; transform: translate(-50%, -50%) scale(1); }
-  50% { opacity: 0.06; transform: translate(-50%, -50%) scale(1.15); }
-}
-
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-}
-
-/* Context menu pointer-event guard is handled in JS (context-menu.tsx)
-   via onPointerUp interception for the first 200ms after mount. */
-
-/* Global pointer cursor for interactive elements */
-button, [role="button"] {
-  cursor: pointer;
+  font-size: 0.6em;
+  line-height: 1;
 }

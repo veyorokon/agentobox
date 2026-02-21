@@ -1,226 +1,169 @@
-/**
- * Types matching backend GraphQL schema.
- *
- * Stream-json types mirror Claude Code's output format 1:1.
- * Field names follow Claude Code conventions (snake_case in wire format,
- * camelCase in TypeScript per GraphQL convention).
- *
- * @see docs/ARCHITECTURE.md, "Data Model"
- * @see docs/ARCHITECTURE.md, "Message Model" (pattern origin)
- */
+export type FeedItemKind =
+  | "USER_MESSAGE"
+  | "AGENT_TEXT"
+  | "ACTIVITY"
+  | "STATUS"
+  | "TASK"
+  | "SYSTEM"
+  | "ERROR"
+  | "QUESTION"
+  | "MEMORY"
+  | "PLAN"
+  | "TASK_START"
+  | "TASK_END"
+  | "TEAM_MESSAGE"
 
-// ── Agent ──
+export interface ToolUseItem {
+  name: string
+  input: Record<string, unknown>
+  result: Record<string, unknown>
+  isError: boolean
+}
 
-export type AgentStatus =
-  | 'deploying'
-  | 'running'
-  | 'idle'
-  | 'stopped'
-  | 'error';
+export interface QuestionOption {
+  label: string
+  description: string
+}
 
-export type AgentPhase = '' | 'thinking' | 'responding' | 'tool-input' | 'tool-use';
+export interface AgentQuestion {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multiSelect: boolean
+}
+
+export interface QuestionAnswer {
+  selectedIndices: number[]
+  otherText: string | null
+}
+
+export interface FeedItem {
+  id: string
+  kind: FeedItemKind
+  agentId: string
+  agentName: string
+  timestamp: string
+  text: string | null
+  imageUrls: string[] | null
+  targetName: string | null
+  tools: ToolUseItem[] | null
+  fromStatus: string | null
+  toStatus: string | null
+  taskSummary: string | null
+  errorText: string | null
+  cumulativeCostUsd: number | null
+  questions: AgentQuestion[] | null
+  memoryContent: string | null
+  planStatus: string | null
+  planSummary: string | null
+  planSteps: string[] | null
+  taskDividerSubject: string | null
+  taskDividerId: string | null
+  taskDividerActiveForm: string | null
+  answers: QuestionAnswer[] | null
+  toolUseId: string | null
+  senderName: string | null
+  targetAgentIds: string[] | null
+}
 
 export interface Agent {
-  id: string;
-  name: string;
-  role: 'lead' | 'worker';
-  status: AgentStatus;
-  phase: AgentPhase;
-  vncUrl: string;
-  sandboxId: string;
-  runtime: string;
-  teamName: string;
-  sessionId: string;
-  model: string;
-  cwd: string;
-  permissionMode: string;
-  mcpServers: Record<string, unknown>;
-  workspacePath: string;
-  instructions: string;
-  sessionCostUsd: string | null;
-  capabilities: AgentCapabilities | null;
-  createdAt: string;
+  id: string
+  name: string
+  runtime: string
+  sandboxId: string
+  vncUrl: string
+  status: string
+  teamName: string
+  parentSessionId: string
+  sessionId: string
+  model: string
+  cwd: string
+  permissionMode: string
+  mcpServers: Record<string, unknown>
+  workspacePath: string
+  volumeMounts: Record<string, unknown>
+  instructions: string
+  role: string
+  sessionCostUsd: string
+  capabilities: Record<string, unknown> | null
+  createdAt: string
+  secretGroups: SecretGroupRef[]
+  sessionResult: SessionResult | null
 }
 
-/**
- * Agent capabilities from Claude Code's system/init event.
- *
- * @see docs/ARCHITECTURE.md, "system/init"
- */
-export interface AgentCapabilities {
-  tools: string[];
-  mcpServers: { name: string; status: string; toolCount?: number }[];
-  model: string;
-  version: string;
-  skills?: string[];
+export interface SecretGroupRef {
+  id: string
+  name: string
 }
 
-// ── Messages (stream-json) ──
-
-/**
- * Mirrors Claude Code's stream-json assistant/user events.
- *
- * Each event with type="assistant" or type="user" becomes one Message.
- * The `parts` array stores message.content[] verbatim — the same typed
- * content parts used by the Anthropic Messages API.
- *
- * Field mapping from Claude Code stream-json:
- *   messageId  <- event.message.id (stable dedup key across incremental updates)
- *   sessionId  <- event.session_id
- *   role       <- event.message.role ("assistant" | "user")
- *   parts      <- event.message.content[] (ContentPart[])
- *   usage      <- event.message.usage (token counts with cache breakdown)
- *   stopReason <- event.message.stop_reason ("end_turn" | "tool_use" | "max_tokens")
- *   parentToolUseId <- event.parent_tool_use_id (non-null for subagent responses)
- *
- * @see docs/ARCHITECTURE.md, "Data Model"
- * @see docs/ARCHITECTURE.md, "Message Model" (pattern origin)
- */
-export interface Message {
-  id: string;
-  agentId: string;
-  messageId: string;
-  sessionId: string;
-  role: 'assistant' | 'user';
-  model?: string;
-  parts: ContentPart[];
-  usage?: TokenUsage;
-  parentToolUseId?: string;
-  stopReason?: string;
-  turnNumber: number;
-  createdAt: string;
-}
-
-/**
- * Discriminated union matching Anthropic API content block types.
- * These are stored verbatim from Claude Code's message.content[] array.
- *
- * Types:
- *   text        <- {type: "text", text: string}
- *   tool_use    <- {type: "tool_use", id: string, name: string, input: object}
- *   tool_result <- {type: "tool_result", tool_use_id: string, content: string, is_error: boolean}
- *
- * @see docs/ARCHITECTURE.md, "Data Model"
- */
-export type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean };
-
-export interface TokenUsage {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_input_tokens?: number;
-  cache_creation_input_tokens?: number;
-}
-
-/**
- * Cost and usage from Claude Code's stream-json result events.
- * Upserted per-turn with cumulative totals.
- *
- * @see docs/ARCHITECTURE.md, "result event"
- */
 export interface SessionResult {
-  id: string;
-  agentId: string;
-  sessionId: string;
-  isError: boolean;
-  totalCostUsd: number;
-  durationMs: number;
-  durationApiMs: number;
-  numTurns: number;
-  modelUsage: Record<string, {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadInputTokens: number;
-    cacheCreationInputTokens: number;
-    costUSD: number;
-  }>;
-  permissionDenials: string[];
+  id: string
+  sessionId: string
+  isError: boolean
+  totalCostUsd: string
+  durationMs: number
+  durationApiMs: number
+  numTurns: number
+  modelUsage: Record<string, unknown>
+  permissionDenials: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  agentId: string
 }
-
-// ── Render model (Crush pattern) ──
-
-/**
- * Derived tool status from matching tool_use and tool_result content parts.
- *
- * @see docs/ARCHITECTURE.md, "ExtractMessageItems"
- */
-export type ToolStatus = 'pending' | 'running' | 'success' | 'error' | 'canceled';
-
-/**
- * Render items extracted from Messages. Separates data model from render model.
- * One assistant Message with text + 2 tool calls becomes 3 MessageItems.
- *
- * Pattern lifted from Crush (charmbracelet/crush).
- *
- * @see docs/ARCHITECTURE.md, "ExtractMessageItems"
- * @see docs/ARCHITECTURE.md, "Patterns to Implement"
- */
-export type MessageItem =
-  | { type: 'user'; message: Message; text: string }
-  | { type: 'assistant'; message: Message; text: string }
-  | { type: 'tool'; message: Message; toolUse: Extract<ContentPart, { type: 'tool_use' }>; toolResult?: Extract<ContentPart, { type: 'tool_result' }>; status: ToolStatus };
-
-export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | null;
-
-// ── Timeline ──
-
-/**
- * Entry types for the unified timeline stream.
- * Maps to backend TimelineEntry GraphQL type.
- */
-export type TimelineEntryType =
-  | 'message'
-  | 'status'
-  | 'task'
-  | 'system'
-  | 'error'
-  | 'cost';
-
-/**
- * Unified timeline entry — messages and system events interleaved
- * in a single sorted stream. Replaces the 3-subscription merge pattern.
- *
- * For entryType="message", data contains { role, parts, message_id, turn_number, session_id }.
- * For other types, data contains the AgentEvent data payload.
- */
-export interface TimelineEntry {
-  id: string;
-  entryType: TimelineEntryType;
-  agentId: string;
-  agentName: string;
-  summary: string | null;
-  data: Record<string, unknown>;
-  createdAt: string;
-}
-
-// ── Secrets ──
-
-export interface ProjectSecret {
-  id: string;
-  key: string;
-  projectId: string;
-  scopedAgentIds: string[];  // empty = all agents
-  createdAt: string;
-  updatedAt: string;
-}
-
-// ── Other ──
 
 export interface Project {
-  id: string;
-  name: string;
-  createdAt: string;
+  id: string
+  name: string
+  createdAt: string
 }
 
 export interface User {
-  id: string;
-  username: string;
-  email: string;
+  id: string
+  username: string
+  email: string
 }
 
-export interface AuthPayload {
-  user: User;
-  token: string;
+export interface Message {
+  id: string
+  messageId: string
+  sessionId: string
+  role: string
+  model: string
+  parts: unknown[]
+  usage: Record<string, unknown> | null
+  parentToolUseId: string
+  stopReason: string
+  turnNumber: number
+  createdAt: string
+  updatedAt: string
+  agentId: string
+}
+
+export interface AgentEvent {
+  id: string
+  eventType: string
+  data: Record<string, unknown>
+  summary: string
+  createdAt: string
+  agentId: string
+  agentName: string
+}
+
+export interface TimelineEntry {
+  id: string
+  entryType: string
+  agentId: string
+  agentName: string
+  summary: string | null
+  data: Record<string, unknown>
+  createdAt: string
+}
+
+export interface SecretGroup {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  projectId: string
+  keys: string[]
 }
