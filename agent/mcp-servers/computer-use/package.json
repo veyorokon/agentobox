@@ -44,5 +44,11 @@
     "tsconfig-domdomegg": "^1.0.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.15"
+  },
+  "overrides": {
+    "eslint": {
+      "ajv": "6.14.0"
+    },
+    "minimatch": "10.2.1"
   }
 }
