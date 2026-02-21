@@ -15,7 +15,15 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       user: null,
       setAuth: (token, user) => set({ token, user }),
-      logout: () => set({ token: null, user: null }),
+      logout: () => {
+        set({ token: null, user: null })
+        // Clear Apollo cache and dispose WebSocket connection.
+        // Dynamic import avoids circular dependency (client.ts reads
+        // auth-storage from localStorage, auth.ts resets the client).
+        import("@/lib/graphql/client").then(({ resetApolloClient }) => {
+          resetApolloClient()
+        })
+      },
     }),
     { name: "auth-storage" }
   )

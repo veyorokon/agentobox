@@ -110,10 +110,18 @@ function Sidebar({
         <div className="flex items-center justify-between px-4 py-2">
           <span className="text-xs text-text-400 font-medium">Sessions</span>
           <div className="flex items-center gap-1">
-            <button className="p-1 text-text-400 hover:text-text-200 rounded transition-colors">
+            <button
+              className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
+              aria-label="Search (coming soon)"
+              disabled
+            >
               <Search className="h-3.5 w-3.5" />
             </button>
-            <button className="p-1 text-text-400 hover:text-text-200 rounded transition-colors">
+            <button
+              className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
+              aria-label="Filters (coming soon)"
+              disabled
+            >
               <SlidersHorizontal className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -139,7 +147,9 @@ function Sidebar({
           </div>
           <button
             type="button"
-            className="p-1 text-text-400 hover:text-text-200 rounded transition-colors"
+            className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
+            aria-label="Settings (coming soon)"
+            disabled
           >
             <Settings className="h-3.5 w-3.5" />
           </button>

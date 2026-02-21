@@ -22,7 +22,7 @@ type StatusMessageProps = {
 }
 
 export function StatusMessage({ item }: StatusMessageProps) {
-  const label = item.text || `${item.fromStatus} → ${item.toStatus}`
+  const label = item.text || (item.fromStatus && item.toStatus ? `${item.fromStatus} → ${item.toStatus}` : "Status changed")
 
   if (isActiveTransition(item)) {
     return (

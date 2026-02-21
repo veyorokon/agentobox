@@ -1,4 +1,4 @@
-import { Circle, CheckCircle2 } from "lucide-react"
+import { Circle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import type { FeedItem } from "@/types"
 
@@ -12,7 +12,9 @@ export function PlanMessage({ item }: PlanMessageProps) {
       ? "success"
       : item.planStatus === "failed"
         ? "danger"
-        : "default"
+        : item.planStatus === "in_progress"
+          ? "warning"
+          : "default"
 
   return (
     <div className="bg-bg-000/50 rounded-lg p-3 border border-border-300">

@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"

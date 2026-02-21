@@ -87,13 +87,8 @@ export interface Agent {
   sessionCostUsd: string
   capabilities: Record<string, unknown> | null
   createdAt: string
-  secretGroups: SecretGroupRef[]
+  phase: string
   sessionResult: SessionResult | null
-}
-
-export interface SecretGroupRef {
-  id: string
-  name: string
 }
 
 export interface SessionResult {
@@ -157,13 +152,4 @@ export interface TimelineEntry {
   summary: string | null
   data: Record<string, unknown>
   createdAt: string
-}
-
-export interface SecretGroup {
-  id: string
-  name: string
-  createdAt: string
-  updatedAt: string
-  projectId: string
-  keys: string[]
 }

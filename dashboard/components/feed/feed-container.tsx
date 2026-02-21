@@ -2,7 +2,6 @@
 
 import { useRef, useEffect, useCallback } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { cn } from "@/lib/utils"
 import { FeedItemRouter } from "@/components/feed/feed-item"
 import type { FeedItem } from "@/types"
 
@@ -14,8 +13,10 @@ type FeedContainerProps = {
 
 export function FeedContainer({ items, loading, onLoadMore }: FeedContainerProps) {
   const parentRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
   const isScrollLockedRef = useRef(true)
-  const prevCountRef = useRef(items.length)
+  const prevLastIdRef = useRef<string | undefined>(undefined)
+  const isLoadingMoreRef = useRef(false)
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -32,15 +33,43 @@ export function FeedContainer({ items, loading, onLoadMore }: FeedContainerProps
     isScrollLockedRef.current = distanceFromBottom < 60
   }, [])
 
-  // Auto-scroll to bottom when new items arrive and scroll is locked
+  // Auto-scroll to bottom when new items arrive and scroll is locked.
+  // Compare on last item ID so agent switches also trigger scroll.
   useEffect(() => {
-    if (items.length > prevCountRef.current && isScrollLockedRef.current) {
+    const lastId = items[items.length - 1]?.id
+    if (lastId !== prevLastIdRef.current && isScrollLockedRef.current && items.length > 0) {
       requestAnimationFrame(() => {
         virtualizer.scrollToIndex(items.length - 1, { align: "end" })
       })
     }
-    prevCountRef.current = items.length
-  }, [items.length, virtualizer])
+    prevLastIdRef.current = lastId
+  }, [items, virtualizer])
+
+  // IntersectionObserver on sentinel at top to trigger loadMore for older history
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || !onLoadMore) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry?.isIntersecting && !isLoadingMoreRef.current) {
+          isLoadingMoreRef.current = true
+          // Use Promise.resolve to handle both promise and non-promise returns
+          Promise.resolve(onLoadMore()).finally(() => {
+            isLoadingMoreRef.current = false
+          })
+        }
+      },
+      {
+        root: parentRef.current,
+        threshold: 0.1,
+      }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [onLoadMore])
 
   if (items.length === 0 && !loading) {
     return (
@@ -58,6 +87,9 @@ export function FeedContainer({ items, loading, onLoadMore }: FeedContainerProps
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto"
     >
+      {/* Sentinel for loading older history when scrolled to top */}
+      <div ref={sentinelRef} className="h-1 w-full" />
+
       <div
         className="relative w-full"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
@@ -67,7 +99,7 @@ export function FeedContainer({ items, loading, onLoadMore }: FeedContainerProps
             key={virtualRow.key}
             data-index={virtualRow.index}
             ref={virtualizer.measureElement}
-            className="absolute top-0 left-0 w-full px-4 py-1"
+            className="absolute top-0 left-0 w-full"
             style={{ transform: `translateY(${virtualRow.start}px)` }}
           >
             <FeedItemRouter item={items[virtualRow.index]} />

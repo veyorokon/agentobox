@@ -30,7 +30,7 @@ function QuestionBlock({
         {question.options.map((option, i) => {
           const isSelected = isAnswered && answer.selectedIndices.includes(i)
 
-          return (
+          return isAnswered ? (
             <Button
               key={i}
               variant="secondary"
@@ -39,7 +39,7 @@ function QuestionBlock({
                 "w-full justify-start text-left",
                 isSelected && "border-accent-main-000 text-accent-main-100",
               )}
-              disabled={isAnswered}
+              disabled
             >
               <div>
                 <div className="text-sm">{option.label}</div>
@@ -50,6 +50,20 @@ function QuestionBlock({
                 )}
               </div>
             </Button>
+          ) : (
+            <div
+              key={i}
+              className={cn(
+                "w-full text-left rounded-md border border-border-300 bg-bg-200/50 px-3 py-1.5 opacity-60 cursor-default",
+              )}
+            >
+              <div className="text-sm text-text-300">{option.label}</div>
+              {option.description && (
+                <div className="text-xs text-text-400 font-normal">
+                  {option.description}
+                </div>
+              )}
+            </div>
           )
         })}
       </div>

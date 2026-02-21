@@ -18,7 +18,7 @@ import type { Project } from "@/types"
 
 export default function ProjectPage() {
   const params = useParams()
-  const projectId = params.projectId as string
+  const projectId = typeof params.projectId === 'string' ? params.projectId : params.projectId?.[0] ?? ''
 
   const selectedAgentId = useUIStore((s) => s.selectedAgentId)
   const selectAgent = useUIStore((s) => s.selectAgent)

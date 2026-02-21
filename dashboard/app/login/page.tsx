@@ -1,17 +1,24 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { useState, useEffect, type FormEvent } from "react"
+import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 export default function LoginPage() {
+  const router = useRouter()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const { login, loading, error, isAuthenticated } = useAuth()
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace("/")
+    }
+  }, [isAuthenticated, router])
+
   if (isAuthenticated) {
-    // Already logged in — will redirect in useAuth, but show nothing while redirecting
     return null
   }
 

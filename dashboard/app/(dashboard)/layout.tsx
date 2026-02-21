@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useQuery, useMutation } from "@apollo/client"
 import { useAuthStore } from "@/stores/auth"
@@ -22,15 +22,23 @@ export default function DashboardLayout({
   const selectedProjectId = useUIStore((s) => s.selectedProjectId)
   const selectProject = useUIStore((s) => s.selectProject)
 
-  // Auth guard
+  // Hydration guard: Zustand persist middleware hasn't rehydrated from
+  // localStorage on the first SSR render, so token reads as null.
+  // Without this, every page load flash-redirects to /login.
+  const [mounted, setMounted] = useState(false)
   useEffect(() => {
-    if (!token) {
+    setMounted(true)
+  }, [])
+
+  // Auth guard — only runs after hydration
+  useEffect(() => {
+    if (mounted && !token) {
       router.push("/login")
     }
-  }, [token, router])
+  }, [mounted, token, router])
 
   const { data: projectsData } = useQuery(PROJECTS_QUERY, {
-    skip: !token,
+    skip: !mounted || !token,
   })
 
   const [createProject] = useMutation(CREATE_PROJECT_MUTATION, {
@@ -43,8 +51,9 @@ export default function DashboardLayout({
   useEffect(() => {
     if (!selectedProjectId && projects.length > 0) {
       selectProject(projects[0].id)
+      router.push(`/${projects[0].id}`)
     }
-  }, [selectedProjectId, projects, selectProject])
+  }, [selectedProjectId, projects, selectProject, router])
 
   const handleSelectProject = (id: string) => {
     selectProject(id)
@@ -61,7 +70,7 @@ export default function DashboardLayout({
     }
   }
 
-  if (!token) return null
+  if (!mounted || !token) return null
 
   return (
     <div className="h-screen flex overflow-hidden bg-bg-100">

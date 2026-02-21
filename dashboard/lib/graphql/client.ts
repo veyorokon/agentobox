@@ -1,3 +1,10 @@
+/**
+ * Client-side only — do not import from server components.
+ *
+ * This module creates a singleton ApolloClient with an InMemoryCache and a
+ * WebSocket link for subscriptions. Importing it in a server component would
+ * share cache state across requests. All consumers must be "use client".
+ */
 import {
   ApolloClient,
   ApolloLink,
@@ -8,7 +15,7 @@ import {
 import { onError } from "@apollo/client/link/error"
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions"
 import { getMainDefinition } from "@apollo/client/utilities"
-import { createClient } from "graphql-ws"
+import { Client, createClient } from "graphql-ws"
 import { GRAPHQL_HTTP_URL, GRAPHQL_WS_URL } from "@/lib/constants"
 
 function getToken(): string | null {
@@ -20,6 +27,19 @@ function getToken(): string | null {
   } catch {
     return null
   }
+}
+
+const AUTH_ERROR_PATTERNS = [
+  "not authenticated",
+  "permission denied",
+  "unauthorized",
+  "invalid token",
+  "token expired",
+]
+
+function isAuthError(message: string): boolean {
+  const lower = message.toLowerCase()
+  return AUTH_ERROR_PATTERNS.some((p) => lower.includes(p))
 }
 
 const authLink = new ApolloLink((operation, forward) => {
@@ -38,10 +58,30 @@ const errorLink = onError(({ graphQLErrors, networkError }) => {
       console.error(
         `[GraphQL error]: Message: ${err.message}, Location: ${JSON.stringify(err.locations)}, Path: ${err.path}`
       )
+
+      // Check for auth errors and force logout
+      const code = (err.extensions?.code as string) ?? ""
+      if (
+        code === "UNAUTHENTICATED" ||
+        code === "FORBIDDEN" ||
+        isAuthError(err.message)
+      ) {
+        // Dynamic import to avoid circular dependency
+        import("@/stores/auth").then(({ useAuthStore }) => {
+          useAuthStore.getState().logout()
+        })
+        break
+      }
     }
   }
   if (networkError) {
     console.error(`[Network error]: ${networkError}`)
+    // Check for 401 on network level
+    if ("statusCode" in networkError && networkError.statusCode === 401) {
+      import("@/stores/auth").then(({ useAuthStore }) => {
+        useAuthStore.getState().logout()
+      })
+    }
   }
 })
 
@@ -49,17 +89,24 @@ const httpLink = new HttpLink({
   uri: GRAPHQL_HTTP_URL,
 })
 
+// Export wsClient so it can be disposed on logout / token change
+export let wsClient: Client | null = null
+
 const wsLink =
   typeof window !== "undefined"
-    ? new GraphQLWsLink(
-        createClient({
+    ? (() => {
+        wsClient = createClient({
           url: GRAPHQL_WS_URL,
           connectionParams: () => {
             const token = getToken()
             return token ? { Authorization: `Bearer ${token}` } : {}
           },
+          retryAttempts: 20,
+          shouldRetry: () => true,
+          keepAlive: 10_000,
         })
-      )
+        return new GraphQLWsLink(wsClient)
+      })()
     : null
 
 const splitLink = wsLink
@@ -76,8 +123,9 @@ const splitLink = wsLink
     )
   : httpLink
 
+// Link chain: errorLink first so transport errors bubble up through it
 const apolloClient = new ApolloClient({
-  link: authLink.concat(errorLink).concat(splitLink),
+  link: ApolloLink.from([errorLink, authLink, splitLink]),
   cache: new InMemoryCache({
     typePolicies: {
       AgentType: { keyFields: ["id"] },
@@ -85,5 +133,17 @@ const apolloClient = new ApolloClient({
     },
   }),
 })
+
+/**
+ * Reset Apollo client state: clear cache and dispose WebSocket connection.
+ * Called from auth store on logout to prevent stale data and force
+ * reconnection with fresh credentials.
+ */
+export async function resetApolloClient() {
+  if (wsClient) {
+    wsClient.dispose()
+  }
+  await apolloClient.clearStore()
+}
 
 export default apolloClient

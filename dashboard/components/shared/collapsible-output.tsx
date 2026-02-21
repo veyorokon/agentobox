@@ -37,7 +37,7 @@ export function CollapsibleOutput({
       <pre
         className={cn(
           "whitespace-pre-wrap font-mono text-sm text-text-200 overflow-hidden transition-all",
-          !expanded && "mask-fade",
+          !expanded && "[mask-image:linear-gradient(to_bottom,black_60%,transparent_100%)]",
         )}
         style={!expanded ? { maxHeight: `${maxHeight}px` } : undefined}
       >
@@ -50,17 +50,6 @@ export function CollapsibleOutput({
       >
         {expanded ? "Show less" : "Show more"}
       </button>
-
-      <style jsx>{`
-        .mask-fade {
-          mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
-          -webkit-mask-image: linear-gradient(
-            to bottom,
-            black 60%,
-            transparent 100%
-          );
-        }
-      `}</style>
     </div>
   );
 }

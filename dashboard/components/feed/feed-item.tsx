@@ -13,6 +13,24 @@ type FeedItemRouterProps = {
   item: FeedItem
 }
 
+function TaskMessage({ item }: { item: FeedItem }) {
+  return (
+    <div className="text-center text-text-500 text-xs font-mono py-1">
+      <span className="text-text-400 mr-1">[task]</span>
+      {item.taskSummary || item.text || "Task update"}
+    </div>
+  )
+}
+
+function MemoryMessage({ item }: { item: FeedItem }) {
+  return (
+    <div className="text-center text-text-500 text-xs font-mono py-1">
+      <span className="text-text-400 mr-1">[memory]</span>
+      {item.memoryContent || item.text || "Memory saved"}
+    </div>
+  )
+}
+
 function renderItem(item: FeedItem) {
   switch (item.kind) {
     case "USER_MESSAGE":
@@ -31,6 +49,10 @@ function renderItem(item: FeedItem) {
       return <StatusMessage item={item} />
     case "SYSTEM":
       return <SystemMessage item={item} />
+    case "TASK":
+      return <TaskMessage item={item} />
+    case "MEMORY":
+      return <MemoryMessage item={item} />
     case "TASK_START":
     case "TASK_END":
       return <TaskDivider item={item} />

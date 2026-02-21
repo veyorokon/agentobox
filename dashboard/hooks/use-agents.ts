@@ -19,30 +19,30 @@ export function useAgents(projectId: string | null) {
     onData: ({ client, data: subData }) => {
       const updated = subData.data?.agentUpdated
       if (!updated) return
-      client.cache.modify({
-        fields: {
-          agents(existing = [], { readField }) {
-            const idx = existing.findIndex(
-              (ref: any) => readField("id", ref) === updated.id
-            )
-            if (idx >= 0) {
-              const newArr = [...existing]
-              newArr[idx] = client.cache.writeFragment({
-                fragment: AGENT_FIELDS,
-                data: updated,
-              })
-              return newArr
-            }
-            return [
-              ...existing,
-              client.cache.writeFragment({
-                fragment: AGENT_FIELDS,
-                data: updated,
-              }),
-            ]
-          },
-        },
+
+      // Write the fragment so the cache has the latest data for this agent
+      client.cache.writeFragment({
+        fragment: AGENT_FIELDS,
+        data: updated,
       })
+
+      // Update the query scoped to this specific projectId
+      client.cache.updateQuery(
+        { query: AGENTS_QUERY, variables: { projectId: projectId! } },
+        (existing) => {
+          if (!existing?.agents) return existing
+          const updatedRef = client.cache.identify(updated)
+          const exists = existing.agents.some(
+            (a: any) => client.cache.identify(a) === updatedRef
+          )
+          if (exists) {
+            // Agent already in list — fragment write above handles field updates
+            return existing
+          }
+          // New agent — append to the list
+          return { ...existing, agents: [...existing.agents, updated] }
+        }
+      )
     },
   })
 

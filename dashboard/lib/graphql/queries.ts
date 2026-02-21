@@ -1,7 +1,6 @@
 import { gql } from "@apollo/client"
 import {
   AGENT_FIELDS,
-  EVENT_FIELDS,
   FEED_ITEM_FIELDS,
   TIMELINE_FIELDS,
 } from "./fragments"
@@ -72,15 +71,6 @@ export const PROJECT_FEED_QUERY = gql`
   }
 `
 
-export const EVENTS_QUERY = gql`
-  ${EVENT_FIELDS}
-  query Events($projectId: ID!, $limit: Int) {
-    events(projectId: $projectId, limit: $limit) {
-      ...EventFields
-    }
-  }
-`
-
 export const TIMELINE_QUERY = gql`
   ${TIMELINE_FIELDS}
   query Timeline($projectId: ID!, $limit: Int, $offset: Int) {
@@ -90,15 +80,3 @@ export const TIMELINE_QUERY = gql`
   }
 `
 
-export const SECRET_GROUPS_QUERY = gql`
-  query SecretGroups($projectId: ID!) {
-    secretGroups(projectId: $projectId) {
-      id
-      name
-      createdAt
-      updatedAt
-      projectId
-      keys
-    }
-  }
-`

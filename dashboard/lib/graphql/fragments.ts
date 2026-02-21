@@ -87,18 +87,6 @@ export const FEED_ITEM_FIELDS = gql`
   }
 `
 
-export const EVENT_FIELDS = gql`
-  fragment EventFields on AgentEventType {
-    id
-    eventType
-    data
-    summary
-    createdAt
-    agentId
-    agentName
-  }
-`
-
 export const TIMELINE_FIELDS = gql`
   fragment TimelineFields on TimelineEntryType {
     id

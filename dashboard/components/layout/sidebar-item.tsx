@@ -1,6 +1,7 @@
+"use client"
+
 import { MessageSquare } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { formatTime } from "@/lib/utils"
+import { cn, formatTime } from "@/lib/utils"
 import type { Project } from "@/types"
 
 type SidebarItemProps = {

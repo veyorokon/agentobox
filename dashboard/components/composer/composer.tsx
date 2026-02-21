@@ -168,7 +168,7 @@ function Composer({
                 <span
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
-                    selectedAgent.status === "working"
+                    selectedAgent.status === "running"
                       ? "bg-success-000"
                       : selectedAgent.status === "idle"
                         ? "bg-accent-secondary-000"
