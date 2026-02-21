@@ -110,7 +110,10 @@ export interface SessionResult {
 export interface Project {
   id: string
   name: string
+  description: string
+  settings: Record<string, unknown>
   createdAt: string
+  archivedAt: string | null
 }
 
 export interface User {

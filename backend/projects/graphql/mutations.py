@@ -22,6 +22,15 @@ from agents.utils import sanitize_name as _sanitize_name
 @strawberry.input
 class CreateProjectInput:
     name: str
+    description: str = ""
+
+
+@strawberry.input
+class UpdateProjectInput:
+    id: ID
+    name: str | None = None
+    description: str | None = None
+    settings: JSON | None = None
 
 
 @strawberry.input
@@ -48,13 +57,14 @@ class ProjectMutation:
 
         project = await Project.objects.acreate(
             name=name,
+            description=input.description,
             owner=user,
         )
         return project
 
     @strawberry.mutation
     async def update_project(
-        self, id: ID, name: str, info: Info
+        self, input: UpdateProjectInput, info: Info
     ) -> ProjectType:
         from projects.models import Project
 
@@ -62,13 +72,56 @@ class ProjectMutation:
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
 
-        name = _sanitize_name(name)
-        if not name:
-            raise ValueError("Project name cannot be empty")
+        project = await Project.objects.aget(id=input.id, owner=user)
+        update_fields: list[str] = []
+
+        if input.name is not None:
+            name = _sanitize_name(input.name)
+            if not name:
+                raise ValueError("Project name cannot be empty")
+            project.name = name
+            update_fields.append("name")
+
+        if input.description is not None:
+            project.description = input.description
+            update_fields.append("description")
+
+        if input.settings is not None:
+            if not isinstance(input.settings, dict):
+                raise ValueError("settings must be a JSON object")
+            project.settings = input.settings
+            update_fields.append("settings")
+
+        if update_fields:
+            await project.asave(update_fields=update_fields)
+        return project
+
+    @strawberry.mutation
+    async def archive_project(self, id: ID, info: Info) -> ProjectType:
+        from django.utils import timezone
+
+        from projects.models import Project
+
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
 
         project = await Project.objects.aget(id=id, owner=user)
-        project.name = name
-        await project.asave(update_fields=["name"])
+        project.archived_at = timezone.now()
+        await project.asave(update_fields=["archived_at"])
+        return project
+
+    @strawberry.mutation
+    async def unarchive_project(self, id: ID, info: Info) -> ProjectType:
+        from projects.models import Project
+
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        project = await Project.objects.aget(id=id, owner=user)
+        project.archived_at = None
+        await project.asave(update_fields=["archived_at"])
         return project
 
     @strawberry.mutation

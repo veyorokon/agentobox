@@ -4,7 +4,16 @@ import { Menu } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
 import { formatModelName } from "@/lib/format"
 import { Button } from "@/components/ui/button"
+import { AgentActions, type AgentActionsProps } from "@/components/layout/agent-actions"
 import type { Agent } from "@/types"
+
+type AgentActionHandlers = {
+  onKillAgent: (agentId: string) => void
+  onRemoveAgent: (agentId: string) => void
+  onRestartAgent: (agentId: string) => void
+  onSetAgentMode: (agentId: string, mode: string) => void
+  onClearAgentSession: (agentId: string) => void
+}
 
 type HeaderProps = {
   projectName?: string
@@ -13,6 +22,7 @@ type HeaderProps = {
   onSelectAgent: (id: string | null) => void
   onToggleSidebar: () => void
   totalCost?: number
+  agentActions?: AgentActionHandlers
 }
 
 const statusColors: Record<string, string> = {
@@ -29,7 +39,11 @@ function Header({
   onSelectAgent,
   onToggleSidebar,
   totalCost,
+  agentActions,
 }: HeaderProps) {
+  const selectedAgent = selectedAgentId
+    ? agents.find((a) => a.id === selectedAgentId) ?? null
+    : null
   return (
     <div className="h-12 border-b border-border-300 bg-bg-200 px-4 flex items-center gap-4">
       {/* Left section */}
@@ -104,11 +118,21 @@ function Header({
       </div>
 
       {/* Right section */}
-      <div className="flex items-center">
+      <div className="flex items-center gap-2">
         {totalCost !== undefined && (
           <span className="text-xs text-text-400">
             {formatCost(totalCost)}
           </span>
+        )}
+        {selectedAgent && agentActions && (
+          <AgentActions
+            agent={selectedAgent}
+            onKill={agentActions.onKillAgent}
+            onRemove={agentActions.onRemoveAgent}
+            onRestart={agentActions.onRestartAgent}
+            onSetMode={agentActions.onSetAgentMode}
+            onClearSession={agentActions.onClearAgentSession}
+          />
         )}
       </div>
     </div>

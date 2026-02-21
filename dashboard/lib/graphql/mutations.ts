@@ -19,7 +19,43 @@ export const CREATE_PROJECT_MUTATION = gql`
     createProject(input: $input) {
       id
       name
+      description
+      settings
       createdAt
+      archivedAt
+    }
+  }
+`
+
+export const UPDATE_PROJECT_MUTATION = gql`
+  mutation UpdateProject($input: UpdateProjectInput!) {
+    updateProject(input: $input) {
+      id
+      name
+      description
+      settings
+      createdAt
+      archivedAt
+    }
+  }
+`
+
+export const ARCHIVE_PROJECT_MUTATION = gql`
+  mutation ArchiveProject($id: ID!) {
+    archiveProject(id: $id) {
+      id
+      name
+      archivedAt
+    }
+  }
+`
+
+export const UNARCHIVE_PROJECT_MUTATION = gql`
+  mutation UnarchiveProject($id: ID!) {
+    unarchiveProject(id: $id) {
+      id
+      name
+      archivedAt
     }
   }
 `
@@ -60,7 +96,7 @@ export const KILL_AGENT_MUTATION = gql`
 export const RESTART_AGENT_MUTATION = gql`
   ${AGENT_FIELDS}
   mutation RestartAgent($agentId: ID!) {
-    restartAgent(agentId: $agentId) {
+    hardRestartAgent(agentId: $agentId) {
       ...AgentFields
     }
   }
@@ -69,5 +105,35 @@ export const RESTART_AGENT_MUTATION = gql`
 export const INTERRUPT_AGENT_MUTATION = gql`
   mutation InterruptAgent($agentId: ID!) {
     interruptAgent(agentId: $agentId)
+  }
+`
+
+export const REMOVE_AGENT_MUTATION = gql`
+  mutation RemoveAgent($agentId: ID!) {
+    removeAgent(agentId: $agentId)
+  }
+`
+
+export const SET_AGENT_MODE_MUTATION = gql`
+  ${AGENT_FIELDS}
+  mutation SetAgentMode($agentId: ID!, $mode: String!) {
+    setAgentMode(agentId: $agentId, mode: $mode) {
+      ...AgentFields
+    }
+  }
+`
+
+export const UPDATE_AGENT_INSTRUCTIONS_MUTATION = gql`
+  ${AGENT_FIELDS}
+  mutation UpdateAgentInstructions($input: UpdateAgentInstructionsInput!) {
+    updateAgentInstructions(input: $input) {
+      ...AgentFields
+    }
+  }
+`
+
+export const CLEAR_AGENT_SESSION_MUTATION = gql`
+  mutation ClearAgentSession($agentId: ID!) {
+    clearAgentSession(agentId: $agentId)
   }
 `

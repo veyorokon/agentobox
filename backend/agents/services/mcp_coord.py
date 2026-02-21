@@ -14,11 +14,11 @@ See: docs/ARCHITECTURE.md, "MCP Coordination Server"
 import uuid
 
 import structlog
-from fastmcp import FastMCP, Context
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
-log = structlog.get_logger("coordination.server")
+log = structlog.get_logger("agents.services.mcp_coord")
 
 mcp = FastMCP("abox-coord")
 
@@ -235,5 +235,3 @@ async def team_status() -> list[dict]:
     ]
 
     return agents
-
-

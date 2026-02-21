@@ -16,11 +16,14 @@ export const ME_QUERY = gql`
 `
 
 export const PROJECTS_QUERY = gql`
-  query Projects {
-    projects {
+  query Projects($includeArchived: Boolean) {
+    projects(includeArchived: $includeArchived) {
       id
       name
+      description
+      settings
       createdAt
+      archivedAt
     }
   }
 `
@@ -30,7 +33,10 @@ export const PROJECT_QUERY = gql`
     project(id: $id) {
       id
       name
+      description
+      settings
       createdAt
+      archivedAt
     }
   }
 `

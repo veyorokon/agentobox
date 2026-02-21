@@ -10,7 +10,7 @@ from django.urls import re_path
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django_asgi_app = get_asgi_application()
 
-from coordination.server import mcp  # noqa: E402
+from agents.services.mcp_coord import mcp  # noqa: E402
 from schema import schema  # noqa: E402
 from strawberry.channels.handlers.ws_handler import GraphQLWSConsumer  # noqa: E402
 

@@ -436,7 +436,7 @@ Built with [FastMCP](https://github.com/jlowin/fastmcp) (29k stars, v3.0.0, Feb 
 ```python
 # asgi.py
 from django.core.asgi import get_asgi_application
-from coordination.mcp import mcp_app
+from agents.services.mcp_coord import mcp
 
 django_app = get_asgi_application()
 
@@ -587,7 +587,7 @@ Transforms stream events and lifecycle events into `FeedItem` objects for the da
 
 ## Roadmap
 
-1. ~~**MCP coordination server**~~ — Done. `backend/coordination/server.py` mounted at `/mcp`.
+1. ~~**MCP coordination server**~~ — Done. `backend/agents/services/mcp_coord.py` mounted at `/mcp`.
 2. ~~**Remove old patterns**~~ — Done. Removed PreToolUse hooks, file-based team config, stream observation routing.
 3. **Reliability fixes** — Heartbeat reconciliation, message delivery guarantees (retry queue for pending_input)
 4. **Feed/UI stabilization** — Edge case scroll fixes, performance with large feeds
@@ -609,7 +609,7 @@ Transforms stream events and lifecycle events into `FeedItem` objects for the da
 | `backend/agents/services/reconcile.py` | Agent state reconciliation |
 | `backend/agents/services/secrets.py` | Secret encryption/decryption |
 | `backend/agents/views.py` | Relay stream endpoint + file uploads |
-| `backend/coordination/server.py` | MCP coordination server (teammate, task, team tools) |
+| `backend/agents/services/mcp_coord.py` | MCP coordination server (teammate, task, team tools) |
 | `backend/agents/runtimes/base.py` | Runtime protocol (create, terminate, exec, write_file) |
 | `backend/agents/runtimes/docker.py` | Docker runtime implementation |
 | `backend/agents/runtimes/modal.py` | Modal runtime implementation |
