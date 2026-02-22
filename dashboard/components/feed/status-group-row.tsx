@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useContext } from "react"
 import { cn } from "@/lib/utils"
 import { Collapsible } from "@/components/ui/collapsible"
 import { ChevronRight } from "lucide-react"
+import { FeedScrollContext } from "@/components/feed/feed-container"
 import { StatusMessage } from "@/components/feed/status-message"
 import { SystemMessage } from "@/components/feed/system-message"
 import type { TimelineEntry, StatusEventData, SystemEventData } from "@/types"
@@ -24,6 +25,7 @@ function renderStatusItem(item: TimelineEntry) {
 
 export function StatusGroupRow({ items }: StatusGroupRowProps) {
   const [expanded, setExpanded] = useState(false)
+  const { scrollToBottom } = useContext(FeedScrollContext)
 
   if (items.length === 0) return null
 
@@ -31,7 +33,11 @@ export function StatusGroupRow({ items }: StatusGroupRowProps) {
     <div className="px-4 py-0.5">
       <button
         type="button"
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={() => {
+          const willExpand = !expanded
+          setExpanded(willExpand)
+          if (willExpand) requestAnimationFrame(() => scrollToBottom())
+        }}
         className="flex items-center justify-center gap-1.5 w-full cursor-pointer py-px"
       >
         <ChevronRight

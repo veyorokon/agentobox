@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useContext } from "react"
 import { cn, formatDuration, formatCost, friendlyModelName } from "@/lib/utils"
+import { FeedScrollContext } from "@/components/feed/feed-container"
 import type { ResultEventData } from "@/types"
 
 type ResultCardProps = {
@@ -59,6 +60,7 @@ function ModelUsageBreakdown({ usage }: { usage: Record<string, unknown> }) {
 
 export function ResultCard({ data, className }: ResultCardProps) {
   const [expanded, setExpanded] = useState(false)
+  const { scrollToBottom } = useContext(FeedScrollContext)
 
   const cost = data.total_cost_usd ?? 0
   const durationMs = data.duration_ms ?? 0
@@ -79,7 +81,15 @@ export function ResultCard({ data, className }: ResultCardProps) {
       {/* Pill row */}
       <div
         className="inline-flex items-center gap-1.5 cursor-pointer"
-        onClick={() => hasModelUsage && setExpanded(!expanded)}
+        onClick={() => {
+          if (!hasModelUsage) return
+          const willExpand = !expanded
+          setExpanded(willExpand)
+          if (willExpand) {
+            // Give Virtuoso time to measure the new size, then scroll
+            requestAnimationFrame(() => scrollToBottom())
+          }
+        }}
       >
         {/* Status pill */}
         <span

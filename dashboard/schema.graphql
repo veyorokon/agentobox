@@ -72,16 +72,6 @@ scalar DateTime
 """Decimal (fixed-point)"""
 scalar Decimal
 
-type EventConnection {
-  edges: [EventEdge!]!
-  pageInfo: PageInfo!
-}
-
-type EventEdge {
-  node: TimelineEntryType!
-  cursor: String!
-}
-
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf).
 """
@@ -132,11 +122,6 @@ type Mutation {
   scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
 }
 
-type PageInfo {
-  hasNextPage: Boolean!
-  endCursor: String
-}
-
 type ProjectSecretType {
   id: UUID!
   key: String!
@@ -161,9 +146,8 @@ type Query {
   project(id: ID!): ProjectType
   agents(projectId: ID!): [AgentType!]!
   agent(agentId: ID!): AgentType
-  timeline(projectId: ID!, limit: Int! = 200, offset: Int! = 0): [TimelineEntryType!]!
-  agentFeed(agentId: ID!, first: Int! = 50, after: String = null): EventConnection!
-  projectFeed(projectId: ID!, first: Int! = 50, after: String = null): EventConnection!
+  agentFeed(agentId: ID!): [TimelineEntryType!]!
+  projectFeed(projectId: ID!): [TimelineEntryType!]!
   availableModels: [ModelEntryType!]!
   mcpRegistry: [McpRegistryEntryType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!

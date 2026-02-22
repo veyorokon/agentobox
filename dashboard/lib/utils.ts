@@ -49,6 +49,18 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-sonnet-4-6": "Sonnet 4.6",
 }
 
+/** Strip XML noise injected by Claude Code into messages/tool results.
+ * system-reminder blocks are removed entirely.
+ * error/tool_use_error tags are unwrapped (keep text, strip tags).
+ */
+export function stripSystemReminders(text: string): string {
+  return text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<\/?error>/g, "")
+    .replace(/<\/?tool_use_error>/g, "")
+    .trim()
+}
+
 export function friendlyModelName(raw: string): string {
   if (MODEL_LABELS[raw]) return MODEL_LABELS[raw]
   // Try partial match: "claude-sonnet-4-5" → "Sonnet 4.5"

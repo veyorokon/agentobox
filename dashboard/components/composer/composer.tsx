@@ -205,7 +205,7 @@ function Composer({
   const submitActive = isStreaming || (hasContent && !disabled)
 
   return (
-    <div className="px-4 pb-4 pt-2">
+    <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full">
       <div
         className={cn(
           "relative rounded-2xl border-[0.5px] border-border-300 bg-bg-000/60 transition-colors",

@@ -62,7 +62,7 @@ export function CodeBlock({
         const lang =
           language && loadedLangs.includes(language) ? language : "text";
 
-        const html = highlighter.codeToHtml(code, {
+        const html = highlighter.codeToHtml(code.trim(), {
           lang,
           theme: "vitesse-dark",
         });
@@ -78,12 +78,12 @@ export function CodeBlock({
     };
   }, [code, language]);
 
-  const trimmedCode = code.replace(/\n$/, "");
+  const trimmedCode = code.trim();
 
   return (
     <div
       ref={containerRef}
-      className="relative group bg-bg-300 rounded-lg overflow-hidden"
+      className="relative group !my-3 border-[0.5px] border-border-300 bg-bg-100/50 rounded-lg overflow-hidden"
     >
       {language ? (
         <div className="flex items-center justify-between px-4 py-2 border-b border-border-300 text-xs text-text-400">

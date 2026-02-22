@@ -51,26 +51,6 @@ class TimelineEntryType:
     created_at: datetime
 
 
-@strawberry.type
-class PageInfo:
-    has_next_page: bool
-    end_cursor: str | None = None
-
-
-@strawberry.type
-class EventEdge:
-    """Edge wrapping a raw event node for cursor pagination."""
-    node: TimelineEntryType
-    cursor: str
-
-
-@strawberry.type
-class EventConnection:
-    """Cursor-paginated connection of raw events — same shape as the subscription."""
-    edges: list[EventEdge]
-    page_info: PageInfo
-
-
 # ── Model-backed types ──
 
 

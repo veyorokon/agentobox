@@ -1,7 +1,9 @@
 "use client"
 
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
+import { CopyButton } from "@/components/shared/copy-button"
 import { ThinkingIndicator } from "@/components/feed/thinking-indicator"
+import { stripSystemReminders } from "@/lib/utils"
 import type { ContentBlock, AssistantEventData } from "@/types"
 
 /**
@@ -39,10 +41,10 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
   const content = data.message.content
   const blocks: ContentBlock[] = Array.isArray(content) ? content : []
 
-  // Collect text blocks into a single markdown string
+  // Collect text blocks into a single markdown string, stripping system-reminder tags
   const textParts = blocks
     .filter((b) => b.type === "text" && "text" in b)
-    .map((b) => (b as { type: "text"; text: string }).text)
+    .map((b) => stripSystemReminders((b as { type: "text"; text: string }).text))
     .filter((t) => t.trim().length > 0)
 
   const hasThinking = blocks.some(
@@ -52,8 +54,10 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
   const avatarColor = getAvatarColor(agentName)
   const initial = agentName.charAt(0).toUpperCase()
 
+  const fullText = textParts.join("\n\n")
+
   return (
-    <div className="flex gap-2 min-w-0">
+    <div className="group/msg flex gap-2 min-w-0 relative">
       {/* Agent avatar — only shown for first message in a group */}
       {showAvatar ? (
         <div
@@ -81,11 +85,18 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
         {/* Text content */}
         {textParts.length > 0 && (
           <MarkdownRenderer
-            content={textParts.join("\n\n")}
+            content={fullText}
             className="text-sm text-text-100"
           />
         )}
       </div>
+
+      {/* Copy full message — appears on hover */}
+      {fullText.length > 0 && (
+        <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+          <CopyButton text={fullText} />
+        </div>
+      )}
     </div>
   )
 }

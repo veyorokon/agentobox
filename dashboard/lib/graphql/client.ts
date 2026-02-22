@@ -15,10 +15,7 @@ import {
 } from "@apollo/client"
 import { onError } from "@apollo/client/link/error"
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions"
-import {
-  getMainDefinition,
-  relayStylePagination,
-} from "@apollo/client/utilities"
+import { getMainDefinition } from "@apollo/client/utilities"
 import { Client, createClient } from "graphql-ws"
 import { GRAPHQL_HTTP_URL, GRAPHQL_WS_URL } from "@/lib/constants"
 
@@ -194,8 +191,18 @@ const apolloClient = new ApolloClient({
       TimelineEntryType: { keyFields: ["id"] },
       Query: {
         fields: {
-          agentFeed: relayStylePagination(["agentId"]),
-          projectFeed: relayStylePagination(["projectId"]),
+          agentFeed: {
+            keyArgs: ["agentId"],
+            merge(_existing: any, incoming: any) {
+              return incoming
+            },
+          },
+          projectFeed: {
+            keyArgs: ["projectId"],
+            merge(_existing: any, incoming: any) {
+              return incoming
+            },
+          },
         },
       },
     },

@@ -1,12 +1,19 @@
 "use client"
 
-import { useRef, useEffect, useCallback, useMemo } from "react"
+import { useRef, useMemo, useCallback, createContext } from "react"
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
 import { FeedItemRouter } from "@/components/feed/feed-item"
 import { StatusGroupRow } from "@/components/feed/status-group-row"
 import { ThinkingIndicator } from "@/components/feed/thinking-indicator"
 import { EmptyFeed } from "@/components/feed/empty-feed"
 import type { TimelineEntry, ContentBlock } from "@/types"
 import { isAssistantEntry, isUserEntry, isSystemEntry } from "@/types"
+import { stripSystemReminders } from "@/lib/utils"
+
+/** Allows children (e.g. ResultCard) to request scroll-to-bottom when they resize */
+export const FeedScrollContext = createContext<{ scrollToBottom: () => void }>({
+  scrollToBottom: () => {},
+})
 
 /* ------------------------------------------------------------------ */
 /*  Pre-processing: consolidate raw events into renderable entries    */
@@ -15,12 +22,6 @@ import { isAssistantEntry, isUserEntry, isSystemEntry } from "@/types"
 type DisplayEntryItem = { kind: "item"; item: TimelineEntry; showAvatar: boolean }
 type DisplayEntryGroup = { kind: "status-group"; items: TimelineEntry[] }
 type DisplayEntry = DisplayEntryItem | DisplayEntryGroup
-
-/** Extract message.id from an assistant event's data. */
-function getMessageId(item: TimelineEntry): string {
-  if (!isAssistantEntry(item)) return ""
-  return item.data.message.id ?? ""
-}
 
 /** Check if an assistant entry has any visible content (text or tool_use). */
 function hasVisibleContent(item: TimelineEntry): boolean {
@@ -39,11 +40,6 @@ function isToolResultOnly(item: TimelineEntry): boolean {
   if (typeof content === "string") return false
   if (!Array.isArray(content)) return false
   return (content as ContentBlock[]).every((b) => b.type === "tool_result")
-}
-
-/** Strip <system-reminder>...</system-reminder> blocks injected by Claude Code into tool results. */
-function stripSystemReminders(text: string): string {
-  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()
 }
 
 /**
@@ -220,8 +216,6 @@ function consolidateItems(items: TimelineEntry[]): TimelineEntry[] {
 /*  Display list: group status events, compute avatar visibility      */
 /* ------------------------------------------------------------------ */
 
-// TODO: isStatusLike + status grouping in buildDisplayList are dead code now that
-// status/process_exit events are filtered in consolidateItems. Remove once confirmed.
 /** Returns true for events that should be collapsed when consecutive */
 function isStatusLike(item: TimelineEntry): boolean {
   if (item.entryType === "status") return true
@@ -288,105 +282,85 @@ function buildDisplayList(items: TimelineEntry[]): DisplayEntry[] {
 type FeedContainerProps = {
   items: TimelineEntry[]
   loading?: boolean
-  onLoadMore?: () => void
   hasAgents?: boolean
   runningAgentNames?: string[]
 }
 
-export function FeedContainer({ items, loading, onLoadMore, hasAgents = false, runningAgentNames = [] }: FeedContainerProps) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const topSentinelRef = useRef<HTMLDivElement>(null)
-  const anchoredRef = useRef(true)
-  const isLoadingMoreRef = useRef(false)
+export function FeedContainer({ items, loading, hasAgents = false, runningAgentNames = [] }: FeedContainerProps) {
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   const displayEntries = useMemo(() => buildDisplayList(items), [items])
 
-  // Track whether user is at the bottom (anchored).
-  // When anchored, new content auto-scrolls into view.
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    anchoredRef.current = distanceFromBottom < 40
-  }, [])
-
-  // Scroll to bottom: on initial load and whenever content changes while anchored.
-  // Uses a single RAF to let the browser lay out new content first.
-  useEffect(() => {
-    if (!anchoredRef.current || !bottomRef.current) return
-    requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ block: "end" })
-    })
-  }, [displayEntries])
-
-  // IntersectionObserver on sentinel at top to trigger loadMore for older history
-  useEffect(() => {
-    const sentinel = topSentinelRef.current
-    if (!sentinel || !onLoadMore) return
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0]
-        if (entry?.isIntersecting && !isLoadingMoreRef.current) {
-          isLoadingMoreRef.current = true
-          Promise.resolve(onLoadMore()).finally(() => {
-            isLoadingMoreRef.current = false
-          })
-        }
-      },
-      {
-        root: scrollRef.current,
-        threshold: 0.1,
+  const computeItemKey = useCallback(
+    (_index: number, entry: DisplayEntry) => {
+      if (entry.kind === "status-group") {
+        return `sg-${entry.items.map((i) => i.id).join("-")}`
       }
-    )
+      return entry.item.id
+    },
+    [],
+  )
 
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [onLoadMore])
+  const scrollCtx = useMemo(() => ({
+    scrollToBottom: () => {
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        behavior: "smooth",
+      })
+    },
+  }), [])
+
+  // Stable components object — defining inline causes remounts on every render
+  // which triggers "zero-sized element" warnings from Virtuoso
+  const virtuosoComponents = useMemo(() => ({
+    Footer: () => (
+      <>
+        {runningAgentNames.length > 0 && (
+          <div className="flex items-center justify-center py-2">
+            <ThinkingIndicator
+              label={runningAgentNames.length === 1
+                ? `${runningAgentNames[0]} is working...`
+                : `${runningAgentNames.length} agents working...`}
+            />
+          </div>
+        )}
+        {loading && (
+          <div className="flex items-center justify-center py-3">
+            <span className="text-text-400 text-xs">Loading...</span>
+          </div>
+        )}
+      </>
+    ),
+  }), [loading, runningAgentNames])
 
   if (items.length === 0 && !loading) {
     return <EmptyFeed hasAgents={hasAgents} />
   }
 
   return (
-    <div
-      ref={scrollRef}
-      onScroll={handleScroll}
-      className="flex-1 overflow-y-auto"
-      style={{ overflowAnchor: "none" }}
-    >
-      {/* Sentinel for loading older history when scrolled to top */}
-      <div ref={topSentinelRef} className="h-1 w-full" />
-
-      {displayEntries.map((entry, i) => (
-        <div key={entry.kind === "status-group" ? `sg-${i}` : entry.item.id}>
-          {entry.kind === "status-group" ? (
-            <StatusGroupRow items={entry.items} />
-          ) : (
-            <FeedItemRouter item={entry.item} showAvatar={entry.showAvatar} />
-          )}
-        </div>
-      ))}
-
-      {runningAgentNames.length > 0 && (
-        <div className="sticky bottom-0 flex items-center justify-center py-2 bg-gradient-to-t from-bg-000/90 to-transparent">
-          <ThinkingIndicator
-            label={runningAgentNames.length === 1
-              ? `${runningAgentNames[0]} is working...`
-              : `${runningAgentNames.length} agents working...`}
-          />
-        </div>
-      )}
-
-      {loading && (
-        <div className="flex items-center justify-center py-3">
-          <span className="text-text-400 text-xs">Loading...</span>
-        </div>
-      )}
-
-      {/* Bottom anchor — scrollIntoView target */}
-      <div ref={bottomRef} className="h-px" />
-    </div>
+    <FeedScrollContext.Provider value={scrollCtx}>
+      <Virtuoso
+        ref={virtuosoRef}
+        data={displayEntries}
+        computeItemKey={computeItemKey}
+        initialTopMostItemIndex={displayEntries.length - 1}
+        alignToBottom
+        defaultItemHeight={80}
+        followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
+        skipAnimationFrameInResizeObserver
+        increaseViewportBy={200}
+        className="flex-1"
+        itemContent={(_index, entry) =>
+          <div style={{ minHeight: 1 }}>
+            {entry.kind === "status-group" ? (
+              <StatusGroupRow items={entry.items} />
+            ) : (
+              <FeedItemRouter item={entry.item} showAvatar={entry.showAvatar} />
+            )}
+          </div>
+        }
+        components={virtuosoComponents}
+      />
+    </FeedScrollContext.Provider>
   )
 }

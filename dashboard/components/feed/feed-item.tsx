@@ -96,7 +96,7 @@ export const FeedItemRouter = memo(
     const content = renderItem(item, showAvatar)
     if (!content) return null
 
-    return <div className="px-4 py-1">{content}</div>
+    return <div className="max-w-3xl mx-auto w-full px-6 py-1">{content}</div>
   },
   (prev, next) => prev.item.id === next.item.id && prev.showAvatar === next.showAvatar,
 )

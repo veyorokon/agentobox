@@ -2,7 +2,7 @@
 
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { cn } from "@/lib/utils";
+import { cn, stripSystemReminders } from "@/lib/utils";
 import { CodeBlock } from "@/components/shared/code-block";
 
 interface MarkdownRendererProps {
@@ -23,7 +23,7 @@ const components: Components = {
     // Inline code
     return (
       <code
-        className="bg-bg-300/80 rounded px-1 py-0.5 text-[13px] font-mono text-accent-secondary-000"
+        className="bg-bg-100/50 border border-border-300 text-danger-000 rounded-[0.4rem] px-1 py-px font-mono text-[13px]"
         {...rest}
       >
         {children}
@@ -114,7 +114,7 @@ const components: Components = {
 
   ul({ children, ...rest }) {
     return (
-      <ul className="list-disc pl-5 space-y-0.5 mb-2 text-sm text-text-100" {...rest}>
+      <ul className="list-disc list-outside ml-6 space-y-1 mb-2 text-sm text-text-100" {...rest}>
         {children}
       </ul>
     );
@@ -123,7 +123,7 @@ const components: Components = {
   ol({ children, ...rest }) {
     return (
       <ol
-        className="list-decimal pl-5 space-y-0.5 mb-2 text-sm text-text-100"
+        className="list-decimal list-outside ml-6 space-y-1 mb-2 text-sm text-text-100"
         {...rest}
       >
         {children}
@@ -142,7 +142,7 @@ const components: Components = {
   blockquote({ children, ...rest }) {
     return (
       <blockquote
-        className="border-l-2 border-text-500/30 pl-3 text-text-300 italic my-2"
+        className="border-l-4 border-border-400 pl-4 italic mb-2"
         {...rest}
       >
         {children}
@@ -152,9 +152,9 @@ const components: Components = {
 
   table({ children, ...rest }) {
     return (
-      <div className="overflow-x-auto my-2">
+      <div className="overflow-x-auto mb-2 rounded border border-border-300">
         <table
-          className="w-full border-collapse text-sm font-mono"
+          className="min-w-full border-collapse text-sm"
           {...rest}
         >
           {children}
@@ -165,16 +165,24 @@ const components: Components = {
 
   thead({ children, ...rest }) {
     return (
-      <thead className="bg-bg-200/60" {...rest}>
+      <thead className="bg-bg-200 border-b border-border-300" {...rest}>
         {children}
       </thead>
+    );
+  },
+
+  tr({ children, ...rest }) {
+    return (
+      <tr className="border-b border-border-300 last:border-b-0" {...rest}>
+        {children}
+      </tr>
     );
   },
 
   th({ children, ...rest }) {
     return (
       <th
-        className="border border-border-300/20 px-2.5 py-1.5 text-[12px] text-text-200 font-semibold text-left"
+        className="px-3 py-2 text-left font-semibold text-text-200 border-r border-border-300 last:border-r-0"
         {...rest}
       >
         {children}
@@ -185,7 +193,7 @@ const components: Components = {
   td({ children, ...rest }) {
     return (
       <td
-        className="border border-border-300/20 px-2.5 py-1.5 text-[12px] text-text-300"
+        className="px-3 py-2 text-text-300 border-r border-border-300 last:border-r-0"
         {...rest}
       >
         {children}
@@ -217,10 +225,13 @@ const components: Components = {
 };
 
 export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+  // Defense-in-depth: strip system-reminder tags that may leak from agent events
+  const cleaned = stripSystemReminders(content);
+
   return (
-    <div className={cn("prose-none", className)}>
+    <div className={cn("prose-none space-y-2", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {content}
+        {cleaned}
       </ReactMarkdown>
     </div>
   );

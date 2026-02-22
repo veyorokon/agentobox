@@ -50,7 +50,7 @@ export default function ProjectPage() {
   const { agents } = useAgents(projectId)
 
   // Fetch feed — agent-specific or project-wide
-  const { items, loading, loadMore, hasNextPage } = useFeed({
+  const { items, loading } = useFeed({
     projectId,
     agentId: selectedAgentId ?? undefined,
   })
@@ -221,7 +221,6 @@ export default function ProjectPage() {
       <FeedContainer
         items={items}
         loading={loading}
-        onLoadMore={hasNextPage ? loadMore : undefined}
         hasAgents={agents.length > 0}
         runningAgentNames={runningAgentNames}
       />

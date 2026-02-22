@@ -51,36 +51,18 @@ export const AGENTS_QUERY = gql`
 
 export const AGENT_FEED_QUERY = gql`
   ${TIMELINE_FIELDS}
-  query AgentFeed($agentId: ID!, $first: Int, $after: String) {
-    agentFeed(agentId: $agentId, first: $first, after: $after) {
-      edges {
-        cursor
-        node {
-          ...TimelineFields
-        }
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
+  query AgentFeed($agentId: ID!) {
+    agentFeed(agentId: $agentId) {
+      ...TimelineFields
     }
   }
 `
 
 export const PROJECT_FEED_QUERY = gql`
   ${TIMELINE_FIELDS}
-  query ProjectFeed($projectId: ID!, $first: Int, $after: String) {
-    projectFeed(projectId: $projectId, first: $first, after: $after) {
-      edges {
-        cursor
-        node {
-          ...TimelineFields
-        }
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
+  query ProjectFeed($projectId: ID!) {
+    projectFeed(projectId: $projectId) {
+      ...TimelineFields
     }
   }
 `
