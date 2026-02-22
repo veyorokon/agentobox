@@ -23,7 +23,7 @@ const components: Components = {
     // Inline code
     return (
       <code
-        className="bg-bg-300 rounded px-1.5 py-0.5 text-sm font-mono text-accent-secondary-000"
+        className="bg-bg-300/80 rounded px-1 py-0.5 text-[13px] font-mono text-accent-secondary-000"
         {...rest}
       >
         {children}
@@ -53,7 +53,7 @@ const components: Components = {
   h1({ children, ...rest }) {
     return (
       <h1
-        className="text-2xl text-text-000 font-semibold mt-6 mb-3"
+        className="text-base text-text-000 font-semibold mt-4 mb-1.5"
         {...rest}
       >
         {children}
@@ -63,7 +63,7 @@ const components: Components = {
 
   h2({ children, ...rest }) {
     return (
-      <h2 className="text-xl text-text-000 font-semibold mt-5 mb-2" {...rest}>
+      <h2 className="text-sm text-text-000 font-semibold mt-3 mb-1" {...rest}>
         {children}
       </h2>
     );
@@ -71,7 +71,7 @@ const components: Components = {
 
   h3({ children, ...rest }) {
     return (
-      <h3 className="text-lg text-text-000 font-semibold mt-4 mb-2" {...rest}>
+      <h3 className="text-sm text-text-000 font-semibold mt-2.5 mb-1" {...rest}>
         {children}
       </h3>
     );
@@ -80,7 +80,7 @@ const components: Components = {
   h4({ children, ...rest }) {
     return (
       <h4
-        className="text-base text-text-000 font-semibold mt-3 mb-1"
+        className="text-sm text-text-000 font-medium mt-2 mb-0.5"
         {...rest}
       >
         {children}
@@ -90,7 +90,7 @@ const components: Components = {
 
   h5({ children, ...rest }) {
     return (
-      <h5 className="text-sm text-text-000 font-semibold mt-3 mb-1" {...rest}>
+      <h5 className="text-sm text-text-100 font-medium mt-2 mb-0.5" {...rest}>
         {children}
       </h5>
     );
@@ -98,7 +98,7 @@ const components: Components = {
 
   h6({ children, ...rest }) {
     return (
-      <h6 className="text-xs text-text-000 font-semibold mt-3 mb-1" {...rest}>
+      <h6 className="text-xs text-text-100 font-medium mt-2 mb-0.5" {...rest}>
         {children}
       </h6>
     );
@@ -106,7 +106,7 @@ const components: Components = {
 
   p({ children, ...rest }) {
     return (
-      <p className="text-text-100 leading-relaxed mb-3" {...rest}>
+      <p className="text-text-100 text-sm leading-relaxed mb-2 last:mb-0" {...rest}>
         {children}
       </p>
     );
@@ -114,7 +114,7 @@ const components: Components = {
 
   ul({ children, ...rest }) {
     return (
-      <ul className="list-disc pl-6 space-y-1 mb-3 text-text-100" {...rest}>
+      <ul className="list-disc pl-5 space-y-0.5 mb-2 text-sm text-text-100" {...rest}>
         {children}
       </ul>
     );
@@ -123,7 +123,7 @@ const components: Components = {
   ol({ children, ...rest }) {
     return (
       <ol
-        className="list-decimal pl-6 space-y-1 mb-3 text-text-100"
+        className="list-decimal pl-5 space-y-0.5 mb-2 text-sm text-text-100"
         {...rest}
       >
         {children}
@@ -131,10 +131,18 @@ const components: Components = {
     );
   },
 
+  li({ children, ...rest }) {
+    return (
+      <li className="text-sm text-text-100 leading-relaxed" {...rest}>
+        {children}
+      </li>
+    );
+  },
+
   blockquote({ children, ...rest }) {
     return (
       <blockquote
-        className="border-l-2 border-border-300 pl-4 text-text-300 italic my-3"
+        className="border-l-2 border-text-500/30 pl-3 text-text-300 italic my-2"
         {...rest}
       >
         {children}
@@ -144,9 +152,9 @@ const components: Components = {
 
   table({ children, ...rest }) {
     return (
-      <div className="overflow-x-auto my-3">
+      <div className="overflow-x-auto my-2">
         <table
-          className="w-full border-collapse border border-border-300 text-sm"
+          className="w-full border-collapse text-sm font-mono"
           {...rest}
         >
           {children}
@@ -155,10 +163,18 @@ const components: Components = {
     );
   },
 
+  thead({ children, ...rest }) {
+    return (
+      <thead className="bg-bg-200/60" {...rest}>
+        {children}
+      </thead>
+    );
+  },
+
   th({ children, ...rest }) {
     return (
       <th
-        className="border border-border-300 px-3 py-2 text-sm text-text-000 font-semibold text-left bg-bg-200"
+        className="border border-border-300/20 px-2.5 py-1.5 text-[12px] text-text-200 font-semibold text-left"
         {...rest}
       >
         {children}
@@ -169,11 +185,33 @@ const components: Components = {
   td({ children, ...rest }) {
     return (
       <td
-        className="border border-border-300 px-3 py-2 text-sm text-text-200"
+        className="border border-border-300/20 px-2.5 py-1.5 text-[12px] text-text-300"
         {...rest}
       >
         {children}
       </td>
+    );
+  },
+
+  hr({ ...rest }) {
+    return (
+      <hr className="border-t border-border-300/15 my-3" {...rest} />
+    );
+  },
+
+  strong({ children, ...rest }) {
+    return (
+      <strong className="text-text-000 font-semibold" {...rest}>
+        {children}
+      </strong>
+    );
+  },
+
+  em({ children, ...rest }) {
+    return (
+      <em className="text-text-200 italic" {...rest}>
+        {children}
+      </em>
     );
   },
 };

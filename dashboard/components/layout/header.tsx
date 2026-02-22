@@ -1,8 +1,7 @@
 "use client"
 
 import { Menu } from "lucide-react"
-import { cn, formatCost } from "@/lib/utils"
-import { formatModelName } from "@/lib/format"
+import { cn, formatCost, friendlyModelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { AgentActions } from "@/components/layout/agent-actions"
 import type { Agent } from "@/types"
@@ -102,7 +101,7 @@ function Header({
               {agent.name}
               {isSelected && agent.model && (
                 <span className="text-[10px] text-text-500 font-mono">
-                  {formatModelName(agent.model)}
+                  {friendlyModelName(agent.model)}
                 </span>
               )}
               {isSelected && cost > 0 && (

@@ -1,4 +1,3 @@
-import enum
 from datetime import datetime
 
 import strawberry
@@ -9,52 +8,7 @@ from strawberry.scalars import JSON
 from agents import models
 
 
-# ── Feed item types (computed, not model-backed) ──
-
-
-@strawberry.enum
-class FeedItemKind(enum.Enum):
-    USER_MESSAGE = "user-message"
-    AGENT_TEXT = "agent-text"
-    ACTIVITY = "activity"
-    STATUS = "status"
-    TASK = "task"
-    SYSTEM = "system"
-    ERROR = "error"
-    QUESTION = "question"
-    MEMORY = "memory"
-    PLAN = "plan"
-    TASK_START = "task-start"
-    TASK_END = "task-end"
-    TEAM_MESSAGE = "team-message"
-
-
-@strawberry.type
-class ToolUseItemType:
-    name: str
-    input: JSON  # raw tool_use.input dict
-    result: JSON  # raw tool_result.content (string or ContentBlock[])
-    is_error: bool = False
-
-
-@strawberry.type
-class QuestionOptionType:
-    label: str
-    description: str
-
-
-@strawberry.type
-class AgentQuestionType:
-    question: str
-    header: str
-    options: list[QuestionOptionType]
-    multi_select: bool
-
-
-@strawberry.type
-class QuestionAnswerType:
-    selected_indices: list[int]
-    other_text: str | None = None
+# ── Session result (model-backed) ──
 
 
 @strawberry_django.type(models.SessionResult)
@@ -76,42 +30,48 @@ class SessionResultType:
         return str(self.agent_id)  # type: ignore[return-value]
 
 
-@strawberry.type
-class FeedItemType:
-    """Single item in the dashboard activity feed.
+# ── Event types — raw event log, same shape for queries + subscriptions ──
 
-    Computed from StreamEvent data by feed_transform.stream_events_to_feed().
-    Each `kind` uses a different subset of fields — same contract as before,
-    now powered by a single table source instead of Message + AgentEvent.
+
+@strawberry.type
+class TimelineEntryType:
+    """Raw event from the StreamEvent log.
+
+    Used by feed queries, timeline query, and event_stream subscription.
+    The data field contains the raw event dict — the frontend decides
+    what to render based on entry_type and the contents of data.
     """
 
     id: str
-    kind: FeedItemKind
+    entry_type: str
     agent_id: str
     agent_name: str
-    timestamp: datetime
-    text: str | None = None
-    image_urls: list[str] | None = None
-    target_name: str | None = None
-    tools: list[ToolUseItemType] | None = None
-    from_status: str | None = None
-    to_status: str | None = None
-    task_summary: str | None = None
-    error_text: str | None = None
-    cumulative_cost_usd: float | None = None
-    questions: list[AgentQuestionType] | None = None
-    memory_content: str | None = None
-    plan_status: str | None = None
-    plan_summary: str | None = None
-    plan_steps: list[str] | None = None
-    task_divider_subject: str | None = None
-    task_divider_id: str | None = None
-    task_divider_active_form: str | None = None
-    answers: list[QuestionAnswerType | None] | None = None
-    tool_use_id: str | None = None
-    sender_name: str | None = None
-    target_agent_ids: list[str] | None = None
-    session_result: SessionResultType | None = None
+    summary: str | None
+    data: JSON
+    created_at: datetime
+
+
+@strawberry.type
+class PageInfo:
+    has_next_page: bool
+    end_cursor: str | None = None
+
+
+@strawberry.type
+class EventEdge:
+    """Edge wrapping a raw event node for cursor pagination."""
+    node: TimelineEntryType
+    cursor: str
+
+
+@strawberry.type
+class EventConnection:
+    """Cursor-paginated connection of raw events — same shape as the subscription."""
+    edges: list[EventEdge]
+    page_info: PageInfo
+
+
+# ── Model-backed types ──
 
 
 @strawberry_django.type(models.ProjectSecret)
@@ -173,7 +133,6 @@ class AgentType:
     parent_session_id: auto
     session_id: auto
     model: auto
-    cwd: auto
     permission_mode: auto
     mcp_servers: auto
     workspace_path: auto
@@ -192,24 +151,3 @@ class AgentType:
     @strawberry_django.field
     def feedback(self, limit: int = 50, offset: int = 0) -> list[AgentFeedbackType]:
         return models.AgentFeedback.objects.filter(agent_id=self.id).order_by("-created_at")[offset:offset + limit]
-
-
-# ── Subscription payload types ──
-# These are the shapes pushed through Channels. TimelineEntryType is
-# the unified subscription contract — same shape for all event types.
-
-
-@strawberry.type
-class TimelineEntryType:
-    """Unified timeline/subscription entry from StreamEvent log.
-
-    Used by both the timeline query and the event_stream subscription.
-    """
-
-    id: str
-    entry_type: str
-    agent_id: str
-    agent_name: str
-    summary: str | None
-    data: JSON
-    created_at: datetime

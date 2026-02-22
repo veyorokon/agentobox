@@ -135,24 +135,19 @@ body {
   z-index: 1;
 }
 
-/* Pulsing sparkle dots for thinking/active indicators */
+/* Pulsing dots for thinking/active indicators */
 @keyframes pulse-dot {
   0%,
   100% {
-    opacity: 0.2;
-    transform: scale(0.85);
+    opacity: 0.15;
   }
   50% {
-    opacity: 1;
-    transform: scale(1);
+    opacity: 0.8;
   }
 }
 
 .animate-pulse-dot {
   animation: pulse-dot 1.4s ease-in-out infinite;
-  display: inline-block;
-  font-size: 0.6em;
-  line-height: 1;
 }
 
 /* Toast slide-in animation */

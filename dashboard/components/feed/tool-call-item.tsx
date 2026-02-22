@@ -1,101 +1,102 @@
 "use client"
 
-import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { CollapsibleOutput } from "@/components/shared/collapsible-output"
-import { FileLink } from "@/components/shared/file-link"
-import type { ToolUseItem } from "@/types"
+import type { ToolUseBlock } from "@/types"
 
 type ToolCallItemProps = {
-  tool: ToolUseItem
+  tool: ToolUseBlock
+  expandedByDefault?: boolean
 }
 
-function getInputSummary(tool: ToolUseItem): string {
+function getInputDisplay(tool: ToolUseBlock): string {
   const input = tool.input
+  if (!input || Object.keys(input).length === 0) return ""
+
   switch (tool.name) {
-    case "Read":
-      return String(input.file_path ?? input.path ?? "")
-    case "Write":
-      return String(input.file_path ?? input.path ?? "")
-    case "Edit":
-      return String(input.file_path ?? input.path ?? "")
     case "Bash":
       return String(input.command ?? "")
+    case "Read":
+    case "Write":
+    case "Edit":
+      return String(input.file_path ?? input.path ?? "")
     case "Grep":
-      return String(input.pattern ?? "")
+      return `pattern: ${String(input.pattern ?? "")}`
     case "Glob":
-      return String(input.pattern ?? "")
+      return `pattern: ${String(input.pattern ?? "")}`
     case "WebFetch":
       return String(input.url ?? "")
     case "Task":
+      return String(input.description ?? input.prompt ?? "")
+    case "SendMessage":
+    case "mcp__abox-coord__teammate_message":
+    case "mcp__abox-coord__teammate_broadcast": {
+      const content = input.content ?? input.message ?? ""
+      const recipient = input.recipient ?? input.agentId ?? ""
+      const msg = typeof content === "string"
+        ? content
+        : JSON.stringify(content, null, 2)
+      return recipient ? `→ ${recipient}: ${msg}` : msg
+    }
+    case "mcp__abox-coord__task_add":
+    case "mcp__abox-coord__task_claim":
+    case "mcp__abox-coord__task_complete":
+      return String(input.title ?? input.task_id ?? input.description ?? "")
     case "TaskCreate":
     case "TaskUpdate":
-      return String(input.subject ?? input.description ?? input.prompt ?? "")
-    default:
-      return Object.keys(input).slice(0, 3).join(", ")
+      return String(input.subject ?? input.description ?? "")
+    default: {
+      // For unknown tools, show a compact key=value format instead of raw JSON
+      const pairs = Object.entries(input)
+        .filter(([, v]) => v !== null && v !== undefined && v !== "")
+        .map(([k, v]) => {
+          const val = typeof v === "string" ? v : JSON.stringify(v)
+          const short = val.length > 80 ? val.slice(0, 80) + "…" : val
+          return `${k}: ${short}`
+        })
+      return pairs.join("\n")
+    }
   }
 }
 
-function getResultText(tool: ToolUseItem): string {
-  const result = tool.result
-  if (!result) return ""
-  if (typeof result === "string") return result
-  if ("output" in result) return String(result.output)
-  if ("content" in result) return String(result.content)
-  if ("text" in result) return String(result.text)
-  return JSON.stringify(result, null, 2)
-}
+export function ToolCallItem({ tool, expandedByDefault }: ToolCallItemProps) {
+  const inputDisplay = getInputDisplay(tool)
+  const result = tool._result
 
-export function ToolCallItem({ tool }: ToolCallItemProps) {
-  const [expanded, setExpanded] = useState(false)
-  const summary = getInputSummary(tool)
-  const resultText = getResultText(tool)
-  const isFileTool = ["Read", "Write", "Edit"].includes(tool.name)
-  const filePath = isFileTool ? summary : null
+  if (!inputDisplay && !result) return null
 
   return (
-    <div className="rounded-md overflow-hidden">
-      {/* Header row: tool name label + input summary */}
-      <button
-        type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        className="flex items-start gap-2 w-full text-left px-2 py-1.5 cursor-pointer hover:bg-bg-200/50 transition-colors"
-      >
-        <span
-          className={cn(
-            "text-[11px] font-semibold shrink-0 mt-px",
-            tool.isError
-              ? "text-danger-000"
-              : "text-accent-secondary-000",
-          )}
-        >
-          {tool.name}
-        </span>
-
-        <span className="text-xs text-text-300 font-mono truncate min-w-0">
-          {filePath ? (
-            <FileLink path={filePath} className="text-xs" />
-          ) : (
-            summary
-          )}
-        </span>
-
-        {tool.isError && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-danger-900/30 text-danger-000 shrink-0">
-            Error
-          </span>
-        )}
-      </button>
-
-      {/* Expanded: show result output */}
-      {expanded && resultText && (
+    <div className="mx-2.5 mb-1.5 rounded bg-bg-300/60 overflow-hidden">
+      {inputDisplay && (
+        <div className="px-3 py-1.5">
+          <CollapsibleOutput
+            content={inputDisplay}
+            maxHeight={100}
+            className="text-[11px]"
+          />
+        </div>
+      )}
+      {result && result.content && (
         <div
           className={cn(
-            "mx-2 mb-2 px-3 py-2 rounded bg-bg-300",
-            tool.isError && "text-danger-000",
+            "px-3 py-1.5",
+            inputDisplay && "border-t border-border-300/10",
+            result.isError && "bg-danger-900/20",
           )}
         >
-          <CollapsibleOutput content={resultText} maxHeight={120} />
+          {result.isError && (
+            <span className="text-[9px] font-mono font-medium text-danger-000/70 uppercase tracking-wider">
+              error
+            </span>
+          )}
+          <CollapsibleOutput
+            content={result.content}
+            maxHeight={80}
+            className={cn(
+              "text-[11px]",
+              result.isError ? "text-danger-000/80" : "text-text-500",
+            )}
+          />
         </div>
       )}
     </div>

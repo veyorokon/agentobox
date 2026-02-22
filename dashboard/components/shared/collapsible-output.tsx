@@ -23,7 +23,7 @@ export function CollapsibleOutput({
     return (
       <pre
         className={cn(
-          "whitespace-pre-wrap font-mono text-sm text-text-200",
+          "whitespace-pre-wrap font-mono text-sm text-text-300 leading-relaxed",
           className,
         )}
       >
@@ -33,11 +33,12 @@ export function CollapsibleOutput({
   }
 
   return (
-    <div className={cn("relative", className)}>
+    <div>
       <pre
         className={cn(
-          "whitespace-pre-wrap font-mono text-sm text-text-200 overflow-hidden transition-all",
+          "whitespace-pre-wrap font-mono text-sm text-text-300 leading-relaxed overflow-hidden transition-all",
           !expanded && "[mask-image:linear-gradient(to_bottom,black_60%,transparent_100%)]",
+          className,
         )}
         style={!expanded ? { maxHeight: `${maxHeight}px` } : undefined}
       >
@@ -46,9 +47,9 @@ export function CollapsibleOutput({
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="text-xs text-accent-secondary-100 hover:underline cursor-pointer mt-1"
+        className="text-[11px] text-accent-secondary-100 hover:text-accent-secondary-000 cursor-pointer mt-0.5 font-mono"
       >
-        {expanded ? "Show less" : "Show more"}
+        {expanded ? "show less" : "show more"}
       </button>
     </div>
   );

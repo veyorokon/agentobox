@@ -1,7 +1,6 @@
 "use client"
 
-import { formatModelName } from "@/lib/format"
-import { formatCost } from "@/lib/utils"
+import { formatCost, friendlyModelName } from "@/lib/utils"
 import type { Agent } from "@/types"
 
 type SessionInfoBarProps = {
@@ -17,7 +16,14 @@ function SessionInfoBar({ agent }: SessionInfoBarProps) {
   const items: string[] = []
 
   if (agent.model) {
-    items.push(formatModelName(agent.model))
+    items.push(friendlyModelName(agent.model))
+  }
+
+  const toolCount = Array.isArray((agent.capabilities as Record<string, unknown>)?.tools)
+    ? ((agent.capabilities as Record<string, unknown>).tools as unknown[]).length
+    : 0
+  if (toolCount > 0) {
+    items.push(`${toolCount} tools`)
   }
 
   if (cost > 0) {

@@ -12,7 +12,6 @@ export const AGENT_FIELDS = gql`
     parentSessionId
     sessionId
     model
-    cwd
     permissionMode
     mcpServers
     workspacePath
@@ -23,67 +22,6 @@ export const AGENT_FIELDS = gql`
     capabilities
     createdAt
     phase
-    sessionResult {
-      id
-      sessionId
-      isError
-      totalCostUsd
-      durationMs
-      durationApiMs
-      numTurns
-      modelUsage
-      permissionDenials
-      createdAt
-      updatedAt
-      agentId
-    }
-  }
-`
-
-export const FEED_ITEM_FIELDS = gql`
-  fragment FeedItemFields on FeedItemType {
-    id
-    kind
-    agentId
-    agentName
-    timestamp
-    text
-    imageUrls
-    targetName
-    tools {
-      name
-      input
-      result
-      isError
-    }
-    fromStatus
-    toStatus
-    taskSummary
-    errorText
-    cumulativeCostUsd
-    questions {
-      question
-      header
-      options {
-        label
-        description
-      }
-      multiSelect
-    }
-    memoryContent
-    planStatus
-    planSummary
-    planSteps
-    taskDividerSubject
-    taskDividerId
-    taskDividerActiveForm
-    answers {
-      selectedIndices
-      otherText
-    }
-    toolUseId
-    senderName
-    targetAgentIds
     sessionResult {
       id
       sessionId

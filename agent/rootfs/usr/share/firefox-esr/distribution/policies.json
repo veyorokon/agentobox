@@ -1,11 +1,5 @@
 {
   "policies": {
-    "ExtensionSettings": {
-      "abox-theme@agentobox.com": {
-        "installation_mode": "normal_installed",
-        "install_url": "file:///opt/abox/firefox-theme/"
-      }
-    },
     "Extensions": {
       "Install": ["file:///opt/abox/firefox-theme.xpi"]
     }

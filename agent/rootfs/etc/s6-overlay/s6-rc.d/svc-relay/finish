@@ -1,0 +1,29 @@
+#!/command/with-contenv bash
+# s6 finish script — runs after the service process exits.
+#
+# $1 = exit code of the run script (or 256 if killed by signal)
+# $2 = signal number that killed it (0 if normal exit)
+#
+# On clean exit (code 0): touch the down file so s6-supervise does NOT
+# restart the relay. A clean exit means the relay decided to stop
+# (e.g., fatal WS close, clean shutdown). Restarting would be wrong.
+#
+# On non-zero exit: s6-supervise auto-restarts (default behavior).
+# The run script will re-check for .relay_env and either start relay
+# or go back to sleep infinity.
+
+EXIT_CODE=${1:-0}
+
+if [ "$EXIT_CODE" = "0" ]; then
+    # Prevent s6-supervise from restarting after clean exit.
+    # s6-rc manages down files internally for state tracking, but
+    # s6-supervise honors them regardless of who creates them.
+    if [ -d /run/service/svc-relay ]; then
+        touch /run/service/svc-relay/down
+    fi
+fi
+
+# Clean up any orphaned Claude CLI processes the SDK may have left behind.
+# The SDK spawns node processes internally; if relay dies mid-session,
+# these can linger and hold file locks or API connections.
+pkill -f 'node.*claude' 2>/dev/null || true

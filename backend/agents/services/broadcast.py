@@ -16,6 +16,7 @@ old AgentEvent creation) and broadcast it.
 """
 
 import structlog
+from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
 from agents.models import Agent, StreamEvent
@@ -25,6 +26,25 @@ log = structlog.get_logger("agents.broadcast")
 
 def _group_name(project_id: str, suffix: str) -> str:
     return f"project_{project_id}_{suffix}"
+
+
+def _create_status_event_sync(agent: Agent, old_status: str) -> StreamEvent:
+    """Create a status-change StreamEvent using sync ORM.
+
+    Must run via sync_to_async(thread_sensitive=False) so it gets its own
+    thread instead of the request's CurrentThreadExecutor — which may already
+    be torn down if this runs inside an asyncio.create_task() that outlives
+    the original HTTP request (e.g. _provision_agent).
+    """
+    return StreamEvent.objects.create(
+        agent=agent,
+        session_id=agent.session_id or "",
+        event_type="status",
+        data={"from": old_status, "to": agent.status},
+    )
+
+
+_create_status_event = sync_to_async(_create_status_event_sync, thread_sensitive=False)
 
 
 async def broadcast_agent_update(agent: Agent) -> None:
@@ -49,13 +69,7 @@ async def broadcast_agent_update(agent: Agent) -> None:
     # Detect status change and emit a status StreamEvent
     old_status = getattr(agent, "_original_status", None)
     if old_status is not None and old_status != agent.status:
-        data = {"from": old_status, "to": agent.status}
-        event = await StreamEvent.objects.acreate(
-            agent=agent,
-            session_id=agent.session_id or "",
-            event_type="status",
-            data=data,
-        )
+        event = await _create_status_event(agent, old_status)
         await broadcast_event(agent, event)
         # Reset to prevent double-emission on subsequent broadcasts
         agent._original_status = agent.status

@@ -2,6 +2,8 @@
 
 import { AlertCircle } from "lucide-react"
 
+const isDev = process.env.NODE_ENV === "development"
+
 export default function DashboardError({
   error,
   reset,
@@ -17,9 +19,15 @@ export default function DashboardError({
           <span className="text-text-200 text-sm font-medium">
             Something went wrong
           </span>
-          <span className="text-text-500 text-xs max-w-xs text-center">
-            {error.message || "An unexpected error occurred"}
-          </span>
+          {isDev ? (
+            <span className="text-text-500 text-xs max-w-xs text-center font-mono">
+              {error.message}
+            </span>
+          ) : (
+            <span className="text-text-500 text-xs max-w-xs text-center">
+              Try refreshing the page.{error.digest && ` (ref: ${error.digest})`}
+            </span>
+          )}
         </div>
         <button
           type="button"

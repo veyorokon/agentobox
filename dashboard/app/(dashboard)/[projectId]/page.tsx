@@ -49,7 +49,7 @@ export default function ProjectPage() {
   const { agents } = useAgents(projectId)
 
   // Fetch feed — agent-specific or project-wide
-  const { items, loading, loadMore } = useFeed({
+  const { items, loading, loadMore, hasNextPage } = useFeed({
     projectId,
     agentId: selectedAgentId ?? undefined,
   })
@@ -69,6 +69,14 @@ export default function ProjectPage() {
     () => agents.find((a) => a.id === selectedAgentId) ?? null,
     [agents, selectedAgentId],
   )
+
+  // Names of currently running agents (for thinking indicator)
+  const runningAgentNames = useMemo(() => {
+    const relevant = selectedAgentId
+      ? agents.filter((a) => a.id === selectedAgentId)
+      : agents
+    return relevant.filter((a) => a.status === "running").map((a) => a.name)
+  }, [agents, selectedAgentId])
 
   // Toast helper
   const addToast = useUIStore((s) => s.addToast)
@@ -198,8 +206,9 @@ export default function ProjectPage() {
       <FeedContainer
         items={items}
         loading={loading}
-        onLoadMore={loadMore}
+        onLoadMore={hasNextPage ? loadMore : undefined}
         hasAgents={agents.length > 0}
+        runningAgentNames={runningAgentNames}
       />
 
       <Composer

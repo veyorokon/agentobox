@@ -24,6 +24,14 @@ from agents.services.broadcast import broadcast_agent_update, broadcast_event
 log = structlog.get_logger("agents.comms")
 
 
+def _needs_restart(agent: Agent) -> bool:
+    """Check if an agent needs a hard restart before receiving a message."""
+    return (
+        agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
+        or (agent.status != AgentStatus.DEPLOYING and not agent.sandbox_id)
+    )
+
+
 def _normalize_content(content: list) -> list:
     """Normalize image content blocks for the Anthropic API.
 
@@ -88,11 +96,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         return False
 
     # Auto-restart dead agents
-    needs_restart = (
-        agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
-        or (agent.status != AgentStatus.DEPLOYING and not agent.sandbox_id)
-    )
-    if needs_restart:
+    if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
         op_log.info("auto_restarting_agent", current_status=agent.status)
         agent = await hard_restart_agent(str(agent_id))
@@ -204,11 +208,7 @@ async def broadcast_message(
     parts_with_meta = [*parts, broadcast_meta]
 
     for agent in agents:
-        needs_restart = (
-            agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
-            or (agent.status != AgentStatus.DEPLOYING and not agent.sandbox_id)
-        )
-        if needs_restart:
+        if _needs_restart(agent):
             op_log.info("auto_restarting_agent", agent_id=str(agent.id))
             agent = await hard_restart_agent(str(agent.id))
 

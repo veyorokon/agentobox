@@ -70,8 +70,6 @@ class Agent(models.Model):
 
     # Claude Code native fields (updated from hook common fields)
     model = models.CharField(max_length=100, blank=True)
-    cwd = models.CharField(max_length=500, blank=True)
-    transcript_path = models.CharField(max_length=500, blank=True)
     permission_mode = models.CharField(max_length=30, blank=True)
 
     # MCP server config: {"server-name": {"command": "...", "args": [...]}}
@@ -129,8 +127,8 @@ class StreamEvent(models.Model):
 
     This is deliberately a dumb append-only log. The relay forwards ALL
     Claude Code stream-json events verbatim — no filtering, no batching,
-    no transformation. Intelligence lives in the read path (feed_transform)
-    and the client (rendering), not the write path.
+    no transformation. Intelligence lives in the read path (the frontend),
+    not the write path.
 
     Why store everything:
     - Thinking content, tool progress, rate limits, content deltas —

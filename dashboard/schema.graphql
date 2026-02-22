@@ -1,4 +1,3 @@
-
 type AgentFeedbackType {
   id: UUID!
   rating: Int!
@@ -6,13 +5,6 @@ type AgentFeedbackType {
   sessionId: String!
   createdAt: DateTime!
   agentId: String!
-}
-
-type AgentQuestionType {
-  question: String!
-  header: String!
-  options: [QuestionOptionType!]!
-  multiSelect: Boolean!
 }
 
 type AgentType {
@@ -27,7 +19,6 @@ type AgentType {
   parentSessionId: String!
   sessionId: String!
   model: String!
-  cwd: String!
   permissionMode: String!
   mcpServers: JSON!
   workspacePath: String!
@@ -81,50 +72,14 @@ scalar DateTime
 """Decimal (fixed-point)"""
 scalar Decimal
 
-enum FeedItemKind {
-  USER_MESSAGE
-  AGENT_TEXT
-  ACTIVITY
-  STATUS
-  TASK
-  SYSTEM
-  ERROR
-  QUESTION
-  MEMORY
-  PLAN
-  TASK_START
-  TASK_END
-  TEAM_MESSAGE
+type EventConnection {
+  edges: [EventEdge!]!
+  pageInfo: PageInfo!
 }
 
-type FeedItemType {
-  id: String!
-  kind: FeedItemKind!
-  agentId: String!
-  agentName: String!
-  timestamp: DateTime!
-  text: String
-  imageUrls: [String!]
-  targetName: String
-  tools: [ToolUseItemType!]
-  fromStatus: String
-  toStatus: String
-  taskSummary: String
-  errorText: String
-  cumulativeCostUsd: Float
-  questions: [AgentQuestionType!]
-  memoryContent: String
-  planStatus: String
-  planSummary: String
-  planSteps: [String!]
-  taskDividerSubject: String
-  taskDividerId: String
-  taskDividerActiveForm: String
-  answers: [QuestionAnswerType]
-  toolUseId: String
-  senderName: String
-  targetAgentIds: [String!]
-  sessionResult: SessionResultType
+type EventEdge {
+  node: TimelineEntryType!
+  cursor: String!
 }
 
 """
@@ -177,6 +132,11 @@ type Mutation {
   scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
 }
 
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
 type ProjectSecretType {
   id: UUID!
   key: String!
@@ -202,21 +162,11 @@ type Query {
   agents(projectId: ID!): [AgentType!]!
   agent(agentId: ID!): AgentType
   timeline(projectId: ID!, limit: Int! = 200, offset: Int! = 0): [TimelineEntryType!]!
-  agentFeed(agentId: ID!, limit: Int! = 200, offset: Int! = 0): [FeedItemType!]!
-  projectFeed(projectId: ID!, limit: Int! = 500, offset: Int! = 0): [FeedItemType!]!
+  agentFeed(agentId: ID!, first: Int! = 50, after: String = null): EventConnection!
+  projectFeed(projectId: ID!, first: Int! = 50, after: String = null): EventConnection!
   availableModels: [ModelEntryType!]!
   mcpRegistry: [McpRegistryEntryType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!
-}
-
-type QuestionAnswerType {
-  selectedIndices: [Int!]!
-  otherText: String
-}
-
-type QuestionOptionType {
-  label: String!
-  description: String!
 }
 
 input RateFeedbackInput {
@@ -283,13 +233,6 @@ type TimelineEntryType {
   summary: String
   data: JSON!
   createdAt: DateTime!
-}
-
-type ToolUseItemType {
-  name: String!
-  input: JSON!
-  result: JSON!
-  isError: Boolean!
 }
 
 scalar UUID

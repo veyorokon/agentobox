@@ -32,3 +32,29 @@ export function formatDuration(ms: number): string {
   const remainSecs = secs % 60
   return `${mins}m ${remainSecs}s`
 }
+
+/** Strip MCP server prefix: "mcp__abox-coord__task_list" → "task_list" */
+export function friendlyToolName(name: string): string {
+  if (name.startsWith("mcp__")) {
+    const parts = name.split("__")
+    return parts[parts.length - 1]
+  }
+  return name
+}
+
+const MODEL_LABELS: Record<string, string> = {
+  "claude-sonnet-4-5-20250929": "Sonnet 4.5",
+  "claude-opus-4-6": "Opus 4.6",
+  "claude-haiku-4-5-20251001": "Haiku 4.5",
+  "claude-sonnet-4-6": "Sonnet 4.6",
+}
+
+export function friendlyModelName(raw: string): string {
+  if (MODEL_LABELS[raw]) return MODEL_LABELS[raw]
+  // Try partial match: "claude-sonnet-4-5" → "Sonnet 4.5"
+  for (const [key, label] of Object.entries(MODEL_LABELS)) {
+    if (raw.startsWith(key.replace(/-\d{8}$/, ""))) return label
+  }
+  // Fallback: strip "claude-" prefix and capitalize
+  return raw.replace(/^claude-/, "").replace(/-\d{8}$/, "")
+}

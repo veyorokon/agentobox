@@ -1,17 +1,43 @@
-import { AlertCircle } from "lucide-react"
-import type { FeedItem } from "@/types"
+import { cn, formatDuration, formatCost } from "@/lib/utils"
+import type { ResultEventData } from "@/types"
 
 type ErrorMessageProps = {
-  item: FeedItem
+  data: ResultEventData
 }
 
-export function ErrorMessage({ item }: ErrorMessageProps) {
+export function ErrorMessage({ data }: ErrorMessageProps) {
+  const cost = data.total_cost_usd ?? 0
+  const durationMs = data.duration_ms ?? 0
+  const numTurns = data.num_turns ?? 0
+  const errorResult = data.result
+
   return (
-    <div className="bg-danger-900/20 border border-danger-200/30 rounded-lg px-4 py-3 flex items-start gap-3">
-      <AlertCircle size={16} className="text-danger-000 shrink-0 mt-0.5" />
-      <p className="text-danger-000 text-sm whitespace-pre-wrap">
-        {item.errorText ?? item.text ?? "Unknown error"}
-      </p>
+    <div className="rounded-r bg-danger-900/10 px-3 py-2 border-l-2 border-l-danger-100">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[11px] font-mono font-medium text-danger-000">
+          session errored
+        </span>
+        {cost > 0 && (
+          <span className="text-[11px] text-text-400 font-mono">
+            {formatCost(cost)}
+          </span>
+        )}
+      </div>
+
+      {errorResult && (
+        <p className="text-danger-000 text-sm font-mono whitespace-pre-wrap leading-relaxed mb-1">
+          {errorResult}
+        </p>
+      )}
+
+      <div className="flex items-center gap-3 text-[10px] text-text-400 font-mono">
+        {durationMs > 0 && <span>{formatDuration(durationMs)}</span>}
+        {numTurns > 0 && (
+          <span>
+            {numTurns} turn{numTurns !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
     </div>
   )
 }

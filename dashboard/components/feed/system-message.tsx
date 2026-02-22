@@ -1,31 +1,79 @@
-import type { FeedItem } from "@/types"
 import { ThinkingIndicator } from "@/components/feed/thinking-indicator"
-
-const ACTIVE_KEYWORDS = ["restarting", "starting", "switching", "running"]
-
-function isActiveSystem(text: string): boolean {
-  const lower = text.toLowerCase()
-  return ACTIVE_KEYWORDS.some((kw) => lower.includes(kw))
-}
+import { friendlyModelName } from "@/lib/utils"
+import type { SystemEventData } from "@/types"
 
 type SystemMessageProps = {
-  item: FeedItem
+  data: SystemEventData
 }
 
-export function SystemMessage({ item }: SystemMessageProps) {
-  const text = item.text || ""
+export function SystemMessage({ data }: SystemMessageProps) {
+  const subtype = data.subtype
 
-  if (isActiveSystem(text)) {
-    return (
-      <div className="flex items-center justify-center py-1">
-        <ThinkingIndicator label={text} />
-      </div>
-    )
+  switch (subtype) {
+    case "init": {
+      const rawModel = data.model
+      const model = rawModel ? friendlyModelName(rawModel) : undefined
+      const tools = data.tools
+      const toolCount = tools?.length ?? 0
+
+      return (
+        <div className="flex items-center justify-center py-px">
+          <span className="text-text-500/60 text-[10px] font-mono">
+            {model && <span>{model}</span>}
+            {model && toolCount > 0 && <span className="mx-1">&middot;</span>}
+            {toolCount > 0 && <span>{toolCount} tools</span>}
+            {!model && toolCount === 0 && "session initialized"}
+          </span>
+        </div>
+      )
+    }
+
+    case "process_exit": {
+      const exitCode = data.exit_code
+      const isError = exitCode !== undefined && exitCode !== 0
+
+      return (
+        <div className="flex items-center justify-center py-px">
+          <span className={`text-[10px] font-mono ${isError ? "text-danger-000/80" : "text-text-500/60"}`}>
+            process exited{exitCode !== undefined ? ` (code ${exitCode})` : ""}
+          </span>
+        </div>
+      )
+    }
+
+    case "status": {
+      const text = data.text
+      if (!text) return null
+
+      const lower = text.toLowerCase()
+      const isActive = ["restarting", "starting", "switching", "running"].some(
+        (kw) => lower.includes(kw),
+      )
+
+      if (isActive) {
+        return (
+          <div className="flex items-center justify-center py-px">
+            <ThinkingIndicator label={text} />
+          </div>
+        )
+      }
+
+      return (
+        <div className="flex items-center justify-center py-px">
+          <span className="text-text-500/60 text-[10px] font-mono">{text}</span>
+        </div>
+      )
+    }
+
+    default: {
+      const text = data.text ?? data.message ?? null
+      if (!text) return null
+
+      return (
+        <div className="flex items-center justify-center py-px">
+          <span className="text-text-500/60 text-[10px] font-mono">{text}</span>
+        </div>
+      )
+    }
   }
-
-  return (
-    <div className="text-center text-text-500 text-xs font-mono py-1">
-      {text}
-    </div>
-  )
 }

@@ -401,7 +401,8 @@ create_agent()
   │    │    ├─ Provision API key helper (tmpfs + script)
   │    │    └─ Provision scoped sudo (package-manager-only)
   │    ├─ Write /home/agent/.relay_env (relay environment variables)
-  │    └─ Launch relay via: tmux new-session -d -s claude -x 200 -y 50
+  │    ├─ Signal s6-supervised relay: s6-svc -t /run/service/svc-relay
+  │    └─ Spawn tmux session tailing relay logs (VNC debug visibility)
 ```
 
 ### Security

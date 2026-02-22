@@ -9,7 +9,7 @@ The relay connects via WebSocket and we get a persistent bidirectional channel:
 This is deliberately a dumb pipe on the transport layer. The relay sends
 every line from Claude Code's stdout verbatim — no filtering, no batching,
 no transformation. The backend stores every event as a StreamEvent row.
-Intelligence lives in the read path (feed_transform), not here.
+Intelligence lives in the read path (the frontend), not here.
 
 Why no batching: the old relay batched events in 75ms windows to amortize
 HTTP overhead. WebSockets have no per-message overhead worth batching for.
@@ -58,14 +58,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 break
 
         try:
-            agent = await Agent.objects.aget(id=self.agent_id)
+            self.agent = await Agent.objects.aget(id=self.agent_id)
         except Agent.DoesNotExist:
             log.warning("relay_ws_reject", reason="agent_not_found", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4004)
             return
 
-        if not agent.relay_token or not token or not hmac.compare_digest(token, agent.relay_token):
+        if not self.agent.relay_token or not token or not hmac.compare_digest(token, self.agent.relay_token):
             log.warning("relay_ws_reject", reason="bad_token", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4001)
@@ -92,7 +92,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         from agents.services.stream import process_stream_event
 
         try:
-            await process_stream_event(self.agent_id, content)
+            await process_stream_event(self.agent, content)
         except Exception:
             log.exception(
                 "relay_ws_event_failed",

@@ -1,0 +1,25 @@
+#!/command/with-contenv bash
+exec 2>&1
+
+# The relay service is registered with s6-rc so the supervisor is always
+# listening, but it stays idle until lifecycle.py writes .relay_env and
+# sends SIGTERM (s6-svc -t) to wake us up.
+#
+# Flow:
+#   1. Container boots -> s6-supervise starts this script
+#   2. No .relay_env yet -> sleep infinity (harmless placeholder)
+#   3. lifecycle.py writes .relay_env, then: s6-svc -t /run/service/svc-relay
+#   4. SIGTERM kills sleep, s6-supervise restarts this script
+#   5. .relay_env exists -> source it, exec relay.py under s6-setuidgid
+
+if [ ! -f /home/agent/.relay_env ]; then
+    exec sleep infinity
+fi
+
+# Relay env written by lifecycle.py — source it for SDK + WS config
+source /home/agent/.relay_env
+
+WORK_DIR="/home/agent/workspace"
+[ -d "$WORK_DIR" ] && cd "$WORK_DIR" || cd /home/agent
+
+exec s6-setuidgid agent python3 /opt/abox/relay.py

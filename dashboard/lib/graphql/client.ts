@@ -15,7 +15,10 @@ import {
 } from "@apollo/client"
 import { onError } from "@apollo/client/link/error"
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions"
-import { getMainDefinition } from "@apollo/client/utilities"
+import {
+  getMainDefinition,
+  relayStylePagination,
+} from "@apollo/client/utilities"
 import { Client, createClient } from "graphql-ws"
 import { GRAPHQL_HTTP_URL, GRAPHQL_WS_URL } from "@/lib/constants"
 
@@ -87,8 +90,9 @@ const errorLink = onError(({ graphQLErrors, networkError }) => {
 })
 
 
+// GQL logging — opt-in via NEXT_PUBLIC_GQL_DEBUG=1 to avoid overhead on every reload.
 const loggingLink =
-  process.env.NODE_ENV !== "production"
+  process.env.NEXT_PUBLIC_GQL_DEBUG === "1"
     ? new ApolloLink((operation, forward) => {
         const definition = getMainDefinition(operation.query)
         const opType =
@@ -102,7 +106,13 @@ const loggingLink =
           return new Observable((observer) => {
             const sub = forward(operation).subscribe({
               next: (result) => {
-                console.debug(`[GQL] ${opType} ${opName} data received`)
+                // Log subscription payloads with entry type for visibility
+                const entry = result.data?.eventStream
+                const entryType = entry?.entryType ?? "?"
+                const agentName = entry?.agentName ?? "?"
+                console.debug(
+                  `[GQL] ${opType} ${opName} ← ${entryType} (agent=${agentName}, id=${entry?.id?.slice(0, 8) ?? "?"})`
+                )
                 observer.next(result)
               },
               error: (err) => {
@@ -129,8 +139,7 @@ const loggingLink =
           return result
         })
       })
-    : // In production, pass through without logging
-      new ApolloLink((operation, forward) => forward(operation))
+    : new ApolloLink((operation, forward) => forward(operation))
 
 const httpLink = new HttpLink({
   uri: GRAPHQL_HTTP_URL,
@@ -182,8 +191,13 @@ const apolloClient = new ApolloClient({
   cache: new InMemoryCache({
     typePolicies: {
       AgentType: { keyFields: ["id"] },
-      FeedItemType: { keyFields: ["id"] },
       TimelineEntryType: { keyFields: ["id"] },
+      Query: {
+        fields: {
+          agentFeed: relayStylePagination(["agentId"]),
+          projectFeed: relayStylePagination(["projectId"]),
+        },
+      },
     },
   }),
 })

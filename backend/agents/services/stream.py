@@ -16,7 +16,7 @@ Thinking content, tool progress, rate limits, content deltas — everything
 Anthropic adds to stream-json is automatically captured. The data field is
 the raw event dict, verbatim. We are an event log, not a relational model.
 
-Intelligence lives in the read path (feed_transform) which reconstructs
+Intelligence lives in the read path (the frontend) which reconstructs
 logical messages by grouping StreamEvents by message_id.
 """
 
@@ -59,14 +59,16 @@ def _extract_message_id(event: dict) -> str:
     return ""
 
 
-async def process_stream_event(agent_id: str, event: dict) -> None:
+async def process_stream_event(agent: Agent, event: dict) -> None:
     """Every event from relay → INSERT StreamEvent + broadcast + side effects.
 
     This is the entire write path. One function. No routing, no branching
     by event type for storage — every event gets stored the same way.
     Side effects (agent model updates) are the only type-specific logic.
+
+    The caller (RelayConsumer) caches the Agent instance for the lifetime
+    of the WebSocket connection — no per-event DB fetch.
     """
-    agent = await Agent.objects.aget(id=agent_id)
     event_type = event.get("type", "")
     session_id = event.get("session_id", "")
 
@@ -95,13 +97,21 @@ async def process_stream_event(agent_id: str, event: dict) -> None:
     # 3. Agent model side effects (materialized view updates)
     # These update denormalized fields on Agent for fast dashboard reads.
     # The StreamEvent log is the source of truth; these are just caches.
+    #
+    # The agent instance is cached on the consumer for the WS lifetime,
+    # so refresh before reads that gate writes to avoid stale-state bugs.
     if event_type == "assistant":
+        await agent.arefresh_from_db(fields=["status"])
         await _maybe_set_running(agent)
     elif event_type == "result":
         await _handle_result(agent, event)
     elif event_type == "system":
+        await agent.arefresh_from_db(
+            fields=["capabilities", "session_id", "permission_mode", "status", "phase"]
+        )
         await _handle_system(agent, event)
     elif event_type == "stream_event":
+        await agent.arefresh_from_db(fields=["phase"])
         await _handle_phase(agent, event)
 
 

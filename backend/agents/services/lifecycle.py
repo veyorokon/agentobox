@@ -127,8 +127,23 @@ def _save_agent_failed(agent_id):
     return agent
 
 
+def _create_stream_event_sync(agent, session_id, event_type, data):
+    """Sync helper: create a StreamEvent row.
+
+    Used inside _provision_agent (which runs as a detached asyncio.create_task)
+    where the original request's CurrentThreadExecutor is already torn down.
+    The async ORM's acreate() uses thread_sensitive=True by default, which
+    tries to submit to that dead executor and crashes. This sync version
+    wrapped with thread_sensitive=False gets its own thread instead.
+    """
+    return StreamEvent.objects.create(
+        agent=agent, session_id=session_id, event_type=event_type, data=data,
+    )
+
+
 _save_provisioned = sync_to_async(_save_agent_provisioned, thread_sensitive=False)
 _save_failed = sync_to_async(_save_agent_failed, thread_sensitive=False)
+_create_stream_event = sync_to_async(_create_stream_event_sync, thread_sensitive=False)
 
 
 def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
@@ -208,7 +223,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
 
-        # Dev: bind-mount relay.py and hooks so changes don't require image rebuild
+        # Dev: bind-mount relay.py so changes don't require image rebuild
         rootfs_path = getattr(settings, "AGENT_ROOTFS_PATH", "")
         if rootfs_path:
             mounts.append(VolumeMount(
@@ -297,7 +312,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await write_theme_files(runtime, sandbox.id, project.theme_tokens)
 
         # Build relay environment variables
-        # The relay reads these to spawn Claude with correct flags and POST events
+        # The relay reads these into ClaudeAgentOptions (SDK) and WS config
         relay_env_lines = [
             f"export AGENT_ID='{_shell_escape(agent_id)}'",
             f"export AGENT_NAME='{_shell_escape(agent.name)}'",
@@ -334,15 +349,27 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         )
         await broadcast_agent_update(agent)
 
-        # Launch relay process via tmux (so it's visible in VNC)
-        relay_cmd = (
-            f"cd {work_dir} && source /home/agent/.relay_env"
-            f" && python3 /opt/abox/relay.py"
+        # Bring up the s6-supervised relay service.
+        # The service runs under s6-supervise from boot, but idles in
+        # `sleep infinity` until .relay_env exists. Now that we've written
+        # the env file, SIGTERM the sleeping placeholder so s6-supervise
+        # restarts the run script — which will find .relay_env and exec
+        # relay.py. On crash, s6-supervise auto-restarts; on clean exit
+        # (code 0), the finish script touches a down file to stop restarts.
+        await runtime.exec(
+            sandbox.id, ["/command/s6-svc", "-t", "/run/service/svc-relay"],
+            user="root",
         )
+
+        # Spawn a tmux session tailing relay logs for VNC debug visibility.
+        # S6_LOGGING=1 routes service stdout/stderr through s6-log to the
+        # catch-all directory. Tail with -F to handle log rotation.
         await runtime.exec(
             sandbox.id,
             ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50",
-             "bash", "-c", relay_cmd],
+             "bash", "-c",
+             "exec tail -F /run/uncaught-logs/current 2>/dev/null || exec sleep infinity"],
+            user="agent",
         )
         op_log.info("relay_launched", team_name=team_name, parent_session_id=parent_session_id)
 
@@ -363,9 +390,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         try:
             agent = await _save_failed(agent_id)
             await broadcast_agent_update(agent)
-            evt = await StreamEvent.objects.acreate(
-                agent=agent, session_id="", event_type="provision_failed",
-                data={"error": "Container provisioning failed"},
+            evt = await _create_stream_event(
+                agent, "", "provision_failed",
+                {"error": "Container provisioning failed"},
             )
             await broadcast_event(agent, evt)
         except Exception:
@@ -598,7 +625,7 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
     try:
         output = await runtime.exec(
             sandbox_id,
-            ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome' | grep -v grep"],
+            ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' | grep -v grep"],
         )
         truncated = output[:2000] if output else "(empty)"
         op_log.info("sandbox_processes", output=truncated)
@@ -621,7 +648,9 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         "ABOX_CALLBACK_URL": getattr(settings, "ABOX_CALLBACK_URL", ""),
         "ABOX_DASHBOARD_URL": getattr(settings, "ABOX_DASHBOARD_URL", ""),
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-        "CLAUDECODE": "1",
+        # DO NOT set CLAUDECODE=1 — the CLI treats it as a nested session
+        # marker and refuses to start. The SDK sets its own entrypoint env var
+        # (CLAUDE_CODE_ENTRYPOINT=sdk-py) internally.
         # BASH_ENV is sourced by bash for every non-interactive invocation.
         # Claude Code's Bash tool uses non-interactive shells, so .bashrc
         # is NOT read. BASH_ENV ensures secrets are available to all commands.

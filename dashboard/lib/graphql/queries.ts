@@ -1,7 +1,7 @@
 import { gql } from "@apollo/client"
 import {
   AGENT_FIELDS,
-  FEED_ITEM_FIELDS,
+  TIMELINE_FIELDS,
 } from "./fragments"
 
 export const ME_QUERY = gql`
@@ -49,31 +49,38 @@ export const AGENTS_QUERY = gql`
   }
 `
 
-export const AGENT_QUERY = gql`
-  ${AGENT_FIELDS}
-  query Agent($agentId: ID!) {
-    agent(agentId: $agentId) {
-      ...AgentFields
-    }
-  }
-`
-
 export const AGENT_FEED_QUERY = gql`
-  ${FEED_ITEM_FIELDS}
-  query AgentFeed($agentId: ID!, $limit: Int, $offset: Int) {
-    agentFeed(agentId: $agentId, limit: $limit, offset: $offset) {
-      ...FeedItemFields
+  ${TIMELINE_FIELDS}
+  query AgentFeed($agentId: ID!, $first: Int, $after: String) {
+    agentFeed(agentId: $agentId, first: $first, after: $after) {
+      edges {
+        cursor
+        node {
+          ...TimelineFields
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
     }
   }
 `
 
 export const PROJECT_FEED_QUERY = gql`
-  ${FEED_ITEM_FIELDS}
-  query ProjectFeed($projectId: ID!, $limit: Int, $offset: Int) {
-    projectFeed(projectId: $projectId, limit: $limit, offset: $offset) {
-      ...FeedItemFields
+  ${TIMELINE_FIELDS}
+  query ProjectFeed($projectId: ID!, $first: Int, $after: String) {
+    projectFeed(projectId: $projectId, first: $first, after: $after) {
+      edges {
+        cursor
+        node {
+          ...TimelineFields
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
     }
   }
 `
-
-

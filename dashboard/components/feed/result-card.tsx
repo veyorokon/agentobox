@@ -1,19 +1,20 @@
 "use client"
 
-import { cn, formatDuration, formatCost } from "@/lib/utils"
-import { Clock, Zap, RotateCw, AlertTriangle, DollarSign } from "lucide-react"
-import type { SessionResult } from "@/types"
+import { useState } from "react"
+import { cn, formatDuration, formatCost, friendlyModelName } from "@/lib/utils"
+import type { ResultEventData } from "@/types"
 
 type ResultCardProps = {
-  result: SessionResult
+  data: ResultEventData
   className?: string
 }
 
 type ModelUsageEntry = {
-  input_tokens?: number
-  output_tokens?: number
-  cache_creation_input_tokens?: number
-  cache_read_input_tokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  cacheCreationInputTokens?: number
+  cacheReadInputTokens?: number
+  costUSD?: number
 }
 
 function formatTokenCount(n: number): string {
@@ -27,30 +28,21 @@ function ModelUsageBreakdown({ usage }: { usage: Record<string, unknown> }) {
   if (entries.length === 0) return null
 
   return (
-    <div className="mt-2 pt-2 border-t border-border-300/10 space-y-1">
-      {entries.map(([model, data]) => {
-        if (!data || typeof data !== "object") return null
-        const input = data.input_tokens ?? 0
-        const output = data.output_tokens ?? 0
-        const cacheWrite = data.cache_creation_input_tokens ?? 0
-        const cacheRead = data.cache_read_input_tokens ?? 0
-
-        // Short model name — strip everything before the last slash
-        const shortName = model.includes("/")
-          ? model.split("/").pop()
-          : model
+    <div className="mt-1.5 space-y-0.5">
+      {entries.map(([model, modelData]) => {
+        if (!modelData || typeof modelData !== "object") return null
+        const input = modelData.inputTokens ?? 0
+        const output = modelData.outputTokens ?? 0
+        const cacheWrite = modelData.cacheCreationInputTokens ?? 0
+        const cacheRead = modelData.cacheReadInputTokens ?? 0
 
         return (
-          <div key={model} className="flex items-center gap-2 text-[11px] font-mono">
+          <div key={model} className="flex items-center gap-2 text-[10px] font-mono">
             <span className="text-text-300 truncate min-w-0 max-w-[140px]">
-              {shortName}
+              {friendlyModelName(model)}
             </span>
-            <span className="text-text-400">
-              {formatTokenCount(input)} in
-            </span>
-            <span className="text-text-400">/</span>
-            <span className="text-text-400">
-              {formatTokenCount(output)} out
+            <span className="text-text-500">
+              {formatTokenCount(input)} in / {formatTokenCount(output)} out
             </span>
             {(cacheWrite > 0 || cacheRead > 0) && (
               <span className="text-text-500">
@@ -65,68 +57,78 @@ function ModelUsageBreakdown({ usage }: { usage: Record<string, unknown> }) {
   )
 }
 
-export function ResultCard({ result, className }: ResultCardProps) {
-  const cost = parseFloat(result.totalCostUsd) || 0
-  const hasModelUsage =
-    result.modelUsage && Object.keys(result.modelUsage).length > 0
+export function ResultCard({ data, className }: ResultCardProps) {
+  const [expanded, setExpanded] = useState(false)
+
+  const cost = data.total_cost_usd ?? 0
+  const durationMs = data.duration_ms ?? 0
+  const numTurns = data.num_turns ?? 0
+  const modelUsage = data.modelUsage ?? {}
+  const isError = !!data.is_error
+  const errorResult = data.result
+  const hasModelUsage = Object.keys(modelUsage).length > 0
+
+  // Build stats string: "12s · 3 turns"
+  const statParts: string[] = []
+  if (durationMs > 0) statParts.push(formatDuration(durationMs))
+  if (numTurns > 0) statParts.push(`${numTurns} turn${numTurns !== 1 ? "s" : ""}`)
+  const statsText = statParts.join(" \u00b7 ")
 
   return (
-    <div
-      className={cn(
-        "rounded-md bg-bg-200 px-3 py-2.5 border-l-2",
-        result.isError
-          ? "border-l-danger-000"
-          : "border-l-accent-main-000",
-        className,
-      )}
-    >
-      {/* Top row: status label + cost */}
-      <div className="flex items-center justify-between gap-2 mb-1.5">
+    <div className={cn("ml-8", className)}>
+      {/* Pill row */}
+      <div
+        className="inline-flex items-center gap-1.5 cursor-pointer"
+        onClick={() => hasModelUsage && setExpanded(!expanded)}
+      >
+        {/* Status pill */}
         <span
           className={cn(
-            "text-xs font-semibold",
-            result.isError ? "text-danger-000" : "text-accent-main-000",
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-mono font-medium",
+            isError
+              ? "bg-danger-900/20 text-danger-000"
+              : "bg-success-900/20 text-success-000",
           )}
         >
-          {result.isError ? (
-            <span className="inline-flex items-center gap-1">
-              <AlertTriangle size={12} />
-              Session Errored
-            </span>
-          ) : (
-            "Session Complete"
-          )}
+          <span className="text-[9px]">{isError ? "\u2717" : "\u2713"}</span>
+          {isError ? "errored" : "done"}
         </span>
-        <span className="text-xs text-text-400 font-mono">
-          {formatCost(cost)}
-        </span>
-      </div>
 
-      {/* Stats row */}
-      <div className="flex items-center gap-4 text-[11px] text-text-300 font-mono">
-        <span className="inline-flex items-center gap-1">
-          <Clock size={11} className="text-text-400" />
-          {formatDuration(result.durationMs)}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Zap size={11} className="text-text-400" />
-          {formatDuration(result.durationApiMs)} API
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <RotateCw size={11} className="text-text-400" />
-          {result.numTurns} turn{result.numTurns !== 1 ? "s" : ""}
-        </span>
+        {/* Cost pill */}
         {cost > 0 && (
-          <span className="inline-flex items-center gap-1">
-            <DollarSign size={11} className="text-text-400" />
+          <span className="inline-flex items-center rounded-full bg-bg-200/80 px-2 py-0.5 text-[10px] font-mono text-text-400">
             {formatCost(cost)}
+          </span>
+        )}
+
+        {/* Stats pill */}
+        {statsText && (
+          <span className="inline-flex items-center rounded-full bg-bg-200/80 px-2 py-0.5 text-[10px] font-mono text-text-400">
+            {statsText}
+          </span>
+        )}
+
+        {/* Expand indicator */}
+        {hasModelUsage && (
+          <span className={cn(
+            "text-text-500 text-[10px] transition-transform duration-150",
+            expanded && "rotate-90",
+          )}>
+            {"\u25b8"}
           </span>
         )}
       </div>
 
-      {/* Model usage breakdown (optional) */}
-      {hasModelUsage && (
-        <ModelUsageBreakdown usage={result.modelUsage} />
+      {/* Error message */}
+      {isError && errorResult && (
+        <p className="mt-1 text-danger-000 text-xs font-mono whitespace-pre-wrap leading-relaxed">
+          {errorResult}
+        </p>
+      )}
+
+      {/* Expanded model usage */}
+      {expanded && hasModelUsage && (
+        <ModelUsageBreakdown usage={modelUsage} />
       )}
     </div>
   )

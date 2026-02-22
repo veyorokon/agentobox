@@ -1,5 +1,5 @@
-import type { FeedItem } from "@/types"
 import { ThinkingIndicator } from "@/components/feed/thinking-indicator"
+import type { StatusEventData } from "@/types"
 
 const ACTIVE_STATUSES = new Set([
   "running",
@@ -8,35 +8,31 @@ const ACTIVE_STATUSES = new Set([
   "starting",
 ])
 
-function isActiveTransition(item: FeedItem): boolean {
-  const text = (item.text || "").toLowerCase()
-  const toStatus = (item.toStatus || "").toLowerCase()
-  return (
-    ACTIVE_STATUSES.has(toStatus) ||
-    [...ACTIVE_STATUSES].some((s) => text.includes(s))
-  )
-}
-
 type StatusMessageProps = {
-  item: FeedItem
+  data: StatusEventData
+  agentName: string
 }
 
-export function StatusMessage({ item }: StatusMessageProps) {
-  const label = item.text || (item.fromStatus && item.toStatus ? `${item.fromStatus} → ${item.toStatus}` : "Status changed")
+export function StatusMessage({ data, agentName }: StatusMessageProps) {
+  const from = data.from
+  const to = data.to
 
-  if (isActiveTransition(item)) {
+  const label = from && to ? `${agentName} ${from} → ${to}` : `${agentName} status changed`
+  const isActive = (to && ACTIVE_STATUSES.has(to.toLowerCase())) ?? false
+
+  if (isActive) {
     return (
-      <div className="flex items-center justify-center py-1 gap-2">
-        <ThinkingIndicator
-          label={`${item.agentName} ${label}`}
-        />
+      <div className="flex items-center justify-center py-px">
+        <ThinkingIndicator label={label} />
       </div>
     )
   }
 
   return (
-    <div className="text-center text-text-400 text-xs font-mono py-1">
-      {item.agentName} {label}
+    <div className="flex items-center justify-center py-px">
+      <span className="text-text-500/60 text-[10px] font-mono">
+        {label}
+      </span>
     </div>
   )
 }
