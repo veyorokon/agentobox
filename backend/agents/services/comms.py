@@ -95,12 +95,6 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         op_log.warning("agent_not_found")
         return False
 
-    # Auto-restart dead agents
-    if _needs_restart(agent):
-        from agents.services.lifecycle import hard_restart_agent
-        op_log.info("auto_restarting_agent", current_status=agent.status)
-        agent = await hard_restart_agent(str(agent_id))
-
     # Build parts from content blocks or plain text
     if content:
         parts = content
@@ -109,7 +103,8 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         parts = [{"type": "text", "text": message}]
         api_parts = parts
 
-    # Store as StreamEvent so the feed sees it
+    # Store as StreamEvent BEFORE restart so the message is persisted
+    # regardless of whether the relay is connected yet.
     stream_event = await StreamEvent.objects.acreate(
         agent=agent,
         session_id=agent.session_id or "",
@@ -122,6 +117,14 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         },
     )
     await broadcast_event(agent, stream_event)
+
+    # Auto-restart dead agents — relay will backfill the message on connect
+    if _needs_restart(agent):
+        from agents.services.lifecycle import hard_restart_agent
+        op_log.info("auto_restarting_agent", current_status=agent.status)
+        await hard_restart_agent(str(agent_id))
+        op_log.info("message_sent", delivery="backfill")
+        return True
 
     # Push to relay via WebSocket
     input_msg = {
@@ -208,11 +211,7 @@ async def broadcast_message(
     parts_with_meta = [*parts, broadcast_meta]
 
     for agent in agents:
-        if _needs_restart(agent):
-            op_log.info("auto_restarting_agent", agent_id=str(agent.id))
-            agent = await hard_restart_agent(str(agent.id))
-
-        # Store with broadcast metadata for feed dedup
+        # Store with broadcast metadata BEFORE restart so the message is persisted
         stream_event = await StreamEvent.objects.acreate(
             agent=agent,
             session_id=agent.session_id or "",
@@ -225,6 +224,12 @@ async def broadcast_message(
             },
         )
         await broadcast_event(agent, stream_event)
+
+        if _needs_restart(agent):
+            op_log.info("auto_restarting_agent", agent_id=str(agent.id))
+            await hard_restart_agent(str(agent.id))
+            # Relay will backfill the message on connect
+            continue
 
         # Push to relay via WebSocket
         input_msg = {"type": "user", "message": {"role": "user", "content": api_parts}}

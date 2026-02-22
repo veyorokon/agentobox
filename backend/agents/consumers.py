@@ -25,6 +25,8 @@ import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
 
+from agents.models import StreamEvent
+
 log = structlog.get_logger("agents.relay_ws")
 
 
@@ -77,6 +79,33 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         # Start the background reconciliation loop on first relay connect
         from agents.services.reconcile import ensure_running
         ensure_running()
+
+        # Backfill pending user messages that arrived while relay was disconnected.
+        # Uses agent.updated_at (set by _atomic_reset_for_restart) as the cutoff.
+        pending = StreamEvent.objects.filter(
+            agent_id=self.agent_id,
+            event_type="user",
+            created_at__gte=self.agent.updated_at,
+        ).order_by("created_at")
+
+        async for event in pending:
+            data = event.data
+            msg = data.get("message", {})
+            content = msg.get("content", "")
+            # Only replay text user messages, not tool_result events
+            if isinstance(content, str) and content.strip():
+                await self.send_json({
+                    "type": "input",
+                    "payload": {"type": "user", "message": {"role": "user", "content": content}},
+                })
+            elif isinstance(content, list):
+                # Check if it's a text-only content block list (not tool_result)
+                text_parts = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if text_parts and not any(b.get("type") == "tool_result" for b in content):
+                    await self.send_json({
+                        "type": "input",
+                        "payload": {"type": "user", "message": {"role": "user", "content": content}},
+                    })
 
         log.info("relay_ws_connected", agent_id=self.agent_id)
 

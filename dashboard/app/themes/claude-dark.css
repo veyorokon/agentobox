@@ -1,0 +1,53 @@
+[data-theme="claude"][data-mode="dark"] {
+  /* Primitives — raw values for the Claude dark palette */
+  --p-surface: hsl(60 2.7% 14.5%);
+  --p-surface-raised: hsl(60 2.1% 18.4%);
+  --p-surface-sunken: hsl(30 3.3% 11.8%);
+  --p-surface-overlay: hsl(60 2.1% 18.4%);
+  --p-surface-backdrop: hsl(0 0% 0% / 0.6);
+  --p-surface-invert: hsl(0 0% 100%);
+
+  --p-text-default: hsl(48 33.3% 97.1%);
+  --p-text-secondary: hsl(50 9% 73.7%);
+  --p-text-muted: hsl(48 4.8% 59.2%);
+  --p-text-disabled: hsl(48 4.8% 59.2% / 0.5);
+  --p-text-on-emphasis: hsl(0 0% 100%);
+
+  --p-border-default: hsl(51 16.5% 84.5% / 0.15);
+  --p-border-subtle: hsl(51 16.5% 84.5% / 0.08);
+  --p-border-strong: hsl(51 16.5% 84.5% / 0.30);
+
+  --p-accent: hsl(15 54.2% 51.2%);
+  --p-accent-hover: hsl(15 63.1% 59.6%);
+  --p-accent-subtle: hsl(15 54.2% 51.2% / 0.15);
+  --p-text-accent: hsl(15 63.1% 59.6%);
+
+  --p-info: hsl(210 65.5% 67.1%);
+  --p-text-info: hsl(210 65.5% 67.1%);
+  --p-text-info-hover: hsl(210 70.9% 51.6%);
+
+  --p-pro: hsl(251 84.6% 74.5%);
+  --p-text-pro: hsl(251 84.6% 74.5%);
+
+  --p-success: hsl(97 59.1% 46.1%);
+  --p-text-success: hsl(97 59.1% 46.1%);
+  --p-success-subtle: hsl(127 100% 13.9% / 0.2);
+
+  --p-danger: hsl(0 98.4% 75.1%);
+  --p-text-danger: hsl(0 98.4% 75.1%);
+  --p-danger-subtle: hsl(0 46.5% 27.8% / 0.2);
+
+  --p-warning: hsl(40 71% 50%);
+  --p-text-warning: hsl(40 71% 50%);
+
+  --p-interactive: hsl(60 2.1% 18.4% / 0.4);
+  --p-interactive-active: hsl(60 2.1% 18.4% / 0.8);
+  --p-ring-focus: hsl(15 63.1% 59.6% / 0.5);
+
+  --p-radius: 0.75rem;
+
+  /* Shadows — theme-specific (dark needs heavier shadows) */
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow-md: 0 4px 6px hsl(0 0% 0% / 0.4);
+  --shadow-lg: 0 10px 15px hsl(0 0% 0% / 0.5);
+}

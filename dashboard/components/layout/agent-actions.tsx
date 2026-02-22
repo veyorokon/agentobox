@@ -27,7 +27,7 @@ type AgentActionsProps = {
 const MODE_CYCLE = [
   { value: "default", label: "Normal", icon: Code },
   { value: "plan", label: "Plan", icon: ClipboardList },
-  { value: "dangerously-skip-permissions", label: "YOLO", icon: ShieldOff },
+  { value: "bypassPermissions", label: "YOLO", icon: ShieldOff },
 ] as const
 
 function getNextMode(current: string): (typeof MODE_CYCLE)[number] {

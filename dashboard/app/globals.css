@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./themes/claude-dark.css";
 
 @theme {
   /* Accent — brand orange */
@@ -65,12 +66,6 @@
   --color-oncolor-200: hsl(60 6.7% 97.1%);
   --color-oncolor-300: hsl(60 6.7% 97.1%);
 
-  /* Pictogram */
-  --color-pictogram-100: hsl(48 3.4% 29.2%);
-  --color-pictogram-200: hsl(60 2.5% 23.3%);
-  --color-pictogram-300: hsl(60 2.1% 18.4%);
-  --color-pictogram-400: hsl(60 2.7% 14.5%);
-
   /* Always */
   --color-always-white: hsl(0 0% 100%);
   --color-always-black: hsl(0 0% 0%);
@@ -78,6 +73,88 @@
   /* Font families */
   --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+}
+
+/* ============================================
+   Semantic tokens — purpose-based aliases
+   These reference primitives set by theme files.
+   @theme inline tells Tailwind these are dynamic.
+   ============================================ */
+
+@theme inline {
+  /* Surfaces */
+  --color-surface: var(--p-surface);
+  --color-surface-raised: var(--p-surface-raised);
+  --color-surface-sunken: var(--p-surface-sunken);
+  --color-surface-overlay: var(--p-surface-overlay);
+  --color-surface-backdrop: var(--p-surface-backdrop);
+  --color-surface-invert: var(--p-surface-invert);
+
+  /* Text (Option A: --color-default produces text-default, text-secondary, etc.) */
+  --color-default: var(--p-text-default);
+  --color-secondary: var(--p-text-secondary);
+  --color-muted: var(--p-text-muted);
+  --color-disabled: var(--p-text-disabled);
+  --color-on-emphasis: var(--p-text-on-emphasis);
+
+  /* Borders */
+  --color-border-default: var(--p-border-default);
+  --color-border-subtle: var(--p-border-subtle);
+  --color-border-strong: var(--p-border-strong);
+
+  /* Accent */
+  --color-accent: var(--p-accent);
+  --color-accent-hover: var(--p-accent-hover);
+  --color-accent-subtle: var(--p-accent-subtle);
+
+  /* Info */
+  --color-info: var(--p-info);
+  --color-info-hover: var(--p-text-info-hover);
+
+  /* Pro */
+  --color-pro: var(--p-pro);
+
+  /* Status */
+  --color-success: var(--p-success);
+  --color-success-subtle: var(--p-success-subtle);
+  --color-danger: var(--p-danger);
+  --color-danger-subtle: var(--p-danger-subtle);
+  --color-warning: var(--p-warning);
+
+  /* Interactive */
+  --color-interactive: var(--p-interactive);
+  --color-interactive-active: var(--p-interactive-active);
+  --color-ring-focus: var(--p-ring-focus);
+}
+
+/* Static theme tokens (same across all themes) */
+@theme {
+  /* Fonts */
+  --font-display: var(--font-ui);
+
+  /* Z-index */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-dropdown: 20;
+  --z-overlay: 30;
+  --z-toast: 40;
+  --z-tooltip: 50;
+
+  /* Motion */
+  --duration-fast: 100ms;
+  --duration-normal: 150ms;
+  --duration-slow: 200ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Radius uses @theme inline because --p-radius is a theme primitive */
+@theme inline {
+  --radius-sm: calc(var(--p-radius) - 0.25rem);
+  --radius-md: calc(var(--p-radius) - 0.125rem);
+  --radius-lg: var(--p-radius);
+  --radius-xl: calc(var(--p-radius) + 0.25rem);
 }
 
 * {
@@ -124,7 +201,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle, hsl(48 4.8% 59.2% / 0.08) 1px, transparent 1px);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--color-text-400) 8%, transparent) 1px, transparent 1px);
   background-size: 24px 24px;
   pointer-events: none;
   z-index: 0;

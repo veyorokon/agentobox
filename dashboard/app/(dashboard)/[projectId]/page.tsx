@@ -15,6 +15,7 @@ import {
   RESTART_AGENT_MUTATION,
   SET_AGENT_MODE_MUTATION,
   CLEAR_AGENT_SESSION_MUTATION,
+  INTERRUPT_AGENT_MUTATION,
 } from "@/lib/graphql/mutations"
 import { Header } from "@/components/layout/header"
 import { SessionInfoBar } from "@/components/layout/session-info-bar"
@@ -91,6 +92,7 @@ export default function ProjectPage() {
   const [restartAgent] = useMutation(RESTART_AGENT_MUTATION)
   const [setAgentMode] = useMutation(SET_AGENT_MODE_MUTATION)
   const [clearAgentSession] = useMutation(CLEAR_AGENT_SESSION_MUTATION)
+  const [interruptAgent] = useMutation(INTERRUPT_AGENT_MUTATION)
 
   const handleSend = useCallback(
     async (message: string, agentId?: string) => {
@@ -179,6 +181,19 @@ export default function ProjectPage() {
     [clearAgentSession, addToast],
   )
 
+  const handleInterrupt = useCallback(async () => {
+    const targetId = selectedAgentId
+    if (!targetId) return
+    try {
+      await interruptAgent({ variables: { agentId: targetId } })
+    } catch {
+      addToast({ message: "Failed to interrupt agent", type: "error" })
+    }
+  }, [selectedAgentId, interruptAgent, addToast])
+
+  // Selected agent is actively running (for interrupt button)
+  const isStreaming = selectedAgent?.status === "running"
+
   const agentActions = useMemo(
     () => ({
       onKillAgent: handleKillAgent,
@@ -213,8 +228,12 @@ export default function ProjectPage() {
 
       <Composer
         onSend={handleSend}
+        onInterrupt={handleInterrupt}
+        onSetAgentMode={handleSetAgentMode}
+        onSelectAgent={selectAgent}
         agents={agents}
         selectedAgentId={selectedAgentId}
+        isStreaming={isStreaming}
         disabled={agents.length === 0}
       />
     </div>

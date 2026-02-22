@@ -1,7 +1,6 @@
 "use client"
 
 import { useRef, useEffect, useCallback, useMemo } from "react"
-import { useVirtualizer } from "@tanstack/react-virtual"
 import { FeedItemRouter } from "@/components/feed/feed-item"
 import { StatusGroupRow } from "@/components/feed/status-group-row"
 import { ThinkingIndicator } from "@/components/feed/thinking-indicator"
@@ -42,18 +41,24 @@ function isToolResultOnly(item: TimelineEntry): boolean {
   return (content as ContentBlock[]).every((b) => b.type === "tool_result")
 }
 
+/** Strip <system-reminder>...</system-reminder> blocks injected by Claude Code into tool results. */
+function stripSystemReminders(text: string): string {
+  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()
+}
+
 /**
  * Extract the text content from a tool_result block.
  * Content can be a string or array of content blocks.
  */
 function extractToolResultText(block: Record<string, unknown>): string {
   const content = block.content
-  if (typeof content === "string") return content
+  if (typeof content === "string") return stripSystemReminders(content)
   if (Array.isArray(content)) {
-    return (content as Array<Record<string, unknown>>)
+    const raw = (content as Array<Record<string, unknown>>)
       .filter((b) => b.type === "text")
       .map((b) => (b.text as string) || "")
       .join("\n")
+    return stripSystemReminders(raw)
   }
   return ""
 }
@@ -119,9 +124,9 @@ function consolidateItems(items: TimelineEntry[]): TimelineEntry[] {
         const stdout = toolUseResult.stdout
         const file = toolUseResult.file
         if (stdout !== undefined) {
-          text = stdout
+          text = stripSystemReminders(stdout)
         } else if (file?.content) {
-          text = file.content
+          text = stripSystemReminders(file.content)
         }
       }
 
@@ -289,48 +294,35 @@ type FeedContainerProps = {
 }
 
 export function FeedContainer({ items, loading, onLoadMore, hasAgents = false, runningAgentNames = [] }: FeedContainerProps) {
-  const parentRef = useRef<HTMLDivElement>(null)
-  const sentinelRef = useRef<HTMLDivElement>(null)
-  const isScrollLockedRef = useRef(true)
-  const prevLastIdRef = useRef<string | undefined>(undefined)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const topSentinelRef = useRef<HTMLDivElement>(null)
+  const anchoredRef = useRef(true)
   const isLoadingMoreRef = useRef(false)
 
   const displayEntries = useMemo(() => buildDisplayList(items), [items])
 
-  const virtualizer = useVirtualizer({
-    count: displayEntries.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 80,
-    overscan: 10,
-  })
-
-  // Track whether user has scrolled away from bottom
+  // Track whether user is at the bottom (anchored).
+  // When anchored, new content auto-scrolls into view.
   const handleScroll = useCallback(() => {
-    const el = parentRef.current
+    const el = scrollRef.current
     if (!el) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    isScrollLockedRef.current = distanceFromBottom < 60
+    anchoredRef.current = distanceFromBottom < 40
   }, [])
 
-  // Auto-scroll to bottom when new items arrive and scroll is locked.
-  // Compare on last item ID so agent switches also trigger scroll.
-  // Double-RAF ensures virtualizer has measured elements before scrolling.
+  // Scroll to bottom: on initial load and whenever content changes while anchored.
+  // Uses a single RAF to let the browser lay out new content first.
   useEffect(() => {
-    const lastId = items[items.length - 1]?.id
-    if (lastId !== prevLastIdRef.current && isScrollLockedRef.current && items.length > 0) {
-      const scroll = () =>
-        virtualizer.scrollToIndex(displayEntries.length - 1, { align: "end" })
-      requestAnimationFrame(() => {
-        scroll()
-        requestAnimationFrame(scroll)
-      })
-    }
-    prevLastIdRef.current = lastId
-  }, [items, displayEntries.length, virtualizer])
+    if (!anchoredRef.current || !bottomRef.current) return
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ block: "end" })
+    })
+  }, [displayEntries])
 
   // IntersectionObserver on sentinel at top to trigger loadMore for older history
   useEffect(() => {
-    const sentinel = sentinelRef.current
+    const sentinel = topSentinelRef.current
     if (!sentinel || !onLoadMore) return
 
     const observer = new IntersectionObserver(
@@ -338,14 +330,13 @@ export function FeedContainer({ items, loading, onLoadMore, hasAgents = false, r
         const entry = entries[0]
         if (entry?.isIntersecting && !isLoadingMoreRef.current) {
           isLoadingMoreRef.current = true
-          // Use Promise.resolve to handle both promise and non-promise returns
           Promise.resolve(onLoadMore()).finally(() => {
             isLoadingMoreRef.current = false
           })
         }
       },
       {
-        root: parentRef.current,
+        root: scrollRef.current,
         threshold: 0.1,
       }
     )
@@ -358,41 +349,25 @@ export function FeedContainer({ items, loading, onLoadMore, hasAgents = false, r
     return <EmptyFeed hasAgents={hasAgents} />
   }
 
-  const virtualItems = virtualizer.getVirtualItems()
-
   return (
     <div
-      ref={parentRef}
+      ref={scrollRef}
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto"
+      style={{ overflowAnchor: "none" }}
     >
       {/* Sentinel for loading older history when scrolled to top */}
-      <div ref={sentinelRef} className="h-1 w-full" />
+      <div ref={topSentinelRef} className="h-1 w-full" />
 
-      <div
-        className="relative w-full"
-        style={{ height: `${virtualizer.getTotalSize()}px` }}
-      >
-        {virtualItems.map((virtualRow) => {
-          const entry = displayEntries[virtualRow.index]
-
-          return (
-            <div
-              key={virtualRow.key}
-              data-index={virtualRow.index}
-              ref={virtualizer.measureElement}
-              className="absolute top-0 left-0 w-full"
-              style={{ transform: `translateY(${virtualRow.start}px)` }}
-            >
-              {entry.kind === "status-group" ? (
-                <StatusGroupRow items={entry.items} />
-              ) : (
-                <FeedItemRouter item={entry.item} showAvatar={entry.showAvatar} />
-              )}
-            </div>
-          )
-        })}
-      </div>
+      {displayEntries.map((entry, i) => (
+        <div key={entry.kind === "status-group" ? `sg-${i}` : entry.item.id}>
+          {entry.kind === "status-group" ? (
+            <StatusGroupRow items={entry.items} />
+          ) : (
+            <FeedItemRouter item={entry.item} showAvatar={entry.showAvatar} />
+          )}
+        </div>
+      ))}
 
       {runningAgentNames.length > 0 && (
         <div className="sticky bottom-0 flex items-center justify-center py-2 bg-gradient-to-t from-bg-000/90 to-transparent">
@@ -409,6 +384,9 @@ export function FeedContainer({ items, loading, onLoadMore, hasAgents = false, r
           <span className="text-text-400 text-xs">Loading...</span>
         </div>
       )}
+
+      {/* Bottom anchor — scrollIntoView target */}
+      <div ref={bottomRef} className="h-px" />
     </div>
   )
 }

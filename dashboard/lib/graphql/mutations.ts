@@ -83,3 +83,9 @@ export const CLEAR_AGENT_SESSION_MUTATION = gql`
     clearAgentSession(agentId: $agentId)
   }
 `
+
+export const INTERRUPT_AGENT_MUTATION = gql`
+  mutation InterruptAgent($agentId: ID!) {
+    interruptAgent(agentId: $agentId)
+  }
+`
