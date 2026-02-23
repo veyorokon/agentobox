@@ -71,7 +71,7 @@ export function ToolGroup({ toolBlocks }: ToolGroupProps) {
 
 function SingleToolRow({ tool }: { tool: ToolUseBlock }) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom } = useContext(FeedScrollContext)
+  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
   const summary = getToolSummary(tool)
 
   return (
@@ -81,7 +81,7 @@ function SingleToolRow({ tool }: { tool: ToolUseBlock }) {
         onClick={() => {
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
         }}
         className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-bg-200/40 transition-colors"
       >
@@ -112,7 +112,7 @@ function SingleToolRow({ tool }: { tool: ToolUseBlock }) {
 function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
   const [expanded, setExpanded] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const { scrollToBottom } = useContext(FeedScrollContext)
+  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
   const needsCollapse = tools.length > COLLAPSE_THRESHOLD
 
   // When collapsed and many tools, show first and last
@@ -129,7 +129,7 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
         onClick={() => {
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
         }}
         className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-bg-200/40 transition-colors"
       >
@@ -158,7 +158,7 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
                 type="button"
                 onClick={() => {
                   setShowAll(true)
-                  requestAnimationFrame(() => scrollToBottom())
+                  if (isAtBottom()) requestAnimationFrame(() => scrollToBottom())
                 }}
                 className="text-[11px] text-accent-secondary-100 hover:text-accent-secondary-000 px-2.5 py-1 cursor-pointer font-mono"
               >
@@ -177,7 +177,7 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
 
 function ToolRow({ tool }: { tool: ToolUseBlock }) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom } = useContext(FeedScrollContext)
+  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
   const summary = getToolSummary(tool)
 
   return (
@@ -187,7 +187,7 @@ function ToolRow({ tool }: { tool: ToolUseBlock }) {
         onClick={() => {
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
         }}
         className="flex items-center gap-2 w-full text-left px-2.5 py-0.5 cursor-pointer hover:bg-bg-200/40 transition-colors"
       >

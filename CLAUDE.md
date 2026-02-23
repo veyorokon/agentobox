@@ -114,6 +114,18 @@ curl -s localhost:8000/graphql -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <token>' --data-raw '{"query":"..."}'
 ```
 
+## Debugging — Consult Logs First
+
+When debugging agent behavior, message delivery, or relay issues, **always check the actual logs** before theorizing. Every component has accessible logs:
+
+- **Backend**: `docker compose logs backend --since=2m 2>/dev/null | grep -iE "keyword"` — look for `relay_ws_connected`, `relay_ws_disconnected`, `message_sent`, `error_agent_reaped`, `stream_event`
+- **Agent container**: `docker exec <container_id> bash -c "cat /run/uncaught-logs/current"` — relay.py stdout/stderr, s6 service logs
+- **Relay process inside container**: `docker logs <container_id>` or read `/run/uncaught-logs/current` inside the container
+- **Dashboard**: Browser console, or Playwright `browser_console_messages` — GraphQL errors, subscription events
+- **Redis Channels**: `docker compose exec redis redis-cli PUBSUB CHANNELS '*'` — check for stale channel groups
+
+Trace the full chain: dashboard mutation → backend log → Channels push → relay WS → Claude Code process. The bug is always where the chain breaks.
+
 ## Tooling
 
 - **Python**: `uv` for package management (`uv run`, `uv sync`, `uv pip`)

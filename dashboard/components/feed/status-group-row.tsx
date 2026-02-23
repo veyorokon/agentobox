@@ -25,7 +25,7 @@ function renderStatusItem(item: TimelineEntry) {
 
 export function StatusGroupRow({ items }: StatusGroupRowProps) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom } = useContext(FeedScrollContext)
+  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
 
   if (items.length === 0) return null
 
@@ -36,7 +36,7 @@ export function StatusGroupRow({ items }: StatusGroupRowProps) {
         onClick={() => {
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
         }}
         className="flex items-center justify-center gap-1.5 w-full cursor-pointer py-px"
       >

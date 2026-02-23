@@ -10,9 +10,14 @@ import type { TimelineEntry, ContentBlock } from "@/types"
 import { isAssistantEntry, isUserEntry, isSystemEntry } from "@/types"
 import { stripSystemReminders } from "@/lib/utils"
 
-/** Allows children (e.g. ResultCard) to request scroll-to-bottom when they resize */
-export const FeedScrollContext = createContext<{ scrollToBottom: () => void }>({
+/** Allows children (e.g. ResultCard) to request scroll-to-bottom when they resize.
+ *  isAtBottom lets children skip scrolling when the user is reading history. */
+export const FeedScrollContext = createContext<{
+  scrollToBottom: () => void
+  isAtBottom: () => boolean
+}>({
   scrollToBottom: () => {},
+  isAtBottom: () => true,
 })
 
 /* ------------------------------------------------------------------ */
@@ -136,6 +141,7 @@ function consolidateItems(items: TimelineEntry[]): TimelineEntry[] {
   // Phase 3: build result — merge assistants, enrich tool_use, filter noise
   const seenMsgIds = new Set<string>()
   const seenBroadcastIds = new Set<string>()
+  const seenResultSessionIds = new Set<string>()
   const result: TimelineEntry[] = []
 
   for (const item of items) {
@@ -189,6 +195,15 @@ function consolidateItems(items: TimelineEntry[]): TimelineEntry[] {
       if (bid) {
         if (seenBroadcastIds.has(bid)) continue
         seenBroadcastIds.add(bid)
+      }
+    }
+
+    // Deduplicate result events by session_id (relay can emit >1 result per session)
+    if (item.entryType === "result") {
+      const sid = (item.data as Record<string, unknown>).session_id as string | undefined
+      if (sid) {
+        if (seenResultSessionIds.has(sid)) continue
+        seenResultSessionIds.add(sid)
       }
     }
 
@@ -288,6 +303,7 @@ type FeedContainerProps = {
 
 export function FeedContainer({ items, loading, hasAgents = false, runningAgentNames = [] }: FeedContainerProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null)
+  const atBottomRef = useRef(true)
 
   const displayEntries = useMemo(() => buildDisplayList(items), [items])
 
@@ -308,7 +324,12 @@ export function FeedContainer({ items, loading, hasAgents = false, runningAgentN
         behavior: "smooth",
       })
     },
+    isAtBottom: () => atBottomRef.current,
   }), [])
+
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    atBottomRef.current = atBottom
+  }, [])
 
   // Stable components object — defining inline causes remounts on every render
   // which triggers "zero-sized element" warnings from Virtuoso
@@ -345,8 +366,10 @@ export function FeedContainer({ items, loading, hasAgents = false, runningAgentN
         computeItemKey={computeItemKey}
         initialTopMostItemIndex={displayEntries.length - 1}
         alignToBottom
+        atBottomThreshold={150}
         defaultItemHeight={80}
         followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
+        atBottomStateChange={handleAtBottomStateChange}
         skipAnimationFrameInResizeObserver
         increaseViewportBy={200}
         className="flex-1"

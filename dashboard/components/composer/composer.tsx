@@ -49,6 +49,9 @@ function Composer({
     : "Message all agents... (type @ to target)"
 
   const hasContent = value.trim().length > 0
+  const agentIsActive = selectedAgent
+    ? selectedAgent.status === "running" || selectedAgent.status === "idle"
+    : false
 
   // Filter agents for @mention autocomplete
   const mentionMatches = mentionQuery !== null
@@ -179,7 +182,7 @@ function Composer({
   // Derive mode label + icon from selected agent's permissionMode
   const modeInfo = (() => {
     if (!selectedAgent) return null
-    const mode = selectedAgent.permissionMode?.toLowerCase() ?? "default"
+    const mode = selectedAgent.permissionMode?.toLowerCase() || "default"
     if (mode === "plan") {
       return {
         label: "Plan mode",
@@ -283,14 +286,15 @@ function Composer({
               <Plus className="h-4 w-4" />
             </button>
 
-            {/* Mode indicator — clickable to cycle modes when a single agent is selected */}
-            {modeInfo && selectedAgent && onSetAgentMode ? (
+            {/* Mode indicator — clickable to cycle modes when agent is active */}
+            {modeInfo && selectedAgent && onSetAgentMode && agentIsActive ? (
               <button
                 type="button"
                 onClick={() => {
-                  const currentMode = selectedAgent.permissionMode?.toLowerCase() ?? "default"
+                  const raw = selectedAgent.permissionMode || "default"
+                  const rawLower = raw.toLowerCase()
                   const idx = MODE_CYCLE.findIndex(
-                    (m) => currentMode === m.value || currentMode.includes(m.value),
+                    (m) => rawLower === m.value.toLowerCase(),
                   )
                   const nextIdx = (idx + 1) % MODE_CYCLE.length
                   onSetAgentMode(selectedAgent.id, MODE_CYCLE[nextIdx].value)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useCallback } from "react"
+import { useEffect, useMemo, useCallback, useState, useRef } from "react"
 import { useParams } from "next/navigation"
 import { useMutation, useQuery } from "@apollo/client"
 import { useUIStore } from "@/stores/ui"
@@ -98,6 +98,9 @@ export default function ProjectPage() {
     async (message: string, agentId?: string) => {
       const targetId = agentId || selectedAgentId
 
+      // Optimistically show stop button
+      if (targetId) setOptimisticStreaming(true)
+
       if (targetId) {
         // Send to specific agent
         await sendMessage({
@@ -189,10 +192,37 @@ export default function ProjectPage() {
     } catch {
       addToast({ message: "Failed to interrupt agent", type: "error" })
     }
+    setOptimisticStreaming(false)
   }, [selectedAgentId, interruptAgent, addToast])
 
-  // Selected agent is actively running (for interrupt button)
-  const isStreaming = selectedAgent?.status === "running"
+  // Optimistic streaming: set true on send, cleared on result event or interrupt.
+  // This makes the stop button appear immediately without waiting for the
+  // backend status roundtrip (which can be slower than a 1-2s agent turn).
+  const [optimisticStreaming, setOptimisticStreaming] = useState(false)
+  const lastResultCountRef = useRef(0)
+
+  // Clear optimistic streaming when a new result event appears for selected agent
+  const resultCount = useMemo(() => {
+    if (!selectedAgentId) return 0
+    return items.filter(
+      (i) => i.entryType === "result" && i.agentId === selectedAgentId,
+    ).length
+  }, [items, selectedAgentId])
+
+  useEffect(() => {
+    if (resultCount > lastResultCountRef.current) {
+      setOptimisticStreaming(false)
+    }
+    lastResultCountRef.current = resultCount
+  }, [resultCount])
+
+  // Clear optimistic streaming when agent selection changes
+  useEffect(() => {
+    setOptimisticStreaming(false)
+  }, [selectedAgentId])
+
+  const isStreaming =
+    optimisticStreaming || selectedAgent?.status === "running"
 
   const agentActions = useMemo(
     () => ({

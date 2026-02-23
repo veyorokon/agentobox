@@ -22,4 +22,10 @@ source /home/agent/.relay_env
 WORK_DIR="/home/agent/workspace"
 [ -d "$WORK_DIR" ] && cd "$WORK_DIR" || cd /home/agent
 
+# s6-setuidgid drops privileges but does NOT update HOME — it stays as
+# /root from the container init. Claude CLI reads config from $HOME/.claude/
+# which fails silently when HOME points to a directory the agent user can't
+# access. This was the root cause of "Control request timeout: initialize".
+export HOME=/home/agent
+
 exec s6-setuidgid agent python3 /opt/abox/relay.py

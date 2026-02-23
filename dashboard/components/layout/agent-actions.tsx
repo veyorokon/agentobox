@@ -31,19 +31,19 @@ const MODE_CYCLE = [
 ] as const
 
 function getNextMode(current: string): (typeof MODE_CYCLE)[number] {
-  const normalized = current?.toLowerCase() ?? "default"
+  const normalized = (current || "default").toLowerCase()
   const idx = MODE_CYCLE.findIndex(
-    (m) => normalized === m.value || normalized.includes(m.value),
+    (m) => normalized === m.value.toLowerCase(),
   )
   const nextIdx = (idx + 1) % MODE_CYCLE.length
   return MODE_CYCLE[nextIdx]
 }
 
 function getCurrentMode(agent: Agent): (typeof MODE_CYCLE)[number] {
-  const mode = agent.permissionMode?.toLowerCase() ?? "default"
+  const mode = (agent.permissionMode || "default").toLowerCase()
   return (
     MODE_CYCLE.find(
-      (m) => mode === m.value || mode.includes(m.value),
+      (m) => mode === m.value.toLowerCase(),
     ) ?? MODE_CYCLE[0]
   )
 }
@@ -83,6 +83,7 @@ function AgentActions({
     }
   }, [open, handleClickOutside])
 
+  const isActive = agent.status === "running" || agent.status === "idle"
   const nextMode = getNextMode(agent.permissionMode)
   const currentMode = getCurrentMode(agent)
 
@@ -115,21 +116,29 @@ function AgentActions({
             "animate-in fade-in duration-150",
           )}
         >
-          {/* Mode toggle */}
+          {/* Mode toggle — disabled when agent is not running/idle */}
           <button
             type="button"
+            disabled={!isActive}
             onClick={() =>
               handleAction(() => onSetMode(agent.id, nextMode.value))
             }
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-text-300 hover:text-text-100 hover:bg-bg-200 rounded transition-colors"
+            className={cn(
+              "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded transition-colors",
+              isActive
+                ? "text-text-300 hover:text-text-100 hover:bg-bg-200"
+                : "text-text-500 cursor-not-allowed opacity-50",
+            )}
           >
             <Zap className="h-3.5 w-3.5" />
             <span className="flex-1 text-left">
               Mode: {currentMode.label}
             </span>
-            <span className="text-[10px] text-text-500">
-              &rarr; {nextMode.label}
-            </span>
+            {isActive && (
+              <span className="text-[10px] text-text-500">
+                &rarr; {nextMode.label}
+              </span>
+            )}
           </button>
 
           {/* Restart */}
