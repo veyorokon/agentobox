@@ -44,7 +44,7 @@ export function StatusGroupRow({ items }: StatusGroupRowProps) {
         <ChevronRight
           size={10}
           className={cn(
-            "shrink-0 text-muted/60 transition-transform duration-150",
+            "shrink-0 text-muted/60 transition-transform duration-(--duration-normal)",
             expanded && "rotate-90",
           )}
         />

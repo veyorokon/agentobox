@@ -116,7 +116,7 @@ export function ResultCard({ data, className }: ResultCardProps) {
           <ChevronRight
             size={10}
             className={cn(
-              "shrink-0 text-muted/60 transition-transform duration-150 ml-0.5",
+              "shrink-0 text-muted/60 transition-transform duration-(--duration-normal) ml-0.5",
               expanded && "rotate-90",
             )}
           />

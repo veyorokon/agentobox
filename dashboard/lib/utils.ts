@@ -61,6 +61,18 @@ export function stripSystemReminders(text: string): string {
     .trim()
 }
 
+/**
+ * Deterministic hue (0-360) from an agent name.
+ * Used for avatar background colors across the app.
+ */
+export function agentHue(name: string): number {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return ((hash % 360) + 360) % 360
+}
+
 export function friendlyModelName(raw: string): string {
   if (MODEL_LABELS[raw]) return MODEL_LABELS[raw]
   // Try partial match: "claude-sonnet-4-5" → "Sonnet 4.5"

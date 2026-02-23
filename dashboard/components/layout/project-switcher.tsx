@@ -119,7 +119,7 @@ function ProjectSwitcher({
     <div
       ref={popoverRef}
       style={{ top: dropdownPos.top, left: dropdownPos.left }}
-      className="fixed z-50 bg-surface-raised border border-border-default rounded-lg shadow-lg min-w-[220px] max-w-[280px]"
+      className="fixed z-(--z-dropdown) bg-surface-raised border border-border-default rounded-lg shadow-lg min-w-[220px] max-w-[280px]"
     >
       {/* Filter input (shown when > 3 projects) */}
       {projects.length > 3 && (

@@ -220,7 +220,7 @@ function Composer({
           <div
             ref={mentionRef}
             className={cn(
-              "absolute bottom-full left-3 mb-1.5 z-50",
+              "absolute bottom-full left-3 mb-1.5 z-(--z-dropdown)",
               "bg-surface-raised border border-border-default rounded-lg shadow-lg p-1 min-w-[180px] max-h-[200px] overflow-y-auto",
             )}
           >

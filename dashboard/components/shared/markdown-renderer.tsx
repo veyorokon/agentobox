@@ -23,7 +23,7 @@ const components: Components = {
     // Inline code
     return (
       <code
-        className="bg-surface/50 border border-border-default text-danger rounded-[0.4rem] px-1 py-px font-mono text-[13px]"
+        className="bg-surface/50 border border-border-default text-danger rounded-md px-1 py-px font-mono text-[13px]"
         {...rest}
       >
         {children}

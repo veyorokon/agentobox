@@ -94,7 +94,7 @@ export function CodeBlock({
           />
         </div>
       ) : (
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-(--z-raised)">
           <CopyButton text={trimmedCode} />
         </div>
       )}

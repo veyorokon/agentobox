@@ -111,9 +111,9 @@ function AgentActions({
         <div
           ref={popoverRef}
           className={cn(
-            "absolute top-full right-0 mt-1.5 z-50",
+            "absolute top-full right-0 mt-1.5 z-(--z-dropdown)",
             "bg-surface-raised border border-border-default rounded-lg shadow-lg p-1.5 min-w-[180px]",
-            "animate-in fade-in duration-150",
+            "animate-in fade-in duration-(--duration-normal)",
           )}
         >
           {/* Mode toggle — disabled when agent is not running/idle */}

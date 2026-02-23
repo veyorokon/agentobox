@@ -1,6 +1,6 @@
 "use client"
 
-import { cn, formatCost, formatTime } from "@/lib/utils"
+import { cn, formatCost, formatTime, agentHue } from "@/lib/utils"
 import type { Agent } from "@/types"
 
 type AgentRosterItemProps = {
@@ -52,18 +52,6 @@ function getStatusConfig(status: string) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Avatar hue                                                         */
-/* ------------------------------------------------------------------ */
-
-function agentHue(name: string): number {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return Math.abs(hash) % 360
-}
-
-/* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -81,7 +69,7 @@ function AgentRosterItem({ agent, isSelected, onClick }: AgentRosterItemProps) {
       type="button"
       onClick={onClick}
       className={cn(
-        "group mx-1.5 rounded-lg transition-all duration-150 text-left",
+        "group mx-1.5 rounded-lg transition-all duration-(--duration-normal) text-left",
         "border-l-2 border-transparent",
         // Selected state
         isSelected && "bg-surface-raised/80 border-l-accent",

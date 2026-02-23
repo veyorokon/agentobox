@@ -3,33 +3,8 @@
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 import { CopyButton } from "@/components/shared/copy-button"
 import { ThinkingIndicator } from "@/components/feed/thinking-indicator"
-import { stripSystemReminders } from "@/lib/utils"
+import { stripSystemReminders, agentHue } from "@/lib/utils"
 import type { ContentBlock, AssistantEventData } from "@/types"
-
-/**
- * Deterministic color based on agent name.
- * Returns a tailwind-compatible HSL string for the avatar background.
- */
-const AVATAR_COLORS = [
-  "bg-blue-600",
-  "bg-emerald-600",
-  "bg-violet-600",
-  "bg-amber-600",
-  "bg-rose-600",
-  "bg-cyan-600",
-  "bg-fuchsia-600",
-  "bg-lime-600",
-  "bg-orange-600",
-  "bg-teal-600",
-]
-
-function getAvatarColor(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
-}
 
 type AssistantMessageProps = {
   data: AssistantEventData
@@ -51,7 +26,7 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
     (b) => b.type === "thinking" || b.type === "redacted_thinking",
   )
 
-  const avatarColor = getAvatarColor(agentName)
+  const hue = agentHue(agentName)
   const initial = agentName.charAt(0).toUpperCase()
 
   const fullText = textParts.join("\n\n")
@@ -61,7 +36,8 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
       {/* Agent avatar — only shown for first message in a group */}
       {showAvatar ? (
         <div
-          className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-white mt-1 ${avatarColor}`}
+          className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-on-emphasis mt-1"
+          style={{ backgroundColor: `hsl(${hue} var(--color-avatar-saturation) var(--color-avatar-lightness))` }}
         >
           {initial}
         </div>

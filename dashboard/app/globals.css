@@ -2,74 +2,6 @@
 @import "./themes/claude-dark.css";
 
 @theme {
-  /* Accent — brand orange */
-  --color-accent-brand: hsl(15 63.1% 59.6%);
-  --color-accent-main-000: hsl(15 54.2% 51.2%);
-  --color-accent-main-100: hsl(15 63.1% 59.6%);
-  --color-accent-main-200: hsl(15 63.1% 59.6%);
-  --color-accent-main-900: hsl(0 0% 0%);
-
-  /* Accent — pro purple */
-  --color-accent-pro-000: hsl(251 84.6% 74.5%);
-  --color-accent-pro-100: hsl(251 40.2% 54.1%);
-  --color-accent-pro-200: hsl(251 40% 45.1%);
-  --color-accent-pro-900: hsl(250 25.3% 19.4%);
-
-  /* Accent — secondary blue */
-  --color-accent-secondary-000: hsl(210 65.5% 67.1%);
-  --color-accent-secondary-100: hsl(210 70.9% 51.6%);
-  --color-accent-secondary-200: hsl(210 70.9% 51.6%);
-  --color-accent-secondary-900: hsl(210 55.9% 24.6%);
-
-  /* Backgrounds */
-  --color-bg-000: hsl(60 2.1% 18.4%);
-  --color-bg-100: hsl(60 2.7% 14.5%);
-  --color-bg-200: hsl(30 3.3% 11.8%);
-  --color-bg-300: hsl(60 2.6% 7.6%);
-  --color-bg-400: hsl(0 0% 0%);
-  --color-bg-500: hsl(0 0% 0%);
-
-  /* Borders */
-  --color-border-100: hsl(51 16.5% 84.5%);
-  --color-border-200: hsl(51 16.5% 84.5%);
-  --color-border-300: hsl(51 16.5% 84.5%);
-  --color-border-400: hsl(51 16.5% 84.5%);
-
-  /* Danger / error */
-  --color-danger-000: hsl(0 98.4% 75.1%);
-  --color-danger-100: hsl(0 67% 59.6%);
-  --color-danger-200: hsl(0 67% 59.6%);
-  --color-danger-900: hsl(0 46.5% 27.8%);
-
-  /* Success */
-  --color-success-000: hsl(97 59.1% 46.1%);
-  --color-success-100: hsl(97 75% 32.9%);
-  --color-success-200: hsl(97 75% 32.9%);
-  --color-success-900: hsl(127 100% 13.9%);
-
-  /* Warning */
-  --color-warning-000: hsl(40 71% 50%);
-  --color-warning-100: hsl(39 93.4% 35.9%);
-  --color-warning-200: hsl(39 93.4% 35.9%);
-  --color-warning-900: hsl(45 94.8% 15.1%);
-
-  /* Text */
-  --color-text-000: hsl(48 33.3% 97.1%);
-  --color-text-100: hsl(48 33.3% 97.1%);
-  --color-text-200: hsl(50 9% 73.7%);
-  --color-text-300: hsl(50 9% 73.7%);
-  --color-text-400: hsl(48 4.8% 59.2%);
-  --color-text-500: hsl(48 4.8% 59.2%);
-
-  /* On-color (text on colored bg) */
-  --color-oncolor-100: hsl(0 0% 100%);
-  --color-oncolor-200: hsl(60 6.7% 97.1%);
-  --color-oncolor-300: hsl(60 6.7% 97.1%);
-
-  /* Always */
-  --color-always-white: hsl(0 0% 100%);
-  --color-always-black: hsl(0 0% 0%);
-
   /* Font families */
   --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
@@ -122,7 +54,11 @@
   --color-danger: var(--p-danger);
   --color-danger-subtle: var(--p-danger-subtle);
   --color-warning: var(--p-warning);
-  --color-warning-subtle: hsl(45 94.8% 15.1% / 0.2);
+  --color-warning-subtle: var(--p-warning-subtle);
+
+  /* Avatar color parameters (hue computed per-agent in JS) */
+  --color-avatar-saturation: var(--p-avatar-saturation);
+  --color-avatar-lightness: var(--p-avatar-lightness);
 
   /* Interactive */
   --color-interactive: var(--p-interactive);
@@ -130,12 +66,44 @@
   --color-ring-focus: var(--p-ring-focus);
 }
 
-/* Static theme tokens (same across all themes) */
+/* ============================================
+   Static theme tokens
+   These generate Tailwind utility classes via @theme.
+   Each theme file overrides values via :root / [data-theme].
+   ============================================ */
 @theme {
   /* Fonts */
   --font-display: var(--font-ui);
 
-  /* Z-index */
+  /* Border radius — generates rounded-sm, rounded-md, etc.
+     Override per theme for sharp/soft/pill variations. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  /* Shadows — generates shadow-sm, shadow-md, etc.
+     Override per theme (dark themes need heavier shadows). */
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow-md: 0 4px 6px hsl(0 0% 0% / 0.4);
+  --shadow-lg: 0 10px 15px hsl(0 0% 0% / 0.5);
+  --shadow-2xl: 0 25px 50px -12px hsl(0 0% 0% / 0.6);
+
+  /* Easing — generates ease-default, ease-in, ease-out */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* ============================================
+   Non-utility design tokens
+   These are CSS custom properties used via var() or
+   Tailwind arbitrary value syntax like z-(--z-overlay).
+   They don't have a @theme namespace in Tailwind v4.
+   ============================================ */
+:root {
+  /* Z-index scale — use via z-(--z-overlay), z-(--z-toast), etc. */
   --z-base: 0;
   --z-raised: 10;
   --z-dropdown: 20;
@@ -143,21 +111,10 @@
   --z-toast: 40;
   --z-tooltip: 50;
 
-  /* Motion */
+  /* Duration scale — use via duration-(--duration-normal), etc. */
   --duration-fast: 100ms;
   --duration-normal: 150ms;
   --duration-slow: 200ms;
-  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-out: cubic-bezier(0, 0, 0.2, 1);
-}
-
-/* Radius uses @theme inline because --p-radius is a theme primitive */
-@theme inline {
-  --radius-sm: calc(var(--p-radius) - 0.25rem);
-  --radius-md: calc(var(--p-radius) - 0.125rem);
-  --radius-lg: var(--p-radius);
-  --radius-xl: calc(var(--p-radius) + 0.25rem);
 }
 
 * {

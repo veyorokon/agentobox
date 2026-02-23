@@ -62,7 +62,7 @@ function UserMenu({ username, email }: UserMenuProps) {
           className={cn(
             "absolute bottom-full left-0 mb-2",
             "bg-surface-raised border border-border-default rounded-lg shadow-lg p-2 min-w-[180px]",
-            "animate-in fade-in duration-150",
+            "animate-in fade-in duration-(--duration-normal)",
           )}
         >
           <div className="px-2 py-1.5">

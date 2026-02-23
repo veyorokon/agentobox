@@ -309,7 +309,7 @@ type FeedContainerProps = {
   runningAgentNames?: string[]
 }
 
-/** Duration of Collapsible CSS transition (matches duration-200 in collapsible.tsx). */
+/** Duration of Collapsible CSS transition (matches --duration-slow token in collapsible.tsx). */
 const COLLAPSIBLE_DURATION_MS = 200
 
 export function FeedContainer({ items, loading, hasAgents = false, runningAgentNames = [] }: FeedContainerProps) {

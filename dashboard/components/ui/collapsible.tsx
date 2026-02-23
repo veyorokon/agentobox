@@ -13,7 +13,7 @@ function Collapsible({ open, children, className }: CollapsibleProps) {
   return (
     <div
       className={cn(
-        "grid transition-[grid-template-rows] duration-200 ease-out",
+        "grid transition-[grid-template-rows] duration-(--duration-slow) ease-out",
         open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         className,
       )}

@@ -89,7 +89,7 @@ function SingleToolRow({ tool }: { tool: ToolUseBlock }) {
         <ChevronRight
           size={12}
           className={cn(
-            "shrink-0 text-muted transition-transform duration-150",
+            "shrink-0 text-muted transition-transform duration-(--duration-normal)",
             expanded && "rotate-90",
           )}
         />
@@ -138,7 +138,7 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
         <ChevronRight
           size={12}
           className={cn(
-            "shrink-0 text-muted transition-transform duration-150",
+            "shrink-0 text-muted transition-transform duration-(--duration-normal)",
             expanded && "rotate-90",
           )}
         />
@@ -198,7 +198,7 @@ function ToolRow({ tool }: { tool: ToolUseBlock }) {
         <ChevronRight
           size={10}
           className={cn(
-            "shrink-0 text-muted transition-transform duration-150",
+            "shrink-0 text-muted transition-transform duration-(--duration-normal)",
             expanded && "rotate-90",
           )}
         />

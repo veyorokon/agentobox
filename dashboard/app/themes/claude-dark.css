@@ -1,3 +1,31 @@
+/* ============================================
+   Claude Dark Theme
+   ============================================
+
+   HOW TO CREATE A NEW THEME:
+   1. Copy this file to e.g. themes/my-theme.css
+   2. Change the selector: [data-theme="my-theme"][data-mode="dark"]
+   3. Override any --p-* primitives (surfaces, text, borders, accents)
+   4. Override design tokens (radius, shadows) for different look & feel
+   5. Import in globals.css: @import "./themes/my-theme.css";
+   6. Set data-theme="my-theme" data-mode="dark" on <html>
+
+   The @theme block in globals.css defines the DEFAULT values.
+   Theme files override those defaults via CSS specificity.
+   Components never hardcode visual values — they use token names.
+   Swapping a theme = swapping one CSS import. No component changes.
+
+   EXAMPLE — sharp theme:
+     --radius-sm: 0;
+     --radius-md: 0;
+     --radius-lg: 0.125rem;
+
+   EXAMPLE — soft theme:
+     --radius-sm: 0.5rem;
+     --radius-md: 0.75rem;
+     --radius-lg: 1rem;
+   ============================================ */
+
 [data-theme="claude"][data-mode="dark"] {
   /* Primitives — raw values for the Claude dark palette */
   --p-surface: hsl(60 2.7% 14.5%);
@@ -39,15 +67,25 @@
 
   --p-warning: hsl(40 71% 50%);
   --p-text-warning: hsl(40 71% 50%);
+  --p-warning-subtle: hsl(45 94.8% 15.1% / 0.2);
+
+  --p-avatar-saturation: 55%;
+  --p-avatar-lightness: 42%;
 
   --p-interactive: hsl(60 2.1% 18.4% / 0.4);
   --p-interactive-active: hsl(60 2.1% 18.4% / 0.8);
   --p-ring-focus: hsl(15 63.1% 59.6% / 0.5);
 
-  --p-radius: 0.75rem;
+  /* Border radius — Claude dark uses moderate rounding */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
 
-  /* Shadows — theme-specific (dark needs heavier shadows) */
+  /* Shadows — dark themes need heavier shadows for depth */
   --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
   --shadow-md: 0 4px 6px hsl(0 0% 0% / 0.4);
   --shadow-lg: 0 10px 15px hsl(0 0% 0% / 0.5);
+  --shadow-2xl: 0 25px 50px -12px hsl(0 0% 0% / 0.6);
 }

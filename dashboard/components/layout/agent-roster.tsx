@@ -329,7 +329,7 @@ function AgentRoster({
                 type="button"
                 onClick={() => onSelectAgent(null)}
                 className={cn(
-                  "mx-1.5 rounded-lg transition-all duration-150 text-left px-3 py-2",
+                  "mx-1.5 rounded-lg transition-all duration-(--duration-normal) text-left px-3 py-2",
                   "border-l-2 border-transparent",
                   selectedAgentId === null
                     ? "bg-surface-raised/80 border-l-accent"

@@ -120,7 +120,7 @@ function SearchOverlay({ projects, agents }: SearchOverlayProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-surface-backdrop/60 backdrop-blur-sm flex items-start justify-center pt-[20vh]"
+      className="fixed inset-0 z-(--z-overlay) bg-surface-backdrop/60 backdrop-blur-sm flex items-start justify-center pt-[20vh]"
       onClick={(e) => {
         if (e.target === e.currentTarget) close()
       }}
