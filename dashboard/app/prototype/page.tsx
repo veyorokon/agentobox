@@ -12,7 +12,6 @@ import {
   X,
   AlertCircle,
   Plus,
-  Code,
   Terminal,
   Clock,
   DollarSign,
@@ -29,6 +28,7 @@ import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Collapsible } from "@/components/ui/collapsible"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
+import { CopyButton } from "@/components/shared/copy-button"
 
 /* ================================================================== */
 /*  FAKE DATA                                                          */
@@ -37,7 +37,7 @@ import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 type FakeAgent = {
   id: string
   name: string
-  status: "running" | "error" | "idle" | "stopped" | "waiting"
+  status: "running" | "error" | "idle" | "stopped" | "waiting" | "deploying"
   task: string
   cost: number
   duration: string
@@ -45,6 +45,9 @@ type FakeAgent = {
   turns: number
   lastOutput: string
   phase?: string
+  /** Live one-liner: last tool call or action, continuously updated.
+   *  SOURCE: latest tool_use content block name + summary from StreamEvent */
+  liveAction?: string
 }
 
 const AGENTS: FakeAgent[] = [
@@ -59,6 +62,7 @@ const AGENTS: FakeAgent[] = [
     turns: 8,
     lastOutput: "Applied fix to validateToken()...",
     phase: "Editing",
+    liveAction: "Edit src/auth.ts (+3 -1)",
   },
   {
     id: "2",
@@ -71,6 +75,7 @@ const AGENTS: FakeAgent[] = [
     turns: 4,
     lastOutput: "Scanning tailwind classes in Button...",
     phase: "Reading",
+    liveAction: "Read src/components/Button.tsx",
   },
   {
     id: "3",
@@ -82,6 +87,7 @@ const AGENTS: FakeAgent[] = [
     model: "Sonnet 4.6",
     turns: 3,
     lastOutput: "FAIL src/auth.test.ts\nExpected 200, received 401",
+    liveAction: "Bash npm test -- --filter auth",
   },
   {
     id: "4",
@@ -104,6 +110,18 @@ const AGENTS: FakeAgent[] = [
     model: "Haiku 4.5",
     turns: 2,
     lastOutput: "Updated API reference section",
+    liveAction: "Edit docs/api-reference.md (+12 -3)",
+  },
+  {
+    id: "6",
+    name: "infra",
+    status: "deploying" as const,
+    task: "Provisioning container",
+    cost: 0.00,
+    duration: "0m 12s",
+    model: "Haiku 4.5",
+    turns: 0,
+    lastOutput: "Initializing workspace...",
   },
 ]
 
@@ -121,6 +139,11 @@ const SECRETS: FakeSecret[] = [
   { id: "s4", key: "OPENAI_API_KEY", value: "sk-proj-xxxxxxxxxxxxxxxx", addedAgo: "1w ago" },
 ]
 
+/**
+ * FAKE_MARKDOWN — used in right-panel agent detail feed.
+ * SOURCE: TimelineEntry.content (full assistant message content blocks)
+ * This is the VERBOSE output — only shown when drilling into an agent.
+ */
 const FAKE_MARKDOWN = `I've analyzed the JWT validation issue. The problem is in \`validateToken()\` — the expiry comparison uses **seconds** but \`Date.now()\` returns **milliseconds**.
 
 Here's the fix:
@@ -145,6 +168,121 @@ The changes needed:
 | Silent failures | Structured logging |`
 
 /* ================================================================== */
+/*  TEAM FEED DATA — main feed shows summaries, not verbose output    */
+/*                                                                     */
+/*  Data sources:                                                      */
+/*  - "summary" items → TimelineEntry.summary (agent turn result)     */
+/*  - "user" items → user messages (sent via composer / @mention)     */
+/*  - "status" items → agent status transitions (StreamEvent)         */
+/*  - "error" items → agent error events (StreamEvent with isError)   */
+/*  - "system" items → session lifecycle events                        */
+/*  - "question" items → AskUserQuestion tool_use in content blocks   */
+/* ================================================================== */
+
+type TeamFeedItem =
+  | { type: "system"; text: string }
+  | { type: "user"; text: string; target?: string }
+  | { type: "summary"; agent: string; summary: string; cost: number; turns: number; duration: string; isError?: boolean }
+  | { type: "status"; agent: string; from: string; to: string }
+  | { type: "error"; agent: string; text: string }
+  | { type: "question"; agent: string; question: string; options: string[] }
+
+const TEAM_FEED: TeamFeedItem[] = [
+  // Session start
+  { type: "system", text: "session started · Opus 4.6 · 47 tools · 6 agents" },
+
+  // User dispatches work to the team
+  { type: "user", text: "Fix the JWT validation bug in auth.ts. The token expiry check is off by one hour.", target: "backend" },
+  { type: "user", text: "Run the test suite after backend finishes and report results.", target: "qa" },
+  { type: "user", text: "Update the API docs once the fix lands.", target: "docs" },
+
+  // Agents start working — status transitions
+  { type: "status", agent: "backend", from: "idle", to: "running" },
+  { type: "status", agent: "qa", from: "idle", to: "waiting" },
+  { type: "status", agent: "docs", from: "idle", to: "running" },
+
+  // Backend finishes first turn — SUMMARY (not the full verbose output)
+  {
+    type: "summary",
+    agent: "backend",
+    summary: "Fixed JWT validation — converted Date.now() to seconds, added 30s clock skew tolerance, updated error logging in validateToken()",
+    cost: 0.08,
+    turns: 5,
+    duration: "2m 10s",
+  },
+
+  // Backend asks a question
+  {
+    type: "question",
+    agent: "backend",
+    question: "Should I also add refresh token rotation while I'm in auth.ts?",
+    options: ["Yes, add rotation", "No, just the fix", "Create a separate task for it"],
+  },
+
+  // User responds
+  { type: "user", text: "Yes, add rotation. Good catch." },
+
+  // QA picks up after backend
+  { type: "status", agent: "qa", from: "waiting", to: "running" },
+
+  // Backend finishes second turn
+  {
+    type: "summary",
+    agent: "backend",
+    summary: "Added refresh token rotation — tokens now rotate on each refresh, old tokens invalidated after 60s grace period. Updated 3 test fixtures.",
+    cost: 0.04,
+    turns: 3,
+    duration: "1m 12s",
+  },
+
+  // QA reports failure
+  {
+    type: "error",
+    agent: "qa",
+    text: "2 assertions failed in auth.test.ts:\n  - Expected 200 on /api/refresh, got 401\n  - Token rotation test expects old format",
+  },
+  { type: "status", agent: "qa", from: "running", to: "error" },
+
+  // User directs backend to fix
+  { type: "user", text: "@backend the refresh endpoint still rejects — check the middleware order", target: "backend" },
+
+  // Backend fixes it
+  {
+    type: "summary",
+    agent: "backend",
+    summary: "Fixed middleware ordering — auth middleware now runs after token refresh handler. Updated test fixtures to match new rotation format.",
+    cost: 0.04,
+    turns: 3,
+    duration: "1m 00s",
+  },
+
+  // QA reruns and passes
+  { type: "status", agent: "qa", from: "error", to: "running" },
+  {
+    type: "summary",
+    agent: "qa",
+    summary: "All 47 tests passing. Auth suite: 12/12 pass. Refresh rotation: 3/3 pass. No regressions detected.",
+    cost: 0.05,
+    turns: 5,
+    duration: "2m 10s",
+  },
+
+  // Docs finishes
+  {
+    type: "summary",
+    agent: "docs",
+    summary: "Updated API reference — added refresh token rotation docs, updated auth flow diagram, added migration notes for v2 token format.",
+    cost: 0.02,
+    turns: 2,
+    duration: "1m 30s",
+  },
+  { type: "status", agent: "docs", from: "running", to: "stopped" },
+
+  // Session summary
+  { type: "system", text: "3 agents completed · 18 turns · $0.23 total" },
+]
+
+/* ================================================================== */
 /*  STATUS CONFIG                                                      */
 /* ================================================================== */
 
@@ -157,11 +295,14 @@ const STATUS_CONFIG: Record<
   waiting: { dot: "bg-warning", label: "Waiting", text: "text-warning" },
   error: { dot: "bg-danger", label: "Error", text: "text-danger" },
   stopped: { dot: "bg-muted/50", label: "Stopped", text: "text-muted" },
+  deploying: { dot: "bg-accent", label: "Starting", text: "text-accent" },
 }
 
 const PILL_CONFIG = [
   { key: "error" as const, dot: "bg-danger", text: "text-danger" },
+  { key: "waiting" as const, dot: "bg-warning", text: "text-warning" },
   { key: "running" as const, dot: "bg-success", text: "text-success", animate: true },
+  { key: "deploying" as const, dot: "bg-accent", text: "text-accent" },
   { key: "idle" as const, dot: "bg-info", text: "text-muted" },
   { key: "stopped" as const, dot: "bg-muted/40", text: "text-muted/50" },
 ]
@@ -185,8 +326,16 @@ function useBreakpoint(): Breakpoint {
       else setBp("XL")
     }
     calc()
-    window.addEventListener("resize", calc)
-    return () => window.removeEventListener("resize", calc)
+    let raf: number
+    function onResize() {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(calc)
+    }
+    window.addEventListener("resize", onResize)
+    return () => {
+      window.removeEventListener("resize", onResize)
+      cancelAnimationFrame(raf)
+    }
   }, [])
 
   return bp
@@ -242,22 +391,7 @@ function ChatAvatar({ name }: { name: string }) {
 /*  FEED CONTENT COMPONENTS                                            */
 /* ================================================================== */
 
-/** 1. User message — right-aligned bubble */
-function UserMessage({ text }: { text: string }) {
-  return (
-    <div className="flex justify-end py-1">
-      <div className="max-w-[80%]">
-        <div className="bg-accent/15 border border-accent/20 rounded px-3 py-1.5">
-          <p className="text-default text-sm whitespace-pre-wrap leading-relaxed">
-            {text}
-          </p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** 2. Assistant message with markdown — left-aligned with avatar */
+/** 2. Assistant message with markdown — left-aligned with avatar (used in agent detail feed) */
 function AssistantMessage({
   agent,
   content,
@@ -285,6 +419,11 @@ function AssistantMessage({
           className="text-sm text-default"
         />
       </div>
+      {content.length > 0 && (
+        <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+          <CopyButton text={content} />
+        </div>
+      )}
     </div>
   )
 }
@@ -305,6 +444,7 @@ function SingleToolRow({
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
           className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
         >
           <ChevronRight
@@ -360,6 +500,7 @@ function MultiToolGroup({
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
           className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
         >
           <ChevronRight
@@ -396,6 +537,7 @@ function ToolRow({ toolName, summary }: { toolName: string; summary: string }) {
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="flex items-center gap-2 w-full text-left px-2.5 py-0.5 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
       >
         <ChevronRight
@@ -447,6 +589,7 @@ function ResultPill({
         type="button"
         className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-mono cursor-pointer hover:bg-surface-sunken/40 transition-colors"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
       >
         {isError ? (
           <X size={12} className="shrink-0 text-danger" strokeWidth={2.5} />
@@ -628,34 +771,7 @@ function TodoList({
   )
 }
 
-/** 9. Activity summary line — inline collapsed */
-function ActivitySummary({
-  agent,
-  text,
-  tools,
-}: {
-  agent: string
-  text: string
-  tools: number
-}) {
-  return (
-    <div className="ml-8">
-      <div className="inline-flex items-center gap-2 border-l-2 border-l-muted/40 rounded-r px-2.5 py-1 hover:bg-surface-sunken/40 transition-colors cursor-pointer">
-        <ChevronRight size={12} className="shrink-0 text-muted" />
-        <AgentAvatar name={agent} size="sm" />
-        <span className="text-xs text-secondary font-medium">{agent}</span>
-        <span className="text-xs text-muted font-mono truncate">{text}</span>
-        {tools > 0 && (
-          <span className="text-[10px] text-muted/60 font-mono shrink-0">
-            (+{tools} tools)
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/** 10. Thinking indicator — pulsing dots */
+/** 10. Thinking indicator — pulsing dots (used in agent detail feed only) */
 function ThinkingIndicator({ label = "Thinking..." }: { label?: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-muted text-[11px] font-mono">
@@ -666,6 +782,146 @@ function ThinkingIndicator({ label = "Thinking..." }: { label?: string }) {
       </span>
       <span>{label}</span>
     </span>
+  )
+}
+
+/* ================================================================== */
+/*  TEAM FEED COMPONENTS — main feed (summaries, not verbose)          */
+/*                                                                     */
+/*  These render team-level events. No tool calls, no thinking, no     */
+/*  intermediate messages. Those live in the right panel detail view.  */
+/* ================================================================== */
+
+/**
+ * Agent summary card — the primary content type in the team feed.
+ * SOURCE: TimelineEntry.summary field (populated when agent completes a turn)
+ * Shows: agent avatar, summary text, cost/turns/duration badge
+ */
+function AgentSummaryCard({
+  agent,
+  summary,
+  cost,
+  turns,
+  duration,
+  isError = false,
+}: {
+  agent: string
+  summary: string
+  cost: number
+  turns: number
+  duration: string
+  isError?: boolean
+}) {
+  return (
+    <div className="flex gap-2.5 min-w-0">
+      <ChatAvatar name={agent} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className="text-[11px] text-muted font-mono">{agent}</span>
+          <span className="text-[9px] text-muted/40">&middot;</span>
+          <span className="text-[9px] text-muted/50 font-mono tabular-nums">
+            {turns} turn{turns !== 1 ? "s" : ""} · {duration} · {formatCost(cost)}
+          </span>
+        </div>
+        <div
+          className={cn(
+            "rounded-lg border px-3 py-2",
+            isError
+              ? "border-danger/20 bg-danger-subtle/20"
+              : "border-border-subtle bg-surface-raised/40",
+          )}
+        >
+          <p className={cn(
+            "text-sm leading-relaxed",
+            isError ? "text-danger" : "text-default",
+          )}>
+            {summary}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Status transition line — inline status change notification.
+ * SOURCE: StreamEvent status change (agent.status field transitions)
+ */
+function AgentStatusLine({ agent, from, to }: { agent: string; from: string; to: string }) {
+  const toConfig = STATUS_CONFIG[to] ?? STATUS_CONFIG.stopped
+
+  return (
+    <div className="flex items-center justify-center gap-2 py-0.5">
+      <AgentAvatar name={agent} size="sm" />
+      <span className="text-[10px] text-muted font-mono">
+        {agent}
+      </span>
+      <span className="text-[10px] text-muted/40 font-mono">{from}</span>
+      <span className="text-[10px] text-muted/30">→</span>
+      <span className={cn("text-[10px] font-mono font-medium", toConfig.text)}>
+        {to}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Team user message — right-aligned with optional @target indicator.
+ * SOURCE: user input via composer (with optional @agent targeting)
+ */
+function TeamUserMessage({ text, target }: { text: string; target?: string }) {
+  return (
+    <div className="flex justify-end py-1">
+      <div className="max-w-[80%]">
+        {target && (
+          <div className="flex justify-end mb-0.5">
+            <span className="text-[10px] text-accent font-mono">@{target}</span>
+          </div>
+        )}
+        <div className="bg-accent/15 border border-accent/20 rounded px-3 py-1.5">
+          <p className="text-default text-sm whitespace-pre-wrap leading-relaxed">
+            {text}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Team error alert — prominent error from an agent.
+ * SOURCE: StreamEvent with isError flag, or TimelineEntry.summary with error content
+ */
+function TeamErrorAlert({ agent, text }: { agent: string; text: string }) {
+  return (
+    <div className="flex gap-2.5 min-w-0">
+      <div className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-danger-subtle mt-1">
+        <AlertCircle className="h-3.5 w-3.5 text-danger" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] text-danger font-mono mb-0.5">{agent}</div>
+        <div className="rounded-lg border border-danger/20 bg-danger-subtle/20 px-3 py-2">
+          <p className="text-xs text-danger leading-relaxed font-mono whitespace-pre-wrap">
+            {text}
+          </p>
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-danger/30 text-[11px] text-danger font-medium hover:bg-danger-subtle/60 transition-colors"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Retry
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] text-muted font-medium hover:text-secondary transition-colors"
+            >
+              View details →
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -691,7 +947,7 @@ function SecretsModal({
 
   if (!open) return null
 
-  const activeAgents = agents.filter((a) => a.status === "running" || a.status === "idle")
+  const activeAgents = agents.filter((a) => a.status === "running" || a.status === "idle" || a.status === "deploying")
   const needsRestart = dirty && !restarted
 
   const toggleReveal = (id: string) => {
@@ -731,21 +987,30 @@ function SecretsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-(--z-overlay) flex items-center justify-center">
+    <div
+      className="fixed inset-0 z-(--z-overlay) flex items-center justify-center"
+      onKeyDown={(e) => { if (e.key === "Escape") onClose() }}
+    >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-surface-backdrop backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg mx-4 rounded-xl border border-border-default bg-surface-raised shadow-lg overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="secrets-title"
+        tabIndex={-1}
+        className="relative w-full max-w-lg mx-4 rounded-xl border border-border-default bg-surface-raised shadow-lg overflow-hidden"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <div>
             <div className="flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-muted" />
-              <h2 className="text-sm font-semibold text-default">Project Secrets</h2>
+              <h2 id="secrets-title" className="text-sm font-semibold text-default">Project Secrets</h2>
             </div>
             <p className="text-[11px] text-muted mt-0.5 ml-6">
               Environment variables injected into agent containers
@@ -790,7 +1055,7 @@ function SecretsModal({
                   </span>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                     <button
                       type="button"
                       onClick={() => toggleReveal(secret.id)}
@@ -933,11 +1198,9 @@ function HeaderBar({
             <span
               className={cn(
                 "h-1.5 w-1.5 rounded-full shrink-0",
-                selectedAgent.status === "running" && "bg-success animate-breathe text-success",
-                selectedAgent.status === "error" && "bg-danger",
-                selectedAgent.status === "idle" && "bg-info",
-                selectedAgent.status === "stopped" && "bg-muted/50",
-                selectedAgent.status === "waiting" && "bg-warning",
+                (STATUS_CONFIG[selectedAgent.status] ?? STATUS_CONFIG.stopped).dot,
+                selectedAgent.status === "running" && "animate-breathe",
+                (STATUS_CONFIG[selectedAgent.status] ?? STATUS_CONFIG.stopped).glow,
               )}
             />
             <span className="font-medium text-default">{selectedAgent.name}</span>
@@ -970,49 +1233,21 @@ function HeaderBar({
 }
 
 /* ================================================================== */
-/*  SESSION INFO BAR                                                   */
-/* ================================================================== */
-
-function SessionInfoBar({ agent }: { agent: FakeAgent | null }) {
-  if (!agent) return null
-
-  const items = [
-    agent.model,
-    "47 tools",
-    formatCost(agent.cost),
-    `${agent.turns} turn${agent.turns === 1 ? "" : "s"}`,
-    "default",
-    agent.phase,
-  ].filter(Boolean)
-
-  return (
-    <div className="h-8 border-b border-border-default bg-surface px-4 flex items-center gap-2 shrink-0">
-      {items.map((item, i) => (
-        <span key={i} className="text-xs text-muted flex items-center gap-2">
-          {i > 0 && <span className="text-muted">&middot;</span>}
-          <span className="font-mono">{item}</span>
-        </span>
-      ))}
-    </div>
-  )
-}
-
-/* ================================================================== */
 /*  COMPOSER BAR                                                       */
 /* ================================================================== */
 
-function ComposerBar({ selectedAgent }: { selectedAgent: FakeAgent | null }) {
-  const placeholder = selectedAgent
-    ? `Message ${selectedAgent.name}...`
-    : "Message team lead... (type @ to target)"
-
+/**
+ * Composer bar — main feed message input.
+ * Broadcasts to all agents by default, use @agent to target one.
+ * Individual agent messaging happens in the right panel's mini-composer.
+ */
+function ComposerBar() {
   return (
     <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
-      <div className="relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60">
+      <div className="relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60 focus-within:bg-surface-raised focus-within:border-border-default">
         {/* Text input */}
         <textarea
-          readOnly
-          placeholder={placeholder}
+          placeholder="Message your team... (type @ to target an agent)"
           rows={1}
           className="w-full bg-transparent border-none outline-none resize-none px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted min-h-[52px] max-h-[40vh]"
         />
@@ -1029,25 +1264,14 @@ function ComposerBar({ selectedAgent }: { selectedAgent: FakeAgent | null }) {
               <Plus className="h-4 w-4" />
             </button>
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-muted">
-              <Code className="h-3 w-3" />
-              Normal
+              <Users className="h-3 w-3" />
+              All agents
             </span>
-            {selectedAgent && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-sunken text-xs text-secondary font-medium">
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    selectedAgent.status === "running" ? "bg-success" : selectedAgent.status === "idle" ? "bg-info" : "bg-muted",
-                  )}
-                />
-                {selectedAgent.name}
-              </span>
-            )}
           </div>
 
           {/* Right side */}
           <div className="flex items-center gap-3">
-            <span className="text-xs text-muted tabular-nums">$0.30</span>
+            <span className="text-xs text-muted font-mono tabular-nums">$0.30</span>
             <button
               type="button"
               className="flex items-center justify-center h-8 w-8 rounded-full bg-surface-sunken text-muted cursor-not-allowed"
@@ -1062,112 +1286,57 @@ function ComposerBar({ selectedAgent }: { selectedAgent: FakeAgent | null }) {
 }
 
 /* ================================================================== */
-/*  CHAT FEED                                                          */
+/*  TEAM FEED — main feed renders team-level events only               */
+/*                                                                     */
+/*  This is the "slack channel" view. You see:                         */
+/*  - Your messages to agents (@mentions + broadcasts)                 */
+/*  - Agent summaries when they complete a turn                        */
+/*  - Status transitions (started, errored, stopped)                   */
+/*  - Error alerts (actionable)                                        */
+/*  - AskUserQuestion cards (agent needs input)                        */
+/*  - System messages (session lifecycle)                               */
+/*                                                                     */
+/*  You do NOT see: tool calls, thinking, intermediate assistant        */
+/*  messages, tool results. Those live in the right panel detail view. */
 /* ================================================================== */
 
-function ChatFeed({ selectedAgent }: { selectedAgent: FakeAgent | null }) {
+function TeamFeed() {
   return (
     <div className="flex flex-col h-full min-w-0">
-      <SessionInfoBar agent={selectedAgent} />
-
       <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
         <div className="max-w-3xl mx-auto w-full px-6 py-4 space-y-3">
-          {/* 6. System init message */}
-          <SystemMessage text="Opus 4.6 · 47 tools" />
-          <SystemMessage text="session initialized" />
-
-          {/* 1. User message */}
-          <UserMessage text="Fix the JWT validation bug in auth.ts. The token expiry check is off by one hour." />
-
-          {/* 2. Assistant message with markdown */}
-          <AssistantMessage
-            agent="backend"
-            content={FAKE_MARKDOWN}
-          />
-
-          {/* 3. Single tool call */}
-          <SingleToolRow toolName="Read" summary="src/auth.ts" />
-
-          {/* 9. Activity summary */}
-          <ActivitySummary
-            agent="frontend"
-            text="Reading component styles"
-            tools={2}
-          />
-
-          {/* 2b. Assistant follow-up (no avatar — same agent) */}
-          <AssistantMessage
-            agent="backend"
-            content="I've applied the fix. Let me also run the linter and verify the tests pass."
-            showAvatar={false}
-          />
-
-          {/* 3b. Multi-tool group */}
-          <MultiToolGroup
-            tools={[
-              { name: "Edit", summary: "src/auth.ts" },
-              { name: "Bash", summary: "npm run lint" },
-              { name: "Bash", summary: "npm test -- --filter auth" },
-            ]}
-          />
-
-          {/* 7. AskUserQuestion card */}
-          <QuestionCard
-            agent="backend"
-            question="The fix is ready. How should I handle the clock skew tolerance?"
-            options={[
-              "30 seconds (Recommended)",
-              "60 seconds",
-              "No tolerance",
-              "Configurable via env var",
-            ]}
-          />
-
-          {/* 1b. User reply */}
-          <UserMessage text="Go with 30 seconds. That's the standard." />
-
-          {/* 5. Error bubble */}
-          <ErrorBubble
-            agent="qa"
-            text={"npm test failed: FAIL src/auth.test.ts\n\nExpected: 200\nReceived: 401\n\nThe auth.ts fix hasn't landed in the test environment yet."}
-          />
-
-          {/* 10. Thinking indicator */}
-          <div className="flex gap-2 min-w-0">
-            <ChatAvatar name="backend" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] text-muted font-mono mb-0.5">backend</div>
-              <ThinkingIndicator label="Applying clock skew fix..." />
-            </div>
-          </div>
-
-          {/* 4. Result pill */}
-          <ResultPill
-            cost={0.12}
-            duration="3m 22s"
-            turns={8}
-            model="Opus 4.6"
-          />
-
-          {/* 8. Todo list */}
-          <TodoList
-            agent="backend"
-            tasks={[
-              { text: "Read auth.ts and identify the bug", done: true },
-              { text: "Fix Date.now() → seconds conversion", done: true },
-              { text: "Add 30s clock skew tolerance", done: true },
-              { text: "Run linter", done: true },
-              { text: "Run auth test suite", done: false },
-              { text: "Update error logging", done: false },
-            ]}
-          />
-
-          {/* 6b. Status message */}
-          <SystemMessage text="backend session complete · 8 turns · $0.12" />
+          {TEAM_FEED.map((item, i) => {
+            switch (item.type) {
+              case "system":
+                return <SystemMessage key={i} text={item.text} />
+              case "user":
+                return <TeamUserMessage key={i} text={item.text} target={item.target} />
+              case "summary":
+                return (
+                  <AgentSummaryCard
+                    key={i}
+                    agent={item.agent}
+                    summary={item.summary}
+                    cost={item.cost}
+                    turns={item.turns}
+                    duration={item.duration}
+                    isError={item.isError}
+                  />
+                )
+              case "status":
+                return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} />
+              case "error":
+                return <TeamErrorAlert key={i} agent={item.agent} text={item.text} />
+              case "question":
+                return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
+              default:
+                return null
+            }
+          })}
         </div>
       </ScrollArea>
 
-      <ComposerBar selectedAgent={selectedAgent} />
+      <ComposerBar />
     </div>
   )
 }
@@ -1190,7 +1359,7 @@ function RosterPanel({
   onSelectAgent: (id: string | null) => void
 }) {
   const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0 }
+    const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
     for (const a of agents) counts[a.status] = (counts[a.status] ?? 0) + 1
     return counts
   }, [agents])
@@ -1473,7 +1642,20 @@ function VncThumbnail({ agent }: { agent: FakeAgent }) {
   )
 }
 
-/** Unified agent card: info + VNC preview side by side */
+/**
+ * Agent card with two states:
+ *
+ * COLLAPSED — compact single row:
+ *   avatar | name | status dot | live action one-liner | cost · time
+ *   SOURCE: Agent model fields + latest tool_use content block (liveAction)
+ *
+ * EXPANDED — full card with VNC + detail feed:
+ *   Top: agent info grid (left) + VNC thumbnail (right)
+ *   Bottom: scrollable detail feed of verbose output
+ *   SOURCE: TimelineEntry.content (full content blocks)
+ *
+ * Click toggles between states (onSelect handler does the toggle).
+ */
 function AgentCardRow({
   agent,
   isSelected,
@@ -1490,76 +1672,283 @@ function AgentCardRow({
   const isError = agent.status === "error"
   const isStopped = agent.status === "stopped"
 
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "w-full text-left rounded-lg border transition-all duration-(--duration-normal)",
-        isSelected
-          ? "border-accent/40 bg-surface-raised/80 shadow-sm"
-          : "border-border-subtle bg-surface hover:bg-surface-raised/40 hover:border-border-default",
-        isError && "border-danger/30",
-        isStopped && "opacity-60",
-      )}
-    >
-      <div className={cn("grid gap-2", compact ? "grid-cols-1 p-2.5" : "grid-cols-2 p-3")}>
-        {/* Left: agent info */}
-        <div className="min-w-0 flex flex-col">
-          {/* Header: avatar + name + status */}
-          <div className="flex items-center gap-2 mb-1.5">
-            <AgentAvatar name={agent.name} stopped={isStopped} />
-            <span
-              className={cn(
-                "text-[13px] font-medium flex-1 truncate",
-                isStopped ? "text-muted" : "text-default",
-              )}
-            >
-              {agent.name}
-            </span>
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full shrink-0",
-                config.dot,
-                isRunning && "animate-breathe text-success",
-              )}
-            />
-          </div>
+  /* ---- COLLAPSED: compact single-row card ---- */
+  if (!isSelected) {
+    return (
+      <button
+        type="button"
+        onClick={onSelect}
+        className={cn(
+          "w-full text-left rounded-lg border px-2.5 py-2 transition-all duration-(--duration-normal)",
+          "border-border-subtle bg-surface hover:bg-surface-raised/40 hover:border-border-default",
+          isError && "border-danger/30 hover:border-danger/40",
+          isStopped && "opacity-60",
+        )}
+      >
+        {/* Row 1: avatar + name + status dot + live action + cost/time */}
+        <div className="flex items-center gap-2 min-w-0">
+          <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
+          <span
+            className={cn(
+              "text-[12px] font-medium shrink-0",
+              isStopped ? "text-muted" : "text-default",
+            )}
+          >
+            {agent.name}
+          </span>
+          <span
+            className={cn(
+              "h-1.5 w-1.5 rounded-full shrink-0",
+              config.dot,
+              isRunning && "animate-breathe text-success",
+            )}
+          />
 
-          {/* Current task */}
-          <div className="flex items-start gap-1.5 mb-1">
-            <Terminal className="h-3 w-3 text-muted/60 shrink-0 mt-0.5" />
-            <span className="text-[11px] text-secondary leading-tight truncate">
+          {/* Live action one-liner — the continuously updating current action
+              SOURCE: latest tool_use content block name + input summary */}
+          {agent.liveAction ? (
+            <span className="text-[10px] text-muted font-mono truncate flex-1 min-w-0">
+              {agent.liveAction}
+            </span>
+          ) : (
+            <span className="text-[10px] text-muted/50 font-mono truncate flex-1 min-w-0">
               {agent.task}
             </span>
-          </div>
+          )}
 
-          {/* Last output */}
-          <div className="rounded bg-surface-sunken/60 px-1.5 py-1 mb-1.5 flex-1">
-            <p className="text-[10px] text-muted font-mono leading-relaxed line-clamp-2 whitespace-pre-wrap">
-              {agent.lastOutput}
-            </p>
-          </div>
-
-          {/* Stats row */}
-          <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap">
-            <span className="inline-flex items-center gap-0.5">
-              <DollarSign className="h-2.5 w-2.5" />
-              {formatCost(agent.cost)}
-            </span>
-            <span className="inline-flex items-center gap-0.5">
-              <Clock className="h-2.5 w-2.5" />
-              {agent.duration}
-            </span>
-            <span className="text-muted/50">&middot;</span>
-            <span>{agent.model}</span>
-          </div>
+          {/* Right: cost · time */}
+          <span className="text-[9px] text-muted/60 font-mono tabular-nums shrink-0">
+            {formatCost(agent.cost)} · {agent.duration}
+          </span>
         </div>
+      </button>
+    )
+  }
 
-        {/* Right: VNC thumbnail */}
-        <VncThumbnail agent={agent} />
+  /* ---- EXPANDED: full card with VNC + detail feed ---- */
+  return (
+    <div
+      className={cn(
+        "rounded-lg border transition-all duration-(--duration-normal)",
+        "border-accent/40 bg-surface-raised/80 shadow-sm",
+        isError && "border-danger/40",
+      )}
+    >
+      {/* Clickable header — click to collapse */}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left"
+      >
+        <div className={cn("grid gap-2", compact ? "grid-cols-1 p-2.5" : "grid-cols-2 p-3")}>
+          {/* Left: agent info */}
+          <div className="min-w-0 flex flex-col">
+            {/* Header: avatar + name + status */}
+            <div className="flex items-center gap-2 mb-1.5">
+              <AgentAvatar name={agent.name} stopped={isStopped} />
+              <span className="text-[13px] font-medium flex-1 truncate text-default">
+                {agent.name}
+              </span>
+              <ChevronRight
+                size={14}
+                className="shrink-0 text-muted rotate-90 transition-transform"
+              />
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full shrink-0",
+                  config.dot,
+                  isRunning && "animate-breathe text-success",
+                )}
+              />
+            </div>
+
+            {/* Current task */}
+            <div className="flex items-start gap-1.5 mb-1">
+              <Terminal className="h-3 w-3 text-muted/60 shrink-0 mt-0.5" />
+              <span className="text-[11px] text-secondary leading-tight truncate">
+                {agent.task}
+              </span>
+            </div>
+
+            {/* Stats row */}
+            <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap">
+              <span className="inline-flex items-center gap-0.5">
+                <DollarSign className="h-2.5 w-2.5" />
+                {formatCost(agent.cost)}
+              </span>
+              <span className="inline-flex items-center gap-0.5">
+                <Clock className="h-2.5 w-2.5" />
+                {agent.duration}
+              </span>
+              <span className="text-muted/50">&middot;</span>
+              <span>{agent.model}</span>
+              <span className="text-muted/50">&middot;</span>
+              <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+
+          {/* Right: VNC thumbnail */}
+          <VncThumbnail agent={agent} />
+        </div>
+      </button>
+
+      {/* Expanded detail feed — full verbose output from TimelineEntry.content */}
+      <AgentDetailFeed agent={agent} />
+    </div>
+  )
+}
+
+/**
+ * Agent detail mini-feed — shows VERBOSE output for a single agent.
+ * This is the drill-in view. Content comes from TimelineEntry.content
+ * (full content blocks), NOT from the summary field.
+ *
+ * SOURCE: TimelineEntry.content — tool_use blocks, assistant text,
+ *   thinking blocks, tool_result blocks. Everything the team feed hides.
+ */
+function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
+  const isRunning = agent.status === "running"
+  const isError = agent.status === "error"
+
+  return (
+    <div className="border-t border-border-subtle">
+      {/* Mini-feed header */}
+      <div className="px-3 py-1.5 flex items-center gap-2 bg-surface-sunken/30">
+        <MessageSquare className="h-3 w-3 text-muted/60" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/60">
+          Detail Feed
+        </span>
+        <span className="text-[9px] text-muted/40 font-mono">
+          source: content blocks
+        </span>
       </div>
-    </button>
+
+      {/* Verbose content — scrollable mini-feed */}
+      <div className="max-h-[320px] overflow-y-auto px-3 py-2 space-y-2">
+        {/* Show different content based on agent */}
+        {agent.name === "backend" ? (
+          <>
+            {/* Thinking indicator (source: thinking content block) */}
+            <ThinkingIndicator label="Analyzing auth.ts..." />
+
+            {/* Tool calls (source: tool_use content blocks) */}
+            <SingleToolRow toolName="Read" summary="src/auth.ts" />
+            <SingleToolRow toolName="Read" summary="src/middleware/auth.ts" />
+
+            {/* Assistant message (source: text content blocks) */}
+            <AssistantMessage
+              agent={agent.name}
+              content={FAKE_MARKDOWN}
+              showAvatar={false}
+            />
+
+            {/* More tool calls */}
+            <MultiToolGroup
+              tools={[
+                { name: "Edit", summary: "src/auth.ts — fix validateToken()" },
+                { name: "Edit", summary: "src/middleware/auth.ts — reorder handlers" },
+                { name: "Bash", summary: "npm run lint" },
+              ]}
+            />
+
+            <AssistantMessage
+              agent={agent.name}
+              content="Applied the fix and ran the linter. All clean."
+              showAvatar={false}
+            />
+
+            {/* Result pill (source: result message) */}
+            <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
+
+            {/* Todo list (source: TodoWrite tool_use blocks) */}
+            {isRunning && (
+              <TodoList
+                agent={agent.name}
+                tasks={[
+                  { text: "Read auth.ts and identify the bug", done: true },
+                  { text: "Fix Date.now() → seconds conversion", done: true },
+                  { text: "Add 30s clock skew tolerance", done: true },
+                  { text: "Add refresh token rotation", done: true },
+                  { text: "Run linter", done: true },
+                  { text: "Update test fixtures", done: false },
+                ]}
+              />
+            )}
+          </>
+        ) : agent.name === "qa" ? (
+          <>
+            <SingleToolRow toolName="Bash" summary="npm test -- --filter auth" />
+            {isError ? (
+              <ErrorBubble
+                agent={agent.name}
+                text={"FAIL src/auth.test.ts\n\nExpected: 200\nReceived: 401\n\nThe refresh endpoint middleware ordering is wrong."}
+              />
+            ) : (
+              <>
+                <AssistantMessage
+                  agent={agent.name}
+                  content="Running the full auth test suite. 47 tests found."
+                  showAvatar={false}
+                />
+                <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
+              </>
+            )}
+          </>
+        ) : agent.name === "frontend" ? (
+          <>
+            <ThinkingIndicator label="Reading component styles..." />
+            <SingleToolRow toolName="Read" summary="src/components/Button.tsx" />
+            <SingleToolRow toolName="Read" summary="src/styles/tokens.css" />
+            <AssistantMessage
+              agent={agent.name}
+              content="Scanning Tailwind classes in Button, Card, and Input components..."
+              showAvatar={false}
+            />
+          </>
+        ) : agent.name === "docs" ? (
+          <>
+            <SingleToolRow toolName="Read" summary="docs/api-reference.md" />
+            <MultiToolGroup
+              tools={[
+                { name: "Edit", summary: "docs/api-reference.md — add rotation docs" },
+                { name: "Edit", summary: "docs/auth-flow.md — update diagram" },
+              ]}
+            />
+            <AssistantMessage
+              agent={agent.name}
+              content="Updated API reference with refresh token rotation documentation and migration notes."
+              showAvatar={false}
+            />
+            <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
+          </>
+        ) : (
+          /* Generic fallback for devops, infra, etc. */
+          <div className="flex items-center justify-center py-4">
+            <span className="text-[10px] text-muted/50 font-mono">
+              {agent.status === "deploying" ? "Initializing workspace..." : "No activity yet"}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Mini composer — message this specific agent */}
+      <div className="px-3 py-2 border-t border-border-subtle">
+        <div className="flex items-center gap-2 rounded-lg border border-border-default bg-surface-sunken/40 px-2.5 py-1.5">
+          <span className="text-[10px] text-accent font-mono shrink-0">@{agent.name}</span>
+          <input
+            type="text"
+            placeholder="Message this agent..."
+            className="flex-1 bg-transparent border-none outline-none text-xs text-default placeholder:text-muted/40 min-w-0"
+          />
+          <button
+            type="button"
+            className="flex items-center justify-center h-5 w-5 rounded-full bg-surface text-muted"
+          >
+            <ArrowUp className="h-3 w-3" strokeWidth={2.5} />
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1605,11 +1994,13 @@ function TabBar({
   onTabChange: (id: string) => void
 }) {
   return (
-    <div className="h-8 flex items-center gap-1 px-3 border-b border-border-default bg-surface shrink-0">
+    <div role="tablist" className="h-8 flex items-center gap-1 px-3 border-b border-border-default bg-surface shrink-0">
       {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"
+          role="tab"
+          aria-selected={activeTab === tab.id}
           onClick={() => onTabChange(tab.id)}
           className={cn(
             "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
@@ -1669,9 +2060,11 @@ function PanelHeader({ children }: { children: React.ReactNode }) {
 /** Drag handle for resizable panels. Place on the leading edge of the panel. */
 function ResizeHandle({
   onResize,
+  onReset,
   side = "left",
 }: {
   onResize: (delta: number) => void
+  onReset?: () => void
   side?: "left" | "right"
 }) {
   const dragging = useRef(false)
@@ -1702,11 +2095,17 @@ function ResizeHandle({
     dragging.current = false
   }, [])
 
+  const onPointerCancel = useCallback(() => {
+    dragging.current = false
+  }, [])
+
   return (
     <div
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onDoubleClick={onReset}
       className={cn(
         "absolute top-0 bottom-0 w-1 z-(--z-dropdown) cursor-col-resize group/resize",
         side === "left" ? "left-0" : "right-0",
@@ -1750,6 +2149,10 @@ export default function PrototypePage() {
     setSelectedAgentId(id)
   }, [])
 
+  const handleSelectAgentCard = useCallback((id: string) => {
+    setSelectedAgentId((prev) => (prev === id ? null : id))
+  }, [])
+
   // Determine what's visible at each breakpoint
   const showRoster = bp !== "mobile"
   const showRightPanel = bp === "XL" || bp === "L" || bp === "M"
@@ -1778,13 +2181,16 @@ export default function PrototypePage() {
   return (
     <div className="h-screen flex flex-col bg-surface overflow-hidden">
       {/* Header bar */}
-      <HeaderBar
+      <header>
+        <h1 className="sr-only">Agentobox Dashboard</h1>
+        <HeaderBar
         onToggleSidebar={() => setRosterCollapsed((c) => !c)}
         onOpenSecrets={() => setSecretsOpen(true)}
         selectedAgent={selectedAgent}
         agents={AGENTS}
         showSidebarToggle={showRoster}
       />
+      </header>
 
       {/* Secrets modal */}
       <SecretsModal
@@ -1806,20 +2212,22 @@ export default function PrototypePage() {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Roster */}
         {showRoster && (
-          <RosterPanel
-            collapsed={rosterCollapsed || bp === "M"}
-            onToggle={() => setRosterCollapsed((c) => !c)}
-            agents={AGENTS}
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={handleSelectAgent}
-          />
+          <aside>
+            <RosterPanel
+              collapsed={rosterCollapsed || bp === "M"}
+              onToggle={() => setRosterCollapsed((c) => !c)}
+              agents={AGENTS}
+              selectedAgentId={selectedAgentId}
+              onSelectAgent={handleSelectAgent}
+            />
+          </aside>
         )}
 
-        {/* Center: chat feed */}
+        {/* Center: team feed (summaries only — no verbose agent output) */}
         {(!showTopTabs || mainTab === "chat") && (
-          <div className="flex-1 min-w-0 flex flex-col">
-            <ChatFeed selectedAgent={selectedAgent} />
-          </div>
+          <main className="flex-1 min-w-0 flex flex-col">
+            <TeamFeed />
+          </main>
         )}
 
         {/* Right panel: unified agent cards with inline VNC */}
@@ -1831,7 +2239,7 @@ export default function PrototypePage() {
               minWidth: effectiveRightWidth,
             }}
           >
-            <ResizeHandle onResize={handleRightPanelResize} side="left" />
+            <ResizeHandle onResize={handleRightPanelResize} onReset={() => setRightPanelWidth(null)} side="left" />
             <PanelHeader>
               <div className="flex items-center gap-2">
                 <Users className="h-3.5 w-3.5 text-muted" />
@@ -1843,7 +2251,7 @@ export default function PrototypePage() {
             <AgentCardsPanel
               agents={AGENTS}
               selectedAgentId={selectedAgentId}
-              onSelectAgent={(id) => setSelectedAgentId(id)}
+              onSelectAgent={handleSelectAgentCard}
               compact={compactCards}
             />
           </div>
@@ -1855,7 +2263,7 @@ export default function PrototypePage() {
             <AgentCardsPanel
               agents={AGENTS}
               selectedAgentId={selectedAgentId}
-              onSelectAgent={(id) => setSelectedAgentId(id)}
+              onSelectAgent={handleSelectAgentCard}
             />
           </div>
         )}
