@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
-  PanelLeftClose,
-  PanelLeftOpen,
   ArrowUp,
   Users,
   MessageSquare,
@@ -23,6 +21,9 @@ import {
   Trash2,
   AlertTriangle,
   RefreshCw,
+  ChevronsUpDown,
+  ChevronsDownUp,
+  Settings,
 } from "lucide-react"
 import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -48,6 +49,10 @@ type FakeAgent = {
   /** Live one-liner: last tool call or action, continuously updated.
    *  SOURCE: latest tool_use content block name + summary from StreamEvent */
   liveAction?: string
+  instructions: string
+  mcpServers: string[]
+  runtime: "docker" | "modal"
+  workspacePath: string
 }
 
 const AGENTS: FakeAgent[] = [
@@ -63,6 +68,10 @@ const AGENTS: FakeAgent[] = [
     lastOutput: "Applied fix to validateToken()...",
     phase: "Editing",
     liveAction: "Edit src/auth.ts (+3 -1)",
+    instructions: "Django 6.0 backend: models, services, auth, GraphQL schema. Run tests before committing.",
+    mcpServers: ["computer-use"],
+    runtime: "docker",
+    workspacePath: "/workspace/agentobox",
   },
   {
     id: "2",
@@ -76,6 +85,10 @@ const AGENTS: FakeAgent[] = [
     lastOutput: "Scanning tailwind classes in Button...",
     phase: "Reading",
     liveAction: "Read src/components/Button.tsx",
+    instructions: "Next.js dashboard: components, stores, GraphQL client, Tailwind CSS. Follow design tokens.",
+    mcpServers: ["playwright", "computer-use"],
+    runtime: "docker",
+    workspacePath: "/workspace/agentobox",
   },
   {
     id: "3",
@@ -88,6 +101,10 @@ const AGENTS: FakeAgent[] = [
     turns: 3,
     lastOutput: "FAIL src/auth.test.ts\nExpected 200, received 401",
     liveAction: "Bash npm test -- --filter auth",
+    instructions: "Run test suites, deploy test agents, Playwright E2E. Report failures with reproduction steps.",
+    mcpServers: ["playwright"],
+    runtime: "docker",
+    workspacePath: "/workspace/agentobox",
   },
   {
     id: "4",
@@ -99,6 +116,10 @@ const AGENTS: FakeAgent[] = [
     model: "Haiku 4.5",
     turns: 1,
     lastOutput: "Standing by...",
+    instructions: "Infrastructure: Docker, CI/CD, Modal config, monitoring. No destructive ops without approval.",
+    mcpServers: ["computer-use"],
+    runtime: "modal",
+    workspacePath: "/workspace/agentobox",
   },
   {
     id: "5",
@@ -111,6 +132,10 @@ const AGENTS: FakeAgent[] = [
     turns: 2,
     lastOutput: "Updated API reference section",
     liveAction: "Edit docs/api-reference.md (+12 -3)",
+    instructions: "Documentation: API reference, architecture docs, migration guides. Keep examples current.",
+    mcpServers: [],
+    runtime: "docker",
+    workspacePath: "/workspace/agentobox",
   },
   {
     id: "6",
@@ -122,6 +147,10 @@ const AGENTS: FakeAgent[] = [
     model: "Haiku 4.5",
     turns: 0,
     lastOutput: "Initializing workspace...",
+    instructions: "Provisioning: container orchestration, volume management, network config.",
+    mcpServers: [],
+    runtime: "modal",
+    workspacePath: "/workspace/agentobox",
   },
 ]
 
@@ -1153,33 +1182,20 @@ function SecretsModal({
 /* ================================================================== */
 
 function HeaderBar({
-  onToggleSidebar,
   onOpenSecrets,
   selectedAgent,
   agents,
-  showSidebarToggle = true,
 }: {
-  onToggleSidebar: () => void
   onOpenSecrets: () => void
   selectedAgent: FakeAgent | null
   agents: FakeAgent[]
-  showSidebarToggle?: boolean
 }) {
   const totalCost = agents.reduce((sum, a) => sum + a.cost, 0)
 
   return (
     <div className="h-12 border-b border-border-default bg-surface-sunken px-4 flex items-center gap-4 shrink-0">
-      {/* Left: sidebar toggle + project name + secrets */}
+      {/* Left: project name + secrets */}
       <div className="flex items-center gap-2">
-        {showSidebarToggle && (
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-          >
-            <PanelLeftClose className="h-4 w-4" />
-          </button>
-        )}
         <span className="text-sm font-medium text-default">agentobox</span>
         <button
           type="button"
@@ -1342,21 +1358,19 @@ function TeamFeed() {
 }
 
 /* ================================================================== */
-/*  ROSTER PANEL                                                       */
+/*  ICON RAIL — 48px vertical strip replacing the old roster panel     */
 /* ================================================================== */
 
-function RosterPanel({
-  collapsed,
-  onToggle,
+function IconRail({
   agents,
   selectedAgentId,
   onSelectAgent,
+  onOpenSecrets,
 }: {
-  collapsed: boolean
-  onToggle: () => void
   agents: FakeAgent[]
   selectedAgentId: string | null
-  onSelectAgent: (id: string | null) => void
+  onSelectAgent: (id: string) => void
+  onOpenSecrets: () => void
 }) {
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
@@ -1365,209 +1379,87 @@ function RosterPanel({
   }, [agents])
 
   return (
-    <div
-      className="h-full bg-surface-sunken border-r-[0.5px] border-border-default flex flex-col overflow-hidden shrink-0"
-      style={{
-        width: collapsed ? 60 : 260,
-        minWidth: collapsed ? 60 : 260,
-        transition: "width 200ms ease, min-width 200ms ease",
-      }}
-    >
-      <div className="flex-1 flex flex-col bg-surface min-h-0">
-        {/* Header — h-8 to align with session info bar + right panel tab bar */}
-        <div className={cn(
-          "h-8 px-3 flex items-center border-b border-border-default shrink-0",
-          collapsed && "justify-center px-1.5",
-        )}>
-          {!collapsed && (
-            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                Agents
-              </span>
-              <div className="flex items-center gap-1.5 ml-1">
-                {PILL_CONFIG.map(
-                  (pill) =>
-                    (statusCounts[pill.key] ?? 0) > 0 && (
-                      <span
-                        key={pill.key}
-                        className={cn(
-                          "inline-flex items-center gap-0.5 font-mono text-[10px] tabular-nums",
-                          pill.text,
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "h-1.5 w-1.5 rounded-full shrink-0",
-                            pill.dot,
-                            pill.animate && "animate-breathe text-success",
-                          )}
-                        />
-                        {statusCounts[pill.key]}
-                      </span>
-                    ),
-                )}
-              </div>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={onToggle}
-            className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
-            aria-label={collapsed ? "Expand roster" : "Collapse roster"}
-          >
-            {collapsed ? (
-              <PanelLeftOpen className="h-3.5 w-3.5" />
-            ) : (
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
+    <div className="w-12 h-full bg-surface-sunken border-r-[0.5px] border-border-default flex flex-col shrink-0">
+      {/* Top: project accent dot */}
+      <div className="pt-3 pb-2 flex justify-center">
+        <span className="h-2 w-2 rounded-full bg-accent" />
+      </div>
 
-        {/* Agent list */}
-        <ScrollArea className="flex-1 overflow-y-auto">
-          <div className="flex flex-col pt-1.5 pb-2">
-            {/* All agents button */}
-            {!collapsed && (
-              <button
-                type="button"
-                onClick={() => onSelectAgent(null)}
+      {/* Agent avatars */}
+      <div className="flex-1 flex flex-col items-center gap-1.5 py-2 overflow-y-auto">
+        {agents.map((agent) => {
+          const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
+          const isSelected = selectedAgentId === agent.id
+          const isRunning = agent.status === "running"
+          const isStopped = agent.status === "stopped"
+
+          return (
+            <button
+              key={agent.id}
+              type="button"
+              onClick={() => onSelectAgent(agent.id)}
+              className={cn(
+                "relative group",
+                isStopped && "opacity-55",
+              )}
+              title={agent.name}
+            >
+              <AgentAvatar name={agent.name} size="md" stopped={isStopped} />
+              <span
                 className={cn(
-                  "mx-1.5 rounded-lg transition-all duration-(--duration-normal) text-left px-3 py-2",
-                  "border-l-2 border-transparent",
-                  selectedAgentId === null
-                    ? "bg-surface-raised/80 border-l-accent"
-                    : "hover:bg-surface-raised/30",
+                  "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
+                  config.dot,
+                  isRunning && "animate-breathe text-success",
+                )}
+              />
+              {isSelected && (
+                <span className="absolute inset-0 rounded-md ring-2 ring-accent/50" />
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Fleet health */}
+      <div className="py-2 flex flex-col items-center gap-1 border-t border-border-subtle">
+        {PILL_CONFIG.map(
+          (pill) =>
+            (statusCounts[pill.key] ?? 0) > 0 && (
+              <span
+                key={pill.key}
+                className={cn(
+                  "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
+                  pill.text,
                 )}
               >
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-accent shrink-0" />
-                  <span
-                    className={cn(
-                      "text-[13px] font-medium",
-                      selectedAgentId === null ? "text-default" : "text-secondary",
-                    )}
-                  >
-                    All agents
-                  </span>
-                  <span className="flex-1" />
-                  <span className="text-[10px] text-muted tabular-nums font-mono">
-                    {agents.length}
-                  </span>
-                </div>
-              </button>
-            )}
-
-            {agents.map((agent) => {
-              const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
-              const isSelected = selectedAgentId === agent.id
-              const isRunning = agent.status === "running"
-              const isError = agent.status === "error"
-              const isStopped = agent.status === "stopped"
-
-              if (collapsed) {
-                return (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    onClick={() => onSelectAgent(agent.id)}
-                    className={cn(
-                      "mx-auto my-0.5 relative group",
-                      isStopped && "opacity-55",
-                    )}
-                    title={agent.name}
-                  >
-                    <AgentAvatar name={agent.name} size="md" stopped={isStopped} />
-                    <span
-                      className={cn(
-                        "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface",
-                        config.dot,
-                        isRunning && "animate-breathe text-success",
-                      )}
-                    />
-                    {isSelected && (
-                      <span className="absolute inset-0 rounded-md ring-2 ring-accent/50" />
-                    )}
-                  </button>
-                )
-              }
-
-              return (
-                <button
-                  key={agent.id}
-                  type="button"
-                  onClick={() => onSelectAgent(agent.id)}
+                <span
                   className={cn(
-                    "group mx-1.5 rounded-lg transition-all duration-(--duration-normal) text-left",
-                    "border-l-2 border-transparent",
-                    isSelected && "bg-surface-raised/80 border-l-accent",
-                    !isSelected && "hover:bg-surface-raised/30",
-                    isError && !isSelected && "hover:bg-danger-subtle",
-                    isError && isSelected && "bg-danger-subtle/60 border-l-danger",
-                    isStopped && "opacity-55",
-                    isRunning && !isSelected && "animate-border-pulse",
+                    "h-1.5 w-1.5 rounded-full shrink-0",
+                    pill.dot,
+                    pill.animate && "animate-breathe text-success",
                   )}
-                >
-                  <div className="flex items-start gap-2 px-2.5 py-2">
-                    <AgentAvatar name={agent.name} stopped={isStopped} />
-                    <div className="flex-1 min-w-0">
-                      {/* Row 1: status dot + name + meta */}
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "h-1.5 w-1.5 rounded-full shrink-0",
-                            config.dot,
-                            isRunning && "animate-breathe text-success",
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            "text-[13px] font-medium truncate",
-                            isSelected ? "text-default" : "text-secondary",
-                            isStopped && "text-muted",
-                          )}
-                        >
-                          {agent.name}
-                        </span>
-                        <span className="flex-1" />
-                        {isError ? (
-                          <span className="text-[9px] font-semibold uppercase tracking-wide text-danger shrink-0">
-                            err
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-muted/60 shrink-0 tabular-nums font-mono">
-                            {agent.duration}
-                          </span>
-                        )}
-                      </div>
-                      {/* Row 2: activity + cost */}
-                      <div className="flex items-center gap-1 mt-px">
-                        <span
-                          className={cn(
-                            "text-[11px] truncate flex-1 leading-tight",
-                            isError ? "text-danger/80" : "text-muted/70",
-                          )}
-                        >
-                          {agent.task}
-                        </span>
-                        {agent.cost > 0 && (
-                          <span className="text-[9px] text-muted/50 font-mono shrink-0 tabular-nums">
-                            {formatCost(agent.cost)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </ScrollArea>
+                />
+                {statusCounts[pill.key]}
+              </span>
+            ),
+        )}
+      </div>
 
-        {/* Bottom bar */}
-        <div className="px-3 py-2 flex items-center shrink-0 border-t border-border-default">
-          {!collapsed && (
-            <span className="text-[11px] text-muted truncate">vahid@agentobox</span>
-          )}
+      {/* Bottom: secrets + user avatar */}
+      <div className="py-2 flex flex-col items-center gap-2 border-t border-border-default">
+        <button
+          type="button"
+          onClick={onOpenSecrets}
+          className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+          title="Project secrets"
+        >
+          <KeyRound className="h-3.5 w-3.5" />
+        </button>
+        <div
+          className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
+          title="vahid"
+        >
+          V
         </div>
       </div>
     </div>
@@ -1642,6 +1534,109 @@ function VncThumbnail({ agent }: { agent: FakeAgent }) {
   )
 }
 
+/* ================================================================== */
+/*  AGENT SETTINGS PANEL — config form inside expanded card            */
+/* ================================================================== */
+
+function AgentSettingsPanel({ agent }: { agent: FakeAgent }) {
+  const [model, setModel] = useState(agent.model)
+  const [instructions, setInstructions] = useState(agent.instructions)
+  const dirty = model !== agent.model || instructions !== agent.instructions
+
+  return (
+    <div className="px-3 py-3 space-y-3">
+      {/* Model selector */}
+      <div>
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+          Model
+        </label>
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs text-default outline-none focus:border-accent/50 transition-colors"
+        >
+          <option>Opus 4.6</option>
+          <option>Sonnet 4.6</option>
+          <option>Haiku 4.5</option>
+        </select>
+      </div>
+
+      {/* Instructions textarea */}
+      <div>
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+          Instructions
+        </label>
+        <textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          rows={4}
+          className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default outline-none focus:border-accent/50 transition-colors resize-none"
+        />
+      </div>
+
+      {/* MCP Servers */}
+      <div>
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+          MCP Servers
+        </label>
+        {agent.mcpServers.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {agent.mcpServers.map((server) => (
+              <span
+                key={server}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-sunken/60 border border-border-subtle text-[11px] font-mono text-secondary"
+              >
+                {server}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[11px] text-muted/50 font-mono">none configured</span>
+        )}
+      </div>
+
+      {/* Info line */}
+      <div className="text-[10px] text-muted font-mono">
+        Runtime: {agent.runtime} · Workspace: {agent.workspacePath}
+      </div>
+
+      {/* Restart banner */}
+      {dirty && (
+        <div className="flex items-center gap-2 px-2.5 py-2 rounded-md bg-warning-subtle/30 border border-warning/20">
+          <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
+          <span className="text-[11px] text-warning">Changes require restart</span>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-accent/30 text-[11px] text-accent font-medium hover:bg-accent/10 transition-colors"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Restart
+        </button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border-default text-[11px] text-secondary font-medium hover:bg-surface-sunken/40 transition-colors"
+        >
+          <RefreshCw className="h-3 w-3" />
+          Redeploy
+        </button>
+        <span className="flex-1" />
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-danger/30 text-[11px] text-danger font-medium hover:bg-danger-subtle/40 transition-colors"
+        >
+          <Trash2 className="h-3 w-3" />
+          Remove
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Agent card with two states:
  *
@@ -1659,11 +1654,13 @@ function VncThumbnail({ agent }: { agent: FakeAgent }) {
 function AgentCardRow({
   agent,
   isSelected,
+  isPreview = false,
   onSelect,
   compact = false,
 }: {
   agent: FakeAgent
   isSelected: boolean
+  isPreview?: boolean
   onSelect: () => void
   compact?: boolean
 }) {
@@ -1671,9 +1668,10 @@ function AgentCardRow({
   const isRunning = agent.status === "running"
   const isError = agent.status === "error"
   const isStopped = agent.status === "stopped"
+  const [detailTab, setDetailTab] = useState<"activity" | "settings">("activity")
 
   /* ---- COLLAPSED: compact single-row card ---- */
-  if (!isSelected) {
+  if (!isSelected && !isPreview) {
     return (
       <button
         type="button"
@@ -1725,7 +1723,86 @@ function AgentCardRow({
     )
   }
 
-  /* ---- EXPANDED: full card with VNC + detail feed ---- */
+  /* ---- Shared header for preview + expanded ---- */
+  const cardHeader = (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full text-left"
+    >
+      <div className={cn("grid gap-2", compact ? "grid-cols-1 p-2.5" : "grid-cols-2 p-3")}>
+        {/* Left: agent info */}
+        <div className="min-w-0 flex flex-col">
+          {/* Header: avatar + name + status */}
+          <div className="flex items-center gap-2 mb-1.5">
+            <AgentAvatar name={agent.name} stopped={isStopped} />
+            <span className="text-[13px] font-medium flex-1 truncate text-default">
+              {agent.name}
+            </span>
+            <ChevronRight
+              size={14}
+              className={cn(
+                "shrink-0 text-muted transition-transform",
+                isSelected && "rotate-90",
+              )}
+            />
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full shrink-0",
+                config.dot,
+                isRunning && "animate-breathe text-success",
+              )}
+            />
+          </div>
+
+          {/* Current task */}
+          <div className="flex items-start gap-1.5 mb-1">
+            <Terminal className="h-3 w-3 text-muted/60 shrink-0 mt-0.5" />
+            <span className="text-[11px] text-secondary leading-tight truncate">
+              {agent.task}
+            </span>
+          </div>
+
+          {/* Stats row */}
+          <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap">
+            <span className="inline-flex items-center gap-0.5">
+              <DollarSign className="h-2.5 w-2.5" />
+              {formatCost(agent.cost)}
+            </span>
+            <span className="inline-flex items-center gap-0.5">
+              <Clock className="h-2.5 w-2.5" />
+              {agent.duration}
+            </span>
+            <span className="text-muted/50">&middot;</span>
+            <span>{agent.model}</span>
+            <span className="text-muted/50">&middot;</span>
+            <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
+          </div>
+        </div>
+
+        {/* Right: VNC thumbnail */}
+        <VncThumbnail agent={agent} />
+      </div>
+    </button>
+  )
+
+  /* ---- PREVIEW: header + VNC only, no tabs/feed ---- */
+  if (isPreview && !isSelected) {
+    return (
+      <div
+        className={cn(
+          "rounded-lg border transition-all duration-(--duration-normal)",
+          "border-border-default bg-surface-raised/50",
+          isError && "border-danger/30",
+          isStopped && "opacity-60",
+        )}
+      >
+        {cardHeader}
+      </div>
+    )
+  }
+
+  /* ---- EXPANDED: full card with tabs + detail feed ---- */
   return (
     <div
       className={cn(
@@ -1734,66 +1811,39 @@ function AgentCardRow({
         isError && "border-danger/40",
       )}
     >
-      {/* Clickable header — click to collapse */}
-      <button
-        type="button"
-        onClick={onSelect}
-        className="w-full text-left"
-      >
-        <div className={cn("grid gap-2", compact ? "grid-cols-1 p-2.5" : "grid-cols-2 p-3")}>
-          {/* Left: agent info */}
-          <div className="min-w-0 flex flex-col">
-            {/* Header: avatar + name + status */}
-            <div className="flex items-center gap-2 mb-1.5">
-              <AgentAvatar name={agent.name} stopped={isStopped} />
-              <span className="text-[13px] font-medium flex-1 truncate text-default">
-                {agent.name}
-              </span>
-              <ChevronRight
-                size={14}
-                className="shrink-0 text-muted rotate-90 transition-transform"
-              />
-              <span
-                className={cn(
-                  "h-2 w-2 rounded-full shrink-0",
-                  config.dot,
-                  isRunning && "animate-breathe text-success",
-                )}
-              />
-            </div>
+      {cardHeader}
 
-            {/* Current task */}
-            <div className="flex items-start gap-1.5 mb-1">
-              <Terminal className="h-3 w-3 text-muted/60 shrink-0 mt-0.5" />
-              <span className="text-[11px] text-secondary leading-tight truncate">
-                {agent.task}
-              </span>
-            </div>
+      {/* Inline tab bar — Activity | Settings */}
+      <div className="flex items-center gap-1 px-3 py-1 border-t border-border-subtle bg-surface-sunken/20">
+        <button
+          type="button"
+          onClick={() => setDetailTab("activity")}
+          className={cn(
+            "px-2 py-1 rounded text-[11px] font-medium transition-colors",
+            detailTab === "activity" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
+          )}
+        >
+          Activity
+        </button>
+        <button
+          type="button"
+          onClick={() => setDetailTab("settings")}
+          className={cn(
+            "px-2 py-1 rounded text-[11px] font-medium transition-colors",
+            detailTab === "settings" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
+          )}
+        >
+          <Settings className="h-3 w-3 inline mr-1" />
+          Settings
+        </button>
+      </div>
 
-            {/* Stats row */}
-            <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap">
-              <span className="inline-flex items-center gap-0.5">
-                <DollarSign className="h-2.5 w-2.5" />
-                {formatCost(agent.cost)}
-              </span>
-              <span className="inline-flex items-center gap-0.5">
-                <Clock className="h-2.5 w-2.5" />
-                {agent.duration}
-              </span>
-              <span className="text-muted/50">&middot;</span>
-              <span>{agent.model}</span>
-              <span className="text-muted/50">&middot;</span>
-              <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
-            </div>
-          </div>
-
-          {/* Right: VNC thumbnail */}
-          <VncThumbnail agent={agent} />
-        </div>
-      </button>
-
-      {/* Expanded detail feed — full verbose output from TimelineEntry.content */}
-      <AgentDetailFeed agent={agent} />
+      {/* Tab content */}
+      {detailTab === "activity" ? (
+        <AgentDetailFeed agent={agent} />
+      ) : (
+        <AgentSettingsPanel agent={agent} />
+      )}
     </div>
   )
 }
@@ -1957,11 +2007,13 @@ function AgentCardsPanel({
   selectedAgentId,
   onSelectAgent,
   compact = false,
+  allExpanded = false,
 }: {
   agents: FakeAgent[]
   selectedAgentId: string | null
   onSelectAgent: (id: string) => void
   compact?: boolean
+  allExpanded?: boolean
 }) {
   return (
     <ScrollArea className="h-full overflow-y-auto">
@@ -1971,6 +2023,7 @@ function AgentCardsPanel({
             key={agent.id}
             agent={agent}
             isSelected={selectedAgentId === agent.id}
+            isPreview={allExpanded && selectedAgentId !== agent.id}
             onSelect={() => onSelectAgent(agent.id)}
             compact={compact}
           />
@@ -2123,17 +2176,11 @@ function ResizeHandle({
 
 export default function PrototypePage() {
   const bp = useBreakpoint()
-  const [rosterCollapsed, setRosterCollapsed] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>("1")
   const [mainTab, setMainTab] = useState<"chat" | "agents">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
   const [rightPanelWidth, setRightPanelWidth] = useState<number | null>(null)
-
-  // Auto-collapse roster at M breakpoint
-  useEffect(() => {
-    if (bp === "M") setRosterCollapsed(true)
-    if (bp === "L" || bp === "XL") setRosterCollapsed(false)
-  }, [bp])
+  const [allExpanded, setAllExpanded] = useState(false)
 
   // Reset custom width when breakpoint changes
   useEffect(() => {
@@ -2145,16 +2192,12 @@ export default function PrototypePage() {
     [selectedAgentId],
   )
 
-  const handleSelectAgent = useCallback((id: string | null) => {
-    setSelectedAgentId(id)
-  }, [])
-
   const handleSelectAgentCard = useCallback((id: string) => {
     setSelectedAgentId((prev) => (prev === id ? null : id))
   }, [])
 
   // Determine what's visible at each breakpoint
-  const showRoster = bp !== "mobile"
+  const showIconRail = bp !== "mobile"
   const showRightPanel = bp === "XL" || bp === "L" || bp === "M"
   const showTopTabs = bp === "S" || bp === "mobile"
 
@@ -2184,12 +2227,10 @@ export default function PrototypePage() {
       <header>
         <h1 className="sr-only">Agentobox Dashboard</h1>
         <HeaderBar
-        onToggleSidebar={() => setRosterCollapsed((c) => !c)}
-        onOpenSecrets={() => setSecretsOpen(true)}
-        selectedAgent={selectedAgent}
-        agents={AGENTS}
-        showSidebarToggle={showRoster}
-      />
+          onOpenSecrets={() => setSecretsOpen(true)}
+          selectedAgent={selectedAgent}
+          agents={AGENTS}
+        />
       </header>
 
       {/* Secrets modal */}
@@ -2210,15 +2251,14 @@ export default function PrototypePage() {
 
       {/* Main layout */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Roster */}
-        {showRoster && (
+        {/* Icon rail */}
+        {showIconRail && (
           <aside>
-            <RosterPanel
-              collapsed={rosterCollapsed || bp === "M"}
-              onToggle={() => setRosterCollapsed((c) => !c)}
+            <IconRail
               agents={AGENTS}
               selectedAgentId={selectedAgentId}
-              onSelectAgent={handleSelectAgent}
+              onSelectAgent={handleSelectAgentCard}
+              onOpenSecrets={() => setSecretsOpen(true)}
             />
           </aside>
         )}
@@ -2241,18 +2281,27 @@ export default function PrototypePage() {
           >
             <ResizeHandle onResize={handleRightPanelResize} onReset={() => setRightPanelWidth(null)} side="left" />
             <PanelHeader>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-1">
                 <Users className="h-3.5 w-3.5 text-muted" />
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
                   Agent Activity
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={() => { setAllExpanded(prev => !prev); if (allExpanded) setSelectedAgentId(null); }}
+                className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+                title={allExpanded ? "Collapse all" : "Expand all"}
+              >
+                {allExpanded ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
+              </button>
             </PanelHeader>
             <AgentCardsPanel
               agents={AGENTS}
               selectedAgentId={selectedAgentId}
               onSelectAgent={handleSelectAgentCard}
               compact={compactCards}
+              allExpanded={allExpanded}
             />
           </div>
         )}
@@ -2264,6 +2313,7 @@ export default function PrototypePage() {
               agents={AGENTS}
               selectedAgentId={selectedAgentId}
               onSelectAgent={handleSelectAgentCard}
+              allExpanded={allExpanded}
             />
           </div>
         )}
