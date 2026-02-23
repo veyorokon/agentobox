@@ -72,7 +72,7 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
       <div className="min-w-0 flex-1">
         {/* Agent name — only shown with avatar */}
         {showAvatar && (
-          <div className="text-[11px] text-text-400 font-mono mb-0.5">
+          <div className="text-[11px] text-muted font-mono mb-0.5">
             {agentName}
           </div>
         )}
@@ -86,7 +86,7 @@ export function AssistantMessage({ data, agentName, showAvatar = true }: Assista
         {textParts.length > 0 && (
           <MarkdownRenderer
             content={fullText}
-            className="text-sm text-text-100"
+            className="text-sm text-default"
           />
         )}
       </div>

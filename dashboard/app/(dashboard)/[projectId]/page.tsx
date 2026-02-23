@@ -1,15 +1,16 @@
 "use client"
 
 import { useEffect, useMemo, useCallback, useState, useRef } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "@apollo/client"
 import { useUIStore } from "@/stores/ui"
 import { useAgents } from "@/hooks/use-agents"
 import { useFeed } from "@/hooks/use-feed"
-import { PROJECT_QUERY } from "@/lib/graphql/queries"
+import { PROJECTS_QUERY, PROJECT_QUERY } from "@/lib/graphql/queries"
 import {
   SEND_MESSAGE_MUTATION,
   BROADCAST_MESSAGE_MUTATION,
+  CREATE_PROJECT_MUTATION,
   KILL_AGENT_MUTATION,
   REMOVE_AGENT_MUTATION,
   RESTART_AGENT_MUTATION,
@@ -25,6 +26,7 @@ import type { Agent, Project } from "@/types"
 
 export default function ProjectPage() {
   const params = useParams()
+  const router = useRouter()
   const projectId = typeof params.projectId === 'string' ? params.projectId : params.projectId?.[0] ?? ''
 
   const selectedAgentId = useUIStore((s) => s.selectedAgentId)
@@ -46,14 +48,34 @@ export default function ProjectPage() {
   })
   const project: Project | null = projectData?.project ?? null
 
+  // Fetch all projects for the switcher
+  const { data: projectsData } = useQuery(PROJECTS_QUERY)
+  const projects: Project[] = projectsData?.projects ?? []
+
+  const [createProject] = useMutation(CREATE_PROJECT_MUTATION, {
+    refetchQueries: [{ query: PROJECTS_QUERY }],
+  })
+
   // Fetch agents
   const { agents } = useAgents(projectId)
 
   // Fetch feed — agent-specific or project-wide
-  const { items, loading } = useFeed({
+  const { items, loading, error: feedError } = useFeed({
     projectId,
     agentId: selectedAgentId ?? undefined,
   })
+
+  // Bug fix: if the selected agent was deleted, the agentFeed query returns
+  // "Agent matching query does not exist". Deselect to fall back to project feed.
+  useEffect(() => {
+    if (
+      feedError &&
+      selectedAgentId &&
+      feedError.message.includes("matching query does not exist")
+    ) {
+      selectAgent(null)
+    }
+  }, [feedError, selectedAgentId, selectAgent])
 
   // Total cost across all agents
   const totalCost = useMemo(
@@ -235,13 +257,37 @@ export default function ProjectPage() {
     [handleKillAgent, handleRemoveAgent, handleRestartAgent, handleSetAgentMode, handleClearAgentSession],
   )
 
+  // Project switcher handlers
+  const handleSelectProject = useCallback(
+    (id: string) => {
+      selectProject(id)
+      router.push(`/${id}`)
+    },
+    [selectProject, router],
+  )
+
+  const handleNewProject = useCallback(
+    async (name: string) => {
+      const { data } = await createProject({
+        variables: { input: { name } },
+      })
+      if (data?.createProject?.id) {
+        selectProject(data.createProject.id)
+        router.push(`/${data.createProject.id}`)
+      }
+    },
+    [createProject, selectProject, router],
+  )
+
   return (
     <div className="flex flex-col flex-1 min-h-0 dotted-grid">
       <Header
-        projectName={project?.name}
+        projects={projects}
+        selectedProjectId={projectId}
+        onSelectProject={handleSelectProject}
+        onNewProject={handleNewProject}
         agents={agents}
         selectedAgentId={selectedAgentId}
-        onSelectAgent={selectAgent}
         onToggleSidebar={toggleSidebar}
         totalCost={totalCost}
         agentActions={agentActions}

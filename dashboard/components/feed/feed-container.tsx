@@ -15,9 +15,12 @@ import { stripSystemReminders } from "@/lib/utils"
 export const FeedScrollContext = createContext<{
   scrollToBottom: () => void
   isAtBottom: () => boolean
+  /** Scroll to bottom after a Collapsible transition completes (~200ms). */
+  scrollAfterExpand: () => void
 }>({
   scrollToBottom: () => {},
   isAtBottom: () => true,
+  scrollAfterExpand: () => {},
 })
 
 /* ------------------------------------------------------------------ */
@@ -141,7 +144,7 @@ function consolidateItems(items: TimelineEntry[]): TimelineEntry[] {
   // Phase 3: build result — merge assistants, enrich tool_use, filter noise
   const seenMsgIds = new Set<string>()
   const seenBroadcastIds = new Set<string>()
-  const seenResultSessionIds = new Set<string>()
+  const seenResultKeys = new Set<string>()
   const result: TimelineEntry[] = []
 
   for (const item of items) {
@@ -198,12 +201,17 @@ function consolidateItems(items: TimelineEntry[]): TimelineEntry[] {
       }
     }
 
-    // Deduplicate result events by session_id (relay can emit >1 result per session)
+    // Deduplicate result events: the SDK can emit >1 result per turn completion
+    // (e.g. partial + final). Key on session_id + num_turns so same-turn dupes
+    // are collapsed but separate completions within a session are preserved.
     if (item.entryType === "result") {
-      const sid = (item.data as Record<string, unknown>).session_id as string | undefined
+      const d = item.data as Record<string, unknown>
+      const sid = d.session_id as string | undefined
+      const turns = d.num_turns as number | undefined
       if (sid) {
-        if (seenResultSessionIds.has(sid)) continue
-        seenResultSessionIds.add(sid)
+        const key = `${sid}:${turns ?? 0}`
+        if (seenResultKeys.has(key)) continue
+        seenResultKeys.add(key)
       }
     }
 
@@ -301,9 +309,13 @@ type FeedContainerProps = {
   runningAgentNames?: string[]
 }
 
+/** Duration of Collapsible CSS transition (matches duration-200 in collapsible.tsx). */
+const COLLAPSIBLE_DURATION_MS = 200
+
 export function FeedContainer({ items, loading, hasAgents = false, runningAgentNames = [] }: FeedContainerProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const atBottomRef = useRef(true)
+  const scrollContainerRef = useRef<HTMLElement | null>(null)
 
   const displayEntries = useMemo(() => buildDisplayList(items), [items])
 
@@ -324,7 +336,29 @@ export function FeedContainer({ items, loading, hasAgents = false, runningAgentN
         behavior: "smooth",
       })
     },
-    isAtBottom: () => atBottomRef.current,
+    isAtBottom: () => {
+      // Primary: read actual DOM scroll position (ground truth).
+      // Virtuoso's atBottomStateChange callback can get out of sync when
+      // Collapsible CSS transitions cause intermediate layout shifts.
+      const el = scrollContainerRef.current
+      if (el) {
+        const threshold = 150
+        return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
+      }
+      // Fallback: use Virtuoso's tracked state
+      return atBottomRef.current
+    },
+    scrollAfterExpand: () => {
+      // Fire scroll-to-bottom after the Collapsible transition finishes.
+      // Using setTimeout aligned to the CSS transition duration (200ms)
+      // ensures the content has reached full height before we measure.
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: "LAST",
+          behavior: "smooth",
+        })
+      }, COLLAPSIBLE_DURATION_MS)
+    },
   }), [])
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
@@ -347,7 +381,7 @@ export function FeedContainer({ items, loading, hasAgents = false, runningAgentN
         )}
         {loading && (
           <div className="flex items-center justify-center py-3">
-            <span className="text-text-400 text-xs">Loading...</span>
+            <span className="text-muted text-xs">Loading...</span>
           </div>
         )}
       </>
@@ -362,6 +396,7 @@ export function FeedContainer({ items, loading, hasAgents = false, runningAgentN
     <FeedScrollContext.Provider value={scrollCtx}>
       <Virtuoso
         ref={virtuosoRef}
+        scrollerRef={(ref) => { scrollContainerRef.current = ref as HTMLElement }}
         data={displayEntries}
         computeItemKey={computeItemKey}
         initialTopMostItemIndex={displayEntries.length - 1}

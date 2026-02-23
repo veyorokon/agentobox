@@ -1,4 +1,4 @@
-import { cn, formatDuration, formatCost } from "@/lib/utils"
+import { formatDuration, formatCost } from "@/lib/utils"
 import type { ResultEventData } from "@/types"
 
 type ErrorMessageProps = {
@@ -12,25 +12,25 @@ export function ErrorMessage({ data }: ErrorMessageProps) {
   const errorResult = data.result
 
   return (
-    <div className="rounded-r bg-danger-900/10 px-3 py-2 border-l-2 border-l-danger-100">
+    <div className="rounded-r bg-danger-subtle/10 px-3 py-2 border-l-2 border-l-danger">
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-[11px] font-mono font-medium text-danger-000">
+        <span className="text-[11px] font-mono font-medium text-danger">
           session errored
         </span>
         {cost > 0 && (
-          <span className="text-[11px] text-text-400 font-mono">
+          <span className="text-[11px] text-muted font-mono">
             {formatCost(cost)}
           </span>
         )}
       </div>
 
       {errorResult && (
-        <p className="text-danger-000 text-sm font-mono whitespace-pre-wrap leading-relaxed mb-1">
+        <p className="text-danger text-sm font-mono whitespace-pre-wrap leading-relaxed mb-1">
           {errorResult}
         </p>
       )}
 
-      <div className="flex items-center gap-3 text-[10px] text-text-400 font-mono">
+      <div className="flex items-center gap-3 text-[10px] text-muted font-mono">
         {durationMs > 0 && <span>{formatDuration(durationMs)}</span>}
         {numTurns > 0 && (
           <span>

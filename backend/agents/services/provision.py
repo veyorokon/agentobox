@@ -709,7 +709,7 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
 
     log.info(
         "secrets_pushed",
-        agent=agent.name,
+        agent_name=agent.name,
         sandbox_id=sandbox_id[:12],
         secret_count=len(secret_envs),
     )

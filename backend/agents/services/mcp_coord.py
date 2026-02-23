@@ -145,7 +145,7 @@ async def task_add(subject: str, description: str = "") -> dict:
         status="pending",
     )
 
-    log.info("mcp_task_add", agent=agent.name, subject=subject[:80])
+    log.info("mcp_task_add", agent_name=agent.name, subject=subject[:80])
     return {"ok": True, "task_id": task.task_id}
 
 
@@ -166,7 +166,7 @@ async def task_claim(task_id: str) -> dict:
     if not updated:
         raise ToolError(f"Task '{task_id}' not found")
 
-    log.info("mcp_task_claim", agent=agent.name, task_id=task_id)
+    log.info("mcp_task_claim", agent_name=agent.name, task_id=task_id)
     return {"ok": True}
 
 
@@ -187,7 +187,7 @@ async def task_complete(task_id: str) -> dict:
     if not updated:
         raise ToolError(f"Task '{task_id}' not found")
 
-    log.info("mcp_task_complete", agent=agent.name, task_id=task_id)
+    log.info("mcp_task_complete", agent_name=agent.name, task_id=task_id)
     return {"ok": True}
 
 

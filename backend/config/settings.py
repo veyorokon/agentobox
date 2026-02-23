@@ -155,6 +155,7 @@ from config.telemetry import (  # noqa: E402
     merge_agent_context,
     orjson_renderer,
     truncate_graphql_request,
+    truncate_long_values,
 )
 
 LOGGING = {
@@ -171,6 +172,7 @@ LOGGING = {
                 structlog.contextvars.merge_contextvars,
                 merge_agent_context,  # Add agent metadata after contextvars
                 truncate_graphql_request,  # Shorten URL-encoded GraphQL queries
+                truncate_long_values,  # Truncate long string values
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.add_logger_name,
                 structlog.processors.TimeStamper(fmt="iso"),

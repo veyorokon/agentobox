@@ -51,7 +51,7 @@ function UserMenu({ username, email }: UserMenuProps) {
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="h-6 w-6 rounded-full bg-accent-main-000 flex items-center justify-center text-[10px] text-oncolor-100 font-medium uppercase cursor-pointer hover:opacity-90 transition-opacity"
+        className="h-6 w-6 rounded-full bg-accent flex items-center justify-center text-[10px] text-on-emphasis font-medium uppercase cursor-pointer hover:opacity-90 transition-opacity"
       >
         {username?.charAt(0) ?? "?"}
       </button>
@@ -61,25 +61,25 @@ function UserMenu({ username, email }: UserMenuProps) {
           ref={popoverRef}
           className={cn(
             "absolute bottom-full left-0 mb-2",
-            "bg-bg-000 border border-border-300 rounded-lg shadow-lg p-2 min-w-[180px]",
+            "bg-surface-raised border border-border-default rounded-lg shadow-lg p-2 min-w-[180px]",
             "animate-in fade-in duration-150",
           )}
         >
           <div className="px-2 py-1.5">
-            <div className="text-sm text-text-200 font-medium">
+            <div className="text-sm text-secondary font-medium">
               {username ?? "Unknown"}
             </div>
             {email && (
-              <div className="text-xs text-text-400">{email}</div>
+              <div className="text-xs text-muted">{email}</div>
             )}
           </div>
 
-          <div className="my-1 h-px bg-border-300" />
+          <div className="my-1 h-px bg-border-default" />
 
           <button
             type="button"
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-text-300 hover:text-text-100 hover:bg-bg-200 rounded transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-secondary hover:text-default hover:bg-surface-sunken rounded transition-colors"
           >
             <LogOut className="h-3.5 w-3.5" />
             Sign out

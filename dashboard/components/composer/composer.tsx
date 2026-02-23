@@ -187,20 +187,20 @@ function Composer({
       return {
         label: "Plan mode",
         icon: ClipboardList,
-        className: "text-accent-pro-000",
+        className: "text-pro",
       }
     }
     if (mode.includes("skip") || mode.includes("bypass")) {
       return {
         label: "YOLO mode",
         icon: ShieldOff,
-        className: "text-warning-000",
+        className: "text-warning",
       }
     }
     return {
       label: "Normal",
       icon: Code,
-      className: "text-text-400",
+      className: "text-muted",
     }
   })()
 
@@ -211,8 +211,8 @@ function Composer({
     <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full">
       <div
         className={cn(
-          "relative rounded-2xl border-[0.5px] border-border-300 bg-bg-000/60 transition-colors",
-          "focus-within:bg-bg-000 focus-within:border-border-300",
+          "relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60 transition-colors",
+          "focus-within:bg-surface-raised focus-within:border-border-default",
         )}
       >
         {/* @mention autocomplete dropdown */}
@@ -221,7 +221,7 @@ function Composer({
             ref={mentionRef}
             className={cn(
               "absolute bottom-full left-3 mb-1.5 z-50",
-              "bg-bg-000 border border-border-300 rounded-lg shadow-lg p-1 min-w-[180px] max-h-[200px] overflow-y-auto",
+              "bg-surface-raised border border-border-default rounded-lg shadow-lg p-1 min-w-[180px] max-h-[200px] overflow-y-auto",
             )}
           >
             {mentionMatches.map((agent, i) => (
@@ -232,22 +232,22 @@ function Composer({
                 className={cn(
                   "w-full flex items-center gap-2 px-2.5 py-1.5 text-sm rounded transition-colors",
                   i === mentionIndex
-                    ? "bg-bg-200 text-text-100"
-                    : "text-text-300 hover:bg-bg-200/50 hover:text-text-100",
+                    ? "bg-surface-sunken text-default"
+                    : "text-secondary hover:bg-surface-sunken/50 hover:text-default",
                 )}
               >
                 <span
                   className={cn(
                     "h-1.5 w-1.5 rounded-full shrink-0",
                     agent.status === "running"
-                      ? "bg-success-000"
+                      ? "bg-success"
                       : agent.status === "idle"
-                        ? "bg-accent-secondary-000"
-                        : "bg-text-500",
+                        ? "bg-info"
+                        : "bg-muted",
                   )}
                 />
                 <span className="truncate">{agent.name}</span>
-                <span className="text-[10px] text-text-500 ml-auto">{agent.status}</span>
+                <span className="text-[10px] text-muted ml-auto">{agent.status}</span>
               </button>
             ))}
           </div>
@@ -267,7 +267,7 @@ function Composer({
           rows={1}
           className={cn(
             "w-full bg-transparent border-none outline-none resize-none",
-            "px-4 pt-4 pb-2 text-sm text-text-100 placeholder:text-text-500",
+            "px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted",
             "min-h-[52px] max-h-[40vh]",
           )}
         />
@@ -280,7 +280,7 @@ function Composer({
             <button
               type="button"
               disabled
-              className="rounded-lg p-1.5 text-text-500 cursor-not-allowed opacity-50 hover:bg-bg-200 transition-colors"
+              className="rounded-lg p-1.5 text-muted cursor-not-allowed opacity-50 hover:bg-surface-sunken transition-colors"
               title="Attach files (coming soon)"
             >
               <Plus className="h-4 w-4" />
@@ -301,7 +301,7 @@ function Composer({
                 }}
                 className={cn(
                   "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium cursor-pointer",
-                  "hover:bg-bg-200 transition-colors",
+                  "hover:bg-surface-sunken transition-colors",
                   modeInfo.className,
                 )}
                 title={`Click to change mode`}
@@ -321,15 +321,15 @@ function Composer({
 
             {/* Target agent pill */}
             {selectedAgent && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-bg-200 text-xs text-text-300 font-medium">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-sunken text-xs text-secondary font-medium">
                 <span
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
                     selectedAgent.status === "running"
-                      ? "bg-success-000"
+                      ? "bg-success"
                       : selectedAgent.status === "idle"
-                        ? "bg-accent-secondary-000"
-                        : "bg-text-500",
+                        ? "bg-info"
+                        : "bg-muted",
                   )}
                 />
                 {selectedAgent.name}
@@ -341,14 +341,14 @@ function Composer({
           <div className="flex items-center gap-3">
             {/* Session cost */}
             {formattedCost && (
-              <span className="text-xs text-text-500 tabular-nums">
+              <span className="text-xs text-muted tabular-nums">
                 {formattedCost}
               </span>
             )}
 
             {/* Escape hint when streaming */}
             {isStreaming && !hasContent && (
-              <span className="text-[10px] text-text-500">
+              <span className="text-[10px] text-muted">
                 esc to stop
               </span>
             )}
@@ -361,10 +361,10 @@ function Composer({
               className={cn(
                 "flex items-center justify-center h-8 w-8 rounded-full transition-all",
                 isStreaming
-                  ? "bg-danger-000 text-oncolor-100 hover:bg-danger-100 shadow-sm"
+                  ? "bg-danger text-on-emphasis hover:bg-danger shadow-sm"
                   : submitActive
-                    ? "bg-accent-main-000 text-oncolor-100 hover:bg-accent-main-100 shadow-sm"
-                    : "bg-bg-200 text-text-500 cursor-not-allowed",
+                    ? "bg-accent text-on-emphasis hover:bg-accent-hover shadow-sm"
+                    : "bg-surface-sunken text-muted cursor-not-allowed",
               )}
             >
               {isStreaming ? (

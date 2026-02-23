@@ -627,7 +627,7 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
             sandbox_id,
             ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' | grep -v grep"],
         )
-        truncated = output[:2000] if output else "(empty)"
+        truncated = output[:200] if output else "(empty)"
         op_log.info("sandbox_processes", output=truncated)
     except Exception:
         op_log.warning("sandbox_log_capture_failed")
@@ -691,5 +691,5 @@ async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
     if not merged:
         return None
 
-    op_log.info("secrets_resolved", count=len(merged), agent=agent.name)
+    op_log.info("secrets_resolved", count=len(merged), agent_name=agent.name)
     return merged

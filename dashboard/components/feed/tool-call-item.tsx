@@ -66,7 +66,7 @@ export function ToolCallItem({ tool, expandedByDefault }: ToolCallItemProps) {
   if (!inputDisplay && !result) return null
 
   return (
-    <div className="mx-2.5 mb-1.5 rounded bg-bg-300/60 overflow-hidden">
+    <div className="mx-2.5 mb-1.5 rounded bg-surface-sunken/60 overflow-hidden">
       {inputDisplay && (
         <div className="px-3 py-1.5">
           <CollapsibleOutput
@@ -80,12 +80,12 @@ export function ToolCallItem({ tool, expandedByDefault }: ToolCallItemProps) {
         <div
           className={cn(
             "px-3 py-1.5",
-            inputDisplay && "border-t border-border-300/10",
-            result.isError && "bg-danger-900/20",
+            inputDisplay && "border-t border-border-default/10",
+            result.isError && "bg-danger-subtle/20",
           )}
         >
           {result.isError && (
-            <span className="text-[9px] font-mono font-medium text-danger-000/70 uppercase tracking-wider">
+            <span className="text-[9px] font-mono font-medium text-danger/70 uppercase tracking-wider">
               error
             </span>
           )}
@@ -94,7 +94,7 @@ export function ToolCallItem({ tool, expandedByDefault }: ToolCallItemProps) {
             maxHeight={80}
             className={cn(
               "text-[11px]",
-              result.isError ? "text-danger-000/80" : "text-text-500",
+              result.isError ? "text-danger/80" : "text-muted",
             )}
           />
         </div>

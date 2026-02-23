@@ -41,14 +41,14 @@ function ModelUsageBreakdown({ usage }: { usage: Record<string, unknown> }) {
 
         return (
           <div key={model} className="flex items-center gap-2 text-[10px] font-mono">
-            <span className="text-text-300 truncate min-w-0 max-w-[140px]">
+            <span className="text-secondary truncate min-w-0 max-w-[140px]">
               {friendlyModelName(model)}
             </span>
-            <span className="text-text-500">
+            <span className="text-muted">
               {formatTokenCount(input)} in / {formatTokenCount(output)} out
             </span>
             {(cacheWrite > 0 || cacheRead > 0) && (
-              <span className="text-text-500">
+              <span className="text-muted">
                 (cache: {formatTokenCount(cacheRead)}r
                 {cacheWrite > 0 && ` ${formatTokenCount(cacheWrite)}w`})
               </span>
@@ -62,7 +62,7 @@ function ModelUsageBreakdown({ usage }: { usage: Record<string, unknown> }) {
 
 export function ResultCard({ data, className }: ResultCardProps) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
+  const { isAtBottom, scrollAfterExpand } = useContext(FeedScrollContext)
 
   const cost = data.total_cost_usd ?? 0
   const durationMs = data.duration_ms ?? 0
@@ -80,33 +80,34 @@ export function ResultCard({ data, className }: ResultCardProps) {
         type="button"
         className={cn(
           "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-mono transition-colors",
-          canExpand && "cursor-pointer hover:bg-bg-200/40",
+          canExpand && "cursor-pointer hover:bg-surface-sunken/40",
           !canExpand && "cursor-default",
         )}
         onClick={() => {
           if (!canExpand) return
+          const wasAtBottom = isAtBottom()
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && wasAtBottom) scrollAfterExpand()
         }}
       >
         {/* Status icon */}
         {isError ? (
-          <X size={12} className="shrink-0 text-danger-000" strokeWidth={2.5} />
+          <X size={12} className="shrink-0 text-danger" strokeWidth={2.5} />
         ) : (
-          <Check size={12} className="shrink-0 text-success-000" strokeWidth={2.5} />
+          <Check size={12} className="shrink-0 text-success" strokeWidth={2.5} />
         )}
 
         {/* Cost */}
         {cost > 0 && (
-          <span className="text-text-300">{formatCost(cost)}</span>
+          <span className="text-secondary">{formatCost(cost)}</span>
         )}
 
         {/* Duration */}
         {durationMs > 0 && (
           <>
-            <span className="text-text-500/50">&middot;</span>
-            <span className="text-text-500">{formatDuration(durationMs)}</span>
+            <span className="text-muted/50">&middot;</span>
+            <span className="text-muted">{formatDuration(durationMs)}</span>
           </>
         )}
 
@@ -115,7 +116,7 @@ export function ResultCard({ data, className }: ResultCardProps) {
           <ChevronRight
             size={10}
             className={cn(
-              "shrink-0 text-text-500/60 transition-transform duration-150 ml-0.5",
+              "shrink-0 text-muted/60 transition-transform duration-150 ml-0.5",
               expanded && "rotate-90",
             )}
           />
@@ -124,7 +125,7 @@ export function ResultCard({ data, className }: ResultCardProps) {
 
       {/* Error message */}
       {isError && errorResult && (
-        <p className="mt-1 ml-2 text-danger-000 text-xs font-mono whitespace-pre-wrap leading-relaxed max-w-lg">
+        <p className="mt-1 ml-2 text-danger text-xs font-mono whitespace-pre-wrap leading-relaxed max-w-lg">
           {errorResult}
         </p>
       )}
@@ -134,7 +135,7 @@ export function ResultCard({ data, className }: ResultCardProps) {
         <div className="ml-2 mt-0.5 space-y-0.5">
           {/* Turns */}
           {numTurns > 0 && (
-            <div className="text-[10px] font-mono text-text-500">
+            <div className="text-[10px] font-mono text-muted">
               {numTurns} turn{numTurns !== 1 ? "s" : ""}
             </div>
           )}

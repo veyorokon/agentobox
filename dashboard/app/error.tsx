@@ -12,19 +12,19 @@ export default function RootError({
   reset: () => void
 }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg-100">
+    <div className="min-h-screen flex items-center justify-center bg-surface">
       <div className="flex flex-col items-center gap-4">
-        <AlertCircle className="h-10 w-10 text-danger-000" />
+        <AlertCircle className="h-10 w-10 text-danger" />
         <div className="flex flex-col items-center gap-1">
-          <span className="text-text-200 text-sm font-medium">
+          <span className="text-secondary text-sm font-medium">
             Something went wrong
           </span>
           {isDev ? (
-            <span className="text-text-500 text-xs max-w-xs text-center font-mono">
+            <span className="text-muted text-xs max-w-xs text-center font-mono">
               {error.message}
             </span>
           ) : (
-            <span className="text-text-500 text-xs max-w-xs text-center">
+            <span className="text-muted text-xs max-w-xs text-center">
               Try refreshing the page.{error.digest && ` (ref: ${error.digest})`}
             </span>
           )}
@@ -32,7 +32,7 @@ export default function RootError({
         <button
           type="button"
           onClick={reset}
-          className="px-4 py-1.5 text-sm rounded-md bg-bg-000 text-text-200 hover:text-text-100 border border-border-300 transition-colors"
+          className="px-4 py-1.5 text-sm rounded-md bg-surface-raised text-secondary hover:text-default border border-border-default transition-colors"
         >
           Try again
         </button>

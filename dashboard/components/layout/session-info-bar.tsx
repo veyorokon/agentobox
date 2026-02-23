@@ -45,10 +45,10 @@ function SessionInfoBar({ agent }: SessionInfoBarProps) {
   if (items.length === 0) return null
 
   return (
-    <div className="h-8 border-b border-border-300 bg-bg-100 px-4 flex items-center gap-2">
+    <div className="h-8 border-b border-border-default bg-surface px-4 flex items-center gap-2">
       {items.map((item, i) => (
-        <span key={i} className="text-xs text-text-400 flex items-center gap-2">
-          {i > 0 && <span className="text-text-500">&middot;</span>}
+        <span key={i} className="text-xs text-muted flex items-center gap-2">
+          {i > 0 && <span className="text-muted">&middot;</span>}
           <span className="font-mono">{item}</span>
         </span>
       ))}

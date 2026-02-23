@@ -25,7 +25,7 @@ function renderStatusItem(item: TimelineEntry) {
 
 export function StatusGroupRow({ items }: StatusGroupRowProps) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
+  const { isAtBottom, scrollAfterExpand } = useContext(FeedScrollContext)
 
   if (items.length === 0) return null
 
@@ -34,20 +34,21 @@ export function StatusGroupRow({ items }: StatusGroupRowProps) {
       <button
         type="button"
         onClick={() => {
+          const wasAtBottom = isAtBottom()
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && wasAtBottom) scrollAfterExpand()
         }}
         className="flex items-center justify-center gap-1.5 w-full cursor-pointer py-px"
       >
         <ChevronRight
           size={10}
           className={cn(
-            "shrink-0 text-text-500/60 transition-transform duration-150",
+            "shrink-0 text-muted/60 transition-transform duration-150",
             expanded && "rotate-90",
           )}
         />
-        <span className="text-text-500/60 text-[10px] font-mono">
+        <span className="text-muted/60 text-[10px] font-mono">
           {items.length} events
         </span>
       </button>

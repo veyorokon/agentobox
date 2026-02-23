@@ -187,7 +187,7 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         agent.phase = ""
         await agent.asave(update_fields=["status", "phase"])
         await broadcast_agent_update(agent)
-        log.info("process_exit", agent_id=str(agent.id), exit_code=exit_code)
+        log.info("stream_process_exit", agent_id=str(agent.id), exit_code=exit_code)
 
 
 async def _handle_phase(agent: Agent, event: dict) -> None:

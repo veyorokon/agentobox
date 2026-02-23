@@ -3,8 +3,9 @@
 import { Menu } from "lucide-react"
 import { cn, formatCost, friendlyModelName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { ProjectSwitcher } from "@/components/layout/project-switcher"
 import { AgentActions } from "@/components/layout/agent-actions"
-import type { Agent } from "@/types"
+import type { Agent, Project } from "@/types"
 
 type AgentActionHandlers = {
   onKillAgent: (agentId: string) => void
@@ -15,28 +16,32 @@ type AgentActionHandlers = {
 }
 
 type HeaderProps = {
-  projectName?: string
+  projects: Project[]
+  selectedProjectId: string | null
+  onSelectProject: (id: string) => void
+  onNewProject?: (name: string) => void
   agents?: Agent[]
   selectedAgentId: string | null
-  onSelectAgent: (id: string | null) => void
   onToggleSidebar: () => void
   totalCost?: number
   agentActions?: AgentActionHandlers
 }
 
 const statusColors: Record<string, string> = {
-  running: "bg-success-000",
-  idle: "bg-accent-secondary-000",
-  waiting: "bg-warning-000",
-  error: "bg-danger-000",
-  stopped: "bg-text-400",
+  running: "text-success",
+  idle: "text-info",
+  waiting: "text-warning",
+  error: "text-danger",
+  stopped: "text-muted",
 }
 
 function Header({
-  projectName,
+  projects,
+  selectedProjectId,
+  onSelectProject,
+  onNewProject,
   agents = [],
   selectedAgentId,
-  onSelectAgent,
   onToggleSidebar,
   totalCost,
   agentActions,
@@ -44,10 +49,11 @@ function Header({
   const selectedAgent = selectedAgentId
     ? agents.find((a) => a.id === selectedAgentId) ?? null
     : null
+
   return (
-    <div className="h-12 border-b border-border-300 bg-bg-200 px-4 flex items-center gap-4">
-      {/* Left section */}
-      <div className="flex items-center gap-3">
+    <div className="h-12 border-b border-border-default bg-surface-sunken px-4 flex items-center gap-4">
+      {/* Left section — sidebar toggle + project switcher */}
+      <div className="flex items-center gap-2">
         <Button
           variant="ghost"
           size="sm"
@@ -56,71 +62,59 @@ function Header({
         >
           <Menu className="h-4 w-4" />
         </Button>
-        {projectName && (
-          <span className="text-sm font-medium text-text-000">
-            {projectName}
-          </span>
-        )}
+        <ProjectSwitcher
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={onSelectProject}
+          onNewProject={onNewProject}
+        />
       </div>
 
-      {/* Center section — agent chips */}
-      <div className="flex-1 flex items-center justify-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => onSelectAgent(null)}
-          className={cn(
-            "px-2.5 py-1 rounded-full text-xs cursor-pointer transition-colors",
-            selectedAgentId === null
-              ? "bg-bg-000 text-text-000"
-              : "text-text-300 hover:bg-bg-000/50",
-          )}
-        >
-          All
-        </button>
-        {agents.map((agent) => {
-          const isSelected = selectedAgentId === agent.id
-          const cost = parseFloat(agent.sessionCostUsd) || 0
-          return (
-            <button
-              key={agent.id}
-              type="button"
-              onClick={() => onSelectAgent(agent.id)}
+      {/* Center section — selected agent indicator */}
+      <div className="flex-1 flex items-center justify-center">
+        {selectedAgent ? (
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-raised/50 text-xs">
+            <span
               className={cn(
-                "px-2.5 py-1 rounded-full text-xs cursor-pointer transition-colors inline-flex items-center gap-1.5",
-                isSelected
-                  ? "bg-bg-000 text-text-000"
-                  : "text-text-300 hover:bg-bg-000/50",
+                "h-1.5 w-1.5 rounded-full shrink-0",
+                selectedAgent.status === "running" && "bg-success animate-breathe text-success",
+                selectedAgent.status === "error" && "bg-danger",
+                selectedAgent.status === "idle" && "bg-info",
+                selectedAgent.status === "stopped" && "bg-muted/50",
+                selectedAgent.status === "waiting" && "bg-warning",
+              )}
+            />
+            <span className="font-medium text-default">
+              {selectedAgent.name}
+            </span>
+            {selectedAgent.model && (
+              <>
+                <span className="text-muted">&middot;</span>
+                <span className="text-muted font-mono">
+                  {friendlyModelName(selectedAgent.model)}
+                </span>
+              </>
+            )}
+            <span
+              className={cn(
+                "text-[10px] capitalize",
+                statusColors[selectedAgent.status] ?? "text-muted",
               )}
             >
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full shrink-0",
-                  statusColors[agent.status] ?? "bg-text-400",
-                )}
-              />
-              {agent.name}
-              {isSelected && agent.model && (
-                <span className="text-[10px] text-text-500 font-mono">
-                  {friendlyModelName(agent.model)}
-                </span>
-              )}
-              {isSelected && cost > 0 && (
-                <>
-                  <span className="text-[10px] text-text-500">&middot;</span>
-                  <span className="text-[10px] text-text-500 font-mono">
-                    {formatCost(cost)}
-                  </span>
-                </>
-              )}
-            </button>
-          )
-        })}
+              {selectedAgent.status}
+            </span>
+          </div>
+        ) : agents.length > 0 ? (
+          <span className="text-xs text-muted">
+            All agents ({agents.length})
+          </span>
+        ) : null}
       </div>
 
-      {/* Right section */}
+      {/* Right section — total cost + agent actions */}
       <div className="flex items-center gap-2">
-        {totalCost !== undefined && (
-          <span className="text-xs text-text-400">
+        {totalCost !== undefined && totalCost > 0 && (
+          <span className="text-xs text-muted font-mono">
             {formatCost(totalCost)}
           </span>
         )}
@@ -140,4 +134,4 @@ function Header({
 }
 
 export { Header }
-export type { HeaderProps }
+export type { HeaderProps, AgentActionHandlers }

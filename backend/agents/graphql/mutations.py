@@ -250,7 +250,7 @@ class AgentMutation:
                     "/home/agent/CLAUDE.md",
                 )
             except Exception:
-                log.warning("claude_md_write_failed", agent=agent.name, exc_info=True)
+                log.exception("claude_md_write_failed", agent_name=agent.name)
 
         return agent
 
@@ -419,4 +419,4 @@ async def _push_secrets_for_project(project) -> None:
                     runtime, agent.sandbox_id, agent, secret_envs,
                 )
         except Exception:
-            op_log.warning("secret_push_failed", agent=agent.name, exc_info=True)
+            op_log.exception("secret_push_failed", agent_name=agent.name)

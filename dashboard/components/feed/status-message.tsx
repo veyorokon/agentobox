@@ -30,7 +30,7 @@ export function StatusMessage({ data, agentName }: StatusMessageProps) {
 
   return (
     <div className="flex items-center justify-center py-px">
-      <span className="text-text-500/60 text-[10px] font-mono">
+      <span className="text-muted/60 text-[10px] font-mono">
         {label}
       </span>
     </div>

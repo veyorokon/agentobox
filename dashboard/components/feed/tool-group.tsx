@@ -71,32 +71,33 @@ export function ToolGroup({ toolBlocks }: ToolGroupProps) {
 
 function SingleToolRow({ tool }: { tool: ToolUseBlock }) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
+  const { isAtBottom, scrollAfterExpand } = useContext(FeedScrollContext)
   const summary = getToolSummary(tool)
 
   return (
-    <div className="border-l-2 rounded-r border-l-text-500/40">
+    <div className="border-l-2 rounded-r border-l-muted/40">
       <button
         type="button"
         onClick={() => {
+          const wasAtBottom = isAtBottom()
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && wasAtBottom) scrollAfterExpand()
         }}
-        className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-bg-200/40 transition-colors"
+        className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
       >
         <ChevronRight
           size={12}
           className={cn(
-            "shrink-0 text-text-500 transition-transform duration-150",
+            "shrink-0 text-muted transition-transform duration-150",
             expanded && "rotate-90",
           )}
         />
-        <span className="text-xs font-medium shrink-0 text-accent-secondary-000">
+        <span className="text-xs font-medium shrink-0 text-info">
           {friendlyToolName(tool.name)}
         </span>
         {summary && (
-          <span className="text-xs text-text-400 font-mono truncate min-w-0">
+          <span className="text-xs text-muted font-mono truncate min-w-0">
             {summary}
           </span>
         )}
@@ -112,7 +113,7 @@ function SingleToolRow({ tool }: { tool: ToolUseBlock }) {
 function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
   const [expanded, setExpanded] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
+  const { isAtBottom, scrollAfterExpand } = useContext(FeedScrollContext)
   const needsCollapse = tools.length > COLLAPSE_THRESHOLD
 
   // When collapsed and many tools, show first and last
@@ -122,28 +123,29 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
   const hiddenCount = tools.length - 2
 
   return (
-    <div className="border-l-2 rounded-r border-l-text-500/40">
+    <div className="border-l-2 rounded-r border-l-muted/40">
       {/* Group header */}
       <button
         type="button"
         onClick={() => {
+          const wasAtBottom = isAtBottom()
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && wasAtBottom) scrollAfterExpand()
         }}
-        className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-bg-200/40 transition-colors"
+        className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
       >
         <ChevronRight
           size={12}
           className={cn(
-            "shrink-0 text-text-500 transition-transform duration-150",
+            "shrink-0 text-muted transition-transform duration-150",
             expanded && "rotate-90",
           )}
         />
-        <span className="text-xs text-text-300">
+        <span className="text-xs text-secondary">
           {tools.length} tool uses
         </span>
-        <span className="text-[11px] text-text-500 font-mono truncate min-w-0">
+        <span className="text-[11px] text-muted font-mono truncate min-w-0">
           {tools.map((t) => friendlyToolName(t.name)).filter((v, i, a) => a.indexOf(v) === i).join(", ")}
         </span>
       </button>
@@ -157,10 +159,11 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
               <button
                 type="button"
                 onClick={() => {
+                  const wasAtBottom = isAtBottom()
                   setShowAll(true)
-                  if (isAtBottom()) requestAnimationFrame(() => scrollToBottom())
+                  if (wasAtBottom) scrollAfterExpand()
                 }}
-                className="text-[11px] text-accent-secondary-100 hover:text-accent-secondary-000 px-2.5 py-1 cursor-pointer font-mono"
+                className="text-[11px] text-info-hover hover:text-info px-2.5 py-1 cursor-pointer font-mono"
               >
                 Show {hiddenCount} more
               </button>
@@ -177,7 +180,7 @@ function MultiToolGroup({ tools }: { tools: ToolUseBlock[] }) {
 
 function ToolRow({ tool }: { tool: ToolUseBlock }) {
   const [expanded, setExpanded] = useState(false)
-  const { scrollToBottom, isAtBottom } = useContext(FeedScrollContext)
+  const { isAtBottom, scrollAfterExpand } = useContext(FeedScrollContext)
   const summary = getToolSummary(tool)
 
   return (
@@ -185,24 +188,25 @@ function ToolRow({ tool }: { tool: ToolUseBlock }) {
       <button
         type="button"
         onClick={() => {
+          const wasAtBottom = isAtBottom()
           const willExpand = !expanded
           setExpanded(willExpand)
-          if (willExpand && isAtBottom()) requestAnimationFrame(() => scrollToBottom())
+          if (willExpand && wasAtBottom) scrollAfterExpand()
         }}
-        className="flex items-center gap-2 w-full text-left px-2.5 py-0.5 cursor-pointer hover:bg-bg-200/40 transition-colors"
+        className="flex items-center gap-2 w-full text-left px-2.5 py-0.5 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
       >
         <ChevronRight
           size={10}
           className={cn(
-            "shrink-0 text-text-500 transition-transform duration-150",
+            "shrink-0 text-muted transition-transform duration-150",
             expanded && "rotate-90",
           )}
         />
-        <span className="text-[11px] font-medium shrink-0 text-accent-secondary-000">
+        <span className="text-[11px] font-medium shrink-0 text-info">
           {friendlyToolName(tool.name)}
         </span>
         {summary && (
-          <span className="text-[11px] text-text-400 font-mono truncate min-w-0">
+          <span className="text-[11px] text-muted font-mono truncate min-w-0">
             {summary}
           </span>
         )}

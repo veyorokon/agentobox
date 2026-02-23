@@ -207,4 +207,4 @@ async def _push_theme_for_project(project) -> None:
             runtime = get_runtime(agent.runtime)
             await write_theme_files(runtime, agent.sandbox_id, project.theme_tokens)
         except Exception:
-            log.warning("theme_push_failed", agent=agent.name, sandbox_id=agent.sandbox_id)
+            log.exception("theme_push_failed", agent_name=agent.name, sandbox_id=agent.sandbox_id)

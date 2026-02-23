@@ -36,8 +36,8 @@ export default function Home() {
   if (!mounted || !token) return null
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg-100">
-      <p className="text-text-400 text-sm">
+    <div className="min-h-screen flex items-center justify-center bg-surface">
+      <p className="text-muted text-sm">
         {projects.length === 0 ? "No projects yet" : "Loading..."}
       </p>
     </div>

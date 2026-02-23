@@ -65,10 +65,10 @@ function Sidebar({
   )
 
   return (
-    <div className="w-[260px] h-full bg-bg-200 border-r-[0.5px] border-border-300 flex flex-col">
-      <div className="flex-1 flex flex-col bg-bg-100 m-0 min-h-0">
+    <div className="w-[260px] h-full bg-surface-sunken border-r-[0.5px] border-border-default flex flex-col">
+      <div className="flex-1 flex flex-col bg-surface m-0 min-h-0">
         <div className="px-4 py-3">
-          <span className="text-sm font-semibold text-text-000">Agentobox</span>
+          <span className="text-sm font-semibold text-default">Agentobox</span>
         </div>
 
         {onNewProject && !isCreating && (
@@ -87,7 +87,7 @@ function Sidebar({
 
         {isCreating && (
           <div className="mx-3 mb-2">
-            <div className="flex items-center gap-1.5 rounded-md border-[0.5px] border-border-300 bg-bg-000/60 focus-within:bg-bg-000 focus-within:border-accent-main-000/40 transition-colors px-2 py-1">
+            <div className="flex items-center gap-1.5 rounded-md border-[0.5px] border-border-default bg-surface-raised/60 focus-within:bg-surface-raised focus-within:border-accent/40 transition-colors px-2 py-1">
               <input
                 ref={inputRef}
                 type="text"
@@ -100,12 +100,12 @@ function Sidebar({
                   }, 150)
                 }}
                 placeholder="Project name..."
-                className="flex-1 bg-transparent border-none outline-none text-sm text-text-100 placeholder:text-text-500 min-w-0"
+                className="flex-1 bg-transparent border-none outline-none text-sm text-default placeholder:text-muted min-w-0"
               />
               <button
                 type="button"
                 onClick={handleCancel}
-                className="p-0.5 text-text-400 hover:text-text-200 rounded transition-colors shrink-0"
+                className="p-0.5 text-muted hover:text-secondary rounded transition-colors shrink-0"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -114,19 +114,19 @@ function Sidebar({
         )}
 
         <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-xs text-text-400 font-medium">Sessions</span>
+          <span className="text-xs text-muted font-medium">Sessions</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => search.open()}
-              className="p-1 text-text-400 hover:text-text-200 rounded transition-colors"
+              className="p-1 text-muted hover:text-secondary rounded transition-colors"
               aria-label="Search"
             >
               <Search className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
-              className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
+              className="p-1 text-muted rounded transition-colors opacity-50 cursor-not-allowed"
               aria-label="Filters (coming soon)"
               disabled
             >
@@ -153,11 +153,11 @@ function Sidebar({
         )}
 
         {/* User menu + settings — bottom of sidebar */}
-        <div className="px-3 py-2 flex items-center justify-between shrink-0 border-t border-border-300">
+        <div className="px-3 py-2 flex items-center justify-between shrink-0 border-t border-border-default">
           <UserMenu username={username} email={email} />
           <button
             type="button"
-            className="p-1 text-text-400 rounded transition-colors opacity-50 cursor-not-allowed"
+            className="p-1 text-muted rounded transition-colors opacity-50 cursor-not-allowed"
             aria-label="Settings (coming soon)"
             disabled
           >

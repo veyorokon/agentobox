@@ -101,7 +101,7 @@ function AgentActions({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="p-1 rounded text-text-400 hover:text-text-200 hover:bg-bg-000/50 transition-colors cursor-pointer"
+        className="p-1 rounded text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors cursor-pointer"
         title="Agent actions"
       >
         <MoreVertical className="h-3.5 w-3.5" />
@@ -112,7 +112,7 @@ function AgentActions({
           ref={popoverRef}
           className={cn(
             "absolute top-full right-0 mt-1.5 z-50",
-            "bg-bg-000 border border-border-300 rounded-lg shadow-lg p-1.5 min-w-[180px]",
+            "bg-surface-raised border border-border-default rounded-lg shadow-lg p-1.5 min-w-[180px]",
             "animate-in fade-in duration-150",
           )}
         >
@@ -126,8 +126,8 @@ function AgentActions({
             className={cn(
               "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded transition-colors",
               isActive
-                ? "text-text-300 hover:text-text-100 hover:bg-bg-200"
-                : "text-text-500 cursor-not-allowed opacity-50",
+                ? "text-secondary hover:text-default hover:bg-surface-sunken"
+                : "text-muted cursor-not-allowed opacity-50",
             )}
           >
             <Zap className="h-3.5 w-3.5" />
@@ -135,7 +135,7 @@ function AgentActions({
               Mode: {currentMode.label}
             </span>
             {isActive && (
-              <span className="text-[10px] text-text-500">
+              <span className="text-[10px] text-muted">
                 &rarr; {nextMode.label}
               </span>
             )}
@@ -145,7 +145,7 @@ function AgentActions({
           <button
             type="button"
             onClick={() => handleAction(() => onRestart(agent.id))}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-text-300 hover:text-text-100 hover:bg-bg-200 rounded transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-secondary hover:text-default hover:bg-surface-sunken rounded transition-colors"
           >
             <RotateCcw className="h-3.5 w-3.5" />
             Restart
@@ -155,19 +155,19 @@ function AgentActions({
           <button
             type="button"
             onClick={() => handleAction(() => onClearSession(agent.id))}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-text-300 hover:text-text-100 hover:bg-bg-200 rounded transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-secondary hover:text-default hover:bg-surface-sunken rounded transition-colors"
           >
             <Eraser className="h-3.5 w-3.5" />
             Clear session
           </button>
 
-          <div className="my-1 h-px bg-border-300" />
+          <div className="my-1 h-px bg-border-default" />
 
           {/* Kill */}
           <button
             type="button"
             onClick={() => handleAction(() => onKill(agent.id))}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-danger-000 hover:bg-bg-200 rounded transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-danger hover:bg-surface-sunken rounded transition-colors"
           >
             <Power className="h-3.5 w-3.5" />
             Kill agent
@@ -177,7 +177,7 @@ function AgentActions({
           <button
             type="button"
             onClick={() => handleAction(() => onRemove(agent.id))}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-danger-000 hover:bg-bg-200 rounded transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-danger hover:bg-surface-sunken rounded transition-colors"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Remove agent

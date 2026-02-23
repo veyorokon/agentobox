@@ -120,18 +120,18 @@ function SearchOverlay({ projects, agents }: SearchOverlayProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-bg-400/60 backdrop-blur-sm flex items-start justify-center pt-[20vh]"
+      className="fixed inset-0 z-50 bg-surface-backdrop/60 backdrop-blur-sm flex items-start justify-center pt-[20vh]"
       onClick={(e) => {
         if (e.target === e.currentTarget) close()
       }}
     >
       <div
-        className="max-w-lg w-full bg-bg-000 rounded-xl border border-border-300 shadow-2xl overflow-hidden"
+        className="max-w-lg w-full bg-surface-raised rounded-xl border border-border-default shadow-2xl overflow-hidden"
         onKeyDown={handleKeyDown}
       >
         {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border-300">
-          <Search className="h-4 w-4 text-text-400 shrink-0" />
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border-default">
+          <Search className="h-4 w-4 text-muted shrink-0" />
           <input
             ref={inputRef}
             type="text"
@@ -141,9 +141,9 @@ function SearchOverlay({ projects, agents }: SearchOverlayProps) {
               setSelectedIndex(0)
             }}
             placeholder="Search projects and agents..."
-            className="flex-1 bg-transparent border-none outline-none text-sm text-text-100 placeholder:text-text-500"
+            className="flex-1 bg-transparent border-none outline-none text-sm text-default placeholder:text-muted"
           />
-          <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-text-400 bg-bg-200 border border-border-300 rounded">
+          <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-muted bg-surface-sunken border border-border-default rounded">
             esc
           </kbd>
         </div>
@@ -151,7 +151,7 @@ function SearchOverlay({ projects, agents }: SearchOverlayProps) {
         {/* Results */}
         <div ref={listRef} className="max-h-[300px] overflow-y-auto p-1">
           {results.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-text-400">
+            <div className="px-4 py-8 text-center text-sm text-muted">
               No results found
             </div>
           ) : (
@@ -165,22 +165,22 @@ function SearchOverlay({ projects, agents }: SearchOverlayProps) {
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors",
                   index === selectedIndex
-                    ? "bg-bg-200 text-text-100"
-                    : "text-text-300 hover:bg-bg-100",
+                    ? "bg-surface-sunken text-default"
+                    : "text-secondary hover:bg-surface",
                 )}
               >
                 {result.type === "project" ? (
-                  <FolderOpen className="h-4 w-4 shrink-0 text-text-400" />
+                  <FolderOpen className="h-4 w-4 shrink-0 text-muted" />
                 ) : (
-                  <Bot className="h-4 w-4 shrink-0 text-text-400" />
+                  <Bot className="h-4 w-4 shrink-0 text-muted" />
                 )}
                 <span className="flex-1 text-sm truncate">{result.name}</span>
                 <span
                   className={cn(
                     "text-[10px] font-medium px-1.5 py-0.5 rounded",
                     result.type === "project"
-                      ? "bg-accent-main-000/10 text-accent-main-000"
-                      : "bg-bg-300 text-text-400",
+                      ? "bg-accent/10 text-accent"
+                      : "bg-surface-sunken text-muted",
                   )}
                 >
                   {result.type === "project" ? "Project" : "Agent"}
@@ -191,21 +191,21 @@ function SearchOverlay({ projects, agents }: SearchOverlayProps) {
         </div>
 
         {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-border-300 flex items-center gap-3 text-[10px] text-text-500">
+        <div className="px-4 py-2 border-t border-border-default flex items-center gap-3 text-[10px] text-muted">
           <span className="flex items-center gap-1">
-            <kbd className="px-1 py-0.5 bg-bg-200 border border-border-300 rounded">
+            <kbd className="px-1 py-0.5 bg-surface-sunken border border-border-default rounded">
               &uarr;&darr;
             </kbd>
             navigate
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="px-1 py-0.5 bg-bg-200 border border-border-300 rounded">
+            <kbd className="px-1 py-0.5 bg-surface-sunken border border-border-default rounded">
               &crarr;
             </kbd>
             select
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="px-1 py-0.5 bg-bg-200 border border-border-300 rounded">
+            <kbd className="px-1 py-0.5 bg-surface-sunken border border-border-default rounded">
               esc
             </kbd>
             close

@@ -38,14 +38,10 @@ _VERSION = _get_version()
 
 
 def add_service_metadata(logger, method_name, event_dict):
-    """Add service metadata to every log entry."""
-    event_dict["service"] = {
-        "name": "agentobox-backend",
-        "version": _VERSION,
-    }
-    event_dict["deployment"] = {
-        "environment": os.getenv("ENVIRONMENT", "dev"),
-    }
+    """Add service metadata to every log entry (flat root-level keys)."""
+    event_dict["service_name"] = "agentobox-backend"
+    event_dict["service_version"] = _VERSION
+    event_dict["environment"] = os.getenv("ENVIRONMENT", "dev")
     return event_dict
 
 
@@ -89,6 +85,26 @@ def copy_exception_to_stacktrace(logger, method_name, event_dict):
     return event_dict
 
 
+MAX_VALUE_LENGTH = 200
+
+
+def truncate_long_values(logger, method_name, event_dict):
+    """Truncate string values longer than MAX_VALUE_LENGTH in log output.
+
+    Prevents log lines from being bloated by large stdout blobs, file
+    contents, error messages, or other long string values.
+    Skips 'event' (the event name) and 'exception' / 'exception.stacktrace'
+    (handled by structlog's exception formatting).
+    """
+    skip_keys = {"event", "exception", "exception.stacktrace", "exception.type", "exception.message"}
+    for key, value in event_dict.items():
+        if key in skip_keys:
+            continue
+        if isinstance(value, str) and len(value) > MAX_VALUE_LENGTH:
+            event_dict[key] = value[:MAX_VALUE_LENGTH] + f"... ({len(value)} chars)"
+    return event_dict
+
+
 def truncate_graphql_request(logger, method_name, event_dict):
     """Truncate URL-encoded GraphQL query strings in request log fields.
 
@@ -111,11 +127,19 @@ def merge_agent_context(logger, method_name, event_dict):
     """
     Merge agent metadata from context variable into log entries.
 
-    Adds agent.id, agent.name, agent.sandbox_id, agent.project_id when available.
+    Adds agent_id, agent_name, agent_sandbox_id, agent_project_id as flat
+    root-level keys when available.
     """
     agent_ctx = _agent_context.get()
     if agent_ctx:
-        event_dict["agent"] = agent_ctx
+        if agent_ctx.get("id"):
+            event_dict["agent_id"] = agent_ctx["id"]
+        if agent_ctx.get("name"):
+            event_dict["agent_name"] = agent_ctx["name"]
+        if agent_ctx.get("sandbox_id"):
+            event_dict["agent_sandbox_id"] = agent_ctx["sandbox_id"]
+        if agent_ctx.get("project_id"):
+            event_dict["agent_project_id"] = agent_ctx["project_id"]
 
     return event_dict
 
@@ -198,6 +222,7 @@ def start_queue_listener():
             structlog.contextvars.merge_contextvars,
             merge_agent_context,
             truncate_graphql_request,
+            truncate_long_values,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),
@@ -310,6 +335,7 @@ def setup():
             structlog.contextvars.merge_contextvars,
             merge_agent_context,  # Add agent metadata from context
             truncate_graphql_request,  # Shorten URL-encoded GraphQL queries
+            truncate_long_values,  # Truncate long string values
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),

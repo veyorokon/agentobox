@@ -90,7 +90,7 @@
   --color-surface-backdrop: var(--p-surface-backdrop);
   --color-surface-invert: var(--p-surface-invert);
 
-  /* Text (Option A: --color-default produces text-default, text-secondary, etc.) */
+  /* Text */
   --color-default: var(--p-text-default);
   --color-secondary: var(--p-text-secondary);
   --color-muted: var(--p-text-muted);
@@ -106,6 +106,7 @@
   --color-accent: var(--p-accent);
   --color-accent-hover: var(--p-accent-hover);
   --color-accent-subtle: var(--p-accent-subtle);
+  --color-text-accent: var(--p-text-accent);
 
   /* Info */
   --color-info: var(--p-info);
@@ -113,6 +114,7 @@
 
   /* Pro */
   --color-pro: var(--p-pro);
+  --color-text-pro: var(--p-text-pro);
 
   /* Status */
   --color-success: var(--p-success);
@@ -120,6 +122,7 @@
   --color-danger: var(--p-danger);
   --color-danger-subtle: var(--p-danger-subtle);
   --color-warning: var(--p-warning);
+  --color-warning-subtle: hsl(45 94.8% 15.1% / 0.2);
 
   /* Interactive */
   --color-interactive: var(--p-interactive);
@@ -158,12 +161,12 @@
 }
 
 * {
-  border-color: color-mix(in srgb, var(--color-border-300) 15%, transparent);
+  border-color: var(--color-border-default);
 }
 
 body {
-  background-color: var(--color-bg-100);
-  color: var(--color-text-100);
+  background-color: var(--color-surface);
+  color: var(--color-default);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -171,7 +174,7 @@ body {
 /* Scrollbar styling */
 * {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-border-400) 40%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--color-border-strong) 40%, transparent) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -184,12 +187,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-border-400) 40%, transparent);
+  background: color-mix(in srgb, var(--color-border-strong) 40%, transparent);
   border-radius: 3px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--color-border-400) 60%, transparent);
+  background: color-mix(in srgb, var(--color-border-strong) 60%, transparent);
 }
 
 /* Dotted grid background for main content area */
@@ -201,7 +204,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle, color-mix(in srgb, var(--color-text-400) 8%, transparent) 1px, transparent 1px);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--color-muted) 8%, transparent) 1px, transparent 1px);
   background-size: 24px 24px;
   pointer-events: none;
   z-index: 0;
@@ -241,4 +244,79 @@ body {
 
 .animate-toast-in {
   animation: toast-in 0.2s ease-out;
+}
+
+/* Agent roster — breathing pulse for active agents */
+@keyframes breathe {
+  0%, 100% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 4px 1px currentColor;
+  }
+}
+
+.animate-breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+/* Agent roster — subtle left-border glow for running agents */
+@keyframes border-pulse {
+  0%, 100% {
+    border-left-color: transparent;
+  }
+  50% {
+    border-left-color: var(--color-success);
+  }
+}
+
+.animate-border-pulse {
+  animation: border-pulse 3s ease-in-out infinite;
+}
+
+/* Agent roster — add-agent button hover glow */
+@keyframes add-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 var(--color-accent-subtle);
+  }
+  50% {
+    box-shadow: 0 0 8px 2px var(--color-accent-subtle);
+  }
+}
+
+.animate-add-glow:hover {
+  animation: add-glow 1.6s ease-in-out infinite;
+}
+
+/* Agent roster — status group separator line */
+.roster-separator {
+  position: relative;
+}
+
+.roster-separator::before {
+  content: "";
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  top: 0;
+  height: 1px;
+  background: var(--color-border-subtle);
+}
+
+/* Agent roster — fade-in for list items (staggered) */
+@keyframes roster-item-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-roster-item-in {
+  animation: roster-item-in 0.2s ease-out both;
 }

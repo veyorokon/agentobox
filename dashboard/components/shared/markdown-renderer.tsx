@@ -23,7 +23,7 @@ const components: Components = {
     // Inline code
     return (
       <code
-        className="bg-bg-100/50 border border-border-300 text-danger-000 rounded-[0.4rem] px-1 py-px font-mono text-[13px]"
+        className="bg-surface/50 border border-border-default text-danger rounded-[0.4rem] px-1 py-px font-mono text-[13px]"
         {...rest}
       >
         {children}
@@ -42,7 +42,7 @@ const components: Components = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-accent-secondary-100 hover:underline"
+        className="text-info-hover hover:underline"
         {...rest}
       >
         {children}
@@ -53,7 +53,7 @@ const components: Components = {
   h1({ children, ...rest }) {
     return (
       <h1
-        className="text-base text-text-000 font-semibold mt-4 mb-1.5"
+        className="text-base text-default font-semibold mt-4 mb-1.5"
         {...rest}
       >
         {children}
@@ -63,7 +63,7 @@ const components: Components = {
 
   h2({ children, ...rest }) {
     return (
-      <h2 className="text-sm text-text-000 font-semibold mt-3 mb-1" {...rest}>
+      <h2 className="text-sm text-default font-semibold mt-3 mb-1" {...rest}>
         {children}
       </h2>
     );
@@ -71,7 +71,7 @@ const components: Components = {
 
   h3({ children, ...rest }) {
     return (
-      <h3 className="text-sm text-text-000 font-semibold mt-2.5 mb-1" {...rest}>
+      <h3 className="text-sm text-default font-semibold mt-2.5 mb-1" {...rest}>
         {children}
       </h3>
     );
@@ -80,7 +80,7 @@ const components: Components = {
   h4({ children, ...rest }) {
     return (
       <h4
-        className="text-sm text-text-000 font-medium mt-2 mb-0.5"
+        className="text-sm text-default font-medium mt-2 mb-0.5"
         {...rest}
       >
         {children}
@@ -90,7 +90,7 @@ const components: Components = {
 
   h5({ children, ...rest }) {
     return (
-      <h5 className="text-sm text-text-100 font-medium mt-2 mb-0.5" {...rest}>
+      <h5 className="text-sm text-default font-medium mt-2 mb-0.5" {...rest}>
         {children}
       </h5>
     );
@@ -98,7 +98,7 @@ const components: Components = {
 
   h6({ children, ...rest }) {
     return (
-      <h6 className="text-xs text-text-100 font-medium mt-2 mb-0.5" {...rest}>
+      <h6 className="text-xs text-default font-medium mt-2 mb-0.5" {...rest}>
         {children}
       </h6>
     );
@@ -106,7 +106,7 @@ const components: Components = {
 
   p({ children, ...rest }) {
     return (
-      <p className="text-text-100 text-sm leading-relaxed mb-2 last:mb-0" {...rest}>
+      <p className="text-default text-sm leading-relaxed mb-2 last:mb-0" {...rest}>
         {children}
       </p>
     );
@@ -114,7 +114,7 @@ const components: Components = {
 
   ul({ children, ...rest }) {
     return (
-      <ul className="list-disc list-outside ml-6 space-y-1 mb-2 text-sm text-text-100" {...rest}>
+      <ul className="list-disc list-outside ml-6 space-y-1 mb-2 text-sm text-default" {...rest}>
         {children}
       </ul>
     );
@@ -123,7 +123,7 @@ const components: Components = {
   ol({ children, ...rest }) {
     return (
       <ol
-        className="list-decimal list-outside ml-6 space-y-1 mb-2 text-sm text-text-100"
+        className="list-decimal list-outside ml-6 space-y-1 mb-2 text-sm text-default"
         {...rest}
       >
         {children}
@@ -133,7 +133,7 @@ const components: Components = {
 
   li({ children, ...rest }) {
     return (
-      <li className="text-sm text-text-100 leading-relaxed" {...rest}>
+      <li className="text-sm text-default leading-relaxed" {...rest}>
         {children}
       </li>
     );
@@ -142,7 +142,7 @@ const components: Components = {
   blockquote({ children, ...rest }) {
     return (
       <blockquote
-        className="border-l-4 border-border-400 pl-4 italic mb-2"
+        className="border-l-4 border-border-strong pl-4 italic mb-2"
         {...rest}
       >
         {children}
@@ -152,7 +152,7 @@ const components: Components = {
 
   table({ children, ...rest }) {
     return (
-      <div className="overflow-x-auto mb-2 rounded border border-border-300">
+      <div className="overflow-x-auto mb-2 rounded border border-border-default">
         <table
           className="min-w-full border-collapse text-sm"
           {...rest}
@@ -165,7 +165,7 @@ const components: Components = {
 
   thead({ children, ...rest }) {
     return (
-      <thead className="bg-bg-200 border-b border-border-300" {...rest}>
+      <thead className="bg-surface-sunken border-b border-border-default" {...rest}>
         {children}
       </thead>
     );
@@ -173,7 +173,7 @@ const components: Components = {
 
   tr({ children, ...rest }) {
     return (
-      <tr className="border-b border-border-300 last:border-b-0" {...rest}>
+      <tr className="border-b border-border-default last:border-b-0" {...rest}>
         {children}
       </tr>
     );
@@ -182,7 +182,7 @@ const components: Components = {
   th({ children, ...rest }) {
     return (
       <th
-        className="px-3 py-2 text-left font-semibold text-text-200 border-r border-border-300 last:border-r-0"
+        className="px-3 py-2 text-left font-semibold text-secondary border-r border-border-default last:border-r-0"
         {...rest}
       >
         {children}
@@ -193,7 +193,7 @@ const components: Components = {
   td({ children, ...rest }) {
     return (
       <td
-        className="px-3 py-2 text-text-300 border-r border-border-300 last:border-r-0"
+        className="px-3 py-2 text-secondary border-r border-border-default last:border-r-0"
         {...rest}
       >
         {children}
@@ -203,13 +203,13 @@ const components: Components = {
 
   hr({ ...rest }) {
     return (
-      <hr className="border-t border-border-300/15 my-3" {...rest} />
+      <hr className="border-t border-border-default/15 my-3" {...rest} />
     );
   },
 
   strong({ children, ...rest }) {
     return (
-      <strong className="text-text-000 font-semibold" {...rest}>
+      <strong className="text-default font-semibold" {...rest}>
         {children}
       </strong>
     );
@@ -217,7 +217,7 @@ const components: Components = {
 
   em({ children, ...rest }) {
     return (
-      <em className="text-text-200 italic" {...rest}>
+      <em className="text-secondary italic" {...rest}>
         {children}
       </em>
     );

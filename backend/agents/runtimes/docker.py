@@ -32,7 +32,7 @@ class DockerRuntime:
         image = getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest")
         network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
 
-        op = log.bind(op="create", agent=name, image=image)
+        op = log.bind(op="create", agent_name=name, image=image)
         op.info("creating_container", volumes=[m.name for m in volumes] if volumes else [])
         t0 = time.monotonic()
 
@@ -106,7 +106,7 @@ class DockerRuntime:
         elapsed = round(time.monotonic() - t0, 2)
         if exit_code != 0:
             op.warning("exec_failed", exit_code=exit_code, elapsed_s=elapsed,
-                       output=result[:500] if result else "")
+                       output=result[:200] if result else "")
         else:
             op.info("exec_done", elapsed_s=elapsed)
         return result

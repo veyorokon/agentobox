@@ -64,7 +64,7 @@ async def broadcast_agent_update(agent: Agent) -> None:
             },
         )
     except Exception:
-        log.warning("broadcast_failed", group=group, exc_info=True)
+        log.exception("broadcast_agent_update_failed", group=group)
 
     # Detect status change and emit a status StreamEvent
     old_status = getattr(agent, "_original_status", None)
@@ -102,4 +102,4 @@ async def broadcast_event(agent: Agent, stream_event: StreamEvent) -> None:
             },
         )
     except Exception:
-        log.warning("broadcast_failed", group=group, exc_info=True)
+        log.exception("broadcast_event_failed", group=group)

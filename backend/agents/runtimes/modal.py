@@ -16,7 +16,7 @@ class ModalRuntime:
         self, name: str, env: dict[str, str],
         volumes: list[VolumeMount] | None = None,
     ) -> SandboxInstance:
-        op = log.bind(op="create", agent=name)
+        op = log.bind(op="create", agent_name=name)
         op.info("creating_sandbox", volumes=[m.name for m in volumes] if volumes else [])
         t0 = time.monotonic()
 
@@ -80,7 +80,7 @@ class ModalRuntime:
         elapsed = round(time.monotonic() - t0, 2)
         if process.returncode and process.returncode != 0:
             op.warning("exec_failed", exit_code=process.returncode, elapsed_s=elapsed,
-                       output=output[:500] if output else "")
+                       output=output[:200] if output else "")
         else:
             op.info("exec_done", elapsed_s=elapsed)
         return output

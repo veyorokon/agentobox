@@ -18,7 +18,7 @@ export function SystemMessage({ data }: SystemMessageProps) {
 
       return (
         <div className="flex items-center justify-center py-px">
-          <span className="text-text-500/60 text-[10px] font-mono">
+          <span className="text-muted/60 text-[10px] font-mono">
             {model && <span>{model}</span>}
             {model && toolCount > 0 && <span className="mx-1">&middot;</span>}
             {toolCount > 0 && <span>{toolCount} tools</span>}
@@ -34,7 +34,7 @@ export function SystemMessage({ data }: SystemMessageProps) {
 
       return (
         <div className="flex items-center justify-center py-px">
-          <span className={`text-[10px] font-mono ${isError ? "text-danger-000/80" : "text-text-500/60"}`}>
+          <span className={`text-[10px] font-mono ${isError ? "text-danger/80" : "text-muted/60"}`}>
             process exited{exitCode !== undefined ? ` (code ${exitCode})` : ""}
           </span>
         </div>
@@ -60,7 +60,7 @@ export function SystemMessage({ data }: SystemMessageProps) {
 
       return (
         <div className="flex items-center justify-center py-px">
-          <span className="text-text-500/60 text-[10px] font-mono">{text}</span>
+          <span className="text-muted/60 text-[10px] font-mono">{text}</span>
         </div>
       )
     }
@@ -71,7 +71,7 @@ export function SystemMessage({ data }: SystemMessageProps) {
 
       return (
         <div className="flex items-center justify-center py-px">
-          <span className="text-text-500/60 text-[10px] font-mono">{text}</span>
+          <span className="text-muted/60 text-[10px] font-mono">{text}</span>
         </div>
       )
     }

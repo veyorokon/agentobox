@@ -4,12 +4,12 @@ import { forwardRef, type ButtonHTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
 
 const variants = {
-  primary: "bg-text-000 text-bg-000 hover:bg-text-100",
+  primary: "bg-default text-surface hover:bg-default",
   secondary:
-    "bg-transparent text-text-000 border border-border-200/30 hover:bg-bg-400",
-  ghost: "bg-transparent text-text-300 hover:bg-bg-300 hover:text-text-100",
-  danger: "bg-danger-200 text-oncolor-100 hover:bg-danger-100",
-  accent: "bg-accent-main-000 text-oncolor-100 hover:bg-accent-main-200",
+    "bg-transparent text-default border border-border-default/30 hover:bg-surface-backdrop",
+  ghost: "bg-transparent text-secondary hover:bg-surface-sunken hover:text-default",
+  danger: "bg-danger text-on-emphasis hover:bg-danger",
+  accent: "bg-accent text-on-emphasis hover:bg-accent-hover",
 } as const
 
 const sizes = {
