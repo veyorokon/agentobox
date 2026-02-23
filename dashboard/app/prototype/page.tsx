@@ -1753,58 +1753,53 @@ function AgentCardRow({
       onClick={onSelect}
       className="w-full text-left"
     >
-      <div className={cn("grid gap-2", compact ? "grid-cols-1 p-2.5" : "grid-cols-2 p-3")}>
-        {/* Left: agent info */}
-        <div className="min-w-0 flex flex-col">
-          {/* Header: avatar + name + status */}
-          <div className="flex items-center gap-2 mb-1.5">
-            <AgentAvatar name={agent.name} stopped={isStopped} />
-            <span className="text-[13px] font-medium flex-1 truncate text-default">
-              {agent.name}
-            </span>
-            <ChevronRight
-              size={14}
-              className={cn(
-                "shrink-0 text-muted transition-transform",
-                isSelected && "rotate-90",
-              )}
-            />
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full shrink-0",
-                config.dot,
-                isRunning && "animate-breathe text-success",
-              )}
-            />
-          </div>
-
-          {/* Current task */}
-          <div className="flex items-start gap-1.5 mb-1">
-            <Terminal className="h-3 w-3 text-muted/60 shrink-0 mt-0.5" />
-            <span className="text-[11px] text-secondary leading-tight truncate">
-              {agent.task}
-            </span>
-          </div>
-
-          {/* Stats row */}
-          <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap">
-            <span className="inline-flex items-center gap-0.5">
-              <DollarSign className="h-2.5 w-2.5" />
-              {formatCost(agent.cost)}
-            </span>
-            <span className="inline-flex items-center gap-0.5">
-              <Clock className="h-2.5 w-2.5" />
-              {agent.duration}
-            </span>
-            <span className="text-muted/50">&middot;</span>
-            <span>{agent.model}</span>
-            <span className="text-muted/50">&middot;</span>
-            <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
-          </div>
+      {/* Row 1: avatar + name + task + chevron + status dot */}
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
+        <AgentAvatar name={agent.name} stopped={isStopped} />
+        <span className="text-[13px] font-medium truncate text-default">
+          {agent.name}
+        </span>
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          <Terminal className="h-3 w-3 text-muted/60 shrink-0" />
+          <span className="text-[11px] text-secondary leading-tight truncate">
+            {agent.task}
+          </span>
         </div>
+        <ChevronRight
+          size={14}
+          className={cn(
+            "shrink-0 text-muted transition-transform",
+            isSelected && "rotate-90",
+          )}
+        />
+        <span
+          className={cn(
+            "h-2 w-2 rounded-full shrink-0",
+            config.dot,
+            isRunning && "animate-breathe text-success",
+          )}
+        />
+      </div>
 
-        {/* Right: VNC thumbnail */}
+      {/* Row 2: VNC full width */}
+      <div className="px-3 pb-2">
         <VncThumbnail agent={agent} />
+      </div>
+
+      {/* Row 3: Stats row */}
+      <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap px-3 pb-2">
+        <span className="inline-flex items-center gap-0.5">
+          <DollarSign className="h-2.5 w-2.5" />
+          {formatCost(agent.cost)}
+        </span>
+        <span className="inline-flex items-center gap-0.5">
+          <Clock className="h-2.5 w-2.5" />
+          {agent.duration}
+        </span>
+        <span className="text-muted/50">&middot;</span>
+        <span>{agent.model}</span>
+        <span className="text-muted/50">&middot;</span>
+        <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
       </div>
     </button>
   )
@@ -1835,6 +1830,9 @@ function AgentCardRow({
       )}
     >
       {cardHeader}
+
+      {/* Live status bar — card-level, visible regardless of tab */}
+      {isRunning && <LiveStatusBar agent={agent} />}
 
       {/* Inline tab bar — Activity | Settings */}
       <div className="flex items-center gap-1 px-3 py-1 border-t border-border-subtle bg-surface-sunken/20">
@@ -1983,9 +1981,6 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
           </div>
         )}
       </div>
-
-      {/* Live status bar — pinned between feed and composer */}
-      {isRunning && <LiveStatusBar agent={agent} />}
 
       {/* Mini composer — message this specific agent */}
       <div className="px-3 py-2 border-t border-border-subtle">
