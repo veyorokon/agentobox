@@ -49,6 +49,8 @@ type FakeAgent = {
   /** Live one-liner: last tool call or action, continuously updated.
    *  SOURCE: latest tool_use content block name + summary from StreamEvent */
   liveAction?: string
+  /** Compact todo progress for live status bar */
+  todoProgress?: { done: number; total: number }
   instructions: string
   mcpServers: string[]
   runtime: "docker" | "modal"
@@ -68,6 +70,7 @@ const AGENTS: FakeAgent[] = [
     lastOutput: "Applied fix to validateToken()...",
     phase: "Editing",
     liveAction: "Edit src/auth.ts (+3 -1)",
+    todoProgress: { done: 5, total: 6 },
     instructions: "Django 6.0 backend: models, services, auth, GraphQL schema. Run tests before committing.",
     mcpServers: ["computer-use"],
     runtime: "docker",
@@ -811,6 +814,26 @@ function ThinkingIndicator({ label = "Thinking..." }: { label?: string }) {
       </span>
       <span>{label}</span>
     </span>
+  )
+}
+
+/** 10b. Live status bar — pinned between feed and composer in agent detail */
+function LiveStatusBar({ agent }: { agent: FakeAgent }) {
+  return (
+    <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/20 flex items-center gap-2 min-h-[28px]">
+      <span className="h-1.5 w-1.5 rounded-full bg-accent animate-breathe shrink-0" />
+      <span className="text-[11px] font-mono text-secondary truncate">
+        {agent.liveAction || "Working..."}
+      </span>
+      {agent.todoProgress && (
+        <span className="ml-auto flex items-center gap-1 shrink-0">
+          <CheckSquare className="h-3 w-3 text-muted/60" />
+          <span className="text-[10px] font-mono text-muted">
+            {agent.todoProgress.done}/{agent.todoProgress.total}
+          </span>
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -1861,7 +1884,7 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
   const isError = agent.status === "error"
 
   return (
-    <div className="border-t border-border-subtle">
+    <div className="border-t border-border-subtle flex flex-col">
       {/* Mini-feed header */}
       <div className="px-3 py-1.5 flex items-center gap-2 bg-surface-sunken/30">
         <MessageSquare className="h-3 w-3 text-muted/60" />
@@ -1873,14 +1896,10 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
         </span>
       </div>
 
-      {/* Verbose content — scrollable mini-feed */}
-      <div className="max-h-[320px] overflow-y-auto px-3 py-2 space-y-2">
-        {/* Show different content based on agent */}
+      {/* Historical content only — scrollable mini-feed */}
+      <div className="flex-1 min-h-0 max-h-[320px] overflow-y-auto px-3 py-2 space-y-2">
         {agent.name === "backend" ? (
           <>
-            {/* Thinking indicator (source: thinking content block) */}
-            <ThinkingIndicator label="Analyzing auth.ts..." />
-
             {/* Tool calls (source: tool_use content blocks) */}
             <SingleToolRow toolName="Read" summary="src/auth.ts" />
             <SingleToolRow toolName="Read" summary="src/middleware/auth.ts" />
@@ -1909,21 +1928,6 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
 
             {/* Result pill (source: result message) */}
             <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
-
-            {/* Todo list (source: TodoWrite tool_use blocks) */}
-            {isRunning && (
-              <TodoList
-                agent={agent.name}
-                tasks={[
-                  { text: "Read auth.ts and identify the bug", done: true },
-                  { text: "Fix Date.now() → seconds conversion", done: true },
-                  { text: "Add 30s clock skew tolerance", done: true },
-                  { text: "Add refresh token rotation", done: true },
-                  { text: "Run linter", done: true },
-                  { text: "Update test fixtures", done: false },
-                ]}
-              />
-            )}
           </>
         ) : agent.name === "qa" ? (
           <>
@@ -1946,7 +1950,6 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
           </>
         ) : agent.name === "frontend" ? (
           <>
-            <ThinkingIndicator label="Reading component styles..." />
             <SingleToolRow toolName="Read" summary="src/components/Button.tsx" />
             <SingleToolRow toolName="Read" summary="src/styles/tokens.css" />
             <AssistantMessage
@@ -1980,6 +1983,9 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
           </div>
         )}
       </div>
+
+      {/* Live status bar — pinned between feed and composer */}
+      {isRunning && <LiveStatusBar agent={agent} />}
 
       {/* Mini composer — message this specific agent */}
       <div className="px-3 py-2 border-t border-border-subtle">
