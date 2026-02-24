@@ -1994,7 +1994,7 @@ function TagInput({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && input.trim()) {
+          if ((e.key === "Enter" || e.key === " ") && input.trim()) {
             e.preventDefault()
             addTag(input.trim())
           }
@@ -2306,16 +2306,14 @@ function AgentCardRow({
           >
             {agent.name}
           </span>
-          {/* Tag pills — max 2 + overflow */}
+          {/* Tag pills — show 1 + overflow count */}
           {agent.tags.length > 0 && (
             <span className="inline-flex items-center gap-1 shrink-0">
-              {agent.tags.slice(0, 2).map((tag) => (
-                <span key={tag} className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle">
-                  {tag}
-                </span>
-              ))}
-              {agent.tags.length > 2 && (
-                <span className="text-[9px] text-muted/40 font-mono">+{agent.tags.length - 2}</span>
+              <span className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle">
+                {agent.tags[0]}
+              </span>
+              {agent.tags.length > 1 && (
+                <span className="text-[9px] text-muted/40 font-mono">+{agent.tags.length - 1}</span>
               )}
             </span>
           )}
