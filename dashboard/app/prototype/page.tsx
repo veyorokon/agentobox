@@ -27,6 +27,10 @@ import {
   Settings,
   Monitor,
   List,
+  BookOpen,
+  Search,
+  Filter,
+  Tag,
 } from "lucide-react"
 import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -58,6 +62,7 @@ type FakeAgent = {
   mcpServers: string[]
   runtime: "docker" | "modal"
   workspacePath: string
+  tags: string[]
 }
 
 const AGENTS: FakeAgent[] = [
@@ -78,6 +83,7 @@ const AGENTS: FakeAgent[] = [
     mcpServers: ["computer-use"],
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
+    tags: ["backend", "core"],
   },
   {
     id: "2",
@@ -95,6 +101,7 @@ const AGENTS: FakeAgent[] = [
     mcpServers: ["playwright", "computer-use"],
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
+    tags: ["frontend", "core"],
   },
   {
     id: "3",
@@ -111,6 +118,7 @@ const AGENTS: FakeAgent[] = [
     mcpServers: ["playwright"],
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
+    tags: ["testing", "ci"],
   },
   {
     id: "4",
@@ -126,6 +134,7 @@ const AGENTS: FakeAgent[] = [
     mcpServers: ["computer-use"],
     runtime: "modal",
     workspacePath: "/workspace/agentobox",
+    tags: ["infra", "ci"],
   },
   {
     id: "5",
@@ -142,6 +151,7 @@ const AGENTS: FakeAgent[] = [
     mcpServers: [],
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
+    tags: ["docs"],
   },
   {
     id: "6",
@@ -157,6 +167,7 @@ const AGENTS: FakeAgent[] = [
     mcpServers: [],
     runtime: "modal",
     workspacePath: "/workspace/agentobox",
+    tags: ["infra"],
   },
 ]
 
@@ -173,6 +184,117 @@ const SECRETS: FakeSecret[] = [
   { id: "s3", key: "AWS_ACCESS_KEY_ID", value: "AKIAIOSFODNN7EXAMPLE", addedAgo: "1w ago" },
   { id: "s4", key: "OPENAI_API_KEY", value: "sk-proj-xxxxxxxxxxxxxxxx", addedAgo: "1w ago" },
 ]
+
+/* ================================================================== */
+/*  SKILLS DATA                                                        */
+/* ================================================================== */
+
+type Skill = {
+  id: string
+  name: string
+  description: string
+  content: string
+  assignedTags: string[]
+  steps?: number
+}
+
+const SKILLS: Skill[] = [
+  {
+    id: "sk1",
+    name: "Test Failure Triage",
+    description: "Systematic approach to diagnosing test failures",
+    assignedTags: ["testing", "core"],
+    steps: 5,
+    content: `# Test Failure Triage
+
+1. **Read the error message** — don't skip to the code. The error tells you what failed, the stack trace tells you where.
+2. **Reproduce locally** — run the exact failing test in isolation:
+   \`\`\`bash
+   npm test -- --filter <test-name>
+   \`\`\`
+   - If it passes locally, the issue is environment-specific
+   - If it fails, you have a local repro
+3. **Check recent changes** — \`git log --oneline -10\` in the affected area
+   - Did a dependency change?
+   - Did a related module change its contract?
+4. **Isolate the assertion** — which specific assertion fails?
+   - Expected vs actual values
+   - Is the test wrong or the code wrong?
+5. **Fix and verify** — apply the fix, run the full suite:
+   - Run the specific test
+   - Run the full suite to check for regressions
+   - If flaky, add a note about the flakiness pattern`,
+  },
+  {
+    id: "sk2",
+    name: "Frontend Design Guidelines",
+    description: "Typography, color, and motion standards",
+    assignedTags: ["frontend"],
+    content: `# Frontend Design Guidelines
+
+## Typography
+Use the system font stack. Body text at 14px, labels at 11px, headings at 16-20px. Monospace for code, data, and technical content. Line height: 1.5 for body, 1.2 for headings.
+
+## Color
+Follow the semantic token system. Never use raw hex values — always reference design tokens (\`text-default\`, \`text-muted\`, \`bg-surface\`, etc.). Status colors: success (green), warning (amber), danger (red), info (blue), accent (brand purple).
+
+## Motion
+Transitions at 150ms for micro-interactions (hover, focus), 200ms for reveals (collapsible, dropdown), 300ms for layout shifts (panel resize). Use \`ease-out\` for enters, \`ease-in\` for exits. No animation on reduced-motion preference.
+
+## Spacing
+Use the 4px grid. Common values: 4, 8, 12, 16, 24, 32. Padding inside cards: 12px. Gap between cards: 8px. Section spacing: 16-24px.`,
+  },
+  {
+    id: "sk3",
+    name: "PR Review Checklist",
+    description: "Code review standards for all pull requests",
+    assignedTags: ["core"],
+    steps: 5,
+    content: `# PR Review Checklist
+
+1. **Scope check** — does the PR do one thing? If the title needs "and", it should be two PRs.
+2. **Read the tests first** — tests document intent. If there are no tests, that's the first comment.
+3. **Check the unhappy path** — error handling, edge cases, null/undefined guards at boundaries.
+   > Note: internal code trusts normalized data — only validate at system boundaries.
+4. **Review naming** — do variable/function names describe what they DO, not what they ARE? \`fetchUserProfile\` > \`getData\`.
+5. **Check for regressions** — does this change break existing behavior? Look for:
+   - Changed function signatures
+   - Removed exports
+   - Modified database schemas
+   - Altered API response shapes`,
+  },
+  {
+    id: "sk4",
+    name: "Deploy Verification",
+    description: "Post-deploy health checks and rollback criteria",
+    assignedTags: ["infra", "ci"],
+    steps: 3,
+    content: `# Deploy Verification
+
+1. **Health check** — hit the health endpoint within 30s of deploy:
+   \`\`\`bash
+   curl -s https://api.example.com/health | jq .
+   \`\`\`
+   - If status != "ok" → **rollback immediately**
+   - If latency > 2s → investigate but don't rollback yet
+2. **Smoke test core flows** — run the critical path tests:
+   - Authentication (login, token refresh)
+   - Primary CRUD operations
+   - WebSocket connections (if applicable)
+   - If any fail → **rollback**
+3. **Monitor for 15 minutes** — watch error rates and p99 latency:
+   - Error rate > 1% → **rollback**
+   - p99 latency > 2x baseline → investigate
+   - All clear after 15m → deploy is stable`,
+  },
+]
+
+function getAgentSkills(agent: FakeAgent): Skill[] {
+  return SKILLS.filter(s => s.assignedTags.some(tag => agent.tags.includes(tag)))
+}
+
+/** All unique tags across agents */
+const ALL_TAGS = Array.from(new Set(AGENTS.flatMap(a => a.tags))).sort()
 
 /**
  * FAKE_MARKDOWN — used in right-panel agent detail feed.
@@ -1274,6 +1396,12 @@ function AgentLeftPanel({
   onResize: (delta: number) => void
   onResetWidth: () => void
 }) {
+  const [panelTab, setPanelTab] = useState<"agents" | "skills">("agents")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showTagDropdown, setShowTagDropdown] = useState(false)
+
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
     for (const a of agents) counts[a.status] = (counts[a.status] ?? 0) + 1
@@ -1281,6 +1409,29 @@ function AgentLeftPanel({
   }, [agents])
 
   const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
+
+  const filteredAgents = useMemo(() => {
+    let result = agents
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(a => a.name.toLowerCase().includes(q))
+    }
+    if (tagFilter) {
+      result = result.filter(a => a.tags.includes(tagFilter))
+    }
+    return result
+  }, [agents, searchQuery, tagFilter])
+
+  const selectable = selectedIds.size > 0
+
+  const handleSelectAgent = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
 
   /* ---- Collapsed state: 48px icon rail ---- */
   if (!isOpen) {
@@ -1392,7 +1543,7 @@ function AgentLeftPanel({
       <div className="h-10 px-3 flex items-center border-b border-border-default shrink-0">
         <button
           type="button"
-          className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors"
+          className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors flex-1 min-w-0"
         >
           <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent shrink-0">
             A
@@ -1400,60 +1551,185 @@ function AgentLeftPanel({
           <span className="text-sm font-medium text-default">agentobox</span>
           <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
         </button>
-      </div>
-
-      {/* Panel header: title + expand-all + collapse */}
-      <div className="h-8 px-3 flex items-center gap-2 border-b border-border-default shrink-0">
-        <Users className="h-3.5 w-3.5 text-muted" />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">
-          Agents
-        </span>
-        <button
-          type="button"
-          onClick={onToggleExpandAll}
-          className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-          title="Cycle card states"
-        >
-          {expandedIds.size > 0 ? (
-            <ChevronsDownUp className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronsUpDown className="h-3.5 w-3.5" />
-          )}
-        </button>
         <button
           type="button"
           onClick={onToggleOpen}
-          className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+          className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
           title="Collapse panel"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      {/* Agent cards */}
-      <ScrollArea className="flex-1 overflow-y-auto">
-        <div className="p-3 space-y-2">
-          {agents.map((agent) => (
-            <AgentCardRow
-              key={agent.id}
-              agent={agent}
-              isOpen={expandedIds.has(agent.id)}
-              onToggle={() => onToggleAgent(agent.id)}
-            />
-          ))}
-        </div>
-      </ScrollArea>
-
-      {/* Fleet health horizontal */}
-      <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-2">
-        <FleetHealthPills statusCounts={statusCounts} layout="horizontal" />
-        <span className="text-[9px] text-muted/40 font-mono ml-auto">
-          {agents.length} agents
-        </span>
+      {/* Panel tabs: Agents | Skills */}
+      <div className="h-7 px-3 flex items-center gap-1 border-b border-border-default shrink-0">
+        <button
+          type="button"
+          onClick={() => setPanelTab("agents")}
+          className={cn(
+            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors",
+            panelTab === "agents"
+              ? "bg-surface-raised text-default"
+              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
+          )}
+        >
+          <Users className="h-3 w-3" />
+          Agents
+        </button>
+        <button
+          type="button"
+          onClick={() => setPanelTab("skills")}
+          className={cn(
+            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors",
+            panelTab === "skills"
+              ? "bg-surface-raised text-default"
+              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
+          )}
+        >
+          <BookOpen className="h-3 w-3" />
+          Skills
+        </button>
+        <span className="flex-1" />
+        {panelTab === "agents" && (
+          <button
+            type="button"
+            onClick={onToggleExpandAll}
+            className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+            title="Cycle card states"
+          >
+            {expandedIds.size > 0 ? (
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
       </div>
 
+      {/* Tab content */}
+      {panelTab === "agents" ? (
+        <>
+          {/* Agent filter bar */}
+          <div className="px-3 py-2 flex items-center gap-2 border-b border-border-subtle shrink-0">
+            <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded-md border border-border-default bg-surface-sunken/40 px-2 py-1">
+              <Search className="h-3 w-3 text-muted/50 shrink-0" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search agents..."
+                className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
+              />
+            </div>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowTagDropdown(!showTagDropdown)}
+                className={cn(
+                  "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
+                  tagFilter
+                    ? "border-accent/30 bg-accent/10 text-accent"
+                    : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+                )}
+              >
+                <Filter className="h-3 w-3" />
+                {tagFilter || "Tags"}
+                <ChevronRight size={10} className="rotate-90 text-muted/40" />
+              </button>
+              {showTagDropdown && (
+                <div className="absolute top-full right-0 mt-1 w-32 rounded-md border border-border-default bg-surface-raised shadow-lg z-(--z-dropdown) overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => { setTagFilter(null); setShowTagDropdown(false) }}
+                    className={cn(
+                      "w-full text-left px-3 py-1.5 text-[11px] transition-colors",
+                      !tagFilter ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
+                    )}
+                  >
+                    All tags
+                  </button>
+                  {ALL_TAGS.map(tag => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => { setTagFilter(tag); setShowTagDropdown(false) }}
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors",
+                        tagFilter === tag ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
+                      )}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Agent cards */}
+          <ScrollArea className="flex-1 overflow-y-auto">
+            <div className="p-3 space-y-2">
+              {filteredAgents.map((agent) => (
+                <AgentCardRow
+                  key={agent.id}
+                  agent={agent}
+                  isOpen={expandedIds.has(agent.id)}
+                  onToggle={() => onToggleAgent(agent.id)}
+                  selectable={selectable}
+                  selected={selectedIds.has(agent.id)}
+                  onSelect={() => handleSelectAgent(agent.id)}
+                />
+              ))}
+              {filteredAgents.length === 0 && (
+                <div className="py-6 text-center">
+                  <Users className="h-5 w-5 text-muted/20 mx-auto mb-1" />
+                  <p className="text-[11px] text-muted/50">No agents match filters</p>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Bulk action bar — when agents are selected */}
+          {selectedIds.size > 0 && (
+            <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-medium text-default shrink-0">
+                {selectedIds.size} selected
+              </span>
+              <select
+                className="bg-surface-sunken/60 border border-border-default rounded-md px-2 py-1 text-[11px] text-secondary outline-none"
+                defaultValue=""
+                onChange={() => {}}
+              >
+                <option value="" disabled>Assign skill...</option>
+                {SKILLS.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <span className="flex-1" />
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-[11px] text-muted hover:text-secondary transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
+          {/* Fleet health horizontal */}
+          <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-2 shrink-0">
+            <FleetHealthPills statusCounts={statusCounts} layout="horizontal" />
+            <span className="text-[9px] text-muted/40 font-mono ml-auto">
+              {agents.length} agents
+            </span>
+          </div>
+        </>
+      ) : (
+        <SkillsPanel />
+      )}
+
       {/* Bottom toolbar: secrets + cost + user */}
-      <div className="px-3 py-2 border-t border-border-default flex items-center gap-3">
+      <div className="px-3 py-2 border-t border-border-default flex items-center gap-3 shrink-0">
         <button
           type="button"
           onClick={onOpenSecrets}
@@ -1758,7 +2034,100 @@ function AgentSettingsPanel({ agent }: { agent: FakeAgent }) {
   )
 }
 
-type ViewMode = "terminal" | "feed" | "settings"
+/* ================================================================== */
+/*  AGENT SKILLS VIEW — per-agent skills in card view                  */
+/* ================================================================== */
+
+function AgentSkillsView({ agent }: { agent: FakeAgent }) {
+  const skills = getAgentSkills(agent)
+  const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
+
+  return (
+    <div className="px-3 py-3 space-y-3">
+      {/* Agent tags */}
+      <div>
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1.5">
+          Tags
+        </label>
+        {agent.tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {agent.tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-[11px] font-mono text-accent"
+              >
+                <Tag className="h-2.5 w-2.5" />
+                {tag}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[11px] text-muted/50 font-mono">no tags</span>
+        )}
+      </div>
+
+      {/* Inherited skills */}
+      <div>
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1.5">
+          Inherited Skills
+        </label>
+        {skills.length === 0 ? (
+          <div className="py-4 text-center rounded-md border border-border-subtle bg-surface-sunken/20">
+            <BookOpen className="h-5 w-5 text-muted/20 mx-auto mb-1" />
+            <p className="text-[11px] text-muted/50">No skills assigned via tags</p>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {skills.map((skill) => {
+              const isExpanded = expandedSkill === skill.id
+              const sourceTag = skill.assignedTags.find(t => agent.tags.includes(t))
+              return (
+                <div key={skill.id} className="rounded-md border border-border-subtle overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedSkill(isExpanded ? null : skill.id)}
+                    className="w-full text-left px-2.5 py-2 flex items-center gap-2 hover:bg-surface-sunken/30 transition-colors"
+                  >
+                    <ChevronRight
+                      size={12}
+                      className={cn(
+                        "shrink-0 text-muted transition-transform duration-(--duration-normal)",
+                        isExpanded && "rotate-90",
+                      )}
+                    />
+                    <span className="text-xs font-medium text-default flex-1 min-w-0 truncate">
+                      {skill.name}
+                    </span>
+                    {sourceTag && (
+                      <span className="text-[9px] font-mono text-muted/60 shrink-0">
+                        via {sourceTag}
+                      </span>
+                    )}
+                    {skill.steps && (
+                      <span className="text-[9px] font-mono text-info/60 shrink-0">
+                        {skill.steps} steps
+                      </span>
+                    )}
+                  </button>
+                  <Collapsible open={isExpanded}>
+                    <div className="px-2.5 pb-2.5 border-t border-border-subtle">
+                      <MarkdownRenderer
+                        content={skill.content}
+                        className="text-xs text-secondary"
+                      />
+                    </div>
+                  </Collapsible>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+type ViewMode = "terminal" | "feed" | "settings" | "skills"
 
 /**
  * Agent card — two states:
@@ -1773,10 +2142,16 @@ function AgentCardRow({
   agent,
   isOpen,
   onToggle,
+  selectable = false,
+  selected = false,
+  onSelect,
 }: {
   agent: FakeAgent
   isOpen: boolean
   onToggle: () => void
+  selectable?: boolean
+  selected?: boolean
+  onSelect?: () => void
 }) {
   const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
   const isRunning = agent.status === "running"
@@ -1787,6 +2162,7 @@ function AgentCardRow({
   const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
     { id: "terminal", icon: Monitor, label: "Screen" },
     { id: "feed", icon: List, label: "Feed" },
+    { id: "skills", icon: BookOpen, label: "Skills" },
     { id: "settings", icon: Settings, label: "Settings" },
   ]
 
@@ -1806,10 +2182,32 @@ function AgentCardRow({
       {/* Header row — always visible, click to toggle */}
       <button
         type="button"
-        onClick={onToggle}
+        onClick={(e) => {
+          if (e.shiftKey && onSelect) {
+            onSelect()
+            return
+          }
+          if (selectable && onSelect) {
+            onSelect()
+          } else {
+            onToggle()
+          }
+        }}
         className="w-full text-left px-2.5 py-2"
       >
         <div className="flex items-center gap-2 min-w-0">
+          {selectable && (
+            <div
+              className={cn(
+                "h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0",
+                selected
+                  ? "bg-accent/20 border-accent/50"
+                  : "border-border-default",
+              )}
+            >
+              {selected && <Check className="h-2.5 w-2.5 text-accent" strokeWidth={3} />}
+            </div>
+          )}
           <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
           <span
             className={cn(
@@ -1819,6 +2217,19 @@ function AgentCardRow({
           >
             {agent.name}
           </span>
+          {/* Tag pills — max 2 + overflow */}
+          {agent.tags.length > 0 && (
+            <span className="inline-flex items-center gap-1 shrink-0">
+              {agent.tags.slice(0, 2).map((tag) => (
+                <span key={tag} className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle">
+                  {tag}
+                </span>
+              ))}
+              {agent.tags.length > 2 && (
+                <span className="text-[9px] text-muted/40 font-mono">+{agent.tags.length - 2}</span>
+              )}
+            </span>
+          )}
           <span
             className={cn(
               "h-1.5 w-1.5 rounded-full shrink-0",
@@ -1858,6 +2269,7 @@ function AgentCardRow({
         <div className="px-3 pb-2">
           {viewMode === "terminal" && <VncThumbnail agent={agent} />}
           {viewMode === "feed" && <AgentDetailFeed agent={agent} />}
+          {viewMode === "skills" && <AgentSkillsView agent={agent} />}
           {viewMode === "settings" && <AgentSettingsPanel agent={agent} />}
         </div>
 
@@ -1928,16 +2340,7 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
 
   return (
     <div className="border-t border-border-subtle flex flex-col">
-      {/* Mini-feed header */}
-      <div className="px-3 py-1.5 flex items-center gap-2 bg-surface-sunken/30">
-        <MessageSquare className="h-3 w-3 text-muted/60" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/60">
-          Detail Feed
-        </span>
-        <span className="text-[9px] text-muted/40 font-mono">
-          source: content blocks
-        </span>
-      </div>
+
 
       {/* Historical content only — scrollable mini-feed */}
       <div className="flex-1 min-h-0 max-h-[320px] overflow-y-auto px-3 py-2 space-y-2">
@@ -2027,6 +2430,156 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
         )}
       </div>
 
+    </div>
+  )
+}
+
+/* ================================================================== */
+/*  SKILLS PANEL — skills tab content in left panel                    */
+/* ================================================================== */
+
+function SkillsPanel() {
+  const [search, setSearch] = useState("")
+  const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [newContent, setNewContent] = useState("")
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return SKILLS
+    const q = search.toLowerCase()
+    return SKILLS.filter(s =>
+      s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
+    )
+  }, [search])
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Search + create */}
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-border-subtle shrink-0">
+        <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded-md border border-border-default bg-surface-sunken/40 px-2 py-1">
+          <Search className="h-3 w-3 text-muted/50 shrink-0" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search skills..."
+            className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowCreate(!showCreate)}
+          className={cn(
+            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0",
+            showCreate
+              ? "bg-accent/15 text-accent"
+              : "text-muted hover:text-secondary hover:bg-surface-raised/50",
+          )}
+        >
+          <Plus className="h-3 w-3" />
+          Create
+        </button>
+      </div>
+
+      {/* Create form */}
+      <Collapsible open={showCreate}>
+        <div className="px-3 py-2 border-b border-border-subtle space-y-2 bg-surface-sunken/20">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Skill name..."
+            className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
+          />
+          <textarea
+            value={newContent}
+            onChange={(e) => setNewContent(e.target.value)}
+            placeholder="Markdown content..."
+            rows={4}
+            className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors resize-none"
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={!newName.trim()}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                newName.trim()
+                  ? "bg-accent text-on-emphasis hover:bg-accent-hover"
+                  : "bg-surface-sunken text-muted cursor-not-allowed",
+              )}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Collapsible>
+
+      {/* Skills list */}
+      <ScrollArea className="flex-1 overflow-y-auto">
+        <div className="p-3 space-y-1.5">
+          {filtered.length === 0 ? (
+            <div className="py-8 text-center">
+              <BookOpen className="h-6 w-6 text-muted/20 mx-auto mb-1.5" />
+              <p className="text-[11px] text-muted/50">No skills found</p>
+            </div>
+          ) : (
+            filtered.map((skill) => {
+              const isExpanded = expandedSkill === skill.id
+              return (
+                <div key={skill.id} className="rounded-lg border border-border-subtle overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedSkill(isExpanded ? null : skill.id)}
+                    className="w-full text-left px-2.5 py-2 hover:bg-surface-raised/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ChevronRight
+                        size={12}
+                        className={cn(
+                          "shrink-0 text-muted transition-transform duration-(--duration-normal)",
+                          isExpanded && "rotate-90",
+                        )}
+                      />
+                      <span className="text-xs font-medium text-default flex-1 min-w-0 truncate">
+                        {skill.name}
+                      </span>
+                      {skill.steps ? (
+                        <span className="text-[9px] font-mono text-info/60 shrink-0">
+                          {skill.steps} steps
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-mono text-muted/40 shrink-0">
+                          skill
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 ml-5">
+                      {skill.assignedTags.map((tag) => (
+                        <span key={tag} className="px-1.5 py-px rounded text-[9px] font-mono text-accent/70 bg-accent/8 border border-accent/15">
+                          {tag}
+                        </span>
+                      ))}
+                      <span className="text-[9px] text-muted/40 font-mono">
+                        {skill.description.length > 40 ? skill.description.slice(0, 40) + "..." : skill.description}
+                      </span>
+                    </div>
+                  </button>
+                  <Collapsible open={isExpanded}>
+                    <div className="px-3 pb-3 border-t border-border-subtle bg-surface-sunken/10">
+                      <MarkdownRenderer
+                        content={skill.content}
+                        className="text-xs text-secondary"
+                      />
+                    </div>
+                  </Collapsible>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </ScrollArea>
     </div>
   )
 }
