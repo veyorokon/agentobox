@@ -31,6 +31,7 @@ import {
   Search,
   Filter,
   Tag,
+  Shield,
 } from "lucide-react"
 import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -63,6 +64,7 @@ type FakeAgent = {
   runtime: "docker" | "modal"
   workspacePath: string
   tags: string[]
+  mode: "auto" | "plan" | "supervised"
 }
 
 const AGENTS: FakeAgent[] = [
@@ -84,6 +86,7 @@ const AGENTS: FakeAgent[] = [
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
     tags: ["backend", "core"],
+    mode: "plan",
   },
   {
     id: "2",
@@ -102,6 +105,7 @@ const AGENTS: FakeAgent[] = [
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
     tags: ["frontend", "core"],
+    mode: "auto",
   },
   {
     id: "3",
@@ -119,6 +123,7 @@ const AGENTS: FakeAgent[] = [
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
     tags: ["testing", "ci"],
+    mode: "supervised",
   },
   {
     id: "4",
@@ -135,6 +140,7 @@ const AGENTS: FakeAgent[] = [
     runtime: "modal",
     workspacePath: "/workspace/agentobox",
     tags: ["infra", "ci"],
+    mode: "auto",
   },
   {
     id: "5",
@@ -152,6 +158,7 @@ const AGENTS: FakeAgent[] = [
     runtime: "docker",
     workspacePath: "/workspace/agentobox",
     tags: ["docs"],
+    mode: "auto",
   },
   {
     id: "6",
@@ -168,6 +175,7 @@ const AGENTS: FakeAgent[] = [
     runtime: "modal",
     workspacePath: "/workspace/agentobox",
     tags: ["infra"],
+    mode: "supervised",
   },
 ]
 
@@ -343,6 +351,9 @@ type TeamFeedItem =
   | { type: "status"; agent: string; from: string; to: string }
   | { type: "error"; agent: string; text: string }
   | { type: "question"; agent: string; question: string; options: string[] }
+  | { type: "plan"; agent: string; title: string; steps: { text: string; status: "done" | "current" | "pending" }[]; planStatus: "pending" | "approved" | "rejected" }
+  | { type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
+  | { type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
 
 const TEAM_FEED: TeamFeedItem[] = [
   // Session start
@@ -358,6 +369,21 @@ const TEAM_FEED: TeamFeedItem[] = [
   { type: "status", agent: "qa", from: "idle", to: "waiting" },
   { type: "status", agent: "docs", from: "idle", to: "running" },
 
+  // Backend proposes a plan before starting work
+  {
+    type: "plan",
+    agent: "backend",
+    title: "Fix JWT validation and add clock skew tolerance",
+    steps: [
+      { text: "Read auth.ts and identify expiry comparison bug", status: "done" },
+      { text: "Convert Date.now() to seconds in validateToken()", status: "done" },
+      { text: "Add 30-second clock skew tolerance", status: "current" },
+      { text: "Add structured error logging for validation failures", status: "pending" },
+      { text: "Run lint and existing tests", status: "pending" },
+    ],
+    planStatus: "approved",
+  },
+
   // Backend finishes first turn — SUMMARY (not the full verbose output)
   {
     type: "summary",
@@ -366,6 +392,22 @@ const TEAM_FEED: TeamFeedItem[] = [
     cost: 0.08,
     turns: 5,
     duration: "2m 10s",
+  },
+
+  // Backend asks multiple questions about auth strategy
+  {
+    type: "multi-question",
+    agent: "backend",
+    questions: [
+      {
+        text: "Which token storage strategy should we use for refresh tokens?",
+        options: ["HTTP-only cookies", "In-memory + secure storage", "Session storage"],
+      },
+      {
+        text: "Should we enforce single-session or allow multiple concurrent sessions?",
+        options: ["Single session (revoke old on new login)", "Multiple sessions (up to 5)", "Unlimited sessions"],
+      },
+    ],
   },
 
   // Backend asks a question
@@ -424,6 +466,15 @@ const TEAM_FEED: TeamFeedItem[] = [
     duration: "2m 10s",
   },
 
+  // QA requests permission to push
+  {
+    type: "permission",
+    agent: "qa",
+    command: "git push origin fix/jwt-validation",
+    risk: "Pushes to remote branch",
+    permStatus: "pending",
+  },
+
   // Docs finishes
   {
     type: "summary",
@@ -463,6 +514,77 @@ const PILL_CONFIG = [
   { key: "idle" as const, dot: "bg-info", text: "text-muted" },
   { key: "stopped" as const, dot: "bg-muted/40", text: "text-muted/50" },
 ]
+
+const MODE_CONFIG = {
+  auto: { label: "auto", color: "text-success" },
+  plan: { label: "plan", color: "text-warning" },
+  supervised: { label: "supervised", color: "text-info" },
+} as const
+
+/* ================================================================== */
+/*  MODE PILL                                                          */
+/* ================================================================== */
+
+function ModePill({
+  mode,
+  onChange,
+}: {
+  mode: "auto" | "plan" | "supervised"
+  onChange: (mode: "auto" | "plan" | "supervised") => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const cfg = MODE_CONFIG[mode]
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [open])
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(!open)
+        }}
+        className={cn("text-[10px] font-medium transition-colors hover:opacity-80", cfg.color)}
+      >
+        {cfg.label}
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 w-28 rounded-md border border-border-default bg-surface-raised shadow-lg z-(--z-dropdown) overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(Object.keys(MODE_CONFIG) as Array<keyof typeof MODE_CONFIG>).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                onChange(key)
+                setOpen(false)
+              }}
+              className={cn(
+                "w-full text-left px-3 py-1.5 text-[11px] font-medium transition-colors",
+                mode === key
+                  ? cn(MODE_CONFIG[key].color, "bg-surface-sunken/40")
+                  : "text-secondary hover:bg-surface-sunken/40",
+              )}
+            >
+              {MODE_CONFIG[key].label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /* ================================================================== */
 /*  BREAKPOINT HOOK                                                    */
@@ -862,6 +984,318 @@ function QuestionCard({
           <p className="text-[10px] text-muted/50 mt-2 font-mono">
             or type a custom response...
           </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 7b. PlanCard — interactive plan approval card */
+function PlanCard({
+  agent,
+  title,
+  steps,
+  planStatus: initialStatus,
+}: {
+  agent: string
+  title: string
+  steps: { text: string; status: "done" | "current" | "pending" }[]
+  planStatus: "pending" | "approved" | "rejected"
+}) {
+  const [status, setStatus] = useState(initialStatus)
+
+  if (status === "approved") {
+    return (
+      <div className="flex items-center gap-2 py-0.5 justify-center">
+        <AgentAvatar name={agent} size="sm" />
+        <span className="text-[10px] font-mono text-success">
+          Plan: {title} <Check className="inline h-3 w-3" strokeWidth={2.5} /> approved
+        </span>
+      </div>
+    )
+  }
+
+  if (status === "rejected") {
+    return (
+      <div className="flex items-center gap-2 py-0.5 justify-center">
+        <AgentAvatar name={agent} size="sm" />
+        <span className="text-[10px] font-mono text-muted">
+          Plan: {title} <X className="inline h-3 w-3" strokeWidth={2.5} /> rejected
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex gap-2 min-w-0">
+      <ChatAvatar name={agent} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] text-warning font-mono mb-0.5">{agent} · Proposing a plan</div>
+        <div className="rounded-lg border border-warning/20 bg-surface-raised/60 p-3 max-w-lg">
+          <p className="text-sm font-medium text-default mb-2">{title}</p>
+          <div className="space-y-1.5 mb-3">
+            {steps.map((step, i) => (
+              <div key={i} className="flex items-start gap-2">
+                {step.status === "done" ? (
+                  <Check className="h-3.5 w-3.5 text-success shrink-0 mt-0.5" strokeWidth={2.5} />
+                ) : step.status === "current" ? (
+                  <span className="h-3.5 w-3.5 flex items-center justify-center shrink-0 mt-0.5">
+                    <span className="h-2 w-2 rounded-full bg-warning animate-breathe" />
+                  </span>
+                ) : (
+                  <span className="h-3.5 w-3.5 rounded-full border border-border-default shrink-0 mt-0.5" />
+                )}
+                <span
+                  className={cn(
+                    "text-xs leading-tight",
+                    step.status === "done" && "text-muted line-through",
+                    step.status === "current" && "text-default font-medium",
+                    step.status === "pending" && "text-muted",
+                  )}
+                >
+                  {step.text}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setStatus("approved")}
+              className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatus("rejected")}
+              className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 7c. PermissionCard — permission request card */
+function PermissionCard({
+  agent,
+  command,
+  risk,
+  permStatus: initialStatus,
+}: {
+  agent: string
+  command: string
+  risk?: string
+  permStatus: "pending" | "allowed" | "denied"
+}) {
+  const [status, setStatus] = useState(initialStatus)
+
+  if (status === "allowed") {
+    return (
+      <div className="flex items-center gap-2 py-0.5 justify-center">
+        <AgentAvatar name={agent} size="sm" />
+        <span className="text-[10px] font-mono text-success">
+          Allowed: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <Check className="inline h-3 w-3" strokeWidth={2.5} />
+        </span>
+      </div>
+    )
+  }
+
+  if (status === "denied") {
+    return (
+      <div className="flex items-center gap-2 py-0.5 justify-center">
+        <AgentAvatar name={agent} size="sm" />
+        <span className="text-[10px] font-mono text-muted">
+          Denied: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <X className="inline h-3 w-3" strokeWidth={2.5} />
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex gap-2 min-w-0">
+      <ChatAvatar name={agent} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] text-info font-mono mb-0.5">
+          <Shield className="inline h-3 w-3 mr-1" />
+          {agent} · Requesting permission
+        </div>
+        <div className="rounded-lg border border-info/20 bg-surface-raised/60 p-3 max-w-lg">
+          <div className="rounded-md bg-surface-sunken/60 border border-border-subtle px-3 py-2 mb-2">
+            <code className="text-xs font-mono text-default">{command}</code>
+          </div>
+          {risk && (
+            <div className="flex items-center gap-1.5 mb-3">
+              <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
+              <span className="text-[11px] text-warning">{risk}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setStatus("allowed")}
+              className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
+            >
+              Allow
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatus("allowed")}
+              className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
+            >
+              Allow always
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatus("denied")}
+              className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
+            >
+              Deny
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 7d. MultiQuestionCard — tabbed multi-question card */
+function MultiQuestionCard({
+  agent,
+  questions,
+}: {
+  agent: string
+  questions: { text: string; options: string[] }[]
+}) {
+  const [currentStep, setCurrentStep] = useState(0)
+  const [answers, setAnswers] = useState<Record<number, number>>({})
+  const [submitted, setSubmitted] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+
+  if (submitted) {
+    return (
+      <div className="flex items-center gap-2 py-0.5 justify-center">
+        <AgentAvatar name={agent} size="sm" />
+        <span className="text-[10px] font-mono text-success">
+          Answered {questions.length} questions <Check className="inline h-3 w-3" strokeWidth={2.5} />
+        </span>
+      </div>
+    )
+  }
+
+  if (reviewing) {
+    return (
+      <div className="flex gap-2 min-w-0">
+        <ChatAvatar name={agent} />
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] text-muted font-mono mb-0.5">{agent}</div>
+          <div className="rounded-lg border border-border-default bg-surface-raised/60 p-3 max-w-lg">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-default">Review answers</span>
+            </div>
+            <div className="space-y-2 mb-3">
+              {questions.map((q, i) => (
+                <div key={i} className="text-xs">
+                  <p className="text-muted mb-0.5">{q.text}</p>
+                  <p className="text-default font-medium">
+                    {answers[i] !== undefined ? q.options[answers[i]] : <span className="text-warning">unanswered</span>}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 pt-2 border-t border-border-subtle">
+              <button
+                type="button"
+                onClick={() => { setReviewing(false); setCurrentStep(0) }}
+                className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubmitted(true)}
+                className="px-3 py-1.5 rounded-md bg-accent text-on-emphasis text-xs font-medium hover:bg-accent-hover transition-colors"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const q = questions[currentStep]
+  const isLast = currentStep === questions.length - 1
+
+  return (
+    <div className="flex gap-2 min-w-0">
+      <ChatAvatar name={agent} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] text-muted font-mono mb-0.5">{agent}</div>
+        <div className="rounded-lg border border-border-default bg-surface-raised/60 p-3 max-w-lg">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm text-default">{q.text}</p>
+            <span className="text-[10px] text-muted font-mono shrink-0 ml-2">
+              {currentStep + 1} of {questions.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {q.options.map((opt, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setAnswers((prev) => ({ ...prev, [currentStep]: i }))}
+                className={cn(
+                  "px-3 py-1.5 rounded-md border text-xs font-medium transition-all",
+                  answers[currentStep] === i
+                    ? "border-accent bg-accent/15 text-accent"
+                    : "border-border-default text-secondary hover:border-border-strong hover:bg-surface-sunken/40",
+                )}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 pt-2 border-t border-border-subtle">
+            {currentStep > 0 && (
+              <button
+                type="button"
+                onClick={() => setCurrentStep((s) => s - 1)}
+                className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
+              >
+                Back
+              </button>
+            )}
+            <span className="flex-1" />
+            {isLast ? (
+              <button
+                type="button"
+                onClick={() => setReviewing(true)}
+                className="px-3 py-1.5 rounded-md bg-accent text-on-emphasis text-xs font-medium hover:bg-accent-hover transition-colors"
+              >
+                Review & Submit
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCurrentStep((s) => s + 1)}
+                className="px-3 py-1.5 rounded-md border border-accent/30 text-xs font-medium text-accent hover:bg-accent/10 transition-colors"
+              >
+                Next →
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1868,6 +2302,80 @@ function ComposerBar() {
 }
 
 /* ================================================================== */
+/*  ATTENTION BAR                                                      */
+/* ================================================================== */
+
+function AttentionBar({ items }: { items: TeamFeedItem[] }) {
+  const pending = items.filter((item): item is Extract<TeamFeedItem, { type: "permission" } | { type: "plan" }> => {
+    if (item.type === "permission" && item.permStatus === "pending") return true
+    if (item.type === "plan" && item.planStatus === "pending") return true
+    return false
+  })
+
+  if (pending.length === 0) return null
+
+  // Sort: permissions first, then plans
+  const sorted = [...pending].sort((a, b) => {
+    const order = { permission: 0, plan: 1 }
+    return (order[a.type] ?? 2) - (order[b.type] ?? 2)
+  })
+
+  return (
+    <div className="mx-6 mb-2 rounded-lg border border-warning/20 bg-warning-subtle/10 p-3 max-w-3xl self-center w-full">
+      <div className="flex items-center gap-2 mb-2">
+        <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
+        <span className="text-xs font-medium text-warning">
+          {pending.length} item{pending.length !== 1 ? "s" : ""} need attention
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        {sorted.map((item, i) => (
+          <div key={i} className="flex items-center gap-2 min-w-0">
+            <AgentAvatar name={item.agent} size="sm" />
+            <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
+              {item.type === "permission"
+                ? `${item.agent} wants to run: ${item.command}`
+                : `${item.agent} proposed: ${item.title}`}
+            </span>
+            {item.type === "permission" ? (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                >
+                  Allow
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                >
+                  Deny
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                >
+                  Reject
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================== */
 /*  TEAM FEED — main feed renders team-level events only               */
 /*                                                                     */
 /*  This is the "slack channel" view. You see:                         */
@@ -1911,6 +2419,12 @@ function TeamFeed() {
                 return <TeamErrorAlert key={i} agent={item.agent} text={item.text} />
               case "question":
                 return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
+              case "plan":
+                return <PlanCard key={i} agent={item.agent} title={item.title} steps={item.steps} planStatus={item.planStatus} />
+              case "permission":
+                return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
+              case "multi-question":
+                return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
               default:
                 return null
             }
@@ -1918,6 +2432,7 @@ function TeamFeed() {
         </div>
       </ScrollArea>
 
+      <AttentionBar items={TEAM_FEED} />
       <ComposerBar />
     </div>
   )
@@ -2294,6 +2809,13 @@ function AgentCardRow({
   const isError = agent.status === "error"
   const isStopped = agent.status === "stopped"
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
+  const [agentMode, setAgentMode] = useState(agent.mode)
+
+  const hasPendingItem = TEAM_FEED.some(
+    (item) =>
+      (item.type === "permission" && item.agent === agent.name && item.permStatus === "pending") ||
+      (item.type === "plan" && item.agent === agent.name && item.planStatus === "pending"),
+  )
 
   const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
     { id: "terminal", icon: Monitor, label: "Screen" },
@@ -2315,9 +2837,10 @@ function AgentCardRow({
             ),
       )}
     >
-      {/* Header row — always visible, click to toggle */}
-      <button
-        type="button"
+      {/* Header row — div instead of button to allow nested interactive ModePill */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => {
           if (selectable && onSelect) {
             onSelect()
@@ -2325,7 +2848,14 @@ function AgentCardRow({
             onToggle()
           }
         }}
-        className="w-full text-left px-2.5 py-2"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            if (selectable && onSelect) onSelect()
+            else onToggle()
+          }
+        }}
+        className="w-full text-left px-2.5 py-2 cursor-pointer"
       >
         <div className="flex items-center gap-2 min-w-0">
           {selectable && (
@@ -2349,14 +2879,15 @@ function AgentCardRow({
           >
             {agent.name}
           </span>
-          {/* Tag pills — show 1 + overflow count */}
+          <ModePill mode={agentMode} onChange={setAgentMode} />
+          {/* Tag pills — show 1 + overflow count, shrink before mode */}
           {agent.tags.length > 0 && (
-            <span className="inline-flex items-center gap-1 shrink-0">
-              <span className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle">
+            <span className="inline-flex items-center gap-1 shrink min-w-0 overflow-hidden">
+              <span className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle truncate">
                 {agent.tags[0]}
               </span>
               {agent.tags.length > 1 && (
-                <span className="text-[9px] text-muted/40 font-mono">+{agent.tags.length - 1}</span>
+                <span className="text-[9px] text-muted/40 font-mono shrink-0">+{agent.tags.length - 1}</span>
               )}
             </span>
           )}
@@ -2391,7 +2922,7 @@ function AgentCardRow({
             )}
           />
         </div>
-      </button>
+      </div>
 
       {/* Open content — animated reveal */}
       <Collapsible open={isOpen}>
@@ -2425,21 +2956,59 @@ function AgentCardRow({
             ))}
           </div>
 
-          {/* Mini composer */}
-          <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded border border-border-default bg-surface-sunken/40 px-2 py-1">
-            <span className="text-[9px] text-accent font-mono shrink-0">@{agent.name}</span>
-            <input
-              type="text"
-              placeholder="Message..."
-              className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
-            />
-            <button
-              type="button"
-              className="flex items-center justify-center h-4 w-4 rounded-full bg-surface text-muted shrink-0"
-            >
-              <ArrowUp className="h-2.5 w-2.5" strokeWidth={2.5} />
-            </button>
-          </div>
+          {/* Mini composer — transforms when agent has pending attention item */}
+          {hasPendingItem ? (
+            <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded border border-warning/30 bg-warning-subtle/10 px-2 py-1">
+              <Clock className="h-3 w-3 text-warning shrink-0" />
+              <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">Needs attention</span>
+              {TEAM_FEED.some(item => item.type === "permission" && item.agent === agent.name && item.permStatus === "pending") ? (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    className="px-2 py-0.5 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                  >
+                    Allow
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-0.5 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                  >
+                    Deny
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    className="px-2 py-0.5 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-0.5 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded border border-border-default bg-surface-sunken/40 px-2 py-1">
+              <span className="text-[9px] text-accent font-mono shrink-0">@{agent.name}</span>
+              <input
+                type="text"
+                placeholder="Message..."
+                className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
+              />
+              <button
+                type="button"
+                className="flex items-center justify-center h-4 w-4 rounded-full bg-surface text-muted shrink-0"
+              >
+                <ArrowUp className="h-2.5 w-2.5" strokeWidth={2.5} />
+              </button>
+            </div>
+          )}
 
           {/* Todo progress */}
           {agent.todoProgress && (
