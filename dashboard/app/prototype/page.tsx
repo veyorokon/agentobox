@@ -3942,6 +3942,40 @@ export default function PrototypePage() {
 
       {/* Right side: tabs (on small) + team feed */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {/* Mobile header: project + secrets + user (replaces sidebar header/footer) */}
+        {bp === "mobile" && (
+          <div className="h-10 px-3 flex items-center border-b border-border-default bg-surface shrink-0">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors min-w-0"
+            >
+              <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent shrink-0">
+                A
+              </div>
+              <span className="text-sm font-medium text-default truncate">agentobox</span>
+              <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
+            </button>
+            <span className="flex-1" />
+            <button
+              type="button"
+              onClick={() => setSecretsOpen(true)}
+              className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+              title="Project secrets"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1.5">
+              {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
+            </span>
+            <div
+              className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
+              title="vahid"
+            >
+              V
+            </div>
+          </div>
+        )}
+
         {/* Top tabs (S + mobile) */}
         {showTopTabs && (
           <TabBar
