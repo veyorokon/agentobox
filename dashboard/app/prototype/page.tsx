@@ -25,6 +25,8 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   Settings,
+  Monitor,
+  List,
 } from "lucide-react"
 import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -1251,8 +1253,8 @@ function FleetHealthPills({
 
 function AgentLeftPanel({
   agents,
-  cardStates,
-  onSelectAgent,
+  expandedIds,
+  onToggleAgent,
   onToggleExpandAll,
   onOpenSecrets,
   isOpen,
@@ -1262,8 +1264,8 @@ function AgentLeftPanel({
   onResetWidth,
 }: {
   agents: FakeAgent[]
-  cardStates: Record<string, CardState>
-  onSelectAgent: (id: string) => void
+  expandedIds: Set<string>
+  onToggleAgent: (id: string) => void
   onToggleExpandAll: () => void
   onOpenSecrets: () => void
   isOpen: boolean
@@ -1303,7 +1305,7 @@ function AgentLeftPanel({
         <div className="flex-1 flex flex-col items-center gap-1.5 py-2 overflow-y-auto">
           {agents.map((agent) => {
             const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
-            const isSelected = (cardStates[agent.id] ?? "collapsed") !== "collapsed"
+            const isSelected = expandedIds.has(agent.id)
             const isRunning = agent.status === "running"
             const isStopped = agent.status === "stopped"
 
@@ -1312,7 +1314,7 @@ function AgentLeftPanel({
                 key={agent.id}
                 type="button"
                 onClick={() => {
-                  onSelectAgent(agent.id)
+                  if (!expandedIds.has(agent.id)) onToggleAgent(agent.id)
                   onToggleOpen()
                 }}
                 className={cn(
@@ -1412,7 +1414,7 @@ function AgentLeftPanel({
           className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
           title="Cycle card states"
         >
-          {Object.values(cardStates).some((s) => s === "expanded") ? (
+          {expandedIds.size > 0 ? (
             <ChevronsDownUp className="h-3.5 w-3.5" />
           ) : (
             <ChevronsUpDown className="h-3.5 w-3.5" />
@@ -1435,8 +1437,8 @@ function AgentLeftPanel({
             <AgentCardRow
               key={agent.id}
               agent={agent}
-              cardState={cardStates[agent.id] ?? "collapsed"}
-              onSelect={() => onSelectAgent(agent.id)}
+              isOpen={expandedIds.has(agent.id)}
+              onToggle={() => onToggleAgent(agent.id)}
             />
           ))}
         </div>
@@ -1756,36 +1758,37 @@ function AgentSettingsPanel({ agent }: { agent: FakeAgent }) {
   )
 }
 
-type CardState = "collapsed" | "preview" | "expanded"
+type ViewMode = "terminal" | "feed" | "settings"
 
 /**
- * Agent card — three states:
+ * Agent card — two states:
  *
  * COLLAPSED — compact single row:
  *   avatar | name | status dot | live action | cost · time | chevron
  *
- * PREVIEW — VNC glance view (no tabs, no detail feed):
- *   collapsed header + VNC + stats row + live status bar
- *
- * EXPANDED — full detail:
- *   preview + Activity/Settings tabs + detail feed + mini composer
+ * OPEN — content area + bottom toolbar:
+ *   header row → content (VNC / feed / settings) → toolbar (view icons + composer + todo)
  */
 function AgentCardRow({
   agent,
-  cardState,
-  onSelect,
+  isOpen,
+  onToggle,
 }: {
   agent: FakeAgent
-  cardState: CardState
-  onSelect: () => void
+  isOpen: boolean
+  onToggle: () => void
 }) {
   const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
   const isRunning = agent.status === "running"
   const isError = agent.status === "error"
   const isStopped = agent.status === "stopped"
-  const isOpen = cardState !== "collapsed"
-  const isFullDetail = cardState === "expanded"
-  const [detailTab, setDetailTab] = useState<"activity" | "settings">("activity")
+  const [viewMode, setViewMode] = useState<ViewMode>("terminal")
+
+  const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
+    { id: "terminal", icon: Monitor, label: "Screen" },
+    { id: "feed", icon: List, label: "Feed" },
+    { id: "settings", icon: Settings, label: "Settings" },
+  ]
 
   return (
     <div
@@ -1800,10 +1803,10 @@ function AgentCardRow({
             ),
       )}
     >
-      {/* Collapsed row — always visible, click to cycle state */}
+      {/* Header row — always visible, click to toggle */}
       <button
         type="button"
-        onClick={onSelect}
+        onClick={onToggle}
         className="w-full text-left px-2.5 py-2"
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -1843,73 +1846,69 @@ function AgentCardRow({
             size={14}
             className={cn(
               "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-              cardState === "preview" && "rotate-45",
-              cardState === "expanded" && "rotate-90",
+              isOpen && "rotate-90",
             )}
           />
         </div>
       </button>
 
-      {/* Preview + expanded content — animated reveal */}
+      {/* Open content — animated reveal */}
       <Collapsible open={isOpen}>
-        {/* VNC full width */}
+        {/* Content area — swaps based on view mode */}
         <div className="px-3 pb-2">
-          <VncThumbnail agent={agent} />
+          {viewMode === "terminal" && <VncThumbnail agent={agent} />}
+          {viewMode === "feed" && <AgentDetailFeed agent={agent} />}
+          {viewMode === "settings" && <AgentSettingsPanel agent={agent} />}
         </div>
 
-        {/* Stats row */}
-        <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap px-3 pb-2">
-          <span className="inline-flex items-center gap-0.5">
-            <DollarSign className="h-2.5 w-2.5" />
-            {formatCost(agent.cost)}
-          </span>
-          <span className="inline-flex items-center gap-0.5">
-            <Clock className="h-2.5 w-2.5" />
-            {agent.duration}
-          </span>
-          <span className="text-muted/50">&middot;</span>
-          <span>{agent.model}</span>
-          <span className="text-muted/50">&middot;</span>
-          <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
+        {/* Bottom toolbar: view icons | mini composer | todo */}
+        <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-border-subtle bg-surface-sunken/20">
+          {/* View mode icons */}
+          <div className="flex items-center gap-0.5 shrink-0">
+            {VIEW_MODES.map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setViewMode(id)}
+                className={cn(
+                  "p-1 rounded transition-colors",
+                  viewMode === id
+                    ? "bg-surface-raised text-default"
+                    : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
+                )}
+                title={label}
+              >
+                <Icon className="h-3 w-3" />
+              </button>
+            ))}
+          </div>
+
+          {/* Mini composer */}
+          <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded border border-border-default bg-surface-sunken/40 px-2 py-1">
+            <span className="text-[9px] text-accent font-mono shrink-0">@{agent.name}</span>
+            <input
+              type="text"
+              placeholder="Message..."
+              className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
+            />
+            <button
+              type="button"
+              className="flex items-center justify-center h-4 w-4 rounded-full bg-surface text-muted shrink-0"
+            >
+              <ArrowUp className="h-2.5 w-2.5" strokeWidth={2.5} />
+            </button>
+          </div>
+
+          {/* Todo progress */}
+          {agent.todoProgress && (
+            <span className="flex items-center gap-1 shrink-0">
+              <CheckSquare className="h-3 w-3 text-muted/50" />
+              <span className="text-[9px] font-mono text-muted tabular-nums">
+                {agent.todoProgress.done}/{agent.todoProgress.total}
+              </span>
+            </span>
+          )}
         </div>
-
-        {/* Live status bar */}
-        {isRunning && <LiveStatusBar agent={agent} />}
-      </Collapsible>
-
-      {/* Full detail — second collapsible for tabs + feed */}
-      <Collapsible open={isFullDetail}>
-        {/* Inline tab bar — Activity | Settings */}
-        <div className="flex items-center gap-1 px-3 py-1 border-t border-border-subtle bg-surface-sunken/20">
-          <button
-            type="button"
-            onClick={() => setDetailTab("activity")}
-            className={cn(
-              "px-2 py-1 rounded text-[11px] font-medium transition-colors",
-              detailTab === "activity" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
-            )}
-          >
-            Activity
-          </button>
-          <button
-            type="button"
-            onClick={() => setDetailTab("settings")}
-            className={cn(
-              "px-2 py-1 rounded text-[11px] font-medium transition-colors",
-              detailTab === "settings" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
-            )}
-          >
-            <Settings className="h-3 w-3 inline mr-1" />
-            Settings
-          </button>
-        </div>
-
-        {/* Tab content */}
-        {detailTab === "activity" ? (
-          <AgentDetailFeed agent={agent} />
-        ) : (
-          <AgentSettingsPanel agent={agent} />
-        )}
       </Collapsible>
     </div>
   )
@@ -2051,12 +2050,12 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
 
 function AgentCardsPanel({
   agents,
-  cardStates,
-  onSelectAgent,
+  expandedIds,
+  onToggleAgent,
 }: {
   agents: FakeAgent[]
-  cardStates: Record<string, CardState>
-  onSelectAgent: (id: string) => void
+  expandedIds: Set<string>
+  onToggleAgent: (id: string) => void
 }) {
   return (
     <ScrollArea className="h-full overflow-y-auto">
@@ -2065,8 +2064,8 @@ function AgentCardsPanel({
           <AgentCardRow
             key={agent.id}
             agent={agent}
-            cardState={cardStates[agent.id] ?? "collapsed"}
-            onSelect={() => onSelectAgent(agent.id)}
+            isOpen={expandedIds.has(agent.id)}
+            onToggle={() => onToggleAgent(agent.id)}
           />
         ))}
       </div>
@@ -2217,7 +2216,7 @@ function ResizeHandle({
 
 export default function PrototypePage() {
   const bp = useBreakpoint()
-  const [cardStates, setCardStates] = useState<Record<string, CardState>>({ "1": "preview" })
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(["1"]))
   const [mainTab, setMainTab] = useState<"chat" | "agents">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
   const [agentPanelOpen, setAgentPanelOpen] = useState(true)
@@ -2230,32 +2229,20 @@ export default function PrototypePage() {
     else if (bp !== "mobile") setAgentPanelOpen(true)
   }, [bp])
 
-  const CARD_CYCLE: Record<CardState, CardState> = { collapsed: "preview", preview: "expanded", expanded: "collapsed" }
-
-  const handleSelectAgentCard = useCallback((id: string) => {
-    setCardStates((prev) => {
-      const current = prev[id] ?? "collapsed"
-      const next = CARD_CYCLE[current]
-      return { ...prev, [id]: next }
+  const handleToggleAgent = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
     })
   }, [])
 
   const handleToggleExpandAll = useCallback(() => {
-    setCardStates((prev) => {
-      const states = AGENTS.map((a) => prev[a.id] ?? "collapsed")
-      const allExpanded = states.every((s) => s === "expanded")
-      const allPreview = states.every((s) => s === "preview")
-      const allCollapsed = states.every((s) => s === "collapsed")
-
-      let target: CardState
-      if (allCollapsed) target = "preview"
-      else if (allPreview) target = "expanded"
-      else if (allExpanded) target = "collapsed"
-      else target = "preview" // mixed → normalize to preview
-
-      const next: Record<string, CardState> = {}
-      for (const a of AGENTS) next[a.id] = target
-      return next
+    setExpandedIds((prev) => {
+      const allOpen = AGENTS.every((a) => prev.has(a.id))
+      if (allOpen) return new Set()
+      return new Set(AGENTS.map((a) => a.id))
     })
   }, [])
 
@@ -2295,8 +2282,8 @@ export default function PrototypePage() {
       {showLeftPanel && (
         <AgentLeftPanel
           agents={AGENTS}
-          cardStates={cardStates}
-          onSelectAgent={handleSelectAgentCard}
+          expandedIds={expandedIds}
+          onToggleAgent={handleToggleAgent}
           onToggleExpandAll={handleToggleExpandAll}
           onOpenSecrets={() => setSecretsOpen(true)}
           isOpen={agentPanelOpen}
@@ -2330,8 +2317,8 @@ export default function PrototypePage() {
           <div className="flex-1 min-w-0 bg-surface">
             <AgentCardsPanel
               agents={AGENTS}
-              cardStates={cardStates}
-              onSelectAgent={handleSelectAgentCard}
+              expandedIds={expandedIds}
+              onToggleAgent={handleToggleAgent}
             />
           </div>
         )}
