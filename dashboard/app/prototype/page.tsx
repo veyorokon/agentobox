@@ -1401,6 +1401,7 @@ function AgentLeftPanel({
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showTagDropdown, setShowTagDropdown] = useState(false)
+  const [skillsAllExpanded, setSkillsAllExpanded] = useState(false)
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
@@ -1590,7 +1591,7 @@ function AgentLeftPanel({
           Skills
         </button>
         <span className="flex-1" />
-        {panelTab === "agents" && (
+        {panelTab === "agents" ? (
           <button
             type="button"
             onClick={onToggleExpandAll}
@@ -1598,6 +1599,19 @@ function AgentLeftPanel({
             title="Cycle card states"
           >
             {expandedIds.size > 0 ? (
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setSkillsAllExpanded(p => !p)}
+            className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+            title={skillsAllExpanded ? "Collapse all" : "Expand all"}
+          >
+            {skillsAllExpanded ? (
               <ChevronsDownUp className="h-3.5 w-3.5" />
             ) : (
               <ChevronsUpDown className="h-3.5 w-3.5" />
@@ -1725,7 +1739,7 @@ function AgentLeftPanel({
           </div>
         </>
       ) : (
-        <SkillsPanel />
+        <SkillsPanel allExpanded={skillsAllExpanded} />
       )}
 
       {/* Bottom toolbar: secrets + cost + user */}
@@ -1932,13 +1946,78 @@ function VncThumbnail({ agent }: { agent: FakeAgent }) {
 }
 
 /* ================================================================== */
+/*  TAG INPUT — reusable inline tag editor with autocomplete           */
+/* ================================================================== */
+
+function TagInput({
+  tags,
+  onChange,
+  placeholder = "Add tag...",
+}: {
+  tags: string[]
+  onChange: (tags: string[]) => void
+  placeholder?: string
+}) {
+  const [input, setInput] = useState("")
+
+  const addTag = (tag: string) => {
+    const normalized = tag.toLowerCase().replace(/[^a-z0-9-]/g, "")
+    if (normalized && !tags.includes(normalized)) {
+      onChange([...tags, normalized])
+    }
+    setInput("")
+  }
+
+  const removeTag = (tag: string) => {
+    onChange(tags.filter(t => t !== tag))
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-[11px] font-mono text-accent"
+        >
+          {tag}
+          <button
+            type="button"
+            onClick={() => removeTag(tag)}
+            className="ml-0.5 text-accent/50 hover:text-accent transition-colors"
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && input.trim()) {
+            e.preventDefault()
+            addTag(input.trim())
+          }
+          if (e.key === "Backspace" && !input && tags.length > 0) {
+            removeTag(tags[tags.length - 1])
+          }
+        }}
+        placeholder={tags.length === 0 ? placeholder : ""}
+        className="flex-1 min-w-[60px] bg-transparent border-none outline-none text-[11px] font-mono text-default placeholder:text-muted/40"
+      />
+    </div>
+  )
+}
+
+/* ================================================================== */
 /*  AGENT SETTINGS PANEL — config form inside expanded card            */
 /* ================================================================== */
 
 function AgentSettingsPanel({ agent }: { agent: FakeAgent }) {
   const [model, setModel] = useState(agent.model)
   const [instructions, setInstructions] = useState(agent.instructions)
-  const dirty = model !== agent.model || instructions !== agent.instructions
+  const [agentTags, setAgentTags] = useState(agent.tags)
+  const dirty = model !== agent.model || instructions !== agent.instructions || JSON.stringify(agentTags) !== JSON.stringify(agent.tags)
 
   return (
     <div className="px-3 py-3 space-y-3">
@@ -1969,6 +2048,16 @@ function AgentSettingsPanel({ agent }: { agent: FakeAgent }) {
           rows={4}
           className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default outline-none focus:border-accent/50 transition-colors resize-none"
         />
+      </div>
+
+      {/* Tags */}
+      <div>
+        <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+          Tags
+        </label>
+        <div className="bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 focus-within:border-accent/50 transition-colors">
+          <TagInput tags={agentTags} onChange={setAgentTags} placeholder="Add tag..." />
+        </div>
       </div>
 
       {/* MCP Servers */}
@@ -2438,12 +2527,13 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
 /*  SKILLS PANEL — skills tab content in left panel                    */
 /* ================================================================== */
 
-function SkillsPanel() {
+function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
   const [search, setSearch] = useState("")
-  const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
+  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState("")
   const [newContent, setNewContent] = useState("")
+  const [newTags, setNewTags] = useState<string[]>([])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return SKILLS
@@ -2499,6 +2589,14 @@ function SkillsPanel() {
             rows={4}
             className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors resize-none"
           />
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+              Assign to tags
+            </label>
+            <div className="bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 focus-within:border-accent/50 transition-colors">
+              <TagInput tags={newTags} onChange={setNewTags} placeholder="Add tag..." />
+            </div>
+          </div>
           <div className="flex justify-end">
             <button
               type="button"
@@ -2526,12 +2624,17 @@ function SkillsPanel() {
             </div>
           ) : (
             filtered.map((skill) => {
-              const isExpanded = expandedSkill === skill.id
+              const isExpanded = allExpanded || expandedSkills.has(skill.id)
               return (
                 <div key={skill.id} className="rounded-lg border border-border-subtle overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => setExpandedSkill(isExpanded ? null : skill.id)}
+                    onClick={() => setExpandedSkills(prev => {
+                      const next = new Set(prev)
+                      if (next.has(skill.id)) next.delete(skill.id)
+                      else next.add(skill.id)
+                      return next
+                    })}
                     className="w-full text-left px-2.5 py-2 hover:bg-surface-raised/30 transition-colors"
                   >
                     <div className="flex items-center gap-2 min-w-0">
