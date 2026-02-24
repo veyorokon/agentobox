@@ -136,7 +136,7 @@ const INITIAL_AGENTS: FakeAgent[] = [
     id: "4",
     name: "devops",
     lifecycleStatus: "waiting",
-    attentionLevel: "none",
+    attentionLevel: "plan",
     task: "Waiting for backend",
     cost: 0.03,
     duration: "5m 00s",
@@ -483,6 +483,19 @@ const TEAM_FEED: TeamFeedItem[] = [
     command: "git push origin fix/jwt-validation",
     risk: "Pushes to remote branch",
     permStatus: "pending",
+  },
+
+  // Devops proposes a deployment plan
+  {
+    type: "plan",
+    agent: "devops",
+    title: "Deploy auth fix to staging",
+    steps: [
+      { text: "Build Docker image with auth changes", status: "done" as const },
+      { text: "Run integration tests in staging env", status: "current" as const },
+      { text: "Swap traffic to new deployment", status: "pending" as const },
+    ],
+    planStatus: "pending" as const,
   },
 
   // Docs finishes
@@ -2484,64 +2497,100 @@ function AttentionBar({
     return (order[a.item.type] ?? 2) - (order[b.item.type] ?? 2)
   })
 
+  // Stepper state — clamp to valid range when items resolve
+  const [stepIdx, setStepIdx] = useState(0)
+  const clamped = Math.min(stepIdx, sorted.length - 1)
+  const current = sorted[clamped]
+  const { item, feedIndex, agentId } = current
+  const isFocused = focusedAgentId != null && agentId === focusedAgentId
+  const hasPrev = clamped > 0
+  const hasNext = clamped < sorted.length - 1
+
   return (
     <div className="mx-6 mb-2 rounded-lg border border-warning/20 bg-warning-subtle/10 p-3 max-w-3xl self-center w-full">
+      {/* Header: icon + count + stepper nav */}
       <div className="flex items-center gap-2 mb-2">
         <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
         <span className="text-xs font-medium text-warning">
-          {pending.length} item{pending.length !== 1 ? "s" : ""} need attention
+          {sorted.length} item{sorted.length !== 1 ? "s" : ""} need attention
         </span>
-      </div>
-      <div className="space-y-1.5">
-        {sorted.map(({ item, feedIndex, agentId }) => {
-          // Suppression: dim items for the focused agent
-          const isFocused = focusedAgentId != null && agentId === focusedAgentId
-          return (
-            <div key={feedIndex} className={cn("flex items-center gap-2 min-w-0", isFocused && "opacity-50")}>
-              <AgentAvatar name={item.agent} size="sm" />
-              <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
-                {item.type === "permission"
-                  ? `${item.agent} wants to run: ${item.command}`
-                  : `${item.agent} proposed: ${item.title}`}
+        {sorted.length > 1 && (
+          <>
+            <span className="flex-1" />
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={!hasPrev}
+                onClick={() => setStepIdx(clamped - 1)}
+                className={cn(
+                  "p-0.5 rounded transition-colors",
+                  hasPrev ? "text-secondary hover:text-default hover:bg-surface-raised/50" : "text-muted/30 cursor-default",
+                )}
+              >
+                <ChevronLeft className="h-3 w-3" />
+              </button>
+              <span className="text-[10px] text-muted tabular-nums font-mono">
+                {clamped + 1}/{sorted.length}
               </span>
-              {item.type === "permission" ? (
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => onResolvePermission(feedIndex, "allowed")}
-                    className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                  >
-                    Allow
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onResolvePermission(feedIndex, "denied")}
-                    className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                  >
-                    Deny
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => onResolvePlan(feedIndex, "approved")}
-                    className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onResolvePlan(feedIndex, "rejected")}
-                    className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                  >
-                    Reject
-                  </button>
-                </div>
-              )}
+              <button
+                type="button"
+                disabled={!hasNext}
+                onClick={() => setStepIdx(clamped + 1)}
+                className={cn(
+                  "p-0.5 rounded transition-colors",
+                  hasNext ? "text-secondary hover:text-default hover:bg-surface-raised/50" : "text-muted/30 cursor-default",
+                )}
+              >
+                <ChevronRight className="h-3 w-3" />
+              </button>
             </div>
-          )
-        })}
+          </>
+        )}
+      </div>
+
+      {/* Current item */}
+      <div className={cn("flex items-center gap-2 min-w-0", isFocused && "opacity-50")}>
+        <AgentAvatar name={item.agent} size="sm" />
+        <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
+          {item.type === "permission"
+            ? `${item.agent} wants to run: ${item.command}`
+            : `${item.agent} proposed: ${item.title}`}
+        </span>
+        {item.type === "permission" ? (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => onResolvePermission(feedIndex, "allowed")}
+              className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+            >
+              Allow
+            </button>
+            <button
+              type="button"
+              onClick={() => onResolvePermission(feedIndex, "denied")}
+              className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+            >
+              Deny
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => onResolvePlan(feedIndex, "approved")}
+              className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={() => onResolvePlan(feedIndex, "rejected")}
+              className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+            >
+              Reject
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
