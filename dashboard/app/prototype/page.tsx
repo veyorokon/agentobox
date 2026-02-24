@@ -6,11 +6,12 @@ import {
   Users,
   MessageSquare,
   ChevronRight,
+  ChevronLeft,
   Check,
   X,
   AlertCircle,
   Plus,
-  Terminal,
+
   Clock,
   DollarSign,
   RotateCcw,
@@ -1201,25 +1202,256 @@ function SecretsModal({
 }
 
 /* ================================================================== */
-/*  HEADER BAR                                                         */
+/*  FLEET HEALTH PILLS                                                 */
 /* ================================================================== */
 
-function HeaderBar({
-  onOpenSecrets,
-  selectedAgent,
-  agents,
+function FleetHealthPills({
+  statusCounts,
+  layout,
 }: {
-  onOpenSecrets: () => void
-  selectedAgent: FakeAgent | null
-  agents: FakeAgent[]
+  statusCounts: Record<string, number>
+  layout: "vertical" | "horizontal"
 }) {
-  const totalCost = agents.reduce((sum, a) => sum + a.cost, 0)
+  const pills = PILL_CONFIG.filter((p) => (statusCounts[p.key] ?? 0) > 0)
+
+  if (pills.length === 0) return null
 
   return (
-    <div className="h-12 border-b border-border-default bg-surface-sunken px-4 flex items-center gap-4 shrink-0">
-      {/* Left: project name + secrets */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-default">agentobox</span>
+    <div
+      className={cn(
+        "flex items-center gap-1",
+        layout === "vertical" ? "flex-col" : "flex-row gap-2",
+      )}
+    >
+      {pills.map((pill) => (
+        <span
+          key={pill.key}
+          className={cn(
+            "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
+            pill.text,
+          )}
+        >
+          <span
+            className={cn(
+              "h-1.5 w-1.5 rounded-full shrink-0",
+              pill.dot,
+              pill.animate && "animate-breathe text-success",
+            )}
+          />
+          {statusCounts[pill.key]}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/* ================================================================== */
+/*  AGENT LEFT PANEL — unified icon rail + agent cards                 */
+/* ================================================================== */
+
+function AgentLeftPanel({
+  agents,
+  cardStates,
+  onSelectAgent,
+  onToggleExpandAll,
+  onOpenSecrets,
+  isOpen,
+  onToggleOpen,
+  width,
+  onResize,
+  onResetWidth,
+}: {
+  agents: FakeAgent[]
+  cardStates: Record<string, CardState>
+  onSelectAgent: (id: string) => void
+  onToggleExpandAll: () => void
+  onOpenSecrets: () => void
+  isOpen: boolean
+  onToggleOpen: () => void
+  width: number
+  onResize: (delta: number) => void
+  onResetWidth: () => void
+}) {
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
+    for (const a of agents) counts[a.status] = (counts[a.status] ?? 0) + 1
+    return counts
+  }, [agents])
+
+  const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
+
+  /* ---- Collapsed state: 48px icon rail ---- */
+  if (!isOpen) {
+    return (
+      <aside className="group/rail w-12 h-full bg-surface-sunken border-r-[0.5px] border-border-default flex flex-col shrink-0 relative">
+        {/* Hover edge hint — subtle accent line on right edge */}
+        <div className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover/rail:bg-accent/25 transition-colors" />
+
+        {/* Project initial */}
+        <button
+          type="button"
+          onClick={onToggleOpen}
+          className="pt-3 pb-2 flex justify-center hover:bg-surface-raised/30 transition-colors"
+          title="Open panel"
+        >
+          <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent">
+            A
+          </div>
+        </button>
+
+        {/* Agent avatars */}
+        <div className="flex-1 flex flex-col items-center gap-1.5 py-2 overflow-y-auto">
+          {agents.map((agent) => {
+            const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
+            const isSelected = (cardStates[agent.id] ?? "collapsed") !== "collapsed"
+            const isRunning = agent.status === "running"
+            const isStopped = agent.status === "stopped"
+
+            return (
+              <button
+                key={agent.id}
+                type="button"
+                onClick={() => {
+                  onSelectAgent(agent.id)
+                  onToggleOpen()
+                }}
+                className={cn(
+                  "relative group",
+                  isStopped && "opacity-55",
+                )}
+                title={agent.name}
+              >
+                <AgentAvatar name={agent.name} size="md" stopped={isStopped} />
+                <span
+                  className={cn(
+                    "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
+                    config.dot,
+                    isRunning && "animate-breathe text-success",
+                  )}
+                />
+                {isSelected && (
+                  <span className="absolute inset-0 rounded-md ring-2 ring-accent/50" />
+                )}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Fleet health */}
+        <div className="py-2 flex flex-col items-center gap-1 border-t border-border-subtle">
+          <FleetHealthPills statusCounts={statusCounts} layout="vertical" />
+        </div>
+
+        {/* Expand button — explicit affordance */}
+        <div className="flex justify-center py-1.5 border-t border-border-subtle">
+          <button
+            type="button"
+            onClick={onToggleOpen}
+            className="p-1 rounded-md text-muted/40 hover:text-accent hover:bg-accent/10 transition-colors"
+            title="Expand panel"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Bottom: secrets + cost + user avatar */}
+        <div className="py-2 flex flex-col items-center gap-2 border-t border-border-default">
+          <button
+            type="button"
+            onClick={onOpenSecrets}
+            className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+            title="Project secrets"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+          </button>
+          <span className="text-[9px] text-muted/60 font-mono tabular-nums">
+            {formatCost(totalCost)}
+          </span>
+          <div
+            className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
+            title="vahid"
+          >
+            V
+          </div>
+        </div>
+      </aside>
+    )
+  }
+
+  /* ---- Open state: resizable panel ---- */
+  return (
+    <aside
+      className="relative h-full bg-surface border-r border-border-default flex flex-col shrink-0"
+      style={{ width, minWidth: width }}
+    >
+      <ResizeHandle onResize={onResize} onReset={onResetWidth} side="right" />
+
+      {/* Project selector placeholder */}
+      <div className="h-10 px-3 flex items-center border-b border-border-default shrink-0">
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors"
+        >
+          <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent shrink-0">
+            A
+          </div>
+          <span className="text-sm font-medium text-default">agentobox</span>
+          <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
+        </button>
+      </div>
+
+      {/* Panel header: title + expand-all + collapse */}
+      <div className="h-8 px-3 flex items-center gap-2 border-b border-border-default shrink-0">
+        <Users className="h-3.5 w-3.5 text-muted" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">
+          Agents
+        </span>
+        <button
+          type="button"
+          onClick={onToggleExpandAll}
+          className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+          title="Cycle card states"
+        >
+          {Object.values(cardStates).some((s) => s === "expanded") ? (
+            <ChevronsDownUp className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronsUpDown className="h-3.5 w-3.5" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleOpen}
+          className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+          title="Collapse panel"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Agent cards */}
+      <ScrollArea className="flex-1 overflow-y-auto">
+        <div className="p-3 space-y-2">
+          {agents.map((agent) => (
+            <AgentCardRow
+              key={agent.id}
+              agent={agent}
+              cardState={cardStates[agent.id] ?? "collapsed"}
+              onSelect={() => onSelectAgent(agent.id)}
+            />
+          ))}
+        </div>
+      </ScrollArea>
+
+      {/* Fleet health horizontal */}
+      <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-2">
+        <FleetHealthPills statusCounts={statusCounts} layout="horizontal" />
+        <span className="text-[9px] text-muted/40 font-mono ml-auto">
+          {agents.length} agents
+        </span>
+      </div>
+
+      {/* Bottom toolbar: secrets + cost + user */}
+      <div className="px-3 py-2 border-t border-border-default flex items-center gap-3">
         <button
           type="button"
           onClick={onOpenSecrets}
@@ -1228,46 +1460,18 @@ function HeaderBar({
         >
           <KeyRound className="h-3.5 w-3.5" />
         </button>
-      </div>
-
-      {/* Center: selected agent indicator */}
-      <div className="flex-1 flex items-center justify-center">
-        {selectedAgent ? (
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-raised/50 text-xs">
-            <span
-              className={cn(
-                "h-1.5 w-1.5 rounded-full shrink-0",
-                (STATUS_CONFIG[selectedAgent.status] ?? STATUS_CONFIG.stopped).dot,
-                selectedAgent.status === "running" && "animate-breathe",
-                (STATUS_CONFIG[selectedAgent.status] ?? STATUS_CONFIG.stopped).glow,
-              )}
-            />
-            <span className="font-medium text-default">{selectedAgent.name}</span>
-            <span className="text-muted">&middot;</span>
-            <span className="text-muted font-mono">{selectedAgent.model}</span>
-            <span
-              className={cn(
-                "text-[10px] capitalize",
-                STATUS_CONFIG[selectedAgent.status]?.text ?? "text-muted",
-              )}
-            >
-              {selectedAgent.status}
-            </span>
-          </div>
-        ) : (
-          <span className="text-xs text-muted">
-            All agents ({agents.length})
-          </span>
-        )}
-      </div>
-
-      {/* Right: total cost */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted font-mono">
+        <span className="text-xs text-muted font-mono tabular-nums">
           {formatCost(totalCost)}
         </span>
+        <span className="flex-1" />
+        <div
+          className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
+          title="vahid"
+        >
+          V
+        </div>
       </div>
-    </div>
+    </aside>
   )
 }
 
@@ -1380,114 +1584,6 @@ function TeamFeed() {
   )
 }
 
-/* ================================================================== */
-/*  ICON RAIL — 48px vertical strip replacing the old roster panel     */
-/* ================================================================== */
-
-function IconRail({
-  agents,
-  selectedAgentId,
-  onSelectAgent,
-  onOpenSecrets,
-}: {
-  agents: FakeAgent[]
-  selectedAgentId: string | null
-  onSelectAgent: (id: string) => void
-  onOpenSecrets: () => void
-}) {
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
-    for (const a of agents) counts[a.status] = (counts[a.status] ?? 0) + 1
-    return counts
-  }, [agents])
-
-  return (
-    <div className="w-12 h-full bg-surface-sunken border-r-[0.5px] border-border-default flex flex-col shrink-0">
-      {/* Top: project accent dot */}
-      <div className="pt-3 pb-2 flex justify-center">
-        <span className="h-2 w-2 rounded-full bg-accent" />
-      </div>
-
-      {/* Agent avatars */}
-      <div className="flex-1 flex flex-col items-center gap-1.5 py-2 overflow-y-auto">
-        {agents.map((agent) => {
-          const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
-          const isSelected = selectedAgentId === agent.id
-          const isRunning = agent.status === "running"
-          const isStopped = agent.status === "stopped"
-
-          return (
-            <button
-              key={agent.id}
-              type="button"
-              onClick={() => onSelectAgent(agent.id)}
-              className={cn(
-                "relative group",
-                isStopped && "opacity-55",
-              )}
-              title={agent.name}
-            >
-              <AgentAvatar name={agent.name} size="md" stopped={isStopped} />
-              <span
-                className={cn(
-                  "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
-                  config.dot,
-                  isRunning && "animate-breathe text-success",
-                )}
-              />
-              {isSelected && (
-                <span className="absolute inset-0 rounded-md ring-2 ring-accent/50" />
-              )}
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Fleet health */}
-      <div className="py-2 flex flex-col items-center gap-1 border-t border-border-subtle">
-        {PILL_CONFIG.map(
-          (pill) =>
-            (statusCounts[pill.key] ?? 0) > 0 && (
-              <span
-                key={pill.key}
-                className={cn(
-                  "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
-                  pill.text,
-                )}
-              >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full shrink-0",
-                    pill.dot,
-                    pill.animate && "animate-breathe text-success",
-                  )}
-                />
-                {statusCounts[pill.key]}
-              </span>
-            ),
-        )}
-      </div>
-
-      {/* Bottom: secrets + user avatar */}
-      <div className="py-2 flex flex-col items-center gap-2 border-t border-border-default">
-        <button
-          type="button"
-          onClick={onOpenSecrets}
-          className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-          title="Project secrets"
-        >
-          <KeyRound className="h-3.5 w-3.5" />
-        </button>
-        <div
-          className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
-          title="vahid"
-        >
-          V
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /* ================================================================== */
 /*  AGENT CARDS + VNC PANEL (unified)                                  */
@@ -1660,53 +1756,56 @@ function AgentSettingsPanel({ agent }: { agent: FakeAgent }) {
   )
 }
 
+type CardState = "collapsed" | "preview" | "expanded"
+
 /**
- * Agent card with two states:
+ * Agent card — three states:
  *
  * COLLAPSED — compact single row:
- *   avatar | name | status dot | live action one-liner | cost · time
- *   SOURCE: Agent model fields + latest tool_use content block (liveAction)
+ *   avatar | name | status dot | live action | cost · time | chevron
  *
- * EXPANDED — full card with VNC + detail feed:
- *   Top: agent info grid (left) + VNC thumbnail (right)
- *   Bottom: scrollable detail feed of verbose output
- *   SOURCE: TimelineEntry.content (full content blocks)
+ * PREVIEW — VNC glance view (no tabs, no detail feed):
+ *   collapsed header + VNC + stats row + live status bar
  *
- * Click toggles between states (onSelect handler does the toggle).
+ * EXPANDED — full detail:
+ *   preview + Activity/Settings tabs + detail feed + mini composer
  */
 function AgentCardRow({
   agent,
-  isSelected,
-  isPreview = false,
+  cardState,
   onSelect,
-  compact = false,
 }: {
   agent: FakeAgent
-  isSelected: boolean
-  isPreview?: boolean
+  cardState: CardState
   onSelect: () => void
-  compact?: boolean
 }) {
   const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
   const isRunning = agent.status === "running"
   const isError = agent.status === "error"
   const isStopped = agent.status === "stopped"
+  const isOpen = cardState !== "collapsed"
+  const isFullDetail = cardState === "expanded"
   const [detailTab, setDetailTab] = useState<"activity" | "settings">("activity")
 
-  /* ---- COLLAPSED: compact single-row card ---- */
-  if (!isSelected && !isPreview) {
-    return (
+  return (
+    <div
+      className={cn(
+        "rounded-lg border transition-all duration-(--duration-normal)",
+        isOpen
+          ? cn("border-accent/40 bg-surface-raised/80 shadow-sm", isError && "border-danger/40")
+          : cn(
+              "border-border-subtle bg-surface hover:bg-surface-raised/40 hover:border-border-default",
+              isError && "border-danger/30 hover:border-danger/40",
+              isStopped && "opacity-60",
+            ),
+      )}
+    >
+      {/* Collapsed row — always visible, click to cycle state */}
       <button
         type="button"
         onClick={onSelect}
-        className={cn(
-          "w-full text-left rounded-lg border px-2.5 py-2 transition-all duration-(--duration-normal)",
-          "border-border-subtle bg-surface hover:bg-surface-raised/40 hover:border-border-default",
-          isError && "border-danger/30 hover:border-danger/40",
-          isStopped && "opacity-60",
-        )}
+        className="w-full text-left px-2.5 py-2"
       >
-        {/* Row 1: avatar + name + status dot + live action + cost/time */}
         <div className="flex items-center gap-2 min-w-0">
           <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
           <span
@@ -1725,8 +1824,7 @@ function AgentCardRow({
             )}
           />
 
-          {/* Live action one-liner — the continuously updating current action
-              SOURCE: latest tool_use content block name + input summary */}
+          {/* Live action one-liner */}
           {agent.liveAction ? (
             <span className="text-[10px] text-muted font-mono truncate flex-1 min-w-0">
               {agent.liveAction}
@@ -1737,134 +1835,82 @@ function AgentCardRow({
             </span>
           )}
 
-          {/* Right: cost · time */}
+          {/* Right: cost · time + chevron */}
           <span className="text-[9px] text-muted/60 font-mono tabular-nums shrink-0">
             {formatCost(agent.cost)} · {agent.duration}
           </span>
+          <ChevronRight
+            size={14}
+            className={cn(
+              "shrink-0 text-muted transition-transform duration-(--duration-normal)",
+              cardState === "preview" && "rotate-45",
+              cardState === "expanded" && "rotate-90",
+            )}
+          />
         </div>
       </button>
-    )
-  }
 
-  /* ---- Shared header for preview + expanded ---- */
-  const cardHeader = (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="w-full text-left"
-    >
-      {/* Row 1: avatar + name + task + chevron + status dot */}
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <AgentAvatar name={agent.name} stopped={isStopped} />
-        <span className="text-[13px] font-medium truncate text-default">
-          {agent.name}
-        </span>
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <Terminal className="h-3 w-3 text-muted/60 shrink-0" />
-          <span className="text-[11px] text-secondary leading-tight truncate">
-            {agent.task}
-          </span>
+      {/* Preview + expanded content — animated reveal */}
+      <Collapsible open={isOpen}>
+        {/* VNC full width */}
+        <div className="px-3 pb-2">
+          <VncThumbnail agent={agent} />
         </div>
-        <ChevronRight
-          size={14}
-          className={cn(
-            "shrink-0 text-muted transition-transform",
-            isSelected && "rotate-90",
-          )}
-        />
-        <span
-          className={cn(
-            "h-2 w-2 rounded-full shrink-0",
-            config.dot,
-            isRunning && "animate-breathe text-success",
-          )}
-        />
-      </div>
 
-      {/* Row 2: VNC full width */}
-      <div className="px-3 pb-2">
-        <VncThumbnail agent={agent} />
-      </div>
+        {/* Stats row */}
+        <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap px-3 pb-2">
+          <span className="inline-flex items-center gap-0.5">
+            <DollarSign className="h-2.5 w-2.5" />
+            {formatCost(agent.cost)}
+          </span>
+          <span className="inline-flex items-center gap-0.5">
+            <Clock className="h-2.5 w-2.5" />
+            {agent.duration}
+          </span>
+          <span className="text-muted/50">&middot;</span>
+          <span>{agent.model}</span>
+          <span className="text-muted/50">&middot;</span>
+          <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
+        </div>
 
-      {/* Row 3: Stats row */}
-      <div className="flex items-center gap-2 text-[9px] text-muted font-mono tabular-nums flex-wrap px-3 pb-2">
-        <span className="inline-flex items-center gap-0.5">
-          <DollarSign className="h-2.5 w-2.5" />
-          {formatCost(agent.cost)}
-        </span>
-        <span className="inline-flex items-center gap-0.5">
-          <Clock className="h-2.5 w-2.5" />
-          {agent.duration}
-        </span>
-        <span className="text-muted/50">&middot;</span>
-        <span>{agent.model}</span>
-        <span className="text-muted/50">&middot;</span>
-        <span>{agent.turns} turn{agent.turns !== 1 ? "s" : ""}</span>
-      </div>
-    </button>
-  )
+        {/* Live status bar */}
+        {isRunning && <LiveStatusBar agent={agent} />}
+      </Collapsible>
 
-  /* ---- PREVIEW: header + VNC only, no tabs/feed ---- */
-  if (isPreview && !isSelected) {
-    return (
-      <div
-        className={cn(
-          "rounded-lg border transition-all duration-(--duration-normal)",
-          "border-border-default bg-surface-raised/50",
-          isError && "border-danger/30",
-          isStopped && "opacity-60",
+      {/* Full detail — second collapsible for tabs + feed */}
+      <Collapsible open={isFullDetail}>
+        {/* Inline tab bar — Activity | Settings */}
+        <div className="flex items-center gap-1 px-3 py-1 border-t border-border-subtle bg-surface-sunken/20">
+          <button
+            type="button"
+            onClick={() => setDetailTab("activity")}
+            className={cn(
+              "px-2 py-1 rounded text-[11px] font-medium transition-colors",
+              detailTab === "activity" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
+            )}
+          >
+            Activity
+          </button>
+          <button
+            type="button"
+            onClick={() => setDetailTab("settings")}
+            className={cn(
+              "px-2 py-1 rounded text-[11px] font-medium transition-colors",
+              detailTab === "settings" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
+            )}
+          >
+            <Settings className="h-3 w-3 inline mr-1" />
+            Settings
+          </button>
+        </div>
+
+        {/* Tab content */}
+        {detailTab === "activity" ? (
+          <AgentDetailFeed agent={agent} />
+        ) : (
+          <AgentSettingsPanel agent={agent} />
         )}
-      >
-        {cardHeader}
-      </div>
-    )
-  }
-
-  /* ---- EXPANDED: full card with tabs + detail feed ---- */
-  return (
-    <div
-      className={cn(
-        "rounded-lg border transition-all duration-(--duration-normal)",
-        "border-accent/40 bg-surface-raised/80 shadow-sm",
-        isError && "border-danger/40",
-      )}
-    >
-      {cardHeader}
-
-      {/* Live status bar — card-level, visible regardless of tab */}
-      {isRunning && <LiveStatusBar agent={agent} />}
-
-      {/* Inline tab bar — Activity | Settings */}
-      <div className="flex items-center gap-1 px-3 py-1 border-t border-border-subtle bg-surface-sunken/20">
-        <button
-          type="button"
-          onClick={() => setDetailTab("activity")}
-          className={cn(
-            "px-2 py-1 rounded text-[11px] font-medium transition-colors",
-            detailTab === "activity" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
-          )}
-        >
-          Activity
-        </button>
-        <button
-          type="button"
-          onClick={() => setDetailTab("settings")}
-          className={cn(
-            "px-2 py-1 rounded text-[11px] font-medium transition-colors",
-            detailTab === "settings" ? "bg-surface-raised text-default" : "text-muted hover:text-secondary",
-          )}
-        >
-          <Settings className="h-3 w-3 inline mr-1" />
-          Settings
-        </button>
-      </div>
-
-      {/* Tab content */}
-      {detailTab === "activity" ? (
-        <AgentDetailFeed agent={agent} />
-      ) : (
-        <AgentSettingsPanel agent={agent} />
-      )}
+      </Collapsible>
     </div>
   )
 }
@@ -2005,16 +2051,12 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
 
 function AgentCardsPanel({
   agents,
-  selectedAgentId,
+  cardStates,
   onSelectAgent,
-  compact = false,
-  allExpanded = false,
 }: {
   agents: FakeAgent[]
-  selectedAgentId: string | null
+  cardStates: Record<string, CardState>
   onSelectAgent: (id: string) => void
-  compact?: boolean
-  allExpanded?: boolean
 }) {
   return (
     <ScrollArea className="h-full overflow-y-auto">
@@ -2023,10 +2065,8 @@ function AgentCardsPanel({
           <AgentCardRow
             key={agent.id}
             agent={agent}
-            isSelected={selectedAgentId === agent.id}
-            isPreview={allExpanded && selectedAgentId !== agent.id}
+            cardState={cardStates[agent.id] ?? "collapsed"}
             onSelect={() => onSelectAgent(agent.id)}
-            compact={compact}
           />
         ))}
       </div>
@@ -2177,62 +2217,72 @@ function ResizeHandle({
 
 export default function PrototypePage() {
   const bp = useBreakpoint()
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>("1")
+  const [cardStates, setCardStates] = useState<Record<string, CardState>>({ "1": "preview" })
   const [mainTab, setMainTab] = useState<"chat" | "agents">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
-  const [rightPanelWidth, setRightPanelWidth] = useState<number | null>(null)
-  const [allExpanded, setAllExpanded] = useState(false)
+  const [agentPanelOpen, setAgentPanelOpen] = useState(true)
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number | null>(null)
 
-  // Reset custom width when breakpoint changes
+  // Reset custom width + auto-collapse on breakpoint change
   useEffect(() => {
-    setRightPanelWidth(null)
+    setLeftPanelWidth(null)
+    if (bp === "S") setAgentPanelOpen(false)
+    else if (bp !== "mobile") setAgentPanelOpen(true)
   }, [bp])
 
-  const selectedAgent = useMemo(
-    () => AGENTS.find((a) => a.id === selectedAgentId) ?? null,
-    [selectedAgentId],
-  )
+  const CARD_CYCLE: Record<CardState, CardState> = { collapsed: "preview", preview: "expanded", expanded: "collapsed" }
 
   const handleSelectAgentCard = useCallback((id: string) => {
-    setSelectedAgentId((prev) => (prev === id ? null : id))
+    setCardStates((prev) => {
+      const current = prev[id] ?? "collapsed"
+      const next = CARD_CYCLE[current]
+      return { ...prev, [id]: next }
+    })
+  }, [])
+
+  const handleToggleExpandAll = useCallback(() => {
+    setCardStates((prev) => {
+      const states = AGENTS.map((a) => prev[a.id] ?? "collapsed")
+      const allExpanded = states.every((s) => s === "expanded")
+      const allPreview = states.every((s) => s === "preview")
+      const allCollapsed = states.every((s) => s === "collapsed")
+
+      let target: CardState
+      if (allCollapsed) target = "preview"
+      else if (allPreview) target = "expanded"
+      else if (allExpanded) target = "collapsed"
+      else target = "preview" // mixed → normalize to preview
+
+      const next: Record<string, CardState> = {}
+      for (const a of AGENTS) next[a.id] = target
+      return next
+    })
   }, [])
 
   // Determine what's visible at each breakpoint
-  const showIconRail = bp !== "mobile"
-  const showRightPanel = bp === "XL" || bp === "L" || bp === "M"
+  const showLeftPanel = bp !== "mobile"
   const showTopTabs = bp === "S" || bp === "mobile"
 
-  // Right panel width: custom if user has resized, else breakpoint default
-  const defaultRightWidth = bp === "M" ? 340 : 480
-  const effectiveRightWidth = rightPanelWidth ?? defaultRightWidth
-  // Compact mode when panel is narrow enough that side-by-side doesn't work
-  const compactCards = effectiveRightWidth < 400
+  // Left panel width: custom if user has resized, else breakpoint default
+  const defaultLeftWidth = bp === "S" ? 340 : bp === "M" ? 340 : 480
+  const effectiveLeftWidth = leftPanelWidth ?? defaultLeftWidth
 
-  const handleRightPanelResize = useCallback((delta: number) => {
-    setRightPanelWidth((prev) => {
-      const current = prev ?? defaultRightWidth
-      // Clamp between 280 and 720
+  const handleLeftPanelResize = useCallback((delta: number) => {
+    setLeftPanelWidth((prev) => {
+      const current = prev ?? defaultLeftWidth
       return Math.max(280, Math.min(720, current + delta))
     })
-  }, [defaultRightWidth])
+  }, [defaultLeftWidth])
 
-  // Top tabs (small screens — no separate Screen tab since VNC is inline with agents)
+  // Top tabs (small screens)
   const topTabs = [
     { id: "chat", label: "Chat", icon: <MessageSquare className="h-3.5 w-3.5" /> },
     { id: "agents", label: "Agents", icon: <Users className="h-3.5 w-3.5" /> },
   ]
 
   return (
-    <div className="h-screen flex flex-col bg-surface overflow-hidden">
-      {/* Header bar */}
-      <header>
-        <h1 className="sr-only">Agentobox Dashboard</h1>
-        <HeaderBar
-          onOpenSecrets={() => setSecretsOpen(true)}
-          selectedAgent={selectedAgent}
-          agents={AGENTS}
-        />
-      </header>
+    <div className="h-screen flex bg-surface overflow-hidden">
+      <h1 className="sr-only">Agentobox Dashboard</h1>
 
       {/* Secrets modal */}
       <SecretsModal
@@ -2241,70 +2291,38 @@ export default function PrototypePage() {
         agents={AGENTS}
       />
 
-      {/* Top tabs (S + mobile) */}
-      {showTopTabs && (
-        <TabBar
-          tabs={topTabs}
-          activeTab={mainTab}
-          onTabChange={(id) => setMainTab(id as "chat" | "agents")}
+      {/* Left panel: collapsed icon rail or open agent cards */}
+      {showLeftPanel && (
+        <AgentLeftPanel
+          agents={AGENTS}
+          cardStates={cardStates}
+          onSelectAgent={handleSelectAgentCard}
+          onToggleExpandAll={handleToggleExpandAll}
+          onOpenSecrets={() => setSecretsOpen(true)}
+          isOpen={agentPanelOpen}
+          onToggleOpen={() => setAgentPanelOpen((p) => !p)}
+          width={effectiveLeftWidth}
+          onResize={handleLeftPanelResize}
+          onResetWidth={() => setLeftPanelWidth(null)}
         />
       )}
 
-      {/* Main layout */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Icon rail */}
-        {showIconRail && (
-          <aside>
-            <IconRail
-              agents={AGENTS}
-              selectedAgentId={selectedAgentId}
-              onSelectAgent={handleSelectAgentCard}
-              onOpenSecrets={() => setSecretsOpen(true)}
-            />
-          </aside>
+      {/* Right side: tabs (on small) + team feed */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {/* Top tabs (S + mobile) */}
+        {showTopTabs && (
+          <TabBar
+            tabs={topTabs}
+            activeTab={mainTab}
+            onTabChange={(id) => setMainTab(id as "chat" | "agents")}
+          />
         )}
 
-        {/* Center: team feed (summaries only — no verbose agent output) */}
+        {/* Center: team feed */}
         {(!showTopTabs || mainTab === "chat") && (
-          <main className="flex-1 min-w-0 flex flex-col">
+          <main className="flex-1 min-w-0 flex flex-col min-h-0">
             <TeamFeed />
           </main>
-        )}
-
-        {/* Right panel: unified agent cards with inline VNC */}
-        {showRightPanel && (
-          <div
-            className="relative border-l border-border-default bg-surface flex flex-col shrink-0"
-            style={{
-              width: effectiveRightWidth,
-              minWidth: effectiveRightWidth,
-            }}
-          >
-            <ResizeHandle onResize={handleRightPanelResize} onReset={() => setRightPanelWidth(null)} side="left" />
-            <PanelHeader>
-              <div className="flex items-center gap-2 flex-1">
-                <Users className="h-3.5 w-3.5 text-muted" />
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  Agent Activity
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setAllExpanded(prev => !prev); if (allExpanded) setSelectedAgentId(null); }}
-                className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-                title={allExpanded ? "Collapse all" : "Expand all"}
-              >
-                {allExpanded ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
-              </button>
-            </PanelHeader>
-            <AgentCardsPanel
-              agents={AGENTS}
-              selectedAgentId={selectedAgentId}
-              onSelectAgent={handleSelectAgentCard}
-              compact={compactCards}
-              allExpanded={allExpanded}
-            />
-          </div>
         )}
 
         {/* Top-tab content: agents (S + mobile) */}
@@ -2312,9 +2330,8 @@ export default function PrototypePage() {
           <div className="flex-1 min-w-0 bg-surface">
             <AgentCardsPanel
               agents={AGENTS}
-              selectedAgentId={selectedAgentId}
+              cardStates={cardStates}
               onSelectAgent={handleSelectAgentCard}
-              allExpanded={allExpanded}
             />
           </div>
         )}
