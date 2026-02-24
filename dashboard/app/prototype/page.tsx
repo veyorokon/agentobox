@@ -1400,6 +1400,7 @@ function AgentLeftPanel({
   const [searchQuery, setSearchQuery] = useState("")
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectMode, setSelectMode] = useState(false)
   const [showTagDropdown, setShowTagDropdown] = useState(false)
   const [skillsAllExpanded, setSkillsAllExpanded] = useState(false)
 
@@ -1423,8 +1424,6 @@ function AgentLeftPanel({
     return result
   }, [agents, searchQuery, tagFilter])
 
-  const selectable = selectedIds.size > 0
-
   const handleSelectAgent = useCallback((id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev)
@@ -1432,6 +1431,11 @@ function AgentLeftPanel({
       else next.add(id)
       return next
     })
+  }, [])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
   }, [])
 
   /* ---- Collapsed state: 48px icon rail ---- */
@@ -1678,6 +1682,19 @@ function AgentLeftPanel({
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors shrink-0",
+                selectMode
+                  ? "border-accent/30 bg-accent/10 text-accent"
+                  : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+              )}
+            >
+              <CheckSquare className="h-3 w-3" />
+              {selectMode ? "Done" : "Select"}
+            </button>
           </div>
 
           {/* Agent cards */}
@@ -1687,9 +1704,9 @@ function AgentLeftPanel({
                 <AgentCardRow
                   key={agent.id}
                   agent={agent}
-                  isOpen={expandedIds.has(agent.id)}
-                  onToggle={() => onToggleAgent(agent.id)}
-                  selectable={selectable}
+                  isOpen={!selectMode && expandedIds.has(agent.id)}
+                  onToggle={() => selectMode ? handleSelectAgent(agent.id) : onToggleAgent(agent.id)}
+                  selectable={selectMode}
                   selected={selectedIds.has(agent.id)}
                   onSelect={() => handleSelectAgent(agent.id)}
                 />
@@ -1703,9 +1720,22 @@ function AgentLeftPanel({
             </div>
           </ScrollArea>
 
-          {/* Bulk action bar — when agents are selected */}
-          {selectedIds.size > 0 && (
+          {/* Bulk action bar — when in select mode */}
+          {selectMode && (
             <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedIds.size === filteredAgents.length) {
+                    setSelectedIds(new Set())
+                  } else {
+                    setSelectedIds(new Set(filteredAgents.map(a => a.id)))
+                  }
+                }}
+                className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
+              >
+                {selectedIds.size === filteredAgents.length ? "Deselect all" : "Select all"}
+              </button>
               <span className="text-[11px] font-medium text-default shrink-0">
                 {selectedIds.size} selected
               </span>
@@ -1718,6 +1748,16 @@ function AgentLeftPanel({
                 {SKILLS.map(s => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
+              </select>
+              <select
+                className="bg-surface-sunken/60 border border-border-default rounded-md px-2 py-1 text-[11px] text-secondary outline-none"
+                defaultValue=""
+                onChange={() => {}}
+              >
+                <option value="" disabled>Set model...</option>
+                <option>Opus 4.6</option>
+                <option>Sonnet 4.6</option>
+                <option>Haiku 4.5</option>
               </select>
               <span className="flex-1" />
               <button
@@ -2271,11 +2311,7 @@ function AgentCardRow({
       {/* Header row — always visible, click to toggle */}
       <button
         type="button"
-        onClick={(e) => {
-          if (e.shiftKey && onSelect) {
-            onSelect()
-            return
-          }
+        onClick={() => {
           if (selectable && onSelect) {
             onSelect()
           } else {
@@ -2532,6 +2568,8 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
   const [newName, setNewName] = useState("")
   const [newContent, setNewContent] = useState("")
   const [newTags, setNewTags] = useState<string[]>([])
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
 
   const filtered = useMemo(() => {
     if (!search.trim()) return SKILLS
@@ -2555,6 +2593,26 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
             className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
           />
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (selectMode) {
+              setSelectMode(false)
+              setSelectedSkills(new Set())
+            } else {
+              setSelectMode(true)
+            }
+          }}
+          className={cn(
+            "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors shrink-0",
+            selectMode
+              ? "border-accent/30 bg-accent/10 text-accent"
+              : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+          )}
+        >
+          <CheckSquare className="h-3 w-3" />
+          {selectMode ? "Done" : "Select"}
+        </button>
         <button
           type="button"
           onClick={() => setShowCreate(!showCreate)}
@@ -2622,27 +2680,55 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
             </div>
           ) : (
             filtered.map((skill) => {
-              const isExpanded = allExpanded || expandedSkills.has(skill.id)
+              const isExpanded = !selectMode && (allExpanded || expandedSkills.has(skill.id))
+              const isSelected = selectedSkills.has(skill.id)
               return (
-                <div key={skill.id} className="rounded-lg border border-border-subtle overflow-hidden">
+                <div key={skill.id} className={cn(
+                  "rounded-lg border overflow-hidden",
+                  selectMode && isSelected ? "border-accent/40" : "border-border-subtle",
+                )}>
                   <button
                     type="button"
-                    onClick={() => setExpandedSkills(prev => {
-                      const next = new Set(prev)
-                      if (next.has(skill.id)) next.delete(skill.id)
-                      else next.add(skill.id)
-                      return next
-                    })}
+                    onClick={() => {
+                      if (selectMode) {
+                        setSelectedSkills(prev => {
+                          const next = new Set(prev)
+                          if (next.has(skill.id)) next.delete(skill.id)
+                          else next.add(skill.id)
+                          return next
+                        })
+                      } else {
+                        setExpandedSkills(prev => {
+                          const next = new Set(prev)
+                          if (next.has(skill.id)) next.delete(skill.id)
+                          else next.add(skill.id)
+                          return next
+                        })
+                      }
+                    }}
                     className="w-full text-left px-2.5 py-2 hover:bg-surface-raised/30 transition-colors"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <ChevronRight
-                        size={12}
-                        className={cn(
-                          "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-                          isExpanded && "rotate-90",
-                        )}
-                      />
+                      {selectMode ? (
+                        <div
+                          className={cn(
+                            "h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0",
+                            isSelected
+                              ? "bg-accent/20 border-accent/50"
+                              : "border-border-default",
+                          )}
+                        >
+                          {isSelected && <Check className="h-2.5 w-2.5 text-accent" strokeWidth={3} />}
+                        </div>
+                      ) : (
+                        <ChevronRight
+                          size={12}
+                          className={cn(
+                            "shrink-0 text-muted transition-transform duration-(--duration-normal)",
+                            isExpanded && "rotate-90",
+                          )}
+                        />
+                      )}
                       <span className="text-xs font-medium text-default flex-1 min-w-0 truncate">
                         {skill.name}
                       </span>
@@ -2681,6 +2767,42 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
           )}
         </div>
       </ScrollArea>
+
+      {/* Bulk action bar for skills */}
+      {selectMode && (
+        <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedSkills.size === filtered.length) {
+                setSelectedSkills(new Set())
+              } else {
+                setSelectedSkills(new Set(filtered.map(s => s.id)))
+              }
+            }}
+            className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
+          >
+            {selectedSkills.size === filtered.length ? "Deselect all" : "Select all"}
+          </button>
+          <span className="text-[11px] text-muted shrink-0">
+            {selectedSkills.size} selected
+          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+              selectedSkills.size > 0
+                ? "text-danger hover:bg-danger-subtle/40"
+                : "text-muted cursor-not-allowed",
+            )}
+            disabled={selectedSkills.size === 0}
+          >
+            <Trash2 className="h-3 w-3" />
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   )
 }
