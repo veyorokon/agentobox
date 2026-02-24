@@ -535,8 +535,7 @@ const ATTENTION_CONFIG: Record<Exclude<AttentionLevel, "none">, { dot: string; l
   permission: { dot: "bg-info",    label: "Permission", text: "text-info",    pulse: true },
 }
 
-// Display order for fleet health pills (highest priority first)
-const LIFECYCLE_PILL_ORDER: LifecycleStatus[] = ["error", "waiting", "running", "deploying", "idle", "stopped"]
+// Priority order (highest first) — used for attention derivation
 const ATTENTION_PILL_ORDER: (Exclude<AttentionLevel, "none">)[] = ["permission", "plan", "review"]
 
 /* ================================================================== */
@@ -1850,102 +1849,6 @@ function SecretsModal({
 }
 
 /* ================================================================== */
-/*  FLEET HEALTH PILLS                                                 */
-/* ================================================================== */
-
-function FleetHealthPills({
-  agents,
-  layout,
-}: {
-  agents: FakeAgent[]
-  layout: "vertical" | "horizontal"
-}) {
-  const lifecycleCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const a of agents) counts[a.lifecycleStatus] = (counts[a.lifecycleStatus] ?? 0) + 1
-    return counts
-  }, [agents])
-
-  const attentionCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const a of agents) {
-      if (a.attentionLevel !== "none") counts[a.attentionLevel] = (counts[a.attentionLevel] ?? 0) + 1
-    }
-    return counts
-  }, [agents])
-
-  const lifecyclePills = LIFECYCLE_PILL_ORDER.filter((k) => (lifecycleCounts[k] ?? 0) > 0)
-  const attentionPills = ATTENTION_PILL_ORDER.filter((k) => (attentionCounts[k] ?? 0) > 0)
-
-  if (lifecyclePills.length === 0 && attentionPills.length === 0) return null
-
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-1",
-        layout === "vertical" ? "flex-col" : "flex-row gap-2",
-      )}
-    >
-      {/* Lifecycle pills */}
-      {lifecyclePills.map((key) => {
-        const cfg = LIFECYCLE_CONFIG[key]
-        return (
-          <span
-            key={key}
-            className={cn(
-              "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
-              cfg.text,
-            )}
-          >
-            <span
-              className={cn(
-                "h-1.5 w-1.5 rounded-full shrink-0",
-                cfg.dot,
-                key === "running" && "animate-breathe text-success",
-              )}
-            />
-            {lifecycleCounts[key]}
-          </span>
-        )
-      })}
-
-      {/* Separator + attention pills */}
-      {attentionPills.length > 0 && (
-        <>
-          {lifecyclePills.length > 0 && (
-            <span className="text-muted/30 text-[9px]">&middot;</span>
-          )}
-          {attentionPills.map((key) => {
-            const cfg = ATTENTION_CONFIG[key]
-            return (
-              <span
-                key={key}
-                className={cn(
-                  "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
-                  cfg.text,
-                )}
-              >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full shrink-0",
-                    cfg.dot,
-                    cfg.pulse && "animate-breathe",
-                  )}
-                />
-                {attentionCounts[key]}
-                {layout === "horizontal" && (
-                  <span className="ml-0.5">{cfg.label.toLowerCase()}</span>
-                )}
-              </span>
-            )
-          })}
-        </>
-      )}
-    </div>
-  )
-}
-
-/* ================================================================== */
 /*  AGENT LEFT PANEL — unified icon rail + agent cards                 */
 /* ================================================================== */
 
@@ -2021,17 +1924,35 @@ function AgentLeftPanel({
         {/* Hover edge hint — subtle accent line on right edge */}
         <div className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover/rail:bg-accent/25 transition-colors" />
 
-        {/* Project initial */}
-        <button
-          type="button"
-          onClick={onToggleOpen}
-          className="pt-3 pb-2 flex justify-center hover:bg-surface-raised/30 transition-colors"
-          title="Open panel"
-        >
+        {/* Project icon + secrets + cost */}
+        <div className="pt-3 pb-1 flex flex-col items-center gap-1.5">
           <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent">
             A
           </div>
-        </button>
+          <button
+            type="button"
+            onClick={onOpenSecrets}
+            className="p-1 rounded-md text-muted/50 hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+            title="Project secrets"
+          >
+            <KeyRound className="h-3 w-3" />
+          </button>
+          <span className="text-[8px] text-muted/50 font-mono tabular-nums">
+            {formatCost(totalCost)}
+          </span>
+        </div>
+
+        {/* Expand button */}
+        <div className="flex justify-center pb-1.5 border-b border-border-subtle mb-1">
+          <button
+            type="button"
+            onClick={onToggleOpen}
+            className="p-1 rounded-md text-muted/40 hover:text-accent hover:bg-accent/10 transition-colors"
+            title="Expand panel"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
 
         {/* Agent avatars */}
         <div className="flex-1 flex flex-col items-center gap-1.5 py-2 overflow-y-auto">
@@ -2084,38 +2005,10 @@ function AgentLeftPanel({
           })}
         </div>
 
-        {/* Fleet health */}
-        <div className="py-2 flex flex-col items-center gap-1 border-t border-border-subtle">
-          <FleetHealthPills agents={agents} layout="vertical" />
-        </div>
-
-        {/* Expand button — explicit affordance */}
-        <div className="flex justify-center py-1.5 border-t border-border-subtle">
-          <button
-            type="button"
-            onClick={onToggleOpen}
-            className="p-1 rounded-md text-muted/40 hover:text-accent hover:bg-accent/10 transition-colors"
-            title="Expand panel"
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* Bottom: secrets + cost + user avatar */}
-        <div className="py-2 flex flex-col items-center gap-2 border-t border-border-default">
-          <button
-            type="button"
-            onClick={onOpenSecrets}
-            className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-            title="Project secrets"
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-          </button>
-          <span className="text-[9px] text-muted/60 font-mono tabular-nums">
-            {formatCost(totalCost)}
-          </span>
+        {/* Bottom: user avatar */}
+        <div className="py-3 flex flex-col items-center border-t border-border-default">
           <div
-            className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
+            className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
             title="vahid"
           >
             V
@@ -2133,18 +2026,30 @@ function AgentLeftPanel({
     >
       <ResizeHandle onResize={onResize} onReset={onResetWidth} side="right" />
 
-      {/* Project selector placeholder */}
+      {/* Project selector + secrets + cost */}
       <div className="h-10 px-3 flex items-center border-b border-border-default shrink-0">
         <button
           type="button"
-          className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors flex-1 min-w-0"
+          className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors min-w-0"
         >
           <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent shrink-0">
             A
           </div>
-          <span className="text-sm font-medium text-default">agentobox</span>
+          <span className="text-sm font-medium text-default truncate">agentobox</span>
           <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
         </button>
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onOpenSecrets}
+          className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
+          title="Project secrets"
+        >
+          <KeyRound className="h-3.5 w-3.5" />
+        </button>
+        <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1 shrink-0">
+          {formatCost(totalCost)}
+        </span>
         <button
           type="button"
           onClick={onToggleOpen}
@@ -2369,34 +2274,15 @@ function AgentLeftPanel({
             </div>
           )}
 
-          {/* Fleet health horizontal */}
-          <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-2 shrink-0">
-            <FleetHealthPills agents={agents} layout="horizontal" />
-            <span className="text-[9px] text-muted/40 font-mono ml-auto">
-              {agents.length} agents
-            </span>
-          </div>
         </>
       ) : (
         <SkillsPanel allExpanded={skillsAllExpanded} />
       )}
 
-      {/* Bottom toolbar: secrets + cost + user */}
-      <div className="px-3 py-2 border-t border-border-default flex items-center gap-3 shrink-0">
-        <button
-          type="button"
-          onClick={onOpenSecrets}
-          className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-          title="Project secrets"
-        >
-          <KeyRound className="h-3.5 w-3.5" />
-        </button>
-        <span className="text-xs text-muted font-mono tabular-nums">
-          {formatCost(totalCost)}
-        </span>
-        <span className="flex-1" />
+      {/* Bottom: user avatar */}
+      <div className="px-3 py-2 border-t border-border-default flex items-center shrink-0">
         <div
-          className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
+          className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
           title="vahid"
         >
           V
@@ -2556,41 +2442,22 @@ function AttentionBar({
             ? `${item.agent} wants to run: ${item.command}`
             : `${item.agent} proposed: ${item.title}`}
         </span>
-        {item.type === "permission" ? (
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => onResolvePermission(feedIndex, "allowed")}
-              className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-            >
-              Allow
-            </button>
-            <button
-              type="button"
-              onClick={() => onResolvePermission(feedIndex, "denied")}
-              className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-            >
-              Deny
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => onResolvePlan(feedIndex, "approved")}
-              className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              onClick={() => onResolvePlan(feedIndex, "rejected")}
-              className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-            >
-              Reject
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => item.type === "permission" ? onResolvePermission(feedIndex, "allowed") : onResolvePlan(feedIndex, "approved")}
+            className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+          >
+            Allow
+          </button>
+          <button
+            type="button"
+            onClick={() => item.type === "permission" ? onResolvePermission(feedIndex, "denied") : onResolvePlan(feedIndex, "rejected")}
+            className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+          >
+            Deny
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -3684,6 +3551,7 @@ function AgentCardsPanel({
   agents,
   expandedIds,
   onToggleAgent,
+  onToggleExpandAll,
   feedItems,
   onResolvePermission,
   onResolvePlan,
@@ -3691,26 +3559,162 @@ function AgentCardsPanel({
   agents: FakeAgent[]
   expandedIds: Set<string>
   onToggleAgent: (id: string) => void
+  onToggleExpandAll?: () => void
   feedItems?: TeamFeedItem[]
   onResolvePermission?: (feedIndex: number, verdict: "allowed" | "denied") => void
   onResolvePlan?: (feedIndex: number, verdict: "approved" | "rejected") => void
 }) {
+  const [searchQuery, setSearchQuery] = useState("")
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [showTagDropdown, setShowTagDropdown] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const filteredAgents = useMemo(() => {
+    let result = agents
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(a => a.name.toLowerCase().includes(q) || a.tags.some(t => t.includes(q)))
+    }
+    if (tagFilter) {
+      result = result.filter(a => a.tags.includes(tagFilter))
+    }
+    return result
+  }, [agents, searchQuery, tagFilter])
+
+  const handleSelectAgent = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
   return (
-    <ScrollArea className="h-full overflow-y-auto">
-      <div className="p-3 space-y-2">
-        {agents.map((agent) => (
-          <AgentCardRow
-            key={agent.id}
-            agent={agent}
-            isOpen={expandedIds.has(agent.id)}
-            onToggle={() => onToggleAgent(agent.id)}
-            pendingItems={feedItems ? getPendingItemsForAgent(feedItems, agent.name) : []}
-            onResolvePermission={onResolvePermission}
-            onResolvePlan={onResolvePlan}
+    <>
+      {/* Toolbar: search + tags + select + create + expand */}
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-border-subtle shrink-0">
+        <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded-md border border-border-default bg-surface-sunken/40 px-2 py-1">
+          <Search className="h-3 w-3 text-muted/50 shrink-0" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search agents..."
+            className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
           />
-        ))}
+        </div>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowTagDropdown(!showTagDropdown)}
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
+              tagFilter
+                ? "border-accent/30 bg-accent/10 text-accent"
+                : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+            )}
+          >
+            <Filter className="h-3 w-3" />
+            {tagFilter || "Tags"}
+            <ChevronRight size={10} className="rotate-90 text-muted/40" />
+          </button>
+          {showTagDropdown && (
+            <div className="absolute top-full right-0 mt-1 w-32 rounded-md border border-border-default bg-surface-raised shadow-lg z-(--z-dropdown) overflow-hidden">
+              <button
+                type="button"
+                onClick={() => { setTagFilter(null); setShowTagDropdown(false) }}
+                className={cn(
+                  "w-full text-left px-3 py-1.5 text-[11px] transition-colors",
+                  !tagFilter ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
+                )}
+              >
+                All tags
+              </button>
+              {ALL_TAGS.map(tag => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => { setTagFilter(tag); setShowTagDropdown(false) }}
+                  className={cn(
+                    "w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors",
+                    tagFilter === tag ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
+                  )}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+          className={cn(
+            "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors shrink-0",
+            selectMode
+              ? "border-accent/30 bg-accent/10 text-accent"
+              : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+          )}
+        >
+          <CheckSquare className="h-3 w-3" />
+          {selectMode ? "Done" : "Select"}
+        </button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 text-muted hover:text-secondary hover:bg-surface-raised/50"
+        >
+          <Plus className="h-3 w-3" />
+          Create
+        </button>
+        {onToggleExpandAll && (
+          <button
+            type="button"
+            onClick={onToggleExpandAll}
+            className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
+            title="Cycle card states"
+          >
+            {expandedIds.size > 0 ? (
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
       </div>
-    </ScrollArea>
+
+      {/* Agent cards */}
+      <ScrollArea className="flex-1 overflow-y-auto">
+        <div className="p-3 space-y-2">
+          {filteredAgents.map((agent) => (
+            <AgentCardRow
+              key={agent.id}
+              agent={agent}
+              isOpen={!selectMode && expandedIds.has(agent.id)}
+              onToggle={() => selectMode ? handleSelectAgent(agent.id) : onToggleAgent(agent.id)}
+              selectable={selectMode}
+              selected={selectedIds.has(agent.id)}
+              onSelect={() => handleSelectAgent(agent.id)}
+              pendingItems={feedItems ? getPendingItemsForAgent(feedItems, agent.name) : []}
+              onResolvePermission={onResolvePermission}
+              onResolvePlan={onResolvePlan}
+            />
+          ))}
+          {filteredAgents.length === 0 && (
+            <div className="py-6 text-center">
+              <Users className="h-5 w-5 text-muted/20 mx-auto mb-1" />
+              <p className="text-[11px] text-muted/50">No agents match filters</p>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </>
   )
 }
 
@@ -3873,14 +3877,12 @@ export default function PrototypePage() {
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>("1")
   const [mainTab, setMainTab] = useState<"chat" | "agents" | "skills">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
-  const [agentPanelOpen, setAgentPanelOpen] = useState(true)
+  const [agentPanelOpen, setAgentPanelOpen] = useState(() => bp !== "S" && bp !== "mobile")
   const [leftPanelWidth, setLeftPanelWidth] = useState<number | null>(null)
 
-  // Reset custom width + auto-collapse on breakpoint change
+  // Reset custom panel width on breakpoint change (keep open/closed state as-is)
   useEffect(() => {
     setLeftPanelWidth(null)
-    if (bp === "S") setAgentPanelOpen(false)
-    else if (bp !== "mobile") setAgentPanelOpen(true)
   }, [bp])
 
   const handleToggleAgent = useCallback((id: string) => {
@@ -3938,8 +3940,8 @@ export default function PrototypePage() {
   const pendingCount = useMemo(() => getAllPendingItems(feedItems).length, [feedItems])
 
   // Determine what's visible at each breakpoint
+  const showTopTabs = bp === "mobile"
   const showLeftPanel = bp !== "mobile"
-  const showTopTabs = bp === "S" || bp === "mobile"
 
   // Left panel width: custom if user has resized, else breakpoint default
   const defaultLeftWidth = bp === "S" ? 340 : bp === "M" ? 340 : 480
@@ -3948,7 +3950,13 @@ export default function PrototypePage() {
   const handleLeftPanelResize = useCallback((delta: number) => {
     setLeftPanelWidth((prev) => {
       const current = prev ?? defaultLeftWidth
-      return Math.max(280, Math.min(720, current + delta))
+      const next = current + delta
+      // Snap to collapsed if dragged below threshold
+      if (next < 360) {
+        setAgentPanelOpen(false)
+        return null // reset to default for when they re-expand
+      }
+      return Math.max(360, Math.min(720, next))
     })
   }, [defaultLeftWidth])
 
@@ -4052,11 +4060,12 @@ export default function PrototypePage() {
 
         {/* Top-tab content: agents (S + mobile) */}
         {showTopTabs && mainTab === "agents" && (
-          <div className="flex-1 min-w-0 bg-surface flex flex-col">
+          <div className="flex-1 min-w-0 bg-surface flex flex-col overflow-hidden">
             <AgentCardsPanel
               agents={agents}
               expandedIds={expandedIds}
               onToggleAgent={handleToggleAgent}
+              onToggleExpandAll={handleToggleExpandAll}
               feedItems={feedItems}
               onResolvePermission={handleResolvePermission}
               onResolvePlan={handleResolvePlan}
