@@ -455,7 +455,7 @@ function AssistantMessage({
         />
       </div>
       {content.length > 0 && (
-        <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+        <div className="absolute top-0 -left-6 opacity-0 group-hover/msg:opacity-100 transition-opacity">
           <CopyButton text={content} />
         </div>
       )}
@@ -2027,23 +2027,6 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
         )}
       </div>
 
-      {/* Mini composer — message this specific agent */}
-      <div className="px-3 py-2 border-t border-border-subtle">
-        <div className="flex items-center gap-2 rounded-lg border border-border-default bg-surface-sunken/40 px-2.5 py-1.5">
-          <span className="text-[10px] text-accent font-mono shrink-0">@{agent.name}</span>
-          <input
-            type="text"
-            placeholder="Message this agent..."
-            className="flex-1 bg-transparent border-none outline-none text-xs text-default placeholder:text-muted/40 min-w-0"
-          />
-          <button
-            type="button"
-            className="flex items-center justify-center h-5 w-5 rounded-full bg-surface text-muted"
-          >
-            <ArrowUp className="h-3 w-3" strokeWidth={2.5} />
-          </button>
-        </div>
-      </div>
     </div>
   )
 }
