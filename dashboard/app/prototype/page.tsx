@@ -1695,6 +1695,13 @@ function AgentLeftPanel({
               <CheckSquare className="h-3 w-3" />
               {selectMode ? "Done" : "Select"}
             </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 text-muted hover:text-secondary hover:bg-surface-raised/50"
+            >
+              <Plus className="h-3 w-3" />
+              Create
+            </button>
           </div>
 
           {/* Agent cards */}
@@ -2570,14 +2577,24 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
   const [newTags, setNewTags] = useState<string[]>([])
   const [selectMode, setSelectMode] = useState(false)
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
+  const [skillTagFilter, setSkillTagFilter] = useState<string | null>(null)
+  const [showSkillTagDropdown, setShowSkillTagDropdown] = useState(false)
+
+  const allSkillTags = useMemo(() => Array.from(new Set(SKILLS.flatMap(s => s.assignedTags))).sort(), [])
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return SKILLS
-    const q = search.toLowerCase()
-    return SKILLS.filter(s =>
-      s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
-    )
-  }, [search])
+    let result = SKILLS
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      result = result.filter(s =>
+        s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
+      )
+    }
+    if (skillTagFilter) {
+      result = result.filter(s => s.assignedTags.includes(skillTagFilter))
+    }
+    return result
+  }, [search, skillTagFilter])
 
   return (
     <div className="flex flex-col h-full">
@@ -2592,6 +2609,49 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
             placeholder="Search skills..."
             className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
           />
+        </div>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowSkillTagDropdown(!showSkillTagDropdown)}
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
+              skillTagFilter
+                ? "border-accent/30 bg-accent/10 text-accent"
+                : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+            )}
+          >
+            <Filter className="h-3 w-3" />
+            {skillTagFilter || "Tags"}
+            <ChevronRight size={10} className="rotate-90 text-muted/40" />
+          </button>
+          {showSkillTagDropdown && (
+            <div className="absolute top-full right-0 mt-1 w-32 rounded-md border border-border-default bg-surface-raised shadow-lg z-(--z-dropdown) overflow-hidden">
+              <button
+                type="button"
+                onClick={() => { setSkillTagFilter(null); setShowSkillTagDropdown(false) }}
+                className={cn(
+                  "w-full text-left px-3 py-1.5 text-[11px] transition-colors",
+                  !skillTagFilter ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
+                )}
+              >
+                All tags
+              </button>
+              {allSkillTags.map(tag => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => { setSkillTagFilter(tag); setShowSkillTagDropdown(false) }}
+                  className={cn(
+                    "w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors",
+                    skillTagFilter === tag ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
+                  )}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <button
           type="button"
