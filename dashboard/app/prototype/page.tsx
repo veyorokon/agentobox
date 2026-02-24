@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, useReducer } from "react"
 import {
   ArrowUp,
   Users,
@@ -43,10 +43,14 @@ import { CopyButton } from "@/components/shared/copy-button"
 /*  FAKE DATA                                                          */
 /* ================================================================== */
 
+type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
+type AttentionLevel = "none" | "review" | "plan" | "permission"
+
 type FakeAgent = {
   id: string
   name: string
-  status: "running" | "error" | "idle" | "stopped" | "waiting" | "deploying"
+  lifecycleStatus: LifecycleStatus
+  attentionLevel: AttentionLevel
   task: string
   cost: number
   duration: string
@@ -67,11 +71,12 @@ type FakeAgent = {
   mode: "auto" | "plan" | "supervised"
 }
 
-const AGENTS: FakeAgent[] = [
+const INITIAL_AGENTS: FakeAgent[] = [
   {
     id: "1",
     name: "backend",
-    status: "running",
+    lifecycleStatus: "running",
+    attentionLevel: "none",
     task: "Editing auth.ts — fixing JWT validation",
     cost: 0.12,
     duration: "3m 22s",
@@ -91,7 +96,8 @@ const AGENTS: FakeAgent[] = [
   {
     id: "2",
     name: "frontend",
-    status: "running",
+    lifecycleStatus: "running",
+    attentionLevel: "none",
     task: "Reading component styles",
     cost: 0.08,
     duration: "1m 45s",
@@ -110,7 +116,8 @@ const AGENTS: FakeAgent[] = [
   {
     id: "3",
     name: "qa",
-    status: "error",
+    lifecycleStatus: "error",
+    attentionLevel: "permission",
     task: "npm test failed",
     cost: 0.05,
     duration: "2m 10s",
@@ -128,7 +135,8 @@ const AGENTS: FakeAgent[] = [
   {
     id: "4",
     name: "devops",
-    status: "idle",
+    lifecycleStatus: "waiting",
+    attentionLevel: "none",
     task: "Waiting for backend",
     cost: 0.03,
     duration: "5m 00s",
@@ -145,7 +153,8 @@ const AGENTS: FakeAgent[] = [
   {
     id: "5",
     name: "docs",
-    status: "stopped",
+    lifecycleStatus: "stopped",
+    attentionLevel: "review",
     task: "Completed README update",
     cost: 0.02,
     duration: "1m 30s",
@@ -163,7 +172,8 @@ const AGENTS: FakeAgent[] = [
   {
     id: "6",
     name: "infra",
-    status: "deploying" as const,
+    lifecycleStatus: "deploying",
+    attentionLevel: "none",
     task: "Provisioning container",
     cost: 0.00,
     duration: "0m 12s",
@@ -302,7 +312,7 @@ function getAgentSkills(agent: FakeAgent): Skill[] {
 }
 
 /** All unique tags across agents */
-const ALL_TAGS = Array.from(new Set(AGENTS.flatMap(a => a.tags))).sort()
+const ALL_TAGS = Array.from(new Set(INITIAL_AGENTS.flatMap(a => a.tags))).sort()
 
 /**
  * FAKE_MARKDOWN — used in right-panel agent detail feed.
@@ -491,29 +501,96 @@ const TEAM_FEED: TeamFeedItem[] = [
 ]
 
 /* ================================================================== */
-/*  STATUS CONFIG                                                      */
+/*  STATUS + ATTENTION CONFIG                                          */
 /* ================================================================== */
 
-const STATUS_CONFIG: Record<
-  string,
-  { dot: string; label: string; glow?: string; text?: string }
-> = {
-  running: { dot: "bg-success", label: "Running", glow: "text-success", text: "text-success" },
-  idle: { dot: "bg-info", label: "Idle", text: "text-info" },
-  waiting: { dot: "bg-warning", label: "Waiting", text: "text-warning" },
-  error: { dot: "bg-danger", label: "Error", text: "text-danger" },
-  stopped: { dot: "bg-muted/50", label: "Stopped", text: "text-muted" },
-  deploying: { dot: "bg-accent", label: "Starting", text: "text-accent" },
+const ATTENTION_PRIORITY: Record<AttentionLevel, number> = { none: 0, review: 1, plan: 2, permission: 3 }
+const LIFECYCLE_PRIORITY: Record<LifecycleStatus, number> = { stopped: 0, idle: 1, deploying: 2, waiting: 3, running: 4, error: 5 }
+
+const LIFECYCLE_CONFIG: Record<LifecycleStatus, { dot: string; label: string; text: string; glow?: string }> = {
+  running:   { dot: "bg-success",   label: "Running",  text: "text-success", glow: "text-success" },
+  idle:      { dot: "bg-info",      label: "Idle",     text: "text-info" },
+  waiting:   { dot: "bg-warning",   label: "Waiting",  text: "text-warning" },
+  error:     { dot: "bg-danger",    label: "Error",    text: "text-danger" },
+  stopped:   { dot: "bg-muted/50",  label: "Stopped",  text: "text-muted" },
+  deploying: { dot: "bg-accent",    label: "Starting", text: "text-accent" },
 }
 
-const PILL_CONFIG = [
-  { key: "error" as const, dot: "bg-danger", text: "text-danger" },
-  { key: "waiting" as const, dot: "bg-warning", text: "text-warning" },
-  { key: "running" as const, dot: "bg-success", text: "text-success", animate: true },
-  { key: "deploying" as const, dot: "bg-accent", text: "text-accent" },
-  { key: "idle" as const, dot: "bg-info", text: "text-muted" },
-  { key: "stopped" as const, dot: "bg-muted/40", text: "text-muted/50" },
-]
+const ATTENTION_CONFIG: Record<Exclude<AttentionLevel, "none">, { dot: string; label: string; text: string; pulse: boolean }> = {
+  review:     { dot: "bg-success", label: "Review",     text: "text-success", pulse: false },
+  plan:       { dot: "bg-warning", label: "Plan",       text: "text-warning", pulse: true },
+  permission: { dot: "bg-info",    label: "Permission", text: "text-info",    pulse: true },
+}
+
+// Display order for fleet health pills (highest priority first)
+const LIFECYCLE_PILL_ORDER: LifecycleStatus[] = ["error", "waiting", "running", "deploying", "idle", "stopped"]
+const ATTENTION_PILL_ORDER: (Exclude<AttentionLevel, "none">)[] = ["permission", "plan", "review"]
+
+/* ================================================================== */
+/*  UTILITY FUNCTIONS                                                   */
+/* ================================================================== */
+
+function getHighestAttention(agents: FakeAgent[]): AttentionLevel {
+  let highest: AttentionLevel = "none"
+  for (const a of agents) {
+    if (a.attentionLevel === "permission") return "permission" // early exit at max
+    if (ATTENTION_PRIORITY[a.attentionLevel] > ATTENTION_PRIORITY[highest]) {
+      highest = a.attentionLevel
+    }
+  }
+  return highest
+}
+
+type PendingItem = Extract<TeamFeedItem, { type: "permission" }> | Extract<TeamFeedItem, { type: "plan" }>
+
+function getPendingItemsForAgent(feedItems: TeamFeedItem[], agentName: string): PendingItem[] {
+  return feedItems.filter((item): item is PendingItem =>
+    (item.type === "permission" && item.agent === agentName && item.permStatus === "pending") ||
+    (item.type === "plan" && item.agent === agentName && item.planStatus === "pending"),
+  )
+}
+
+function getAllPendingItems(feedItems: TeamFeedItem[]): PendingItem[] {
+  return feedItems.filter((item): item is PendingItem =>
+    (item.type === "permission" && item.permStatus === "pending") ||
+    (item.type === "plan" && item.planStatus === "pending"),
+  )
+}
+
+function deriveAttentionFromFeed(feedItems: TeamFeedItem[], agentName: string): AttentionLevel {
+  const pending = getPendingItemsForAgent(feedItems, agentName)
+  let highest: AttentionLevel = "none"
+  for (const item of pending) {
+    const level: AttentionLevel = item.type === "permission" ? "permission" : "plan"
+    if (ATTENTION_PRIORITY[level] > ATTENTION_PRIORITY[highest]) highest = level
+  }
+  return highest
+}
+
+/* ================================================================== */
+/*  AGENT REDUCER                                                       */
+/* ================================================================== */
+
+type AgentAction =
+  | { type: "SET_LIFECYCLE"; agentId: string; status: LifecycleStatus }
+  | { type: "SET_ATTENTION"; agentId: string; level: AttentionLevel }
+  | { type: "ACKNOWLEDGE"; agentId: string }
+  | { type: "RESET" }
+
+function agentReducer(state: FakeAgent[], action: AgentAction): FakeAgent[] {
+  switch (action.type) {
+    case "SET_LIFECYCLE":
+      return state.map(a => a.id === action.agentId ? { ...a, lifecycleStatus: action.status } : a)
+    case "SET_ATTENTION":
+      return state.map(a => a.id === action.agentId ? { ...a, attentionLevel: action.level } : a)
+    case "ACKNOWLEDGE":
+      return state.map(a => a.id === action.agentId && a.attentionLevel === "review" ? { ...a, attentionLevel: "none" } : a)
+    case "RESET":
+      return INITIAL_AGENTS
+    default:
+      return state
+  }
+}
 
 const MODE_CONFIG = {
   auto: { label: "auto", color: "text-success" },
@@ -1459,7 +1536,7 @@ function AgentSummaryCard({
  * SOURCE: StreamEvent status change (agent.status field transitions)
  */
 function AgentStatusLine({ agent, from, to }: { agent: string; from: string; to: string }) {
-  const toConfig = STATUS_CONFIG[to] ?? STATUS_CONFIG.stopped
+  const toConfig = LIFECYCLE_CONFIG[to as LifecycleStatus] ?? LIFECYCLE_CONFIG.stopped
 
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
@@ -1558,7 +1635,7 @@ function SecretsModal({
 
   if (!open) return null
 
-  const activeAgents = agents.filter((a) => a.status === "running" || a.status === "idle" || a.status === "deploying")
+  const activeAgents = agents.filter((a) => a.lifecycleStatus === "running" || a.lifecycleStatus === "idle" || a.lifecycleStatus === "deploying")
   const needsRestart = dirty && !restarted
 
   const toggleReveal = (id: string) => {
@@ -1764,15 +1841,30 @@ function SecretsModal({
 /* ================================================================== */
 
 function FleetHealthPills({
-  statusCounts,
+  agents,
   layout,
 }: {
-  statusCounts: Record<string, number>
+  agents: FakeAgent[]
   layout: "vertical" | "horizontal"
 }) {
-  const pills = PILL_CONFIG.filter((p) => (statusCounts[p.key] ?? 0) > 0)
+  const lifecycleCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const a of agents) counts[a.lifecycleStatus] = (counts[a.lifecycleStatus] ?? 0) + 1
+    return counts
+  }, [agents])
 
-  if (pills.length === 0) return null
+  const attentionCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const a of agents) {
+      if (a.attentionLevel !== "none") counts[a.attentionLevel] = (counts[a.attentionLevel] ?? 0) + 1
+    }
+    return counts
+  }, [agents])
+
+  const lifecyclePills = LIFECYCLE_PILL_ORDER.filter((k) => (lifecycleCounts[k] ?? 0) > 0)
+  const attentionPills = ATTENTION_PILL_ORDER.filter((k) => (attentionCounts[k] ?? 0) > 0)
+
+  if (lifecyclePills.length === 0 && attentionPills.length === 0) return null
 
   return (
     <div
@@ -1781,24 +1873,61 @@ function FleetHealthPills({
         layout === "vertical" ? "flex-col" : "flex-row gap-2",
       )}
     >
-      {pills.map((pill) => (
-        <span
-          key={pill.key}
-          className={cn(
-            "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
-            pill.text,
-          )}
-        >
+      {/* Lifecycle pills */}
+      {lifecyclePills.map((key) => {
+        const cfg = LIFECYCLE_CONFIG[key]
+        return (
           <span
+            key={key}
             className={cn(
-              "h-1.5 w-1.5 rounded-full shrink-0",
-              pill.dot,
-              pill.animate && "animate-breathe text-success",
+              "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
+              cfg.text,
             )}
-          />
-          {statusCounts[pill.key]}
-        </span>
-      ))}
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full shrink-0",
+                cfg.dot,
+                key === "running" && "animate-breathe text-success",
+              )}
+            />
+            {lifecycleCounts[key]}
+          </span>
+        )
+      })}
+
+      {/* Separator + attention pills */}
+      {attentionPills.length > 0 && (
+        <>
+          {lifecyclePills.length > 0 && (
+            <span className="text-muted/30 text-[9px]">&middot;</span>
+          )}
+          {attentionPills.map((key) => {
+            const cfg = ATTENTION_CONFIG[key]
+            return (
+              <span
+                key={key}
+                className={cn(
+                  "inline-flex items-center gap-0.5 font-mono text-[9px] tabular-nums",
+                  cfg.text,
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full shrink-0",
+                    cfg.dot,
+                    cfg.pulse && "animate-breathe",
+                  )}
+                />
+                {attentionCounts[key]}
+                {layout === "horizontal" && (
+                  <span className="ml-0.5">{cfg.label.toLowerCase()}</span>
+                )}
+              </span>
+            )
+          })}
+        </>
+      )}
     </div>
   )
 }
@@ -1818,6 +1947,9 @@ function AgentLeftPanel({
   width,
   onResize,
   onResetWidth,
+  feedItems,
+  onResolvePermission,
+  onResolvePlan,
 }: {
   agents: FakeAgent[]
   expandedIds: Set<string>
@@ -1829,6 +1961,9 @@ function AgentLeftPanel({
   width: number
   onResize: (delta: number) => void
   onResetWidth: () => void
+  feedItems: TeamFeedItem[]
+  onResolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
+  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
 }) {
   const [panelTab, setPanelTab] = useState<"agents" | "skills">("agents")
   const [searchQuery, setSearchQuery] = useState("")
@@ -1837,12 +1972,6 @@ function AgentLeftPanel({
   const [selectMode, setSelectMode] = useState(false)
   const [showTagDropdown, setShowTagDropdown] = useState(false)
   const [skillsAllExpanded, setSkillsAllExpanded] = useState(false)
-
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { running: 0, error: 0, idle: 0, stopped: 0, waiting: 0, deploying: 0 }
-    for (const a of agents) counts[a.status] = (counts[a.status] ?? 0) + 1
-    return counts
-  }, [agents])
 
   const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
 
@@ -1894,10 +2023,12 @@ function AgentLeftPanel({
         {/* Agent avatars */}
         <div className="flex-1 flex flex-col items-center gap-1.5 py-2 overflow-y-auto">
           {agents.map((agent) => {
-            const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
+            const config = LIFECYCLE_CONFIG[agent.lifecycleStatus]
             const isSelected = expandedIds.has(agent.id)
-            const isRunning = agent.status === "running"
-            const isStopped = agent.status === "stopped"
+            const isRunning = agent.lifecycleStatus === "running"
+            const isStopped = agent.lifecycleStatus === "stopped"
+            const hasAttention = agent.attentionLevel !== "none"
+            const attCfg = hasAttention ? ATTENTION_CONFIG[agent.attentionLevel as Exclude<AttentionLevel, "none">] : null
 
             return (
               <button
@@ -1914,13 +2045,24 @@ function AgentLeftPanel({
                 title={agent.name}
               >
                 <AgentAvatar name={agent.name} size="md" stopped={isStopped} />
-                <span
-                  className={cn(
-                    "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
-                    config.dot,
-                    isRunning && "animate-breathe text-success",
-                  )}
-                />
+                {/* Attention dot takes precedence over lifecycle dot */}
+                {hasAttention && attCfg ? (
+                  <span
+                    className={cn(
+                      "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
+                      attCfg.dot,
+                      attCfg.pulse && "animate-breathe",
+                    )}
+                  />
+                ) : (
+                  <span
+                    className={cn(
+                      "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
+                      config.dot,
+                      isRunning && "animate-breathe text-success",
+                    )}
+                  />
+                )}
                 {isSelected && (
                   <span className="absolute inset-0 rounded-md ring-2 ring-accent/50" />
                 )}
@@ -1931,7 +2073,7 @@ function AgentLeftPanel({
 
         {/* Fleet health */}
         <div className="py-2 flex flex-col items-center gap-1 border-t border-border-subtle">
-          <FleetHealthPills statusCounts={statusCounts} layout="vertical" />
+          <FleetHealthPills agents={agents} layout="vertical" />
         </div>
 
         {/* Expand button — explicit affordance */}
@@ -2150,6 +2292,9 @@ function AgentLeftPanel({
                   selectable={selectMode}
                   selected={selectedIds.has(agent.id)}
                   onSelect={() => handleSelectAgent(agent.id)}
+                  pendingItems={getPendingItemsForAgent(feedItems, agent.name)}
+                  onResolvePermission={onResolvePermission}
+                  onResolvePlan={onResolvePlan}
                 />
               ))}
               {filteredAgents.length === 0 && (
@@ -2213,7 +2358,7 @@ function AgentLeftPanel({
 
           {/* Fleet health horizontal */}
           <div className="px-3 py-1.5 border-t border-border-subtle flex items-center gap-2 shrink-0">
-            <FleetHealthPills statusCounts={statusCounts} layout="horizontal" />
+            <FleetHealthPills agents={agents} layout="horizontal" />
             <span className="text-[9px] text-muted/40 font-mono ml-auto">
               {agents.length} agents
             </span>
@@ -2305,11 +2450,30 @@ function ComposerBar() {
 /*  ATTENTION BAR                                                      */
 /* ================================================================== */
 
-function AttentionBar({ items }: { items: TeamFeedItem[] }) {
-  const pending = items.filter((item): item is Extract<TeamFeedItem, { type: "permission" } | { type: "plan" }> => {
-    if (item.type === "permission" && item.permStatus === "pending") return true
-    if (item.type === "plan" && item.planStatus === "pending") return true
-    return false
+function AttentionBar({
+  feedItems,
+  focusedAgentId,
+  agents,
+  onResolvePermission,
+  onResolvePlan,
+}: {
+  feedItems: TeamFeedItem[]
+  focusedAgentId: string | null
+  agents: FakeAgent[]
+  onResolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
+  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
+}) {
+  // Collect pending items with their original feed index for resolution
+  const pending: { item: PendingItem; feedIndex: number; agentId?: string }[] = []
+  feedItems.forEach((item, i) => {
+    if (item.type === "permission" && item.permStatus === "pending") {
+      const agent = agents.find(a => a.name === item.agent)
+      pending.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
+    }
+    if (item.type === "plan" && item.planStatus === "pending") {
+      const agent = agents.find(a => a.name === item.agent)
+      pending.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
+    }
   })
 
   if (pending.length === 0) return null
@@ -2317,7 +2481,7 @@ function AttentionBar({ items }: { items: TeamFeedItem[] }) {
   // Sort: permissions first, then plans
   const sorted = [...pending].sort((a, b) => {
     const order = { permission: 0, plan: 1 }
-    return (order[a.type] ?? 2) - (order[b.type] ?? 2)
+    return (order[a.item.type] ?? 2) - (order[b.item.type] ?? 2)
   })
 
   return (
@@ -2329,47 +2493,55 @@ function AttentionBar({ items }: { items: TeamFeedItem[] }) {
         </span>
       </div>
       <div className="space-y-1.5">
-        {sorted.map((item, i) => (
-          <div key={i} className="flex items-center gap-2 min-w-0">
-            <AgentAvatar name={item.agent} size="sm" />
-            <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
-              {item.type === "permission"
-                ? `${item.agent} wants to run: ${item.command}`
-                : `${item.agent} proposed: ${item.title}`}
-            </span>
-            {item.type === "permission" ? (
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                >
-                  Allow
-                </button>
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                >
-                  Deny
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                >
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                >
-                  Reject
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+        {sorted.map(({ item, feedIndex, agentId }) => {
+          // Suppression: dim items for the focused agent
+          const isFocused = focusedAgentId != null && agentId === focusedAgentId
+          return (
+            <div key={feedIndex} className={cn("flex items-center gap-2 min-w-0", isFocused && "opacity-50")}>
+              <AgentAvatar name={item.agent} size="sm" />
+              <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
+                {item.type === "permission"
+                  ? `${item.agent} wants to run: ${item.command}`
+                  : `${item.agent} proposed: ${item.title}`}
+              </span>
+              {item.type === "permission" ? (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onResolvePermission(feedIndex, "allowed")}
+                    className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                  >
+                    Allow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onResolvePermission(feedIndex, "denied")}
+                    className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                  >
+                    Deny
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onResolvePlan(feedIndex, "approved")}
+                    className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onResolvePlan(feedIndex, "rejected")}
+                    className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -2390,51 +2562,46 @@ function AttentionBar({ items }: { items: TeamFeedItem[] }) {
 /*  messages, tool results. Those live in the right panel detail view. */
 /* ================================================================== */
 
-function TeamFeed() {
+function TeamFeed({ feedItems }: { feedItems: TeamFeedItem[] }) {
   return (
-    <div className="flex flex-col h-full min-w-0">
-      <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
-        <div className="max-w-3xl mx-auto w-full px-6 py-4 space-y-3">
-          {TEAM_FEED.map((item, i) => {
-            switch (item.type) {
-              case "system":
-                return <SystemMessage key={i} text={item.text} />
-              case "user":
-                return <TeamUserMessage key={i} text={item.text} target={item.target} />
-              case "summary":
-                return (
-                  <AgentSummaryCard
-                    key={i}
-                    agent={item.agent}
-                    summary={item.summary}
-                    cost={item.cost}
-                    turns={item.turns}
-                    duration={item.duration}
-                    isError={item.isError}
-                  />
-                )
-              case "status":
-                return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} />
-              case "error":
-                return <TeamErrorAlert key={i} agent={item.agent} text={item.text} />
-              case "question":
-                return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
-              case "plan":
-                return <PlanCard key={i} agent={item.agent} title={item.title} steps={item.steps} planStatus={item.planStatus} />
-              case "permission":
-                return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
-              case "multi-question":
-                return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
-              default:
-                return null
-            }
-          })}
-        </div>
-      </ScrollArea>
-
-      <AttentionBar items={TEAM_FEED} />
-      <ComposerBar />
-    </div>
+    <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
+      <div className="max-w-3xl mx-auto w-full px-6 py-4 space-y-3">
+        {feedItems.map((item, i) => {
+          switch (item.type) {
+            case "system":
+              return <SystemMessage key={i} text={item.text} />
+            case "user":
+              return <TeamUserMessage key={i} text={item.text} target={item.target} />
+            case "summary":
+              return (
+                <AgentSummaryCard
+                  key={i}
+                  agent={item.agent}
+                  summary={item.summary}
+                  cost={item.cost}
+                  turns={item.turns}
+                  duration={item.duration}
+                  isError={item.isError}
+                />
+              )
+            case "status":
+              return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} />
+            case "error":
+              return <TeamErrorAlert key={i} agent={item.agent} text={item.text} />
+            case "question":
+              return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
+            case "plan":
+              return <PlanCard key={i} agent={item.agent} title={item.title} steps={item.steps} planStatus={item.planStatus} />
+            case "permission":
+              return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
+            case "multi-question":
+              return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
+            default:
+              return null
+          }
+        })}
+      </div>
+    </ScrollArea>
   )
 }
 
@@ -2445,8 +2612,8 @@ function TeamFeed() {
 
 /** VNC thumbnail placeholder — aspect ratio matches a 16:10 display */
 function VncThumbnail({ agent }: { agent: FakeAgent }) {
-  const isRunning = agent.status === "running"
-  const isStopped = agent.status === "stopped"
+  const isRunning = agent.lifecycleStatus === "running"
+  const isStopped = agent.lifecycleStatus === "stopped"
 
   return (
     <div
@@ -2466,7 +2633,7 @@ function VncThumbnail({ agent }: { agent: FakeAgent }) {
             <span className="h-1.5 w-1.5 rounded-full bg-warning/60" />
             <span className="h-1.5 w-1.5 rounded-full bg-success/60" />
             <span className="ml-2 text-[7px] text-muted/40 font-mono truncate">
-              {agent.name} — {isRunning ? agent.task : isStopped ? "session ended" : agent.status}
+              {agent.name} — {isRunning ? agent.task : isStopped ? "session ended" : agent.lifecycleStatus}
             </span>
           </div>
           {/* Fake terminal content */}
@@ -2483,13 +2650,13 @@ function VncThumbnail({ agent }: { agent: FakeAgent }) {
               <div className="flex items-center justify-center h-full">
                 <span className="text-[7px] font-mono text-muted/20">session ended</span>
               </div>
-            ) : agent.status === "error" ? (
+            ) : agent.lifecycleStatus === "error" ? (
               <div className="space-y-0.5">
                 <p className="text-[6px] font-mono text-danger/50 leading-tight">Error: {agent.task}</p>
               </div>
             ) : (
               <div className="flex items-center justify-center h-full">
-                <span className="text-[7px] font-mono text-muted/25">{agent.status}</span>
+                <span className="text-[7px] font-mono text-muted/25">{agent.lifecycleStatus}</span>
               </div>
             )}
           </div>
@@ -2796,6 +2963,9 @@ function AgentCardRow({
   selectable = false,
   selected = false,
   onSelect,
+  pendingItems = [],
+  onResolvePermission,
+  onResolvePlan,
 }: {
   agent: FakeAgent
   isOpen: boolean
@@ -2803,19 +2973,20 @@ function AgentCardRow({
   selectable?: boolean
   selected?: boolean
   onSelect?: () => void
+  pendingItems?: PendingItem[]
+  onResolvePermission?: (index: number, verdict: "allowed" | "denied") => void
+  onResolvePlan?: (index: number, verdict: "approved" | "rejected") => void
 }) {
-  const config = STATUS_CONFIG[agent.status] ?? STATUS_CONFIG.stopped
-  const isRunning = agent.status === "running"
-  const isError = agent.status === "error"
-  const isStopped = agent.status === "stopped"
+  const config = LIFECYCLE_CONFIG[agent.lifecycleStatus]
+  const isRunning = agent.lifecycleStatus === "running"
+  const isError = agent.lifecycleStatus === "error"
+  const isStopped = agent.lifecycleStatus === "stopped"
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
   const [agentMode, setAgentMode] = useState(agent.mode)
 
-  const hasPendingItem = TEAM_FEED.some(
-    (item) =>
-      (item.type === "permission" && item.agent === agent.name && item.permStatus === "pending") ||
-      (item.type === "plan" && item.agent === agent.name && item.planStatus === "pending"),
-  )
+  const hasAttention = agent.attentionLevel !== "none"
+  const attCfg = hasAttention ? ATTENTION_CONFIG[agent.attentionLevel as Exclude<AttentionLevel, "none">] : null
+  const hasPendingItem = pendingItems.length > 0
 
   const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
     { id: "terminal", icon: Monitor, label: "Screen" },
@@ -2870,7 +3041,19 @@ function AgentCardRow({
               {selected && <Check className="h-2.5 w-2.5 text-accent" strokeWidth={3} />}
             </div>
           )}
-          <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
+          <div className="relative shrink-0">
+            <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
+            {/* Attention dot overlay on avatar — takes precedence over lifecycle */}
+            {hasAttention && attCfg && (
+              <span
+                className={cn(
+                  "absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-surface",
+                  attCfg.dot,
+                  attCfg.pulse && "animate-breathe",
+                )}
+              />
+            )}
+          </div>
           <span
             className={cn(
               "text-[12px] font-medium shrink-0",
@@ -2937,11 +3120,7 @@ function AgentCardRow({
         {/* Bottom toolbar — swaps entirely when agent needs attention */}
         {hasPendingItem ? (
           <div className="border-t border-warning/20 bg-warning-subtle/10 px-3 py-2">
-            {TEAM_FEED.filter(
-              (item): item is Extract<TeamFeedItem, { type: "permission" } | { type: "plan" }> =>
-                (item.type === "permission" && item.agent === agent.name && item.permStatus === "pending") ||
-                (item.type === "plan" && item.agent === agent.name && item.planStatus === "pending"),
-            ).map((item, i) => (
+            {pendingItems.map((item, i) => (
               <div key={i} className="flex items-center gap-2 min-w-0">
                 <Shield className="h-3.5 w-3.5 text-warning shrink-0" />
                 <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
@@ -2953,12 +3132,14 @@ function AgentCardRow({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
+                      onClick={() => onResolvePermission?.(i, "allowed")}
                       className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
                     >
                       Allow
                     </button>
                     <button
                       type="button"
+                      onClick={() => onResolvePermission?.(i, "denied")}
                       className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
                     >
                       Deny
@@ -2968,12 +3149,14 @@ function AgentCardRow({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
+                      onClick={() => onResolvePlan?.(i, "approved")}
                       className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
                     >
                       Approve
                     </button>
                     <button
                       type="button"
+                      onClick={() => onResolvePlan?.(i, "rejected")}
                       className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
                     >
                       Reject
@@ -3046,8 +3229,8 @@ function AgentCardRow({
  *   thinking blocks, tool_result blocks. Everything the team feed hides.
  */
 function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
-  const isRunning = agent.status === "running"
-  const isError = agent.status === "error"
+  const isRunning = agent.lifecycleStatus === "running"
+  const isError = agent.lifecycleStatus === "error"
 
   return (
     <div className="border-t border-border-subtle flex flex-col">
@@ -3135,7 +3318,7 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
           /* Generic fallback for devops, infra, etc. */
           <div className="flex items-center justify-center py-4">
             <span className="text-[10px] text-muted/50 font-mono">
-              {agent.status === "deploying" ? "Initializing workspace..." : "No activity yet"}
+              {agent.lifecycleStatus === "deploying" ? "Initializing workspace..." : "No activity yet"}
             </span>
           </div>
         )}
@@ -3452,10 +3635,16 @@ function AgentCardsPanel({
   agents,
   expandedIds,
   onToggleAgent,
+  feedItems,
+  onResolvePermission,
+  onResolvePlan,
 }: {
   agents: FakeAgent[]
   expandedIds: Set<string>
   onToggleAgent: (id: string) => void
+  feedItems?: TeamFeedItem[]
+  onResolvePermission?: (feedIndex: number, verdict: "allowed" | "denied") => void
+  onResolvePlan?: (feedIndex: number, verdict: "approved" | "rejected") => void
 }) {
   return (
     <ScrollArea className="h-full overflow-y-auto">
@@ -3466,6 +3655,9 @@ function AgentCardsPanel({
             agent={agent}
             isOpen={expandedIds.has(agent.id)}
             onToggle={() => onToggleAgent(agent.id)}
+            pendingItems={feedItems ? getPendingItemsForAgent(feedItems, agent.name) : []}
+            onResolvePermission={onResolvePermission}
+            onResolvePlan={onResolvePlan}
           />
         ))}
       </div>
@@ -3481,31 +3673,41 @@ function TabBar({
   tabs,
   activeTab,
   onTabChange,
+  badges,
 }: {
   tabs: { id: string; label: string; icon: React.ReactNode }[]
   activeTab: string
   onTabChange: (id: string) => void
+  badges?: Record<string, number>
 }) {
   return (
     <div role="tablist" className="h-8 flex items-center gap-1 px-3 border-b border-border-default bg-surface shrink-0">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === tab.id}
-          onClick={() => onTabChange(tab.id)}
-          className={cn(
-            "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
-            activeTab === tab.id
-              ? "bg-surface-raised text-default"
-              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
-          )}
-        >
-          {tab.icon}
-          {tab.label}
-        </button>
-      ))}
+      {tabs.map((tab) => {
+        const badge = badges?.[tab.id] ?? 0
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => onTabChange(tab.id)}
+            className={cn(
+              "relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+              activeTab === tab.id
+                ? "bg-surface-raised text-default"
+                : "text-muted hover:text-secondary hover:bg-surface-raised/30",
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+            {badge > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 h-3.5 min-w-[14px] px-0.5 rounded-full bg-danger text-[8px] font-bold text-on-emphasis flex items-center justify-center">
+                {badge}
+              </span>
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -3616,7 +3818,10 @@ function ResizeHandle({
 
 export default function PrototypePage() {
   const bp = useBreakpoint()
+  const [agents, dispatchAgent] = useReducer(agentReducer, INITIAL_AGENTS)
+  const [feedItems, setFeedItems] = useState<TeamFeedItem[]>(TEAM_FEED)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(["1"]))
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>("1")
   const [mainTab, setMainTab] = useState<"chat" | "agents" | "skills">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
   const [agentPanelOpen, setAgentPanelOpen] = useState(true)
@@ -3636,15 +3841,52 @@ export default function PrototypePage() {
       else next.add(id)
       return next
     })
+    // Track focused agent + acknowledge review on expand
+    setFocusedAgentId(id)
+    dispatchAgent({ type: "ACKNOWLEDGE", agentId: id })
   }, [])
 
   const handleToggleExpandAll = useCallback(() => {
     setExpandedIds((prev) => {
-      const allOpen = AGENTS.every((a) => prev.has(a.id))
+      const allOpen = agents.every((a) => prev.has(a.id))
       if (allOpen) return new Set()
-      return new Set(AGENTS.map((a) => a.id))
+      return new Set(agents.map((a) => a.id))
     })
-  }, [])
+  }, [agents])
+
+  // Resolve a permission feed item → update feed + recompute agent attention
+  const handleResolvePermission = useCallback((feedIndex: number, verdict: "allowed" | "denied") => {
+    setFeedItems(prev => {
+      const next = [...prev]
+      const item = next[feedIndex]
+      if (item.type === "permission") {
+        next[feedIndex] = { ...item, permStatus: verdict }
+        // Recompute attention for this agent
+        const agentName = item.agent
+        const newAttention = deriveAttentionFromFeed(next, agentName)
+        dispatchAgent({ type: "SET_ATTENTION", agentId: agents.find(a => a.name === agentName)?.id ?? "", level: newAttention })
+      }
+      return next
+    })
+  }, [agents])
+
+  // Resolve a plan feed item → update feed + recompute agent attention
+  const handleResolvePlan = useCallback((feedIndex: number, verdict: "approved" | "rejected") => {
+    setFeedItems(prev => {
+      const next = [...prev]
+      const item = next[feedIndex]
+      if (item.type === "plan") {
+        next[feedIndex] = { ...item, planStatus: verdict }
+        const agentName = item.agent
+        const newAttention = deriveAttentionFromFeed(next, agentName)
+        dispatchAgent({ type: "SET_ATTENTION", agentId: agents.find(a => a.name === agentName)?.id ?? "", level: newAttention })
+      }
+      return next
+    })
+  }, [agents])
+
+  // Attention badge count for small-screen tab bar
+  const pendingCount = useMemo(() => getAllPendingItems(feedItems).length, [feedItems])
 
   // Determine what's visible at each breakpoint
   const showLeftPanel = bp !== "mobile"
@@ -3676,13 +3918,13 @@ export default function PrototypePage() {
       <SecretsModal
         open={secretsOpen}
         onClose={() => setSecretsOpen(false)}
-        agents={AGENTS}
+        agents={agents}
       />
 
       {/* Left panel: collapsed icon rail or open agent cards */}
       {showLeftPanel && (
         <AgentLeftPanel
-          agents={AGENTS}
+          agents={agents}
           expandedIds={expandedIds}
           onToggleAgent={handleToggleAgent}
           onToggleExpandAll={handleToggleExpandAll}
@@ -3692,6 +3934,9 @@ export default function PrototypePage() {
           width={effectiveLeftWidth}
           onResize={handleLeftPanelResize}
           onResetWidth={() => setLeftPanelWidth(null)}
+          feedItems={feedItems}
+          onResolvePermission={handleResolvePermission}
+          onResolvePlan={handleResolvePlan}
         />
       )}
 
@@ -3703,31 +3948,57 @@ export default function PrototypePage() {
             tabs={topTabs}
             activeTab={mainTab}
             onTabChange={(id) => setMainTab(id as "chat" | "agents" | "skills")}
+            badges={pendingCount > 0 ? { chat: pendingCount } : undefined}
           />
         )}
 
-        {/* Center: team feed */}
+        {/* Center: team feed + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
           <main className="flex-1 min-w-0 flex flex-col min-h-0">
-            <TeamFeed />
+            <TeamFeed feedItems={feedItems} />
+            <AttentionBar
+              feedItems={feedItems}
+              focusedAgentId={focusedAgentId}
+              agents={agents}
+              onResolvePermission={handleResolvePermission}
+              onResolvePlan={handleResolvePlan}
+            />
+            <ComposerBar />
           </main>
         )}
 
         {/* Top-tab content: agents (S + mobile) */}
         {showTopTabs && mainTab === "agents" && (
-          <div className="flex-1 min-w-0 bg-surface">
+          <div className="flex-1 min-w-0 bg-surface flex flex-col">
             <AgentCardsPanel
-              agents={AGENTS}
+              agents={agents}
               expandedIds={expandedIds}
               onToggleAgent={handleToggleAgent}
+              feedItems={feedItems}
+              onResolvePermission={handleResolvePermission}
+              onResolvePlan={handleResolvePlan}
+            />
+            <AttentionBar
+              feedItems={feedItems}
+              focusedAgentId={focusedAgentId}
+              agents={agents}
+              onResolvePermission={handleResolvePermission}
+              onResolvePlan={handleResolvePlan}
             />
           </div>
         )}
 
         {/* Top-tab content: skills (S + mobile) */}
         {showTopTabs && mainTab === "skills" && (
-          <div className="flex-1 min-w-0 bg-surface overflow-hidden">
+          <div className="flex-1 min-w-0 bg-surface overflow-hidden flex flex-col">
             <SkillsPanel allExpanded={false} />
+            <AttentionBar
+              feedItems={feedItems}
+              focusedAgentId={focusedAgentId}
+              agents={agents}
+              onResolvePermission={handleResolvePermission}
+              onResolvePlan={handleResolvePlan}
+            />
           </div>
         )}
       </div>
