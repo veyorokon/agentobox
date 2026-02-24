@@ -2854,7 +2854,7 @@ function ResizeHandle({
 export default function PrototypePage() {
   const bp = useBreakpoint()
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(["1"]))
-  const [mainTab, setMainTab] = useState<"chat" | "agents">("chat")
+  const [mainTab, setMainTab] = useState<"chat" | "agents" | "skills">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
   const [agentPanelOpen, setAgentPanelOpen] = useState(true)
   const [leftPanelWidth, setLeftPanelWidth] = useState<number | null>(null)
@@ -2902,6 +2902,7 @@ export default function PrototypePage() {
   const topTabs = [
     { id: "chat", label: "Chat", icon: <MessageSquare className="h-3.5 w-3.5" /> },
     { id: "agents", label: "Agents", icon: <Users className="h-3.5 w-3.5" /> },
+    { id: "skills", label: "Skills", icon: <BookOpen className="h-3.5 w-3.5" /> },
   ]
 
   return (
@@ -2938,7 +2939,7 @@ export default function PrototypePage() {
           <TabBar
             tabs={topTabs}
             activeTab={mainTab}
-            onTabChange={(id) => setMainTab(id as "chat" | "agents")}
+            onTabChange={(id) => setMainTab(id as "chat" | "agents" | "skills")}
           />
         )}
 
@@ -2957,6 +2958,13 @@ export default function PrototypePage() {
               expandedIds={expandedIds}
               onToggleAgent={handleToggleAgent}
             />
+          </div>
+        )}
+
+        {/* Top-tab content: skills (S + mobile) */}
+        {showTopTabs && mainTab === "skills" && (
+          <div className="flex-1 min-w-0 bg-surface overflow-hidden">
+            <SkillsPanel allExpanded={false} />
           </div>
         )}
       </div>
