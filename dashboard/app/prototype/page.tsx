@@ -2348,12 +2348,14 @@ function RecipientSearchBox({
   recipients,
   onAddRecipient,
   onRemoveRecipient,
+  onSuggestionsChange,
 }: {
   agents: FakeAgent[]
   allTags: string[]
   recipients: RecipientEntry[]
   onAddRecipient: (entry: RecipientEntry) => void
   onRemoveRecipient: (index: number) => void
+  onSuggestionsChange?: (suggestions: RecipientEntry[]) => void
 }) {
   const [inputValue, setInputValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -2464,8 +2466,12 @@ function RecipientSearchBox({
     return []
   }, [inputValue, agents, allTags, recipients])
 
+  useEffect(() => {
+    onSuggestionsChange?.(suggestions)
+  }, [suggestions, onSuggestionsChange])
+
   return (
-    <div className="flex flex-col min-w-0 flex-1">
+    <div className="min-w-0 flex-1">
       {/* Dark search input */}
       <div className="relative flex items-center min-w-0 rounded-md bg-surface-sunken/50 px-2 py-1">
         <span
@@ -2493,22 +2499,6 @@ function RecipientSearchBox({
           </span>
         )}
       </div>
-
-      {/* Autocomplete suggestions */}
-      {suggestions.length > 0 && (
-        <div className="flex items-center gap-1 mt-1 overflow-x-auto no-scrollbar">
-          {suggestions.map(s => (
-            <button
-              key={recipientKey(s)}
-              type="button"
-              onClick={() => { onAddRecipient(s); setInputValue("") }}
-              className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-mono bg-surface-sunken text-secondary hover:bg-surface-sunken/80 hover:text-default transition-colors"
-            >
-              {recipientLabel(s)}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -2530,6 +2520,12 @@ function ComposerBar({
   onAddRecipient: (entry: RecipientEntry) => void
   onRemoveRecipient: (index: number) => void
 }) {
+  const [suggestions, setSuggestions] = useState<RecipientEntry[]>([])
+
+  const handleSuggestionsChange = useCallback((s: RecipientEntry[]) => {
+    setSuggestions(s)
+  }, [])
+
   const placeholderName = recipients.length === 0
     ? "your team"
     : recipients.length === 1
@@ -2540,41 +2536,25 @@ function ComposerBar({
   const visiblePills = recipients.slice(0, MAX_VISIBLE_PILLS)
   const overflowCount = Math.max(0, recipients.length - MAX_VISIBLE_PILLS)
 
-  // Hide "To:" line when it's just the default @team-lead
+  // Dont show committed pills when just the default @team-lead
   const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
+
+  const hasPillContent = (!isDefault && recipients.length > 0) || suggestions.length > 0
 
   return (
     <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
-      {/* To: pills row — hidden when just the default recipient */}
-      {!isDefault && <div className="flex items-center gap-1.5 px-1 pb-1.5 min-w-0 overflow-x-auto no-scrollbar">
-        <span className="text-[10px] text-muted/50 font-medium shrink-0">To:</span>
-        {visiblePills.map((r, i) => (
-          <span
-            key={recipientKey(r)}
-            className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full bg-surface-sunken text-[10px] font-mono text-secondary shrink-0"
-          >
-            {recipientLabel(r)}
-            <button
-              type="button"
-              onClick={() => onRemoveRecipient(i)}
-              className="text-muted/40 hover:text-muted transition-colors"
-            >
-              <X className="h-2.5 w-2.5" />
-            </button>
-          </span>
-        ))}
-        {overflowCount > 0 && (
-          <span className="text-[10px] text-muted font-mono shrink-0">+{overflowCount}</span>
-        )}
-      </div>}
-
       {/* Composer box */}
       <div className="relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60 focus-within:bg-surface-raised focus-within:border-border-default">
-        {/* Text input */}
+        {/* Text input — auto-grows up to ~6 rows then scrolls */}
         <textarea
           placeholder={placeholder}
           rows={1}
-          className="w-full bg-transparent border-none outline-none resize-none px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted min-h-[52px] max-h-[40vh]"
+          onInput={(e) => {
+            const el = e.currentTarget
+            el.style.height = "auto"
+            el.style.height = `${el.scrollHeight}px`
+          }}
+          className="w-full bg-transparent border-none outline-none resize-none px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted min-h-[52px] max-h-[200px] overflow-y-auto"
         />
 
         {/* Toolbar row */}
@@ -2594,6 +2574,7 @@ function ComposerBar({
               recipients={recipients}
               onAddRecipient={onAddRecipient}
               onRemoveRecipient={onRemoveRecipient}
+              onSuggestionsChange={handleSuggestionsChange}
             />
           </div>
 
@@ -2608,6 +2589,41 @@ function ComposerBar({
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Pills row — underneath the composer box */}
+      <div className="flex items-center gap-1.5 px-1 pt-2 min-w-0 overflow-x-auto no-scrollbar min-h-[28px]">
+        {/* Committed pills */}
+        {!isDefault && visiblePills.map((r, i) => (
+          <span
+            key={recipientKey(r)}
+            className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full bg-surface-sunken text-[10px] font-mono text-secondary shrink-0"
+          >
+            {recipientLabel(r)}
+            <button
+              type="button"
+              onClick={() => onRemoveRecipient(i)}
+              className="text-muted/40 hover:text-muted transition-colors"
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        ))}
+        {!isDefault && overflowCount > 0 && (
+          <span className="text-[10px] text-muted font-mono shrink-0">+{overflowCount}</span>
+        )}
+        {/* Autocomplete suggestions inline */}
+        {suggestions.map(s => (
+          <button
+            key={`sug-${recipientKey(s)}`}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onAddRecipient(s)}
+            className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-mono bg-surface-sunken/50 text-muted hover:bg-surface-sunken hover:text-secondary transition-colors border border-border-subtle/50"
+          >
+            {recipientLabel(s)}
+          </button>
+        ))}
       </div>
     </div>
   )
@@ -4303,12 +4319,16 @@ function ResizeHandle({
       onPointerCancel={onPointerCancel}
       onDoubleClick={onReset}
       className={cn(
-        "absolute top-0 bottom-0 w-1 z-(--z-dropdown) cursor-col-resize group/resize",
-        side === "left" ? "left-0" : "right-0",
+        "absolute top-0 bottom-0 w-3 z-(--z-dropdown) cursor-col-resize group/resize",
+        side === "left" ? "-left-1.5" : "-right-1.5",
       )}
     >
-      {/* Visual indicator on hover/drag */}
-      <div className="absolute inset-y-0 left-0 w-px bg-transparent group-hover/resize:bg-accent/50 group-active/resize:bg-accent transition-colors" />
+      {/* Full-height border highlight on hover/drag */}
+      <div className={cn(
+        "absolute inset-y-0 w-0.5 transition-colors",
+        "bg-transparent group-hover/resize:bg-accent/50 group-active/resize:bg-accent",
+        side === "left" ? "left-1.5" : "right-1.5",
+      )} />
     </div>
   )
 }
@@ -4390,8 +4410,10 @@ export default function PrototypePage() {
   const pendingCount = useMemo(() => getAllPendingItems(feedItems).length, [feedItems])
 
   // Expand recipients to flat set of agent names (tags resolve to their agents)
-  // @all = no filter (empty set means all pass through)
+  // Default (@team-lead) and @all = no filter (empty set means all pass through)
+  const isDefaultRecipient = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
   const effectiveAgentFilter = useMemo(() => {
+    if (isDefaultRecipient) return new Set<string>()
     if (recipients.some(r => r.type === "all")) return new Set<string>()
     if (recipients.length === 0) return new Set<string>()
     const names = new Set<string>()
@@ -4400,7 +4422,7 @@ export default function PrototypePage() {
       else if (r.type === "tag") for (const a of agents) { if (a.tags.includes(r.value)) names.add(a.name) }
     }
     return names
-  }, [recipients, agents])
+  }, [recipients, agents, isDefaultRecipient])
 
   const singleFilteredAgent = useMemo(() =>
     effectiveAgentFilter.size === 1 ? Array.from(effectiveAgentFilter)[0] : null
