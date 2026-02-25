@@ -10,6 +10,7 @@ import {
   Check,
   X,
   AlertCircle,
+  Paperclip,
   Plus,
 
   Clock,
@@ -71,7 +72,33 @@ type FakeAgent = {
   mode: "auto" | "plan" | "supervised"
 }
 
+type RecipientEntry =
+  | { type: "agent"; value: string }
+  | { type: "tag"; value: string }
+  | { type: "all" }
+
 const INITIAL_AGENTS: FakeAgent[] = [
+  {
+    id: "0",
+    name: "team-lead",
+    lifecycleStatus: "running",
+    attentionLevel: "none",
+    task: "Coordinating sprint tasks",
+    cost: 0.18,
+    duration: "12m 05s",
+    model: "Opus 4.6",
+    turns: 14,
+    lastOutput: "Delegated auth fix to backend, waiting on QA...",
+    phase: "Planning",
+    liveAction: "Reviewing agent progress",
+    todoProgress: { done: 3, total: 5 },
+    instructions: "Orchestrate the team. Break down tasks, delegate to specialists, track progress, resolve blockers. You are the single point of contact for the human.",
+    mcpServers: [],
+    runtime: "docker",
+    workspacePath: "/workspace/agentobox",
+    tags: ["core"],
+    mode: "plan",
+  },
   {
     id: "1",
     name: "backend",
@@ -1504,6 +1531,7 @@ function AgentSummaryCard({
   turns,
   duration,
   isError = false,
+  onClickAgent,
 }: {
   agent: string
   summary: string
@@ -1511,10 +1539,13 @@ function AgentSummaryCard({
   turns: number
   duration: string
   isError?: boolean
+  onClickAgent?: (name: string) => void
 }) {
   return (
     <div className="flex gap-2.5 min-w-0">
-      <ChatAvatar name={agent} />
+      <button type="button" onClick={() => onClickAgent?.(agent)} className="shrink-0 cursor-pointer">
+        <ChatAvatar name={agent} />
+      </button>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-0.5">
           <span className="text-[11px] text-muted font-mono">{agent}</span>
@@ -1547,12 +1578,14 @@ function AgentSummaryCard({
  * Status transition line — inline status change notification.
  * SOURCE: StreamEvent status change (agent.status field transitions)
  */
-function AgentStatusLine({ agent, from, to }: { agent: string; from: string; to: string }) {
+function AgentStatusLine({ agent, from, to, onClickAgent }: { agent: string; from: string; to: string; onClickAgent?: (name: string) => void }) {
   const toConfig = LIFECYCLE_CONFIG[to as LifecycleStatus] ?? LIFECYCLE_CONFIG.stopped
 
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
-      <AgentAvatar name={agent} size="sm" />
+      <button type="button" onClick={() => onClickAgent?.(agent)} className="shrink-0 cursor-pointer">
+        <AgentAvatar name={agent} size="sm" />
+      </button>
       <span className="text-[10px] text-muted font-mono">
         {agent}
       </span>
@@ -1592,12 +1625,14 @@ function TeamUserMessage({ text, target }: { text: string; target?: string }) {
  * Team error alert — prominent error from an agent.
  * SOURCE: StreamEvent with isError flag, or TimelineEntry.summary with error content
  */
-function TeamErrorAlert({ agent, text }: { agent: string; text: string }) {
+function TeamErrorAlert({ agent, text, onClickAgent }: { agent: string; text: string; onClickAgent?: (name: string) => void }) {
   return (
     <div className="flex gap-2.5 min-w-0">
-      <div className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-danger-subtle mt-1">
-        <AlertCircle className="h-3.5 w-3.5 text-danger" />
-      </div>
+      <button type="button" onClick={() => onClickAgent?.(agent)} className="shrink-0 cursor-pointer">
+        <div className="w-6 h-6 rounded-full flex items-center justify-center bg-danger-subtle mt-1">
+          <AlertCircle className="h-3.5 w-3.5 text-danger" />
+        </div>
+      </button>
       <div className="min-w-0 flex-1">
         <div className="text-[11px] text-danger font-mono mb-0.5">{agent}</div>
         <div className="rounded-lg border border-danger/20 bg-danger-subtle/20 px-3 py-2">
@@ -2293,44 +2328,277 @@ function AgentLeftPanel({
 }
 
 /* ================================================================== */
+/*  RECIPIENT SEARCH — dark search box for @agent / #tag               */
+/* ================================================================== */
+
+/** Max pills to show before collapsing to "+N" */
+const MAX_VISIBLE_PILLS = 6
+
+function recipientLabel(r: RecipientEntry): string {
+  return r.type === "all" ? "@all" : r.type === "agent" ? `@${r.value}` : `#${r.value}`
+}
+
+function recipientKey(r: RecipientEntry): string {
+  return r.type === "all" ? "all" : `${r.type}-${r.value}`
+}
+
+function RecipientSearchBox({
+  agents,
+  allTags,
+  recipients,
+  onAddRecipient,
+  onRemoveRecipient,
+}: {
+  agents: FakeAgent[]
+  allTags: string[]
+  recipients: RecipientEntry[]
+  onAddRecipient: (entry: RecipientEntry) => void
+  onRemoveRecipient: (index: number) => void
+}) {
+  const [inputValue, setInputValue] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+  const measureRef = useRef<HTMLSpanElement>(null)
+
+  // Ghost suggestion — includes @all as a special option
+  const ghost = useMemo(() => {
+    if (!inputValue) return null
+    if (inputValue.startsWith("@")) {
+      const partial = inputValue.slice(1).toLowerCase()
+      if (!partial) return null
+      if ("all".startsWith(partial) && "all" !== partial) return "all".slice(partial.length)
+      if ("all" === partial) return null
+      const match = agents.find(a => a.name.toLowerCase().startsWith(partial))
+      if (match && match.name.toLowerCase() !== partial) return match.name.slice(partial.length)
+      if (match && match.name.toLowerCase() === partial) return null
+    }
+    if (inputValue.startsWith("#")) {
+      const partial = inputValue.slice(1).toLowerCase()
+      if (!partial) return null
+      const match = allTags.find(t => t.toLowerCase().startsWith(partial))
+      if (match && match.toLowerCase() !== partial) return match.slice(partial.length)
+      if (match && match.toLowerCase() === partial) return null
+    }
+    return null
+  }, [inputValue, agents, allTags])
+
+  const isCompleteMatch = useMemo(() => {
+    if (inputValue.startsWith("@")) {
+      const name = inputValue.slice(1).toLowerCase()
+      if (name === "all") return true
+      return agents.some(a => a.name.toLowerCase() === name)
+    }
+    if (inputValue.startsWith("#")) {
+      const tag = inputValue.slice(1).toLowerCase()
+      return allTags.some(t => t.toLowerCase() === tag)
+    }
+    return false
+  }, [inputValue, agents, allTags])
+
+  const commitInput = useCallback(() => {
+    if (inputValue.startsWith("@")) {
+      const name = inputValue.slice(1).toLowerCase()
+      if (name === "all") { onAddRecipient({ type: "all" }); setInputValue(""); return true }
+      const match = agents.find(a => a.name.toLowerCase() === name)
+      if (match) { onAddRecipient({ type: "agent", value: match.name }); setInputValue(""); return true }
+    }
+    if (inputValue.startsWith("#")) {
+      const tag = inputValue.slice(1).toLowerCase()
+      const match = allTags.find(t => t.toLowerCase() === tag)
+      if (match) { onAddRecipient({ type: "tag", value: match }); setInputValue(""); return true }
+    }
+    return false
+  }, [inputValue, agents, allTags, onAddRecipient])
+
+  const acceptGhost = useCallback(() => {
+    if (!ghost) return false
+    setInputValue(prev => prev + ghost)
+    return true
+  }, [ghost])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if ((e.key === "Tab" || e.key === "ArrowRight") && ghost) {
+      e.preventDefault()
+      acceptGhost()
+      return
+    }
+    if ((e.key === "Enter" || e.key === " ") && isCompleteMatch) {
+      e.preventDefault()
+      commitInput()
+      return
+    }
+    if (e.key === "Backspace" && inputValue === "" && recipients.length > 0) {
+      e.preventDefault()
+      onRemoveRecipient(recipients.length - 1)
+      return
+    }
+    if (e.key === "Escape") {
+      e.preventDefault()
+      setInputValue("")
+    }
+  }, [ghost, isCompleteMatch, inputValue, recipients.length, acceptGhost, commitInput, onRemoveRecipient])
+
+  // Autocomplete suggestions
+  const suggestions = useMemo((): RecipientEntry[] => {
+    if (!inputValue) return []
+    if (inputValue.startsWith("@")) {
+      const partial = inputValue.slice(1).toLowerCase()
+      const results: RecipientEntry[] = []
+      if (!partial || "all".startsWith(partial)) {
+        if (!recipients.some(r => r.type === "all")) results.push({ type: "all" })
+      }
+      agents
+        .filter(a => !partial || a.name.toLowerCase().startsWith(partial))
+        .filter(a => !recipients.some(r => r.type === "agent" && r.value === a.name))
+        .slice(0, 6)
+        .forEach(a => results.push({ type: "agent", value: a.name }))
+      return results
+    }
+    if (inputValue.startsWith("#")) {
+      const partial = inputValue.slice(1).toLowerCase()
+      return allTags
+        .filter(t => !partial || t.toLowerCase().startsWith(partial))
+        .filter(t => !recipients.some(r => r.type === "tag" && r.value === t))
+        .slice(0, 6)
+        .map(t => ({ type: "tag", value: t }))
+    }
+    return []
+  }, [inputValue, agents, allTags, recipients])
+
+  return (
+    <div className="flex flex-col min-w-0 flex-1">
+      {/* Dark search input */}
+      <div className="relative flex items-center min-w-0 rounded-md bg-surface-sunken/50 px-2 py-1">
+        <span
+          ref={measureRef}
+          className="invisible absolute whitespace-pre text-[11px] font-mono"
+          aria-hidden
+        >
+          {inputValue}
+        </span>
+        <input
+          ref={inputRef}
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="@agent or #tag"
+          className="bg-transparent border-none outline-none text-[11px] font-mono text-default placeholder:text-muted/30 w-full min-w-0"
+        />
+        {ghost && (
+          <span
+            className="absolute pointer-events-none text-[11px] font-mono text-muted/25 whitespace-pre"
+            style={{ left: `calc(0.5rem + ${measureRef.current?.offsetWidth ?? 0}px)` }}
+          >
+            {ghost}
+          </span>
+        )}
+      </div>
+
+      {/* Autocomplete suggestions */}
+      {suggestions.length > 0 && (
+        <div className="flex items-center gap-1 mt-1 overflow-x-auto no-scrollbar">
+          {suggestions.map(s => (
+            <button
+              key={recipientKey(s)}
+              type="button"
+              onClick={() => { onAddRecipient(s); setInputValue("") }}
+              className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-mono bg-surface-sunken text-secondary hover:bg-surface-sunken/80 hover:text-default transition-colors"
+            >
+              {recipientLabel(s)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ================================================================== */
 /*  COMPOSER BAR                                                       */
 /* ================================================================== */
 
-/**
- * Composer bar — main feed message input.
- * Broadcasts to all agents by default, use @agent to target one.
- * Individual agent messaging happens in the right panel's mini-composer.
- */
-function ComposerBar() {
+function ComposerBar({
+  recipients,
+  agents,
+  allTags,
+  onAddRecipient,
+  onRemoveRecipient,
+}: {
+  recipients: RecipientEntry[]
+  agents: FakeAgent[]
+  allTags: string[]
+  onAddRecipient: (entry: RecipientEntry) => void
+  onRemoveRecipient: (index: number) => void
+}) {
+  const placeholderName = recipients.length === 0
+    ? "your team"
+    : recipients.length === 1
+      ? recipients[0].type === "all" ? "all agents" : recipients[0].type === "agent" ? recipients[0].value : `#${recipients[0].value}`
+      : `${recipients.length} recipients`
+  const placeholder = `Message ${placeholderName}...`
+
+  const visiblePills = recipients.slice(0, MAX_VISIBLE_PILLS)
+  const overflowCount = Math.max(0, recipients.length - MAX_VISIBLE_PILLS)
+
+  // Hide "To:" line when it's just the default @team-lead
+  const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
+
   return (
     <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
+      {/* To: pills row — hidden when just the default recipient */}
+      {!isDefault && <div className="flex items-center gap-1.5 px-1 pb-1.5 min-w-0 overflow-x-auto no-scrollbar">
+        <span className="text-[10px] text-muted/50 font-medium shrink-0">To:</span>
+        {visiblePills.map((r, i) => (
+          <span
+            key={recipientKey(r)}
+            className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full bg-surface-sunken text-[10px] font-mono text-secondary shrink-0"
+          >
+            {recipientLabel(r)}
+            <button
+              type="button"
+              onClick={() => onRemoveRecipient(i)}
+              className="text-muted/40 hover:text-muted transition-colors"
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        ))}
+        {overflowCount > 0 && (
+          <span className="text-[10px] text-muted font-mono shrink-0">+{overflowCount}</span>
+        )}
+      </div>}
+
+      {/* Composer box */}
       <div className="relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60 focus-within:bg-surface-raised focus-within:border-border-default">
         {/* Text input */}
         <textarea
-          placeholder="Message your team... (type @ to target an agent)"
+          placeholder={placeholder}
           rows={1}
           className="w-full bg-transparent border-none outline-none resize-none px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted min-h-[52px] max-h-[40vh]"
         />
 
         {/* Toolbar row */}
-        <div className="flex items-center justify-between px-3 pb-3">
+        <div className="flex items-center justify-between px-3 pb-3 gap-2">
           {/* Left side */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               type="button"
               disabled
-              className="rounded-lg p-1.5 text-muted cursor-not-allowed opacity-50"
+              className="rounded-lg p-1.5 text-muted cursor-not-allowed opacity-50 shrink-0"
             >
-              <Plus className="h-4 w-4" />
+              <Paperclip className="h-4 w-4" />
             </button>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-muted">
-              <Users className="h-3 w-3" />
-              All agents
-            </span>
+            <RecipientSearchBox
+              agents={agents}
+              allTags={allTags}
+              recipients={recipients}
+              onAddRecipient={onAddRecipient}
+              onRemoveRecipient={onRemoveRecipient}
+            />
           </div>
 
           {/* Right side */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <span className="text-xs text-muted font-mono tabular-nums">$0.30</span>
             <button
               type="button"
@@ -2346,6 +2614,112 @@ function ComposerBar() {
 }
 
 /* ================================================================== */
+/*  PINNED ITEM CARD — shows pending plan/permission at feed top       */
+/* ================================================================== */
+
+function PinnedItemCard({
+  item,
+  feedIndex,
+  onResolvePermission,
+  onResolvePlan,
+}: {
+  item: PendingItem
+  feedIndex: number
+  onResolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
+  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
+}) {
+  return (
+    <div className="px-6 pt-3 pb-1 max-w-3xl mx-auto w-full shrink-0">
+      <div className="rounded-lg border border-warning/25 bg-warning-subtle/5 p-3 border-t-2 border-t-warning/40">
+        {item.type === "plan" ? (
+          <div className="space-y-2">
+            <div className="text-[11px] text-warning font-mono">{item.agent} · Proposing a plan</div>
+            <p className="text-sm font-medium text-default">{item.title}</p>
+            <div className="space-y-1.5">
+              {item.steps.map((step, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  {step.status === "done" ? (
+                    <Check className="h-3.5 w-3.5 text-success shrink-0 mt-0.5" strokeWidth={2.5} />
+                  ) : step.status === "current" ? (
+                    <span className="h-3.5 w-3.5 flex items-center justify-center shrink-0 mt-0.5">
+                      <span className="h-2 w-2 rounded-full bg-warning animate-breathe" />
+                    </span>
+                  ) : (
+                    <span className="h-3.5 w-3.5 rounded-full border border-border-default shrink-0 mt-0.5" />
+                  )}
+                  <span className={cn(
+                    "text-xs leading-tight",
+                    step.status === "done" && "text-muted line-through",
+                    step.status === "current" && "text-default font-medium",
+                    step.status === "pending" && "text-muted",
+                  )}>
+                    {step.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => onResolvePlan(feedIndex, "approved")}
+                className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => onResolvePlan(feedIndex, "rejected")}
+                className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-[11px] text-info font-mono">
+              <Shield className="inline h-3 w-3 mr-1" />
+              {item.agent} · Requesting permission
+            </div>
+            <div className="rounded-md bg-surface-sunken/60 border border-border-subtle px-3 py-2">
+              <code className="text-xs font-mono text-default">{item.command}</code>
+            </div>
+            {item.risk && (
+              <div className="flex items-center gap-1.5">
+                <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
+                <span className="text-[11px] text-warning">{item.risk}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => onResolvePermission(feedIndex, "allowed")}
+                className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
+              >
+                Allow
+              </button>
+              <button
+                type="button"
+                onClick={() => onResolvePermission(feedIndex, "denied")}
+                className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
+              >
+                Deny
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================== */
 /*  ATTENTION BAR                                                      */
 /* ================================================================== */
 
@@ -2355,12 +2729,14 @@ function AttentionBar({
   agents,
   onResolvePermission,
   onResolvePlan,
+  onReviewAgent,
 }: {
   feedItems: TeamFeedItem[]
   focusedAgentId: string | null
   agents: FakeAgent[]
   onResolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
   onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
+  onReviewAgent: (agentName: string) => void
 }) {
   // Collect pending items with their original feed index for resolution
   const pending: { item: PendingItem; feedIndex: number; agentId?: string }[] = []
@@ -2393,7 +2769,7 @@ function AttentionBar({
   const hasNext = clamped < sorted.length - 1
 
   return (
-    <div className="mx-6 mb-2 rounded-lg border border-warning/20 bg-warning-subtle/10 p-3 max-w-3xl self-center w-full">
+    <div className="px-6 mb-2 max-w-3xl mx-auto w-full"><div className="rounded-lg border border-warning/20 bg-warning-subtle/10 p-3">
       {/* Header: icon + count + stepper nav */}
       <div className="flex items-center gap-2 mb-2">
         <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
@@ -2443,24 +2819,54 @@ function AttentionBar({
             : `${item.agent} proposed: ${item.title}`}
         </span>
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => item.type === "permission" ? onResolvePermission(feedIndex, "allowed") : onResolvePlan(feedIndex, "approved")}
-            className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-          >
-            Allow
-          </button>
-          <button
-            type="button"
-            onClick={() => item.type === "permission" ? onResolvePermission(feedIndex, "denied") : onResolvePlan(feedIndex, "rejected")}
-            className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-          >
-            Deny
-          </button>
+          {item.type === "permission" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onResolvePermission(feedIndex, "allowed")}
+                className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+              >
+                Allow
+              </button>
+              <button
+                type="button"
+                onClick={() => onResolvePermission(feedIndex, "denied")}
+                className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+              >
+                Deny
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onReviewAgent(item.agent)}
+              className="px-2 py-1 rounded text-[10px] font-medium text-warning border border-warning/30 hover:bg-warning-subtle/40 transition-colors inline-flex items-center gap-1"
+            >
+              Review <ChevronRight className="h-2.5 w-2.5" />
+            </button>
+          )}
         </div>
       </div>
-    </div>
+    </div></div>
   )
+}
+
+/** Get the agent name from a feed item (if it has one) */
+function getFeedItemAgent(item: TeamFeedItem): string | null {
+  switch (item.type) {
+    case "summary":
+    case "status":
+    case "error":
+    case "question":
+    case "plan":
+    case "permission":
+    case "multi-question":
+      return item.agent
+    case "user":
+      return item.target ?? null
+    case "system":
+      return null
+  }
 }
 
 /* ================================================================== */
@@ -2478,11 +2884,38 @@ function AttentionBar({
 /*  messages, tool results. Those live in the right panel detail view. */
 /* ================================================================== */
 
-function TeamFeed({ feedItems }: { feedItems: TeamFeedItem[] }) {
+function TeamFeed({
+  feedItems,
+  agentFilter,
+  onClickAgent,
+}: {
+  feedItems: TeamFeedItem[]
+  agentFilter?: Set<string>
+  onClickAgent?: (agentName: string) => void
+}) {
+  const filtered = useMemo(() => {
+    let items = feedItems
+    // Filter by agent
+    if (agentFilter && agentFilter.size > 0) {
+      items = items.filter(item => {
+        const agent = getFeedItemAgent(item)
+        // System messages pass through when filtering (context)
+        if (item.type === "system") return true
+        // User messages targeted to a filtered agent pass through
+        if (item.type === "user" && item.target && agentFilter.has(item.target)) return true
+        // User messages without target pass through (broadcasts)
+        if (item.type === "user" && !item.target) return true
+        // Agent items pass if agent matches
+        return agent !== null && agentFilter.has(agent)
+      })
+    }
+    return items
+  }, [feedItems, agentFilter])
+
   return (
     <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
       <div className="max-w-3xl mx-auto w-full px-6 py-4 space-y-3">
-        {feedItems.map((item, i) => {
+        {filtered.map((item, i) => {
           switch (item.type) {
             case "system":
               return <SystemMessage key={i} text={item.text} />
@@ -2498,12 +2931,13 @@ function TeamFeed({ feedItems }: { feedItems: TeamFeedItem[] }) {
                   turns={item.turns}
                   duration={item.duration}
                   isError={item.isError}
+                  onClickAgent={onClickAgent}
                 />
               )
             case "status":
-              return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} />
+              return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} onClickAgent={onClickAgent} />
             case "error":
-              return <TeamErrorAlert key={i} agent={item.agent} text={item.text} />
+              return <TeamErrorAlert key={i} agent={item.agent} text={item.text} onClickAgent={onClickAgent} />
             case "question":
               return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
             case "plan":
@@ -3248,7 +3682,7 @@ function AgentDetailFeed({ agent }: { agent: FakeAgent }) {
 /*  SKILLS PANEL — skills tab content in left panel                    */
 /* ================================================================== */
 
-function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
+function SkillsPanel({ allExpanded, onToggleExpandAll }: { allExpanded: boolean; onToggleExpandAll?: () => void }) {
   const [search, setSearch] = useState("")
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
@@ -3366,6 +3800,20 @@ function SkillsPanel({ allExpanded }: { allExpanded: boolean }) {
           <Plus className="h-3 w-3" />
           Create
         </button>
+        {onToggleExpandAll && (
+          <button
+            type="button"
+            onClick={onToggleExpandAll}
+            className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
+            title={allExpanded ? "Collapse all" : "Expand all"}
+          >
+            {allExpanded ? (
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
       </div>
 
       {/* Create form */}
@@ -3877,6 +4325,8 @@ export default function PrototypePage() {
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>("1")
   const [mainTab, setMainTab] = useState<"chat" | "agents" | "skills">("chat")
   const [secretsOpen, setSecretsOpen] = useState(false)
+  const [mobileSkillsExpanded, setMobileSkillsExpanded] = useState(false)
+  const [recipients, setRecipients] = useState<RecipientEntry[]>([{ type: "agent", value: "team-lead" }])
   const [agentPanelOpen, setAgentPanelOpen] = useState(() => bp !== "S" && bp !== "mobile")
   const [leftPanelWidth, setLeftPanelWidth] = useState<number | null>(null)
 
@@ -3938,6 +4388,67 @@ export default function PrototypePage() {
 
   // Attention badge count for small-screen tab bar
   const pendingCount = useMemo(() => getAllPendingItems(feedItems).length, [feedItems])
+
+  // Expand recipients to flat set of agent names (tags resolve to their agents)
+  // @all = no filter (empty set means all pass through)
+  const effectiveAgentFilter = useMemo(() => {
+    if (recipients.some(r => r.type === "all")) return new Set<string>()
+    if (recipients.length === 0) return new Set<string>()
+    const names = new Set<string>()
+    for (const r of recipients) {
+      if (r.type === "agent") names.add(r.value)
+      else if (r.type === "tag") for (const a of agents) { if (a.tags.includes(r.value)) names.add(a.name) }
+    }
+    return names
+  }, [recipients, agents])
+
+  const singleFilteredAgent = useMemo(() =>
+    effectiveAgentFilter.size === 1 ? Array.from(effectiveAgentFilter)[0] : null
+  , [effectiveAgentFilter])
+
+  const pinnedItem = useMemo(() => {
+    if (!singleFilteredAgent) return null
+    const pending = getPendingItemsForAgent(feedItems, singleFilteredAgent)
+    if (pending.length === 0) return null
+    const feedIndex = feedItems.indexOf(pending[0])
+    return { item: pending[0], feedIndex }
+  }, [singleFilteredAgent, feedItems])
+
+  // Recipient handlers
+  const defaultRecipient: RecipientEntry = { type: "agent", value: "team-lead" }
+
+  const handleAddRecipient = useCallback((entry: RecipientEntry) => {
+    setRecipients(prev => {
+      // @all replaces everything
+      if (entry.type === "all") return [entry]
+      // Adding a specific recipient removes @all
+      const without = prev.filter(r => r.type !== "all")
+      const entryKey = `${entry.type}:${"value" in entry ? entry.value : ""}`
+      const isDupe = without.some(r => `${r.type}:${"value" in r ? r.value : ""}` === entryKey)
+      if (isDupe) return without
+      return [...without, entry]
+    })
+  }, [])
+
+  const handleRemoveRecipient = useCallback((index: number) => {
+    setRecipients(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      // If removing last recipient, reset to default
+      if (next.length === 0) return [defaultRecipient]
+      return next
+    })
+  }, [])
+
+  const handleReviewAgent = useCallback((agentName: string) => {
+    setRecipients([{ type: "agent", value: agentName }])
+    setMainTab("chat")
+  }, [])
+
+  // Click agent avatar in feed → set recipient to that agent
+  const handleFeedClickAgent = useCallback((agentName: string) => {
+    setRecipients([{ type: "agent", value: agentName }])
+    setMainTab("chat")
+  }, [])
 
   // Determine what's visible at each breakpoint
   const showTopTabs = bp === "mobile"
@@ -4046,15 +4557,34 @@ export default function PrototypePage() {
         {/* Center: team feed + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
           <main className="flex-1 min-w-0 flex flex-col min-h-0">
-            <TeamFeed feedItems={feedItems} />
+            {pinnedItem && (
+              <PinnedItemCard
+                item={pinnedItem.item}
+                feedIndex={pinnedItem.feedIndex}
+                onResolvePermission={handleResolvePermission}
+                onResolvePlan={handleResolvePlan}
+              />
+            )}
+            <TeamFeed
+              feedItems={feedItems}
+              agentFilter={effectiveAgentFilter}
+              onClickAgent={handleFeedClickAgent}
+            />
             <AttentionBar
               feedItems={feedItems}
               focusedAgentId={focusedAgentId}
               agents={agents}
               onResolvePermission={handleResolvePermission}
               onResolvePlan={handleResolvePlan}
+              onReviewAgent={handleReviewAgent}
             />
-            <ComposerBar />
+            <ComposerBar
+              recipients={recipients}
+              agents={agents}
+              allTags={ALL_TAGS}
+              onAddRecipient={handleAddRecipient}
+              onRemoveRecipient={handleRemoveRecipient}
+            />
           </main>
         )}
 
@@ -4076,6 +4606,7 @@ export default function PrototypePage() {
               agents={agents}
               onResolvePermission={handleResolvePermission}
               onResolvePlan={handleResolvePlan}
+              onReviewAgent={handleReviewAgent}
             />
           </div>
         )}
@@ -4083,13 +4614,14 @@ export default function PrototypePage() {
         {/* Top-tab content: skills (S + mobile) */}
         {showTopTabs && mainTab === "skills" && (
           <div className="flex-1 min-w-0 bg-surface overflow-hidden flex flex-col">
-            <SkillsPanel allExpanded={false} />
+            <SkillsPanel allExpanded={mobileSkillsExpanded} onToggleExpandAll={() => setMobileSkillsExpanded(p => !p)} />
             <AttentionBar
               feedItems={feedItems}
               focusedAgentId={focusedAgentId}
               agents={agents}
               onResolvePermission={handleResolvePermission}
               onResolvePlan={handleResolvePlan}
+              onReviewAgent={handleReviewAgent}
             />
           </div>
         )}
