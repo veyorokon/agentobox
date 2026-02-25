@@ -2448,9 +2448,9 @@ function RecipientSearchBox({
   }, [suggestions, onSuggestionsChange])
 
   return (
-    <div className="min-w-0 flex-1">
+    <div className="min-w-0">
       {/* Dark search input */}
-      <div className="relative flex items-center min-w-0 rounded-md bg-surface-sunken/50 px-2 py-1">
+      <div className="relative flex items-center min-w-0 rounded-md border border-border-subtle/50 bg-surface-sunken/30 px-2 py-0.5 w-36">
         <span
           ref={measureRef}
           className="invisible absolute whitespace-pre text-[11px] font-mono"
