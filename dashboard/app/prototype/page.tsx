@@ -33,6 +33,8 @@ import {
   Filter,
   Tag,
   Shield,
+  FileText,
+  ChevronDown,
 } from "lucide-react"
 import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -388,7 +390,7 @@ type TeamFeedItem =
   | { type: "status"; agent: string; from: string; to: string }
   | { type: "error"; agent: string; text: string }
   | { type: "question"; agent: string; question: string; options: string[] }
-  | { type: "plan"; agent: string; title: string; steps: { text: string; status: "done" | "current" | "pending" }[]; planStatus: "pending" | "approved" | "rejected" }
+  | { type: "plan"; agent: string; title: string; context: string; steps: { text: string; description?: string; files?: string[]; status: "done" | "current" | "pending" }[]; files: string[]; planStatus: "pending" | "approved" | "rejected" }
   | { type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
   | { type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
 
@@ -411,13 +413,15 @@ const TEAM_FEED: TeamFeedItem[] = [
     type: "plan",
     agent: "backend",
     title: "Fix JWT validation and add clock skew tolerance",
+    context: "The JWT validation middleware rejects tokens within 5s of expiry due to Date.now() returning milliseconds while the JWT exp claim uses seconds. Adding clock skew tolerance prevents intermittent 401s during server clock drift.",
     steps: [
-      { text: "Read auth.ts and identify expiry comparison bug", status: "done" },
-      { text: "Convert Date.now() to seconds in validateToken()", status: "done" },
-      { text: "Add 30-second clock skew tolerance", status: "current" },
-      { text: "Add structured error logging for validation failures", status: "pending" },
-      { text: "Run lint and existing tests", status: "pending" },
+      { text: "Identify expiry comparison bug", description: "Read auth.ts, trace the validateToken() path to find the ms vs seconds mismatch", files: ["backend/middleware/auth.ts"], status: "done" },
+      { text: "Convert Date.now() to seconds", description: "Replace Date.now() with Math.floor(Date.now() / 1000) in the expiry check", files: ["backend/middleware/auth.ts"], status: "done" },
+      { text: "Add 30s clock skew tolerance", description: "Pass clockTolerance: 30 to jsonwebtoken.verify() options", files: ["backend/middleware/auth.ts", "backend/config/auth.ts"], status: "current" },
+      { text: "Add structured error logging", description: "Log validation failures with token claims, expected vs actual timestamps", files: ["backend/middleware/auth.ts"], status: "pending" },
+      { text: "Run lint and existing tests", files: ["backend/tests/auth.test.ts"], status: "pending" },
     ],
+    files: ["backend/middleware/auth.ts", "backend/config/auth.ts", "backend/tests/auth.test.ts"],
     planStatus: "approved",
   },
 
@@ -517,11 +521,13 @@ const TEAM_FEED: TeamFeedItem[] = [
     type: "plan",
     agent: "devops",
     title: "Deploy auth fix to staging",
+    context: "The auth hotfix needs to reach staging for QA verification before the production rollout window. Build a fresh image from the fix branch, run integration tests against the staging database, then swap traffic with zero downtime.",
     steps: [
-      { text: "Build Docker image with auth changes", status: "done" as const },
-      { text: "Run integration tests in staging env", status: "current" as const },
-      { text: "Swap traffic to new deployment", status: "pending" as const },
+      { text: "Build Docker image with auth changes", description: "docker build from fix/jwt-validation branch, tag as staging-candidate", files: ["backend/Dockerfile", "docker-compose.staging.yml"], status: "done" as const },
+      { text: "Run integration tests in staging env", description: "Execute full auth test suite against staging DB with new image", files: ["tests/integration/auth.test.ts", "tests/integration/refresh.test.ts"], status: "current" as const },
+      { text: "Swap traffic to new deployment", description: "Blue-green deploy — route staging traffic to new containers, drain old ones", files: ["infra/staging/deploy.yaml", "infra/staging/routes.yaml"], status: "pending" as const },
     ],
+    files: ["backend/Dockerfile", "docker-compose.staging.yml", "tests/integration/auth.test.ts", "tests/integration/refresh.test.ts", "infra/staging/deploy.yaml", "infra/staging/routes.yaml"],
     planStatus: "pending" as const,
   },
 
@@ -1110,15 +1116,20 @@ function QuestionCard({
 function PlanCard({
   agent,
   title,
+  context,
   steps,
+  files,
   planStatus: initialStatus,
 }: {
   agent: string
   title: string
-  steps: { text: string; status: "done" | "current" | "pending" }[]
+  context: string
+  steps: { text: string; description?: string; files?: string[]; status: "done" | "current" | "pending" }[]
+  files: string[]
   planStatus: "pending" | "approved" | "rejected"
 }) {
   const [status, setStatus] = useState(initialStatus)
+  const [expanded, setExpanded] = useState(true)
 
   if (status === "approved") {
     return (
@@ -1142,39 +1153,122 @@ function PlanCard({
     )
   }
 
+  const doneCount = steps.filter(s => s.status === "done").length
+  const totalCount = steps.length
+
   return (
     <div className="flex gap-2 min-w-0">
       <ChatAvatar name={agent} />
       <div className="min-w-0 flex-1">
         <div className="text-[11px] text-warning font-mono mb-0.5">{agent} · Proposing a plan</div>
-        <div className="rounded-lg border border-warning/20 bg-surface-raised/60 p-3 max-w-lg">
-          <p className="text-sm font-medium text-default mb-2">{title}</p>
-          <div className="space-y-1.5 mb-3">
-            {steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2">
-                {step.status === "done" ? (
-                  <Check className="h-3.5 w-3.5 text-success shrink-0 mt-0.5" strokeWidth={2.5} />
-                ) : step.status === "current" ? (
-                  <span className="h-3.5 w-3.5 flex items-center justify-center shrink-0 mt-0.5">
-                    <span className="h-2 w-2 rounded-full bg-warning animate-breathe" />
-                  </span>
-                ) : (
-                  <span className="h-3.5 w-3.5 rounded-full border border-border-default shrink-0 mt-0.5" />
-                )}
-                <span
-                  className={cn(
-                    "text-xs leading-tight",
-                    step.status === "done" && "text-muted line-through",
-                    step.status === "current" && "text-default font-medium",
-                    step.status === "pending" && "text-muted",
-                  )}
-                >
-                  {step.text}
-                </span>
+        <div className="rounded-lg border border-warning/20 bg-surface-raised/60 max-w-xl overflow-hidden">
+          {/* Header — title + summary + expand toggle */}
+          <div className="px-3.5 pt-3 pb-2">
+            <button
+              type="button"
+              onClick={() => setExpanded(e => !e)}
+              className="flex items-start gap-2 w-full text-left group"
+            >
+              <ChevronDown className={cn(
+                "h-3.5 w-3.5 text-muted shrink-0 mt-0.5 transition-transform",
+                !expanded && "-rotate-90",
+              )} />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-medium text-default leading-snug">{title}</p>
+                <p className="text-[11px] text-muted mt-1 leading-relaxed">{context}</p>
               </div>
-            ))}
+            </button>
+            {/* Progress bar */}
+            <div className="flex items-center gap-2 mt-2.5 ml-5.5">
+              <div className="flex-1 h-1 rounded-full bg-surface-sunken overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-success/60 transition-all"
+                  style={{ width: `${(doneCount / totalCount) * 100}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-muted shrink-0">{doneCount}/{totalCount}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Expanded content — steps + files */}
+          {expanded && (
+            <>
+              {/* Steps */}
+              <div className="border-t border-border-subtle/50 px-3.5 py-2.5">
+                <div className="space-y-0.5">
+                  {steps.map((step, i) => (
+                    <div key={i} className="group/step">
+                      <div className="flex items-start gap-2.5 py-1">
+                        {/* Step number + status */}
+                        <span className={cn(
+                          "w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-[10px] font-mono font-medium",
+                          step.status === "done" && "bg-success/15 text-success",
+                          step.status === "current" && "bg-warning/15 text-warning",
+                          step.status === "pending" && "bg-surface-sunken text-muted",
+                        )}>
+                          {step.status === "done" ? (
+                            <Check className="h-3 w-3" strokeWidth={2.5} />
+                          ) : (
+                            i + 1
+                          )}
+                        </span>
+                        {/* Step text + description */}
+                        <div className="min-w-0 flex-1">
+                          <span className={cn(
+                            "text-xs leading-snug block",
+                            step.status === "done" && "text-muted",
+                            step.status === "current" && "text-default font-medium",
+                            step.status === "pending" && "text-secondary",
+                          )}>
+                            {step.text}
+                          </span>
+                          {step.description && (
+                            <span className="text-[10px] text-muted/70 leading-relaxed block mt-0.5">
+                              {step.description}
+                            </span>
+                          )}
+                          {step.files && step.files.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {step.files.map(f => (
+                                <span key={f} className="inline-flex items-center gap-0.5 text-[9px] font-mono text-muted/60 bg-surface-sunken/60 rounded px-1.5 py-0.5">
+                                  <FileText className="h-2.5 w-2.5" />
+                                  {f.split("/").pop()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {/* Connector line between steps */}
+                      {i < steps.length - 1 && (
+                        <div className="ml-2.5 w-px h-1 bg-border-subtle/40" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Files affected */}
+              {files.length > 0 && (
+                <div className="border-t border-border-subtle/50 px-3.5 py-2">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <FileText className="h-3 w-3 text-muted/60" />
+                    <span className="text-[10px] font-mono text-muted/60 uppercase tracking-wider">Files affected</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {files.map(f => (
+                      <span key={f} className="text-[10px] font-mono text-secondary/80 bg-surface-sunken/40 rounded px-1.5 py-0.5">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Actions */}
+          <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
             <button
               type="button"
               onClick={() => setStatus("approved")}
@@ -2633,6 +2727,135 @@ function ComposerBar({
 /*  PINNED ITEM CARD — shows pending plan/permission at feed top       */
 /* ================================================================== */
 
+type PlanFeedItem = Extract<TeamFeedItem, { type: "plan" }>
+
+function PinnedPlanContent({
+  item,
+  feedIndex,
+  onResolvePlan,
+}: {
+  item: PlanFeedItem
+  feedIndex: number
+  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
+}) {
+  const doneCount = item.steps.filter(s => s.status === "done").length
+  const totalCount = item.steps.length
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="px-3.5 pt-3 pb-2">
+        <div className="text-[11px] text-warning font-mono mb-1.5">{item.agent} · Proposing a plan</div>
+        <p className="text-[13px] font-medium text-default leading-snug">{item.title}</p>
+        <p className="text-[11px] text-muted mt-1 leading-relaxed">{item.context}</p>
+        {/* Progress bar */}
+        <div className="flex items-center gap-2 mt-2.5">
+          <div className="flex-1 h-1 rounded-full bg-surface-sunken overflow-hidden">
+            <div
+              className="h-full rounded-full bg-success/60 transition-all"
+              style={{ width: `${(doneCount / totalCount) * 100}%` }}
+            />
+          </div>
+          <span className="text-[10px] font-mono text-muted shrink-0">{doneCount}/{totalCount}</span>
+        </div>
+      </div>
+
+      {/* Steps */}
+      <div className="border-t border-border-subtle/50 px-3.5 py-2.5">
+        <div className="space-y-0.5">
+          {item.steps.map((step, i) => (
+            <div key={i}>
+              <div className="flex items-start gap-2.5 py-1">
+                <span className={cn(
+                  "w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-[10px] font-mono font-medium",
+                  step.status === "done" && "bg-success/15 text-success",
+                  step.status === "current" && "bg-warning/15 text-warning",
+                  step.status === "pending" && "bg-surface-sunken text-muted",
+                )}>
+                  {step.status === "done" ? (
+                    <Check className="h-3 w-3" strokeWidth={2.5} />
+                  ) : (
+                    i + 1
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <span className={cn(
+                    "text-xs leading-snug block",
+                    step.status === "done" && "text-muted",
+                    step.status === "current" && "text-default font-medium",
+                    step.status === "pending" && "text-secondary",
+                  )}>
+                    {step.text}
+                  </span>
+                  {step.description && (
+                    <span className="text-[10px] text-muted/70 leading-relaxed block mt-0.5">
+                      {step.description}
+                    </span>
+                  )}
+                  {step.files && step.files.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {step.files.map(f => (
+                        <span key={f} className="inline-flex items-center gap-0.5 text-[9px] font-mono text-muted/60 bg-surface-sunken/60 rounded px-1.5 py-0.5">
+                          <FileText className="h-2.5 w-2.5" />
+                          {f.split("/").pop()}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {i < item.steps.length - 1 && (
+                <div className="ml-2.5 w-px h-1 bg-border-subtle/40" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Files affected */}
+      {item.files.length > 0 && (
+        <div className="border-t border-border-subtle/50 px-3.5 py-2">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <FileText className="h-3 w-3 text-muted/60" />
+            <span className="text-[10px] font-mono text-muted/60 uppercase tracking-wider">Files affected</span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {item.files.map(f => (
+              <span key={f} className="text-[10px] font-mono text-secondary/80 bg-surface-sunken/40 rounded px-1.5 py-0.5">
+                {f}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onResolvePlan(feedIndex, "approved")}
+          className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => onResolvePlan(feedIndex, "rejected")}
+          className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
+        >
+          Reject
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function PinnedItemCard({
   item,
   feedIndex,
@@ -2646,57 +2869,9 @@ function PinnedItemCard({
 }) {
   return (
     <div className="px-6 pt-3 pb-1 max-w-3xl mx-auto w-full shrink-0">
-      <div className="rounded-lg border border-warning/25 bg-warning-subtle/5 p-3 border-t-2 border-t-warning/40">
+      <div className="rounded-lg border border-warning/25 bg-warning-subtle/5 border-t-2 border-t-warning/40 overflow-hidden">
         {item.type === "plan" ? (
-          <div className="space-y-2">
-            <div className="text-[11px] text-warning font-mono">{item.agent} · Proposing a plan</div>
-            <p className="text-sm font-medium text-default">{item.title}</p>
-            <div className="space-y-1.5">
-              {item.steps.map((step, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  {step.status === "done" ? (
-                    <Check className="h-3.5 w-3.5 text-success shrink-0 mt-0.5" strokeWidth={2.5} />
-                  ) : step.status === "current" ? (
-                    <span className="h-3.5 w-3.5 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="h-2 w-2 rounded-full bg-warning animate-breathe" />
-                    </span>
-                  ) : (
-                    <span className="h-3.5 w-3.5 rounded-full border border-border-default shrink-0 mt-0.5" />
-                  )}
-                  <span className={cn(
-                    "text-xs leading-tight",
-                    step.status === "done" && "text-muted line-through",
-                    step.status === "current" && "text-default font-medium",
-                    step.status === "pending" && "text-muted",
-                  )}>
-                    {step.text}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => onResolvePlan(feedIndex, "approved")}
-                className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={() => onResolvePlan(feedIndex, "rejected")}
-                className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
-              >
-                Reject
-              </button>
-            </div>
-          </div>
+          <PinnedPlanContent item={item} feedIndex={feedIndex} onResolvePlan={onResolvePlan} />
         ) : (
           <div className="space-y-2">
             <div className="text-[11px] text-info font-mono">
@@ -2957,7 +3132,7 @@ function TeamFeed({
             case "question":
               return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
             case "plan":
-              return <PlanCard key={i} agent={item.agent} title={item.title} steps={item.steps} planStatus={item.planStatus} />
+              return <PlanCard key={i} agent={item.agent} title={item.title} context={item.context} steps={item.steps} files={item.files} planStatus={item.planStatus} />
             case "permission":
               return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
             case "multi-question":
@@ -4279,54 +4454,44 @@ function ResizeHandle({
   onReset?: () => void
   side?: "left" | "right"
 }) {
-  const dragging = useRef(false)
   const lastX = useRef(0)
+  const [active, setActive] = useState(false)
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
       e.preventDefault()
-      dragging.current = true
       lastX.current = e.clientX
-      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    },
-    [],
-  )
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!dragging.current) return
-      const delta = e.clientX - lastX.current
-      lastX.current = e.clientX
-      // For left-edge handle: dragging left = positive resize (panel grows)
-      onResize(side === "left" ? -delta : delta)
+      setActive(true)
+      document.documentElement.classList.add("dragging-resize")
+      const move = (ev: MouseEvent) => {
+        const delta = ev.clientX - lastX.current
+        lastX.current = ev.clientX
+        onResize(side === "left" ? -delta : delta)
+      }
+      const up = () => {
+        setActive(false)
+        document.documentElement.classList.remove("dragging-resize")
+        document.removeEventListener("mousemove", move)
+        document.removeEventListener("mouseup", up)
+      }
+      document.addEventListener("mousemove", move)
+      document.addEventListener("mouseup", up)
     },
     [onResize, side],
   )
 
-  const onPointerUp = useCallback(() => {
-    dragging.current = false
-  }, [])
-
-  const onPointerCancel = useCallback(() => {
-    dragging.current = false
-  }, [])
-
   return (
     <div
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerCancel}
+      onMouseDown={onMouseDown}
       onDoubleClick={onReset}
       className={cn(
-        "absolute top-0 bottom-0 w-3 z-(--z-dropdown) cursor-col-resize group/resize",
+        "absolute top-0 bottom-0 w-3 z-(--z-dropdown) hover:cursor-col-resize",
         side === "left" ? "-left-1.5" : "-right-1.5",
       )}
     >
-      {/* Full-height border highlight on hover/drag */}
       <div className={cn(
         "absolute inset-y-0 w-0.5 transition-colors",
-        "bg-transparent group-hover/resize:bg-accent/50 group-active/resize:bg-accent",
+        active ? "bg-accent/50" : "bg-transparent",
         side === "left" ? "left-1.5" : "right-1.5",
       )} />
     </div>
@@ -4476,22 +4641,38 @@ export default function PrototypePage() {
   const showTopTabs = bp === "mobile"
   const showLeftPanel = bp !== "mobile"
 
-  // Left panel width: custom if user has resized, else breakpoint default
-  const defaultLeftWidth = bp === "S" ? 340 : bp === "M" ? 340 : 480
+  // Left panel width: scale with screen, collapse threshold = 25% of viewport
+  const screenWidth = typeof window !== "undefined" ? window.innerWidth : 1920
+  const collapseThreshold = Math.round(screenWidth * 0.2)
+  const minPanelWidth = collapseThreshold + 20
+  const defaultLeftWidth = bp === "S" ? Math.max(minPanelWidth, 320) : bp === "M" ? Math.max(minPanelWidth, 340) : 480
   const effectiveLeftWidth = leftPanelWidth ?? defaultLeftWidth
 
   const handleLeftPanelResize = useCallback((delta: number) => {
     setLeftPanelWidth((prev) => {
       const current = prev ?? defaultLeftWidth
       const next = current + delta
-      // Snap to collapsed if dragged below threshold
-      if (next < 360) {
+      if (next < collapseThreshold) {
         setAgentPanelOpen(false)
-        return null // reset to default for when they re-expand
+        return null
       }
-      return Math.max(360, Math.min(720, next))
+      return Math.max(minPanelWidth, Math.min(720, next))
     })
-  }, [defaultLeftWidth])
+  }, [defaultLeftWidth, collapseThreshold, minPanelWidth])
+
+  // When re-expanding, set width above collapse threshold to prevent insta-collapse
+  const handleTogglePanelOpen = useCallback(() => {
+    setAgentPanelOpen(prev => {
+      if (!prev) {
+        // expanding — ensure width is safely above collapse threshold
+        setLeftPanelWidth(cur => {
+          const w = cur ?? defaultLeftWidth
+          return Math.max(w, collapseThreshold + 40)
+        })
+      }
+      return !prev
+    })
+  }, [defaultLeftWidth, collapseThreshold])
 
   // Top tabs (small screens)
   const topTabs = [
@@ -4501,7 +4682,7 @@ export default function PrototypePage() {
   ]
 
   return (
-    <div className="h-screen flex bg-surface overflow-hidden">
+    <div className="h-screen flex bg-surface overflow-hidden cursor-default">
       <h1 className="sr-only">Agentobox Dashboard</h1>
 
       {/* Secrets modal */}
@@ -4520,7 +4701,7 @@ export default function PrototypePage() {
           onToggleExpandAll={handleToggleExpandAll}
           onOpenSecrets={() => setSecretsOpen(true)}
           isOpen={agentPanelOpen}
-          onToggleOpen={() => setAgentPanelOpen((p) => !p)}
+          onToggleOpen={handleTogglePanelOpen}
           width={effectiveLeftWidth}
           onResize={handleLeftPanelResize}
           onResetWidth={() => setLeftPanelWidth(null)}

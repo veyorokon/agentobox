@@ -117,6 +117,13 @@
   --duration-slow: 200ms;
 }
 
+/* Force default cursor during resize drag — overrides all hover styles (Safari fix) */
+html.dragging-resize,
+html.dragging-resize * {
+  cursor: default !important;
+  user-select: none !important;
+}
+
 * {
   border-color: var(--color-border-default);
 }
