@@ -7,6 +7,7 @@ import {
   MessageSquare,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Check,
   X,
   AlertCircle,
@@ -391,6 +392,7 @@ type TeamFeedItem =
   | { type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
   | { type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
   | { type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
+  | { type: "agent-message"; from: string; to: string; text: string }
 
 const TEAM_FEED: TeamFeedItem[] = [
   // Session start
@@ -493,6 +495,9 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
   },
   { type: "status", agent: "qa", from: "running", to: "error" },
 
+  // Backend pings QA about the fix
+  { type: "agent-message", from: "backend", to: "qa", text: "auth endpoints updated — refresh rotation uses new token format now, you may need to update fixtures" },
+
   // User directs backend to fix
   { type: "user", text: "@backend the refresh endpoint still rejects — check the middleware order", target: "backend" },
 
@@ -516,6 +521,9 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     turns: 5,
     duration: "2m 10s",
   },
+
+  // QA tells devops the branch is green
+  { type: "agent-message", from: "qa", to: "devops", text: "fix/jwt-validation is green — 47/47 tests pass, safe to deploy" },
 
   // QA requests permission to push
   {
@@ -1576,6 +1584,25 @@ function AgentStatusLine({ agent, from, to, onClickAgent }: { agent: string; fro
 }
 
 /**
+ * Agent-to-agent message — inline with arrow between two agent avatars.
+ * SOURCE: inter-agent @mention communication
+ */
+function AgentToAgentMessage({ from, to, text, onClickAgent }: { from: string; to: string; text: string; onClickAgent?: (name: string) => void }) {
+  return (
+    <div className="flex items-center justify-center gap-2 py-0.5">
+      <button type="button" onClick={() => onClickAgent?.(from)} className="shrink-0 cursor-pointer">
+        <AgentAvatar name={from} size="sm" />
+      </button>
+      <span className="text-[10px] text-muted/30">→</span>
+      <button type="button" onClick={() => onClickAgent?.(to)} className="shrink-0 cursor-pointer">
+        <AgentAvatar name={to} size="sm" />
+      </button>
+      <span className="text-[10px] text-secondary font-mono truncate max-w-md">{text}</span>
+    </div>
+  )
+}
+
+/**
  * Team user message — right-aligned with optional @target indicator.
  * SOURCE: user input via composer (with optional @agent targeting)
  */
@@ -2610,108 +2637,6 @@ function ComposerBar({
 /*  PINNED ITEM CARD — shows pending plan/permission at feed top       */
 /* ================================================================== */
 
-type PlanFeedItem = Extract<TeamFeedItem, { type: "plan" }>
-
-function PinnedPlanContent({
-  item,
-  feedIndex,
-  onResolvePlan,
-}: {
-  item: PlanFeedItem
-  feedIndex: number
-  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
-}) {
-  return (
-    <div>
-      {/* Header */}
-      <div className="px-3.5 pt-3 pb-1">
-        <div className="text-[11px] text-warning font-mono mb-1">{item.agent} · Proposing a plan</div>
-        <p className="text-[13px] font-medium text-default leading-snug">{item.title}</p>
-      </div>
-
-      {/* Plan markdown */}
-      <div className="border-t border-border-subtle/50 px-3.5 py-3">
-        <MarkdownRenderer
-          content={item.plan}
-          className="text-xs text-secondary [&_h2]:text-[11px] [&_h2]:font-mono [&_h2]:uppercase [&_h2]:tracking-wider [&_h2]:text-muted [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:first:mt-0 [&_ol]:space-y-1 [&_ul]:space-y-0.5 [&_li]:text-xs [&_li]:leading-relaxed [&_code]:text-[10px] [&_code]:bg-surface-sunken/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_p]:leading-relaxed [&_p]:mb-1.5"
-        />
-      </div>
-
-      {/* Actions */}
-      <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onResolvePlan(feedIndex, "approved")}
-          className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
-        >
-          Approve
-        </button>
-        <button
-          type="button"
-          onClick={() => onResolvePlan(feedIndex, "rejected")}
-          className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
-        >
-          Reject
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function PinnedItemCard({
-  item,
-  feedIndex,
-  onResolvePermission,
-  onResolvePlan,
-}: {
-  item: PendingItem
-  feedIndex: number
-  onResolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
-  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
-}) {
-  return (
-    <div className="px-6 pt-3 pb-1 max-w-3xl mx-auto w-full shrink-0">
-      <div className="rounded-lg border border-warning/25 bg-warning-subtle/5 border-t-2 border-t-warning/40 overflow-hidden">
-        {item.type === "plan" ? (
-          <PinnedPlanContent item={item} feedIndex={feedIndex} onResolvePlan={onResolvePlan} />
-        ) : (
-          <div className="space-y-2">
-            <div className="text-[11px] text-info font-mono">
-              <Shield className="inline h-3 w-3 mr-1" />
-              {item.agent} · Requesting permission
-            </div>
-            <div className="rounded-md bg-surface-sunken/60 border border-border-subtle px-3 py-2">
-              <code className="text-xs font-mono text-default">{item.command}</code>
-            </div>
-            {item.risk && (
-              <div className="flex items-center gap-1.5">
-                <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
-                <span className="text-[11px] text-warning">{item.risk}</span>
-              </div>
-            )}
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => onResolvePermission(feedIndex, "allowed")}
-                className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
-              >
-                Allow
-              </button>
-              <button
-                type="button"
-                onClick={() => onResolvePermission(feedIndex, "denied")}
-                className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
-              >
-                Deny
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 /* ================================================================== */
 /*  ATTENTION BAR                                                      */
 /* ================================================================== */
@@ -2744,6 +2669,12 @@ function AttentionBar({
     }
   })
 
+  // Expanded plan review state
+  const [expandedFeedIndex, setExpandedFeedIndex] = useState<number | null>(null)
+  const expandedPlan = expandedFeedIndex !== null
+    ? pending.find(p => p.feedIndex === expandedFeedIndex && p.item.type === "plan")
+    : null
+
   if (pending.length === 0) return null
 
   // Sort: permissions first, then plans
@@ -2761,6 +2692,100 @@ function AttentionBar({
   const hasPrev = clamped > 0
   const hasNext = clamped < sorted.length - 1
 
+  const handleReview = (agentName: string, fi: number) => {
+    onReviewAgent(agentName)
+    setExpandedFeedIndex(fi)
+  }
+
+  const handleResolvePlanAndCollapse = (fi: number, verdict: "approved" | "rejected") => {
+    onResolvePlan(fi, verdict)
+    setExpandedFeedIndex(null)
+  }
+
+  // Expanded view — the card IS the attention bar
+  if (expandedPlan && expandedPlan.item.type === "plan") {
+    return (
+      <div className="px-6 mb-2 max-w-3xl mx-auto w-full">
+        <div className="rounded-lg border border-warning/20 bg-warning-subtle/10 overflow-hidden flex flex-col">
+          {/* Header: agent label + stepper + close */}
+          <div className="px-3.5 pt-3 pb-2 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
+            <span className="text-[11px] text-warning font-mono">{expandedPlan.item.agent} · Proposing a plan</span>
+            <span className="flex-1" />
+            {sorted.length > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={!hasPrev}
+                  onClick={() => { setStepIdx(clamped - 1); setExpandedFeedIndex(null) }}
+                  className={cn(
+                    "p-0.5 rounded transition-colors",
+                    hasPrev ? "text-secondary hover:text-default hover:bg-surface-raised/50" : "text-muted/30 cursor-default",
+                  )}
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </button>
+                <span className="text-[10px] text-muted tabular-nums font-mono">
+                  {clamped + 1}/{sorted.length}
+                </span>
+                <button
+                  type="button"
+                  disabled={!hasNext}
+                  onClick={() => { setStepIdx(clamped + 1); setExpandedFeedIndex(null) }}
+                  className={cn(
+                    "p-0.5 rounded transition-colors",
+                    hasNext ? "text-secondary hover:text-default hover:bg-surface-raised/50" : "text-muted/30 cursor-default",
+                  )}
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setExpandedFeedIndex(null)}
+              className="p-0.5 rounded text-muted hover:text-default hover:bg-surface-raised/50 transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+
+          {/* Title */}
+          <div className="px-3.5 pb-2">
+            <p className="text-[13px] font-medium text-default leading-snug">{expandedPlan.item.title}</p>
+          </div>
+
+          {/* Scrollable markdown body */}
+          <div className="border-t border-border-subtle/50 px-3.5 py-3 max-h-[35vh] overflow-y-auto">
+            <MarkdownRenderer
+              content={expandedPlan.item.plan}
+              className="text-xs text-secondary [&_h2]:text-[11px] [&_h2]:font-mono [&_h2]:uppercase [&_h2]:tracking-wider [&_h2]:text-muted [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:first:mt-0 [&_ol]:space-y-1 [&_ul]:space-y-0.5 [&_li]:text-xs [&_li]:leading-relaxed [&_code]:text-[10px] [&_code]:bg-surface-sunken/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_p]:leading-relaxed [&_p]:mb-1.5"
+            />
+          </div>
+
+          {/* Pinned footer — always visible */}
+          <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedIndex, "approved")}
+              className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedIndex, "rejected")}
+              className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Collapsed compact bar
   return (
     <div className="px-6 mb-2 max-w-3xl mx-auto w-full"><div className="rounded-lg border border-warning/20 bg-warning-subtle/10 p-3">
       {/* Header: icon + count + stepper nav */}
@@ -2832,7 +2857,7 @@ function AttentionBar({
           ) : (
             <button
               type="button"
-              onClick={() => onReviewAgent(item.agent)}
+              onClick={() => handleReview(item.agent, feedIndex)}
               className="px-2 py-1 rounded text-[10px] font-medium text-warning border border-warning/30 hover:bg-warning-subtle/40 transition-colors inline-flex items-center gap-1"
             >
               Review <ChevronRight className="h-2.5 w-2.5" />
@@ -2855,6 +2880,8 @@ function getFeedItemAgent(item: TeamFeedItem): string | null {
     case "permission":
     case "multi-question":
       return item.agent
+    case "agent-message":
+      return item.from // primary agent is sender; filtering handled separately
     case "user":
       return item.target ?? null
     case "system":
@@ -2898,6 +2925,8 @@ function TeamFeed({
         if (item.type === "user" && item.target && agentFilter.has(item.target)) return true
         // User messages without target pass through (broadcasts)
         if (item.type === "user" && !item.target) return true
+        // Agent-to-agent messages pass if either participant matches
+        if (item.type === "agent-message") return agentFilter.has(item.from) || agentFilter.has(item.to)
         // Agent items pass if agent matches
         return agent !== null && agentFilter.has(agent)
       })
@@ -2939,6 +2968,8 @@ function TeamFeed({
               return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
             case "multi-question":
               return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
+            case "agent-message":
+              return <AgentToAgentMessage key={i} from={item.from} to={item.to} text={item.text} onClickAgent={onClickAgent} />
             default:
               return null
           }
@@ -4395,14 +4426,6 @@ export default function PrototypePage() {
     effectiveAgentFilter.size === 1 ? Array.from(effectiveAgentFilter)[0] : null
   , [effectiveAgentFilter])
 
-  const pinnedItem = useMemo(() => {
-    if (!singleFilteredAgent) return null
-    const pending = getPendingItemsForAgent(feedItems, singleFilteredAgent)
-    if (pending.length === 0) return null
-    const feedIndex = feedItems.indexOf(pending[0])
-    return { item: pending[0], feedIndex }
-  }, [singleFilteredAgent, feedItems])
-
   // Recipient handlers
   const defaultRecipient: RecipientEntry = { type: "agent", value: "team-lead" }
 
@@ -4562,14 +4585,6 @@ export default function PrototypePage() {
         {/* Center: team feed + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
           <main className="flex-1 min-w-0 flex flex-col min-h-0">
-            {pinnedItem && (
-              <PinnedItemCard
-                item={pinnedItem.item}
-                feedIndex={pinnedItem.feedIndex}
-                onResolvePermission={handleResolvePermission}
-                onResolvePlan={handleResolvePlan}
-              />
-            )}
             <TeamFeed
               feedItems={feedItems}
               agentFilter={effectiveAgentFilter}
