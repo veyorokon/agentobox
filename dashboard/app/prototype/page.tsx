@@ -33,8 +33,6 @@ import {
   Filter,
   Tag,
   Shield,
-  FileText,
-  ChevronDown,
 } from "lucide-react"
 import { cn, agentHue, formatCost } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -390,7 +388,7 @@ type TeamFeedItem =
   | { type: "status"; agent: string; from: string; to: string }
   | { type: "error"; agent: string; text: string }
   | { type: "question"; agent: string; question: string; options: string[] }
-  | { type: "plan"; agent: string; title: string; context: string; steps: { text: string; description?: string; files?: string[]; status: "done" | "current" | "pending" }[]; files: string[]; planStatus: "pending" | "approved" | "rejected" }
+  | { type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
   | { type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
   | { type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
 
@@ -413,15 +411,27 @@ const TEAM_FEED: TeamFeedItem[] = [
     type: "plan",
     agent: "backend",
     title: "Fix JWT validation and add clock skew tolerance",
-    context: "The JWT validation middleware rejects tokens within 5s of expiry due to Date.now() returning milliseconds while the JWT exp claim uses seconds. Adding clock skew tolerance prevents intermittent 401s during server clock drift.",
-    steps: [
-      { text: "Identify expiry comparison bug", description: "Read auth.ts, trace the validateToken() path to find the ms vs seconds mismatch", files: ["backend/middleware/auth.ts"], status: "done" },
-      { text: "Convert Date.now() to seconds", description: "Replace Date.now() with Math.floor(Date.now() / 1000) in the expiry check", files: ["backend/middleware/auth.ts"], status: "done" },
-      { text: "Add 30s clock skew tolerance", description: "Pass clockTolerance: 30 to jsonwebtoken.verify() options", files: ["backend/middleware/auth.ts", "backend/config/auth.ts"], status: "current" },
-      { text: "Add structured error logging", description: "Log validation failures with token claims, expected vs actual timestamps", files: ["backend/middleware/auth.ts"], status: "pending" },
-      { text: "Run lint and existing tests", files: ["backend/tests/auth.test.ts"], status: "pending" },
-    ],
-    files: ["backend/middleware/auth.ts", "backend/config/auth.ts", "backend/tests/auth.test.ts"],
+    plan: `## Context
+
+The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.now()\` returning milliseconds while the JWT \`exp\` claim uses seconds. This causes intermittent 401s during peak traffic when server clocks drift.
+
+## Changes
+
+1. **Fix the unit mismatch** — Replace \`Date.now()\` with \`Math.floor(Date.now() / 1000)\` in the expiry comparison inside \`validateToken()\`
+2. **Add clock skew tolerance** — Pass \`clockTolerance: 30\` to \`jsonwebtoken.verify()\` options, configurable via \`AUTH_CLOCK_SKEW_SECONDS\` env var
+3. **Structured error logging** — Log validation failures with token claims and expected vs actual timestamps for debugging
+
+## Files
+
+- \`backend/middleware/auth.ts\` — main fix + logging
+- \`backend/config/auth.ts\` — new \`clockTolerance\` config
+- \`backend/tests/auth.test.ts\` — new test cases for skew tolerance
+
+## Verification
+
+- Existing auth tests still pass
+- New test: token with exp = now - 25s should be accepted (within tolerance)
+- New test: token with exp = now - 35s should be rejected (outside tolerance)`,
     planStatus: "approved",
   },
 
@@ -521,13 +531,26 @@ const TEAM_FEED: TeamFeedItem[] = [
     type: "plan",
     agent: "devops",
     title: "Deploy auth fix to staging",
-    context: "The auth hotfix needs to reach staging for QA verification before the production rollout window. Build a fresh image from the fix branch, run integration tests against the staging database, then swap traffic with zero downtime.",
-    steps: [
-      { text: "Build Docker image with auth changes", description: "docker build from fix/jwt-validation branch, tag as staging-candidate", files: ["backend/Dockerfile", "docker-compose.staging.yml"], status: "done" as const },
-      { text: "Run integration tests in staging env", description: "Execute full auth test suite against staging DB with new image", files: ["tests/integration/auth.test.ts", "tests/integration/refresh.test.ts"], status: "current" as const },
-      { text: "Swap traffic to new deployment", description: "Blue-green deploy — route staging traffic to new containers, drain old ones", files: ["infra/staging/deploy.yaml", "infra/staging/routes.yaml"], status: "pending" as const },
-    ],
-    files: ["backend/Dockerfile", "docker-compose.staging.yml", "tests/integration/auth.test.ts", "tests/integration/refresh.test.ts", "infra/staging/deploy.yaml", "infra/staging/routes.yaml"],
+    plan: `## Context
+
+The auth hotfix on \`fix/jwt-validation\` needs to reach staging for QA verification before the Friday production rollout window.
+
+## Steps
+
+1. Build Docker image from \`fix/jwt-validation\` branch, tag as \`staging-candidate\`
+2. Run full auth integration test suite against staging database with new image
+3. Blue-green deploy — swap staging traffic to new containers, drain old ones within 60s grace period
+
+## Files
+
+- \`backend/Dockerfile\`
+- \`docker-compose.staging.yml\`
+- \`tests/integration/auth.test.ts\`
+- \`infra/staging/deploy.yaml\`
+
+## Rollback
+
+If integration tests fail or health checks don't pass within 120s, automatically revert to the previous deployment. No manual intervention needed.`,
     planStatus: "pending" as const,
   },
 
@@ -1112,26 +1135,18 @@ function QuestionCard({
   )
 }
 
-/** 7b. PlanCard — interactive plan approval card */
+/** 7b. PlanCard — feed notification line (no actions, review happens in pinned card) */
 function PlanCard({
   agent,
   title,
-  context,
-  steps,
-  files,
-  planStatus: initialStatus,
+  planStatus,
 }: {
   agent: string
   title: string
-  context: string
-  steps: { text: string; description?: string; files?: string[]; status: "done" | "current" | "pending" }[]
-  files: string[]
+  plan: string
   planStatus: "pending" | "approved" | "rejected"
 }) {
-  const [status, setStatus] = useState(initialStatus)
-  const [expanded, setExpanded] = useState(true)
-
-  if (status === "approved") {
+  if (planStatus === "approved") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
         <AgentAvatar name={agent} size="sm" />
@@ -1142,7 +1157,7 @@ function PlanCard({
     )
   }
 
-  if (status === "rejected") {
+  if (planStatus === "rejected") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
         <AgentAvatar name={agent} size="sm" />
@@ -1153,145 +1168,13 @@ function PlanCard({
     )
   }
 
-  const doneCount = steps.filter(s => s.status === "done").length
-  const totalCount = steps.length
-
+  // Pending — just a notification line, no card
   return (
-    <div className="flex gap-2 min-w-0">
-      <ChatAvatar name={agent} />
-      <div className="min-w-0 flex-1">
-        <div className="text-[11px] text-warning font-mono mb-0.5">{agent} · Proposing a plan</div>
-        <div className="rounded-lg border border-warning/20 bg-surface-raised/60 max-w-xl overflow-hidden">
-          {/* Header — title + summary + expand toggle */}
-          <div className="px-3.5 pt-3 pb-2">
-            <button
-              type="button"
-              onClick={() => setExpanded(e => !e)}
-              className="flex items-start gap-2 w-full text-left group"
-            >
-              <ChevronDown className={cn(
-                "h-3.5 w-3.5 text-muted shrink-0 mt-0.5 transition-transform",
-                !expanded && "-rotate-90",
-              )} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-default leading-snug">{title}</p>
-                <p className="text-[11px] text-muted mt-1 leading-relaxed">{context}</p>
-              </div>
-            </button>
-            {/* Progress bar */}
-            <div className="flex items-center gap-2 mt-2.5 ml-5.5">
-              <div className="flex-1 h-1 rounded-full bg-surface-sunken overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-success/60 transition-all"
-                  style={{ width: `${(doneCount / totalCount) * 100}%` }}
-                />
-              </div>
-              <span className="text-[10px] font-mono text-muted shrink-0">{doneCount}/{totalCount}</span>
-            </div>
-          </div>
-
-          {/* Expanded content — steps + files */}
-          {expanded && (
-            <>
-              {/* Steps */}
-              <div className="border-t border-border-subtle/50 px-3.5 py-2.5">
-                <div className="space-y-0.5">
-                  {steps.map((step, i) => (
-                    <div key={i} className="group/step">
-                      <div className="flex items-start gap-2.5 py-1">
-                        {/* Step number + status */}
-                        <span className={cn(
-                          "w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-[10px] font-mono font-medium",
-                          step.status === "done" && "bg-success/15 text-success",
-                          step.status === "current" && "bg-warning/15 text-warning",
-                          step.status === "pending" && "bg-surface-sunken text-muted",
-                        )}>
-                          {step.status === "done" ? (
-                            <Check className="h-3 w-3" strokeWidth={2.5} />
-                          ) : (
-                            i + 1
-                          )}
-                        </span>
-                        {/* Step text + description */}
-                        <div className="min-w-0 flex-1">
-                          <span className={cn(
-                            "text-xs leading-snug block",
-                            step.status === "done" && "text-muted",
-                            step.status === "current" && "text-default font-medium",
-                            step.status === "pending" && "text-secondary",
-                          )}>
-                            {step.text}
-                          </span>
-                          {step.description && (
-                            <span className="text-[10px] text-muted/70 leading-relaxed block mt-0.5">
-                              {step.description}
-                            </span>
-                          )}
-                          {step.files && step.files.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {step.files.map(f => (
-                                <span key={f} className="inline-flex items-center gap-0.5 text-[9px] font-mono text-muted/60 bg-surface-sunken/60 rounded px-1.5 py-0.5">
-                                  <FileText className="h-2.5 w-2.5" />
-                                  {f.split("/").pop()}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      {/* Connector line between steps */}
-                      {i < steps.length - 1 && (
-                        <div className="ml-2.5 w-px h-1 bg-border-subtle/40" />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Files affected */}
-              {files.length > 0 && (
-                <div className="border-t border-border-subtle/50 px-3.5 py-2">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <FileText className="h-3 w-3 text-muted/60" />
-                    <span className="text-[10px] font-mono text-muted/60 uppercase tracking-wider">Files affected</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {files.map(f => (
-                      <span key={f} className="text-[10px] font-mono text-secondary/80 bg-surface-sunken/40 rounded px-1.5 py-0.5">
-                        {f}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Actions */}
-          <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setStatus("approved")}
-              className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => setStatus("rejected")}
-              className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
-            >
-              Reject
-            </button>
-          </div>
-        </div>
-      </div>
+    <div className="flex items-center gap-2 py-0.5 justify-center">
+      <AgentAvatar name={agent} size="sm" />
+      <span className="text-[10px] font-mono text-warning">
+        Plan: {title} · awaiting review
+      </span>
     </div>
   )
 }
@@ -2738,96 +2621,21 @@ function PinnedPlanContent({
   feedIndex: number
   onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
 }) {
-  const doneCount = item.steps.filter(s => s.status === "done").length
-  const totalCount = item.steps.length
-
   return (
     <div>
       {/* Header */}
-      <div className="px-3.5 pt-3 pb-2">
-        <div className="text-[11px] text-warning font-mono mb-1.5">{item.agent} · Proposing a plan</div>
+      <div className="px-3.5 pt-3 pb-1">
+        <div className="text-[11px] text-warning font-mono mb-1">{item.agent} · Proposing a plan</div>
         <p className="text-[13px] font-medium text-default leading-snug">{item.title}</p>
-        <p className="text-[11px] text-muted mt-1 leading-relaxed">{item.context}</p>
-        {/* Progress bar */}
-        <div className="flex items-center gap-2 mt-2.5">
-          <div className="flex-1 h-1 rounded-full bg-surface-sunken overflow-hidden">
-            <div
-              className="h-full rounded-full bg-success/60 transition-all"
-              style={{ width: `${(doneCount / totalCount) * 100}%` }}
-            />
-          </div>
-          <span className="text-[10px] font-mono text-muted shrink-0">{doneCount}/{totalCount}</span>
-        </div>
       </div>
 
-      {/* Steps */}
-      <div className="border-t border-border-subtle/50 px-3.5 py-2.5">
-        <div className="space-y-0.5">
-          {item.steps.map((step, i) => (
-            <div key={i}>
-              <div className="flex items-start gap-2.5 py-1">
-                <span className={cn(
-                  "w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-[10px] font-mono font-medium",
-                  step.status === "done" && "bg-success/15 text-success",
-                  step.status === "current" && "bg-warning/15 text-warning",
-                  step.status === "pending" && "bg-surface-sunken text-muted",
-                )}>
-                  {step.status === "done" ? (
-                    <Check className="h-3 w-3" strokeWidth={2.5} />
-                  ) : (
-                    i + 1
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <span className={cn(
-                    "text-xs leading-snug block",
-                    step.status === "done" && "text-muted",
-                    step.status === "current" && "text-default font-medium",
-                    step.status === "pending" && "text-secondary",
-                  )}>
-                    {step.text}
-                  </span>
-                  {step.description && (
-                    <span className="text-[10px] text-muted/70 leading-relaxed block mt-0.5">
-                      {step.description}
-                    </span>
-                  )}
-                  {step.files && step.files.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {step.files.map(f => (
-                        <span key={f} className="inline-flex items-center gap-0.5 text-[9px] font-mono text-muted/60 bg-surface-sunken/60 rounded px-1.5 py-0.5">
-                          <FileText className="h-2.5 w-2.5" />
-                          {f.split("/").pop()}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-              {i < item.steps.length - 1 && (
-                <div className="ml-2.5 w-px h-1 bg-border-subtle/40" />
-              )}
-            </div>
-          ))}
-        </div>
+      {/* Plan markdown */}
+      <div className="border-t border-border-subtle/50 px-3.5 py-3">
+        <MarkdownRenderer
+          content={item.plan}
+          className="text-xs text-secondary [&_h2]:text-[11px] [&_h2]:font-mono [&_h2]:uppercase [&_h2]:tracking-wider [&_h2]:text-muted [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:first:mt-0 [&_ol]:space-y-1 [&_ul]:space-y-0.5 [&_li]:text-xs [&_li]:leading-relaxed [&_code]:text-[10px] [&_code]:bg-surface-sunken/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_p]:leading-relaxed [&_p]:mb-1.5"
+        />
       </div>
-
-      {/* Files affected */}
-      {item.files.length > 0 && (
-        <div className="border-t border-border-subtle/50 px-3.5 py-2">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <FileText className="h-3 w-3 text-muted/60" />
-            <span className="text-[10px] font-mono text-muted/60 uppercase tracking-wider">Files affected</span>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {item.files.map(f => (
-              <span key={f} className="text-[10px] font-mono text-secondary/80 bg-surface-sunken/40 rounded px-1.5 py-0.5">
-                {f}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Actions */}
       <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
@@ -2837,12 +2645,6 @@ function PinnedPlanContent({
           className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
         >
           Approve
-        </button>
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
-        >
-          Edit
         </button>
         <button
           type="button"
@@ -3132,7 +2934,7 @@ function TeamFeed({
             case "question":
               return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
             case "plan":
-              return <PlanCard key={i} agent={item.agent} title={item.title} context={item.context} steps={item.steps} files={item.files} planStatus={item.planStatus} />
+              return <PlanCard key={i} agent={item.agent} title={item.title} plan={item.plan} planStatus={item.planStatus} />
             case "permission":
               return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
             case "multi-question":
