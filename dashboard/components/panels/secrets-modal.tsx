@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   KeyRound,
   Eye,
@@ -30,6 +30,16 @@ export function SecretsModal({
   const [newValue, setNewValue] = useState("")
   const [dirty, setDirty] = useState(false)
   const [restarted, setRestarted] = useState(false)
+
+  // Document-level Escape handler — works regardless of focus
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose()
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [open, onClose])
 
   if (!open) return null
 
@@ -75,7 +85,6 @@ export function SecretsModal({
   return (
     <div
       className="fixed inset-0 z-(--z-overlay) flex items-center justify-center"
-      onKeyDown={(e) => { if (e.key === "Escape") onClose() }}
     >
       {/* Backdrop */}
       <div

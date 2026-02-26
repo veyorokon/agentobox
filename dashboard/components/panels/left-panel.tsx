@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useCallback, useEffect } from "react"
+import { useState, useMemo, useCallback, useEffect, useRef } from "react"
 import {
   Users,
   ChevronRight,
@@ -18,8 +18,9 @@ import {
 import { cn, formatCost } from "@/lib/utils"
 import type { AttentionLevel } from "@/lib/types"
 import { LIFECYCLE_CONFIG, ATTENTION_CONFIG } from "@/lib/config"
-import { ALL_TAGS, SKILLS } from "@/lib/data/mock"
+import { ALL_TAGS } from "@/lib/data/mock"
 import { useBreakpoint } from "@/hooks/use-breakpoint"
+import { useWindowWidth } from "@/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useTeamStore } from "@/lib/stores/team"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -53,7 +54,7 @@ export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void })
   const acknowledgeAgent = useTeamStore(s => s.acknowledgeAgent)
 
   // ── Layout metrics (derived from breakpoint + store) ───────────────
-  const screenWidth = typeof window !== "undefined" ? window.innerWidth : 1920
+  const screenWidth = useWindowWidth()
   const collapseThreshold = Math.round(screenWidth * 0.2)
   const minPanelWidth = collapseThreshold + 20
   const defaultWidth = bp === "S" ? Math.max(minPanelWidth, 320) : bp === "M" ? Math.max(minPanelWidth, 340) : 480
@@ -97,6 +98,17 @@ export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
   const [showTagDropdown, setShowTagDropdown] = useState(false)
+  const tagDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Click-outside to close tag dropdown
+  useEffect(() => {
+    if (!showTagDropdown) return
+    function handleClick(e: MouseEvent) {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) setShowTagDropdown(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showTagDropdown])
 
   const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
 
@@ -342,7 +354,7 @@ export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void })
                 className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
               />
             </div>
-            <div className="relative shrink-0">
+            <div className="relative shrink-0" ref={tagDropdownRef}>
               <button
                 type="button"
                 onClick={() => setShowTagDropdown(!showTagDropdown)}
@@ -447,26 +459,6 @@ export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void })
               <span className="text-[11px] font-medium text-default shrink-0">
                 {selectedIds.size} selected
               </span>
-              <select
-                className="bg-surface-sunken/60 border border-border-default rounded-md px-2 py-1 text-[11px] text-secondary outline-none"
-                defaultValue=""
-                onChange={() => {}}
-              >
-                <option value="" disabled>Assign skill...</option>
-                {SKILLS.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-              <select
-                className="bg-surface-sunken/60 border border-border-default rounded-md px-2 py-1 text-[11px] text-secondary outline-none"
-                defaultValue=""
-                onChange={() => {}}
-              >
-                <option value="" disabled>Set model...</option>
-                <option>Opus 4.6</option>
-                <option>Sonnet 4.6</option>
-                <option>Haiku 4.5</option>
-              </select>
               <span className="flex-1" />
               <button
                 type="button"

@@ -207,53 +207,49 @@ export function AgentCardRow({
         {/* Bottom toolbar -- swaps entirely when agent needs attention */}
         {hasPendingItem ? (
           <div className="border-t border-warning/20 bg-warning-subtle/10 px-3 py-2">
-            {pendingItems.map((item, i) => (
-              <div key={i} className="flex items-center gap-2 min-w-0">
+            {pendingItems.map((item) => (
+              <div key={item.id} className="flex items-center gap-2 min-w-0">
                 <Shield className="h-3.5 w-3.5 text-warning shrink-0" />
                 <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
                   {item.type === "permission"
                     ? item.command
                     : item.title}
                 </span>
-                {(() => {
-                  const feedIndex = feedItems.indexOf(item)
-                  if (feedIndex < 0) return null
-                  return item.type === "permission" ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => resolvePermission(feedIndex, "allowed")}
-                        className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                      >
-                        Allow
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => resolvePermission(feedIndex, "denied")}
-                        className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => resolvePlan(feedIndex, "approved")}
-                        className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => resolvePlan(feedIndex, "rejected")}
-                        className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  )
-                })()}
+                {item.type === "permission" ? (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => resolvePermission(item.id, "allowed")}
+                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                    >
+                      Allow
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resolvePermission(item.id, "denied")}
+                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                    >
+                      Deny
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => resolvePlan(item.id, "approved")}
+                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resolvePlan(item.id, "rejected")}
+                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

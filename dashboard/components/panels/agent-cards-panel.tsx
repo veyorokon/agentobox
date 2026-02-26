@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect, useRef } from "react"
 import {
   Search,
   Filter,
@@ -34,6 +34,17 @@ export function AgentCardsPanel() {
   const [showTagDropdown, setShowTagDropdown] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const tagDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Click-outside to close tag dropdown
+  useEffect(() => {
+    if (!showTagDropdown) return
+    function handleClick(e: MouseEvent) {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) setShowTagDropdown(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showTagDropdown])
 
   const filteredAgents = useMemo(() => {
     let result = agents
@@ -75,7 +86,7 @@ export function AgentCardsPanel() {
             className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
           />
         </div>
-        <div className="relative shrink-0">
+        <div className="relative shrink-0" ref={tagDropdownRef}>
           <button
             type="button"
             onClick={() => setShowTagDropdown(!showTagDropdown)}

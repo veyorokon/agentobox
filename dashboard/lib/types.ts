@@ -53,23 +53,17 @@ export type Skill = {
 }
 
 export type TeamFeedItem =
-  | { type: "system"; text: string }
-  | { type: "user"; text: string; target?: string }
-  | { type: "summary"; agent: string; summary: string; cost: number; turns: number; duration: string; isError?: boolean }
-  | { type: "status"; agent: string; from: string; to: string }
-  | { type: "error"; agent: string; text: string }
-  | { type: "question"; agent: string; question: string; options: string[] }
-  | { type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
-  | { type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
-  | { type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
-  | { type: "agent-message"; from: string; to: string; text: string }
+  | { id: string; type: "system"; text: string }
+  | { id: string; type: "user"; text: string; target?: string }
+  | { id: string; type: "summary"; agent: string; summary: string; cost: number; turns: number; duration: string; isError?: boolean }
+  | { id: string; type: "status"; agent: string; from: string; to: string }
+  | { id: string; type: "error"; agent: string; text: string }
+  | { id: string; type: "question"; agent: string; question: string; options: string[] }
+  | { id: string; type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
+  | { id: string; type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
+  | { id: string; type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
+  | { id: string; type: "agent-message"; from: string; to: string; text: string }
 
 export type PendingItem = Extract<TeamFeedItem, { type: "permission" }> | Extract<TeamFeedItem, { type: "plan" }>
 
 export type ViewMode = "terminal" | "feed" | "settings" | "skills"
-
-export type AgentAction =
-  | { type: "SET_LIFECYCLE"; agentId: string; status: LifecycleStatus }
-  | { type: "SET_ATTENTION"; agentId: string; level: AttentionLevel }
-  | { type: "ACKNOWLEDGE"; agentId: string }
-  | { type: "RESET" }

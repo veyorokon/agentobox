@@ -49,7 +49,7 @@ interface SidebarState {
 
   /* Attention bar — shared across 3 mobile tab instances */
   attentionStepIdx: number
-  attentionExpandedFeedIndex: number | null
+  attentionExpandedFeedItemId: string | null
 }
 
 interface SidebarActions {
@@ -71,7 +71,7 @@ interface SidebarActions {
   toggleSkillsExpandAll: () => void
 
   setAttentionStepIdx: (idx: number) => void
-  setAttentionExpandedFeedIndex: (idx: number | null) => void
+  setAttentionExpandedFeedItemId: (id: string | null) => void
 }
 
 export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => ({
@@ -87,7 +87,7 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => 
   skillTagFilter: null,
   skillsAllExpanded: false,
   attentionStepIdx: 0,
-  attentionExpandedFeedIndex: null,
+  attentionExpandedFeedItemId: null,
 
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
@@ -119,5 +119,5 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => 
   toggleSkillsExpandAll: () => set((s) => ({ skillsAllExpanded: !s.skillsAllExpanded })),
 
   setAttentionStepIdx: (idx) => set({ attentionStepIdx: idx }),
-  setAttentionExpandedFeedIndex: (idx) => set({ attentionExpandedFeedIndex: idx }),
+  setAttentionExpandedFeedItemId: (id) => set({ attentionExpandedFeedItemId: id }),
 }))

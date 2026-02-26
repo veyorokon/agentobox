@@ -22,9 +22,6 @@ export const ATTENTION_CONFIG: Record<Exclude<AttentionLevel, "none">, { dot: st
   permission: { dot: "bg-info",    label: "Permission", text: "text-info",    pulse: true },
 }
 
-// Priority order (highest first) — used for attention derivation
-export const ATTENTION_PILL_ORDER: (Exclude<AttentionLevel, "none">)[] = ["permission", "plan", "review"]
-
 export const MODE_CONFIG = {
   auto: { label: "auto", color: "text-success" },
   plan: { label: "plan", color: "text-warning" },

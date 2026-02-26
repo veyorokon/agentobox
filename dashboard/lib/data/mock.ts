@@ -254,14 +254,15 @@ Use the 4px grid. Common values: 4, 8, 12, 16, 24, 32. Padding inside cards: 12p
 /* ================================================================== */
 
 export const TEAM_FEED: TeamFeedItem[] = [
-  { type: "system", text: "session started · Opus 4.6 · 47 tools · 6 agents" },
-  { type: "user", text: "Fix the JWT validation bug in auth.ts. The token expiry check is off by one hour.", target: "backend" },
-  { type: "user", text: "Run the test suite after backend finishes and report results.", target: "qa" },
-  { type: "user", text: "Update the API docs once the fix lands.", target: "docs" },
-  { type: "status", agent: "backend", from: "idle", to: "running" },
-  { type: "status", agent: "qa", from: "idle", to: "waiting" },
-  { type: "status", agent: "docs", from: "idle", to: "running" },
+  { id: "feed-1", type: "system", text: "session started · Opus 4.6 · 47 tools · 6 agents" },
+  { id: "feed-2", type: "user", text: "Fix the JWT validation bug in auth.ts. The token expiry check is off by one hour.", target: "backend" },
+  { id: "feed-3", type: "user", text: "Run the test suite after backend finishes and report results.", target: "qa" },
+  { id: "feed-4", type: "user", text: "Update the API docs once the fix lands.", target: "docs" },
+  { id: "feed-5", type: "status", agent: "backend", from: "idle", to: "running" },
+  { id: "feed-6", type: "status", agent: "qa", from: "idle", to: "waiting" },
+  { id: "feed-7", type: "status", agent: "docs", from: "idle", to: "running" },
   {
+    id: "feed-8",
     type: "plan",
     agent: "backend",
     title: "Fix JWT validation and add clock skew tolerance",
@@ -289,6 +290,7 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     planStatus: "approved",
   },
   {
+    id: "feed-9",
     type: "summary",
     agent: "backend",
     summary: "Fixed JWT validation — converted Date.now() to seconds, added 30s clock skew tolerance, updated error logging in validateToken()",
@@ -297,6 +299,7 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     duration: "2m 10s",
   },
   {
+    id: "feed-10",
     type: "multi-question",
     agent: "backend",
     questions: [
@@ -311,14 +314,16 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     ],
   },
   {
+    id: "feed-11",
     type: "question",
     agent: "backend",
     question: "Should I also add refresh token rotation while I'm in auth.ts?",
     options: ["Yes, add rotation", "No, just the fix", "Create a separate task for it"],
   },
-  { type: "user", text: "Yes, add rotation. Good catch." },
-  { type: "status", agent: "qa", from: "waiting", to: "running" },
+  { id: "feed-12", type: "user", text: "Yes, add rotation. Good catch." },
+  { id: "feed-13", type: "status", agent: "qa", from: "waiting", to: "running" },
   {
+    id: "feed-14",
     type: "summary",
     agent: "backend",
     summary: "Added refresh token rotation — tokens now rotate on each refresh, old tokens invalidated after 60s grace period. Updated 3 test fixtures.",
@@ -327,14 +332,16 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     duration: "1m 12s",
   },
   {
+    id: "feed-15",
     type: "error",
     agent: "qa",
     text: "2 assertions failed in auth.test.ts:\n  - Expected 200 on /api/refresh, got 401\n  - Token rotation test expects old format",
   },
-  { type: "status", agent: "qa", from: "running", to: "error" },
-  { type: "agent-message", from: "backend", to: "qa", text: "auth endpoints updated — refresh rotation uses new token format now, you may need to update fixtures" },
-  { type: "user", text: "@backend the refresh endpoint still rejects — check the middleware order", target: "backend" },
+  { id: "feed-16", type: "status", agent: "qa", from: "running", to: "error" },
+  { id: "feed-17", type: "agent-message", from: "backend", to: "qa", text: "auth endpoints updated — refresh rotation uses new token format now, you may need to update fixtures" },
+  { id: "feed-18", type: "user", text: "@backend the refresh endpoint still rejects — check the middleware order", target: "backend" },
   {
+    id: "feed-19",
     type: "summary",
     agent: "backend",
     summary: "Fixed middleware ordering — auth middleware now runs after token refresh handler. Updated test fixtures to match new rotation format.",
@@ -342,8 +349,9 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     turns: 3,
     duration: "1m 00s",
   },
-  { type: "status", agent: "qa", from: "error", to: "running" },
+  { id: "feed-20", type: "status", agent: "qa", from: "error", to: "running" },
   {
+    id: "feed-21",
     type: "summary",
     agent: "qa",
     summary: "All 47 tests passing. Auth suite: 12/12 pass. Refresh rotation: 3/3 pass. No regressions detected.",
@@ -351,8 +359,9 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     turns: 5,
     duration: "2m 10s",
   },
-  { type: "agent-message", from: "qa", to: "devops", text: "fix/jwt-validation is green — 47/47 tests pass, safe to deploy" },
+  { id: "feed-22", type: "agent-message", from: "qa", to: "devops", text: "fix/jwt-validation is green — 47/47 tests pass, safe to deploy" },
   {
+    id: "feed-23",
     type: "permission",
     agent: "qa",
     command: "git push origin fix/jwt-validation",
@@ -360,6 +369,7 @@ The JWT validation middleware rejects tokens within 5s of expiry due to \`Date.n
     permStatus: "pending",
   },
   {
+    id: "feed-24",
     type: "plan",
     agent: "devops",
     title: "Deploy auth fix to staging",
@@ -386,6 +396,7 @@ If integration tests fail or health checks don't pass within 120s, automatically
     planStatus: "pending" as const,
   },
   {
+    id: "feed-25",
     type: "summary",
     agent: "docs",
     summary: "Updated API reference — added refresh token rotation docs, updated auth flow diagram, added migration notes for v2 token format.",
@@ -393,8 +404,8 @@ If integration tests fail or health checks don't pass within 120s, automatically
     turns: 2,
     duration: "1m 30s",
   },
-  { type: "status", agent: "docs", from: "running", to: "stopped" },
-  { type: "system", text: "3 agents completed · 18 turns · $0.23 total" },
+  { id: "feed-26", type: "status", agent: "docs", from: "running", to: "stopped" },
+  { id: "feed-27", type: "system", text: "3 agents completed · 18 turns · $0.23 total" },
 ]
 
 /* ================================================================== */

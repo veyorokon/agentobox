@@ -41,8 +41,8 @@ interface TeamActions {
   acknowledgeAgent: (agentId: string) => void
 
   // Feed mutations (resolve pending items → recompute attention)
-  resolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
-  resolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
+  resolvePermission: (feedItemId: string, verdict: "allowed" | "denied") => void
+  resolvePlan: (feedItemId: string, verdict: "approved" | "rejected") => void
 
   // Recipient mutations
   addRecipient: (entry: RecipientEntry) => void
@@ -88,13 +88,15 @@ export const useTeamStore = create<TeamState & TeamActions>()((set, get) => ({
 
   // ── Feed mutations ───────────────────────────────────────────────
 
-  resolvePermission: (feedIndex, verdict) =>
+  resolvePermission: (feedItemId, verdict) =>
     set(s => {
       const next = [...s.feedItems]
-      const item = next[feedIndex]
+      const idx = next.findIndex(fi => fi.id === feedItemId)
+      if (idx < 0) return s
+      const item = next[idx]
       if (item.type !== "permission") return s
 
-      next[feedIndex] = { ...item, permStatus: verdict }
+      next[idx] = { ...item, permStatus: verdict }
       const agentName = item.agent
       const newAttention = deriveAttentionFromFeed(next, agentName)
       const agent = s.agents.find(a => a.name === agentName)
@@ -107,13 +109,15 @@ export const useTeamStore = create<TeamState & TeamActions>()((set, get) => ({
       }
     }),
 
-  resolvePlan: (feedIndex, verdict) =>
+  resolvePlan: (feedItemId, verdict) =>
     set(s => {
       const next = [...s.feedItems]
-      const item = next[feedIndex]
+      const idx = next.findIndex(fi => fi.id === feedItemId)
+      if (idx < 0) return s
+      const item = next[idx]
       if (item.type !== "plan") return s
 
-      next[feedIndex] = { ...item, planStatus: verdict }
+      next[idx] = { ...item, planStatus: verdict }
       const agentName = item.agent
       const newAttention = deriveAttentionFromFeed(next, agentName)
       const agent = s.agents.find(a => a.name === agentName)

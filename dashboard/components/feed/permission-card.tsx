@@ -9,7 +9,7 @@ export interface PermissionCardProps {
   command: string
   risk?: string
   permStatus: "pending" | "allowed" | "denied"
-  feedIndex: number
+  feedItemId: string
 }
 
 /** Permission request card */
@@ -18,7 +18,7 @@ export function PermissionCard({
   command,
   risk,
   permStatus,
-  feedIndex,
+  feedItemId,
 }: PermissionCardProps) {
   const resolvePermission = useTeamStore(s => s.resolvePermission)
 
@@ -65,21 +65,21 @@ export function PermissionCard({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => resolvePermission(feedIndex, "allowed")}
+              onClick={() => resolvePermission(feedItemId, "allowed")}
               className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
             >
               Allow
             </button>
             <button
               type="button"
-              onClick={() => resolvePermission(feedIndex, "allowed")}
+              onClick={() => resolvePermission(feedItemId, "allowed")}
               className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
             >
               Allow always
             </button>
             <button
               type="button"
-              onClick={() => resolvePermission(feedIndex, "denied")}
+              onClick={() => resolvePermission(feedItemId, "denied")}
               className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
             >
               Deny

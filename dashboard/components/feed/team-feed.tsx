@@ -63,16 +63,16 @@ export function TeamFeed() {
   return (
     <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
       <div className="max-w-3xl mx-auto w-full px-6 py-4 space-y-3">
-        {filtered.map((item, i) => {
+        {filtered.map((item) => {
           switch (item.type) {
             case "system":
-              return <SystemMessage key={i} text={item.text} />
+              return <SystemMessage key={item.id} text={item.text} />
             case "user":
-              return <TeamUserMessage key={i} text={item.text} target={item.target} />
+              return <TeamUserMessage key={item.id} text={item.text} target={item.target} />
             case "summary":
               return (
                 <AgentSummaryCard
-                  key={i}
+                  key={item.id}
                   agent={item.agent}
                   summary={item.summary}
                   cost={item.cost}
@@ -83,19 +83,19 @@ export function TeamFeed() {
                 />
               )
             case "status":
-              return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} onClickAgent={handleClickAgent} />
+              return <AgentStatusLine key={item.id} agent={item.agent} from={item.from} to={item.to} onClickAgent={handleClickAgent} />
             case "error":
-              return <TeamErrorAlert key={i} agent={item.agent} text={item.text} onClickAgent={handleClickAgent} />
+              return <TeamErrorAlert key={item.id} agent={item.agent} text={item.text} onClickAgent={handleClickAgent} />
             case "question":
-              return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
+              return <QuestionCard key={item.id} agent={item.agent} question={item.question} options={item.options} />
             case "plan":
-              return <PlanCard key={i} agent={item.agent} title={item.title} plan={item.plan} planStatus={item.planStatus} />
+              return <PlanCard key={item.id} agent={item.agent} title={item.title} planStatus={item.planStatus} />
             case "permission":
-              return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} feedIndex={i} />
+              return <PermissionCard key={item.id} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} feedItemId={item.id} />
             case "multi-question":
-              return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
+              return <MultiQuestionCard key={item.id} agent={item.agent} questions={item.questions} />
             case "agent-message":
-              return <AgentToAgentMessage key={i} from={item.from} to={item.to} text={item.text} onClickAgent={handleClickAgent} />
+              return <AgentToAgentMessage key={item.id} from={item.from} to={item.to} text={item.text} onClickAgent={handleClickAgent} />
             default:
               return null
           }

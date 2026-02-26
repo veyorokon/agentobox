@@ -26,27 +26,27 @@ export function AttentionBar() {
   const setMainTab = useSidebarStore(s => s.setMainTab)
   const stepIdx = useSidebarStore(s => s.attentionStepIdx)
   const setStepIdx = useSidebarStore(s => s.setAttentionStepIdx)
-  const expandedFeedIndex = useSidebarStore(s => s.attentionExpandedFeedIndex)
-  const setExpandedFeedIndex = useSidebarStore(s => s.setAttentionExpandedFeedIndex)
+  const expandedFeedItemId = useSidebarStore(s => s.attentionExpandedFeedItemId)
+  const setExpandedFeedItemId = useSidebarStore(s => s.setAttentionExpandedFeedItemId)
 
-  // ── Derived: collect pending items with feed indices ───────────────
+  // ── Derived: collect pending items with IDs ─────────────────────────
   const pending = useMemo(() => {
-    const result: { item: PendingItem; feedIndex: number; agentId?: string }[] = []
-    feedItems.forEach((item, i) => {
+    const result: { item: PendingItem; feedItemId: string; agentId?: string }[] = []
+    for (const item of feedItems) {
       if (item.type === "permission" && item.permStatus === "pending") {
         const agent = agents.find(a => a.name === item.agent)
-        result.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
+        result.push({ item: item as PendingItem, feedItemId: item.id, agentId: agent?.id })
       }
       if (item.type === "plan" && item.planStatus === "pending") {
         const agent = agents.find(a => a.name === item.agent)
-        result.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
+        result.push({ item: item as PendingItem, feedItemId: item.id, agentId: agent?.id })
       }
-    })
+    }
     return result
   }, [feedItems, agents])
 
-  const expandedPlan = expandedFeedIndex !== null
-    ? pending.find(p => p.feedIndex === expandedFeedIndex && p.item.type === "plan")
+  const expandedPlan = expandedFeedItemId !== null
+    ? pending.find(p => p.feedItemId === expandedFeedItemId && p.item.type === "plan")
     : null
 
   if (pending.length === 0) return null
@@ -60,20 +60,20 @@ export function AttentionBar() {
   // Clamp stepper to valid range when items resolve
   const clamped = Math.min(stepIdx, sorted.length - 1)
   const current = sorted[clamped]
-  const { item, feedIndex, agentId } = current
+  const { item, feedItemId, agentId } = current
   const isFocused = focusedAgentId != null && agentId === focusedAgentId
   const hasPrev = clamped > 0
   const hasNext = clamped < sorted.length - 1
 
-  const handleReview = (agentName: string, fi: number) => {
+  const handleReview = (agentName: string, id: string) => {
     reviewAgent(agentName)
     setMainTab("chat")
-    setExpandedFeedIndex(fi)
+    setExpandedFeedItemId(id)
   }
 
-  const handleResolvePlanAndCollapse = (fi: number, verdict: "approved" | "rejected") => {
-    resolvePlan(fi, verdict)
-    setExpandedFeedIndex(null)
+  const handleResolvePlanAndCollapse = (id: string, verdict: "approved" | "rejected") => {
+    resolvePlan(id, verdict)
+    setExpandedFeedItemId(null)
   }
 
   // Expanded view — the card IS the attention bar
@@ -91,7 +91,7 @@ export function AttentionBar() {
                 <button
                   type="button"
                   disabled={!hasPrev}
-                  onClick={() => { setStepIdx(clamped - 1); setExpandedFeedIndex(null) }}
+                  onClick={() => { setStepIdx(clamped - 1); setExpandedFeedItemId(null) }}
                   className={cn(
                     "p-0.5 rounded transition-colors",
                     hasPrev ? "text-secondary hover:text-default hover:bg-surface-raised/50" : "text-muted/30 cursor-default",
@@ -105,7 +105,7 @@ export function AttentionBar() {
                 <button
                   type="button"
                   disabled={!hasNext}
-                  onClick={() => { setStepIdx(clamped + 1); setExpandedFeedIndex(null) }}
+                  onClick={() => { setStepIdx(clamped + 1); setExpandedFeedItemId(null) }}
                   className={cn(
                     "p-0.5 rounded transition-colors",
                     hasNext ? "text-secondary hover:text-default hover:bg-surface-raised/50" : "text-muted/30 cursor-default",
@@ -117,7 +117,7 @@ export function AttentionBar() {
             )}
             <button
               type="button"
-              onClick={() => setExpandedFeedIndex(null)}
+              onClick={() => setExpandedFeedItemId(null)}
               className="p-0.5 rounded text-muted hover:text-default hover:bg-surface-raised/50 transition-colors"
             >
               <X className="h-3 w-3" />
@@ -141,14 +141,14 @@ export function AttentionBar() {
           <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedIndex, "approved")}
+              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedItemId, "approved")}
               className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
             >
               Approve
             </button>
             <button
               type="button"
-              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedIndex, "rejected")}
+              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedItemId, "rejected")}
               className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
             >
               Reject
@@ -215,14 +215,14 @@ export function AttentionBar() {
             <>
               <button
                 type="button"
-                onClick={() => resolvePermission(feedIndex, "allowed")}
+                onClick={() => resolvePermission(feedItemId, "allowed")}
                 className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
               >
                 Allow
               </button>
               <button
                 type="button"
-                onClick={() => resolvePermission(feedIndex, "denied")}
+                onClick={() => resolvePermission(feedItemId, "denied")}
                 className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
               >
                 Deny
@@ -231,7 +231,7 @@ export function AttentionBar() {
           ) : (
             <button
               type="button"
-              onClick={() => handleReview(item.agent, feedIndex)}
+              onClick={() => handleReview(item.agent, feedItemId)}
               className="px-2 py-1 rounded text-[10px] font-medium text-warning border border-warning/30 hover:bg-warning-subtle/40 transition-colors inline-flex items-center gap-1"
             >
               Review <ChevronRight className="h-2.5 w-2.5" />

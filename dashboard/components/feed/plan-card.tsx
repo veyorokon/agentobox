@@ -6,7 +6,6 @@ import { AgentAvatar } from "@/components/agent/avatar"
 export interface PlanCardProps {
   agent: string
   title: string
-  plan: string
   planStatus: "pending" | "approved" | "rejected"
 }
 
