@@ -2,7 +2,7 @@
 
 import { Check, X, Shield, AlertTriangle } from "lucide-react"
 import { AgentAvatar, ChatAvatar } from "@/components/agent/avatar"
-import { useResolvePermission } from "@/lib/graphql/hooks/use-agents"
+import { useResolvePermission } from "@/lib/graphql/hooks/use-feed"
 
 export interface PermissionCardProps {
   agent: string

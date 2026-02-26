@@ -4,6 +4,7 @@ import { useMemo, useCallback } from "react"
 import { getFeedItemAgent } from "@/lib/attention"
 import { useTeamStore } from "@/lib/stores/team"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
+import { useFeed } from "@/lib/graphql/hooks/use-feed"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SystemMessage } from "@/components/feed/system-message"
@@ -18,7 +19,8 @@ import { PermissionCard } from "@/components/feed/permission-card"
 
 export function TeamFeed() {
   // ── Store subscriptions ───────────────────────────────────────────
-  const feedItems = useTeamStore(s => s.feedItems)
+  const { data: feedData } = useFeed()
+  const feedItems = feedData?.feed ?? []
   const recipients = useTeamStore(s => s.recipients)
   const { data } = useAgents()
   const agents = data?.agents ?? []

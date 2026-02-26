@@ -21,6 +21,7 @@ export const client = new ApolloClient({
     typePolicies: {
       Agent: { keyFields: ["id"] },
       FeedItem: { keyFields: ["id"] },
+      FeedQuestion: { keyFields: false },
       TodoProgress: { keyFields: false },
     },
   }),

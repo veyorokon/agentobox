@@ -16,8 +16,8 @@ import { cn, formatCost } from "@/lib/utils"
 import { LIFECYCLE_CONFIG, ATTENTION_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useTeamStore } from "@/lib/stores/team"
-import { useAcknowledgeAgent, useSetAgentMode, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-agents"
+import { useAcknowledgeAgent, useSetAgentMode } from "@/lib/graphql/hooks/use-agents"
+import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
 import { Collapsible } from "@/components/ui/collapsible"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
@@ -59,7 +59,8 @@ export function AgentCardRow({
   const toggleAgent = useSidebarStore(s => s.toggleAgent)
   const acknowledgeAgent = useAcknowledgeAgent()
   const setAgentMode = useSetAgentMode()
-  const feedItems = useTeamStore(s => s.feedItems)
+  const { data: feedData } = useFeed()
+  const feedItems = feedData?.feed ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
   const handleModeChange = (mode: FakeAgent["mode"]) => setAgentMode(agent.id, mode)

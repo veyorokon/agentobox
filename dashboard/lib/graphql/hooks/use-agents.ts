@@ -1,8 +1,6 @@
 import { useQuery, useApolloClient } from "@apollo/client"
 import { useCallback } from "react"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
-import { deriveAttentionFromFeed } from "@/lib/attention"
-import { useTeamStore } from "@/lib/stores/team"
 import type { FakeAgent, AttentionLevel, LifecycleStatus } from "@/lib/types"
 
 /* ================================================================== */
@@ -81,76 +79,6 @@ export function useAcknowledgeAgent() {
           attentionLevel: (current: AttentionLevel) =>
             current === "review" ? "none" : current,
         },
-      })
-    },
-    [client],
-  )
-}
-
-/* ================================================================== */
-/*  BRIDGE HOOKS — span team store (feedItems) + Apollo (agents)       */
-/*                                                                      */
-/*  resolvePermission/resolvePlan update feedItems in team store,       */
-/*  then recompute attention and write it to the Apollo agent cache.    */
-/*  These bridge hooks exist because data is split across two stores    */
-/*  during the migration. When feedItems move to Apollo (Part 2b),     */
-/*  these become pure Apollo cache operations.                          */
-/* ================================================================== */
-
-export function useResolvePermission() {
-  const client = useApolloClient()
-
-  return useCallback(
-    (feedItemId: string, verdict: "allowed" | "denied") => {
-      // 1. Update feedItems in team store
-      useTeamStore.getState().resolvePermission(feedItemId, verdict)
-
-      // 2. Recompute attention for the affected agent
-      const feedItems = useTeamStore.getState().feedItems
-      const item = feedItems.find(fi => fi.id === feedItemId)
-      if (!item || item.type !== "permission") return
-
-      const agentName = item.agent
-      const newAttention = deriveAttentionFromFeed(feedItems, agentName)
-
-      // 3. Find agent by name and update attention in Apollo cache
-      const data = client.readQuery<{ agents: FakeAgent[] }>({ query: GET_AGENTS })
-      const agent = data?.agents.find(a => a.name === agentName)
-      if (!agent) return
-
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agent.id }),
-        fields: { attentionLevel: () => newAttention },
-      })
-    },
-    [client],
-  )
-}
-
-export function useResolvePlan() {
-  const client = useApolloClient()
-
-  return useCallback(
-    (feedItemId: string, verdict: "approved" | "rejected") => {
-      // 1. Update feedItems in team store
-      useTeamStore.getState().resolvePlan(feedItemId, verdict)
-
-      // 2. Recompute attention for the affected agent
-      const feedItems = useTeamStore.getState().feedItems
-      const item = feedItems.find(fi => fi.id === feedItemId)
-      if (!item || item.type !== "plan") return
-
-      const agentName = item.agent
-      const newAttention = deriveAttentionFromFeed(feedItems, agentName)
-
-      // 3. Find agent by name and update attention in Apollo cache
-      const data = client.readQuery<{ agents: FakeAgent[] }>({ query: GET_AGENTS })
-      const agent = data?.agents.find(a => a.name === agentName)
-      if (!agent) return
-
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agent.id }),
-        fields: { attentionLevel: () => newAttention },
       })
     },
     [client],

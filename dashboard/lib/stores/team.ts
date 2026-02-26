@@ -1,40 +1,22 @@
 import { create } from "zustand"
-import type { TeamFeedItem, RecipientEntry } from "@/lib/types"
-import { TEAM_FEED } from "@/lib/data/mock"
+import type { RecipientEntry } from "@/lib/types"
 
 /* ================================================================== */
 /*  TEAM STORE                                                         */
 /*                                                                     */
-/*  Owns feed items (until Part 2b migration) and recipients.          */
-/*  Agents moved to Apollo cache — see lib/graphql/hooks/use-agents.   */
+/*  Permanent home for composer input state (recipients).              */
+/*  Agents and feed items live in Apollo cache.                        */
 /*                                                                     */
-/*  Attention derivation for feed mutations (resolvePermission,        */
-/*  resolvePlan) uses Apollo cache.modify to update agent attention    */
-/*  — see the resolve* actions below.                                  */
-/*                                                                     */
-/*  ┌─────────────────────────────────────────────────────────────────┐ */
-/*  │  STORE vs APOLLO — ownership split                              │ */
-/*  │                                                                │ */
-/*  │  APOLLO CACHE:                                                 │ */
-/*  │  • agents (query + cache.modify for mutations)                 │ */
-/*  │                                                                │ */
-/*  │  THIS STORE:                                                   │ */
-/*  │  • feedItems (moves to Apollo in Part 2b)                      │ */
-/*  │  • recipients (stays permanently — composer input state)       │ */
-/*  └─────────────────────────────────────────────────────────────────┘ */
+/*  See:                                                               */
+/*  - lib/graphql/hooks/use-agents.ts (agent queries + mutations)     */
+/*  - lib/graphql/hooks/use-feed.ts   (feed queries + mutations)      */
 /* ================================================================== */
 
 interface TeamState {
-  feedItems: TeamFeedItem[]
   recipients: RecipientEntry[]
 }
 
 interface TeamActions {
-  // Feed mutations (moves to Apollo in Part 2b)
-  resolvePermission: (feedItemId: string, verdict: "allowed" | "denied") => void
-  resolvePlan: (feedItemId: string, verdict: "approved" | "rejected") => void
-
-  // Recipient mutations (stays permanently)
   addRecipient: (entry: RecipientEntry) => void
   removeRecipient: (index: number) => void
   setRecipients: (entries: RecipientEntry[]) => void
@@ -44,37 +26,7 @@ interface TeamActions {
 const DEFAULT_RECIPIENT: RecipientEntry = { type: "agent", value: "team-lead" }
 
 export const useTeamStore = create<TeamState & TeamActions>()((set) => ({
-  feedItems: TEAM_FEED,
   recipients: [DEFAULT_RECIPIENT],
-
-  // ── Feed mutations ───────────────────────────────────────────────
-  // NOTE: These no longer recompute agent attention — that's handled
-  // by the calling component via Apollo cache.modify after resolving.
-  // In production, backend computes attention and pushes via subscription.
-
-  resolvePermission: (feedItemId, verdict) =>
-    set(s => {
-      const next = [...s.feedItems]
-      const idx = next.findIndex(fi => fi.id === feedItemId)
-      if (idx < 0) return s
-      const item = next[idx]
-      if (item.type !== "permission") return s
-
-      next[idx] = { ...item, permStatus: verdict }
-      return { feedItems: next }
-    }),
-
-  resolvePlan: (feedItemId, verdict) =>
-    set(s => {
-      const next = [...s.feedItems]
-      const idx = next.findIndex(fi => fi.id === feedItemId)
-      if (idx < 0) return s
-      const item = next[idx]
-      if (item.type !== "plan") return s
-
-      next[idx] = { ...item, planStatus: verdict }
-      return { feedItems: next }
-    }),
 
   // ── Recipient mutations ──────────────────────────────────────────
 

@@ -12,8 +12,8 @@ import { formatCost } from "@/lib/utils"
 import { getAllPendingItems } from "@/lib/attention"
 import { useBreakpoint } from "@/hooks/use-breakpoint"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useTeamStore } from "@/lib/stores/team"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
+import { useFeed } from "@/lib/graphql/hooks/use-feed"
 
 import { SecretsModal } from "@/components/panels/secrets-modal"
 import { AgentLeftPanel } from "@/components/panels/left-panel"
@@ -40,10 +40,11 @@ export default function ProjectPage() {
   const mainTab = useSidebarStore(s => s.mainTab)
   const setMainTab = useSidebarStore(s => s.setMainTab)
 
-  // ── Apollo (agents) + Team store (feed for badge count) ──────────
+  // ── Apollo (agents + feed) ──────────────────────────────────────
   const { data: agentsData } = useAgents()
   const agents = agentsData?.agents ?? []
-  const feedItems = useTeamStore(s => s.feedItems)
+  const { data: feedData } = useFeed()
+  const feedItems = feedData?.feed ?? []
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
