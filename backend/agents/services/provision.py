@@ -30,6 +30,7 @@ async def provision_workspace(
     team_name: str = "",
     relay_token: str = "",
     callback_url: str = "",
+    mode: str = "auto",
 ) -> None:
     """
     Write CLAUDE.md, .claude/settings.json, .mcp.json, and security
@@ -74,7 +75,7 @@ async def provision_workspace(
     claude_dir = f"{workspace}/.claude"
     await runtime.exec(sandbox_id, ["mkdir", "-p", claude_dir])
 
-    settings_json = _build_settings_json(api_key=api_key)
+    settings_json = _build_settings_json(api_key=api_key, mode=mode)
     await runtime.write_file(
         sandbox_id,
         settings_json.encode("utf-8"),
@@ -715,10 +716,19 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
     )
 
 
-def _build_settings_json(api_key: str = "") -> str:
+# Frontend mode → Claude Code permission mode mapping
+MODE_TO_PERMISSION = {
+    "auto": "bypassPermissions",
+    "plan": "plan",
+    "supervised": "default",
+}
+
+
+def _build_settings_json(api_key: str = "", mode: str = "auto") -> str:
+    perm_mode = MODE_TO_PERMISSION.get(mode, "bypassPermissions")
     settings = {
         "theme": "dark",
-        "defaultMode": "bypassPermissions",
+        "defaultMode": perm_mode,
         "enableAllProjectMcpServers": True,
     }
     # Use apiKeyHelper instead of env var for API key (Layer 1)

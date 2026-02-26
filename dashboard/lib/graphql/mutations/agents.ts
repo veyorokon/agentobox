@@ -18,24 +18,6 @@ export const SET_AGENT_MODE = gql`
   }
 `
 
-export const SET_AGENT_LIFECYCLE = gql`
-  mutation SetAgentLifecycle($agentId: ID!, $status: String!) {
-    setAgentLifecycle(agentId: $agentId, status: $status) {
-      id
-      lifecycleStatus
-    }
-  }
-`
-
-export const SET_AGENT_ATTENTION = gql`
-  mutation SetAgentAttention($agentId: ID!, $level: String!) {
-    setAgentAttention(agentId: $agentId, level: $level) {
-      id
-      attentionLevel
-    }
-  }
-`
-
 export const RESOLVE_PERMISSION = gql`
   mutation ResolvePermission($feedItemId: ID!, $verdict: String!) {
     resolvePermission(feedItemId: $feedItemId, verdict: $verdict) {

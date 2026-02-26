@@ -6,6 +6,7 @@ from django.db import models
 class AgentStatus(models.TextChoices):
     DEPLOYING = "deploying"
     RUNNING = "running"
+    WAITING = "waiting"
     IDLE = "idle"
     STOPPED = "stopped"
     ERROR = "error"
@@ -99,6 +100,18 @@ class Agent(models.Model):
     capabilities = models.JSONField(null=True, blank=True)
     # Current activity phase from stream_event (thinking, responding, tool-input, tool-use)
     phase = models.CharField(max_length=20, blank=True, default="")
+
+    # Frontend-facing state
+    mode = models.CharField(max_length=20, default="auto")               # auto | plan | supervised
+    attention_level = models.CharField(max_length=20, default="none")     # none | review | plan | permission
+    task = models.CharField(max_length=500, blank=True, default="")       # current task description
+    last_output = models.TextField(blank=True, default="")                # last assistant text (~500 chars)
+    live_action = models.CharField(max_length=500, blank=True, default="")  # last tool_use name + summary
+    tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
+
+    # Denormalized from SessionResult (avoid N+1 on agents list query)
+    duration_ms = models.IntegerField(default=0)
+    num_turns = models.IntegerField(default=0)
 
     # Auth token for WebSocket relay connection (generated during provisioning)
     relay_token = models.CharField(max_length=64, blank=True)
@@ -231,6 +244,71 @@ class AgentTask(models.Model):
 
     def __str__(self):
         return f"{self.subject[:50]} ({self.status}) -> {self.agent.name}"
+
+
+class TeamFeedItem(models.Model):
+    """Curated feed items for the dashboard team feed.
+
+    Flat union: every field on every row, null/empty where not applicable.
+    Matches the frontend's discriminated union TeamFeedItem type.
+    StreamEvent = raw audit log (untouched). TeamFeedItem = dashboard view.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="feed_items")
+
+    # Discriminator
+    type = models.CharField(max_length=30)
+    # system | user | summary | status | error | question | plan | permission | multi-question | agent-message
+
+    # Shared
+    agent_name = models.CharField(max_length=100, blank=True, default="")
+    text = models.TextField(blank=True, default="")
+
+    # Permission
+    command = models.TextField(blank=True, default="")
+    risk = models.CharField(max_length=200, blank=True, default="")
+    perm_status = models.CharField(max_length=20, blank=True, default="")
+    tool_use_id = models.CharField(max_length=100, blank=True, default="")
+
+    # Plan
+    title = models.CharField(max_length=500, blank=True, default="")
+    plan = models.TextField(blank=True, default="")
+    plan_status = models.CharField(max_length=20, blank=True, default="")
+
+    # Summary
+    summary = models.TextField(blank=True, default="")
+    cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    turns = models.IntegerField(null=True, blank=True)
+    duration = models.CharField(max_length=30, blank=True, default="")
+    is_error = models.BooleanField(null=True, blank=True)
+
+    # Status change / agent-message (from/to serve double duty)
+    from_value = models.CharField(max_length=100, blank=True, default="")
+    to_value = models.CharField(max_length=100, blank=True, default="")
+
+    # User message
+    target = models.CharField(max_length=100, blank=True, default="")
+
+    # Question
+    question = models.CharField(max_length=1000, blank=True, default="")
+    options = models.JSONField(default=list, blank=True)
+    questions = models.JSONField(default=list, blank=True)
+
+    # Traceability
+    agent_record = models.ForeignKey(Agent, on_delete=models.SET_NULL, null=True, blank=True, related_name="feed_items")
+    source_event = models.ForeignKey(StreamEvent, on_delete=models.SET_NULL, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["project", "created_at"]),
+            models.Index(fields=["project", "agent_name", "type", "perm_status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.type} ({self.agent_name}) {self.created_at:%H:%M}"
 
 
 class AgentFeedback(models.Model):

@@ -6,7 +6,7 @@ from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
-from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType
+from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("agents.mutations")
 
@@ -30,20 +30,14 @@ class CreateAgentInput:
     volume_mounts: list[VolumeMountInput] | None = None
     instructions: str = ""
     role: str = "worker"
+    mode: str = "auto"
+    tags: list[str] | None = None
 
 
 @strawberry.input
-class SendMessageInput:
-    agent_id: ID
-    message: str = ""
-    content: JSON | None = None  # ContentBlock[] — takes precedence over message
-
-
-@strawberry.input
-class BroadcastMessageInput:
-    agent_ids: list[ID]
-    message: str = ""
-    content: JSON | None = None  # ContentBlock[] — takes precedence over message
+class RecipientInput:
+    type: str   # "agent" | "tag" | "all"
+    value: str = ""
 
 
 @strawberry.input
@@ -130,6 +124,8 @@ class AgentMutation:
             instructions=input.instructions,
             role=input.role,
             volume_mounts=vm_dicts,
+            mode=input.mode,
+            tags=input.tags,
         )
 
     @strawberry.mutation
@@ -176,28 +172,78 @@ class AgentMutation:
 
     @strawberry.mutation
     async def set_agent_mode(self, agent_id: ID, mode: str, info: strawberry.types.Info) -> AgentType:
+        """Accept frontend vocabulary (auto/plan/supervised), map to Claude Code mode."""
         from agents.services.comms import set_agent_mode
 
         await authorize_agent(info, agent_id)
         return await set_agent_mode(agent_id, mode)
 
     @strawberry.mutation
-    async def send_message(self, input: SendMessageInput, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import send_message
+    async def send_message(
+        self,
+        text: str,
+        recipients: list[RecipientInput],
+        info: strawberry.types.Info,
+    ) -> bool:
+        """Send message to resolved agents. Recipients can be agent names, tags, or 'all'."""
+        from agents.models import Agent
+        from agents.services.comms import send_message as _send_single, broadcast_message
 
-        await authorize_agent(info, input.agent_id)
-        return await send_message(input.agent_id, input.message, input.content)
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
 
-    @strawberry.mutation
-    async def broadcast_message(self, input: BroadcastMessageInput, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import broadcast_message
+        # Resolve recipients to agent IDs
+        agent_ids: list[str] = []
+        for r in recipients:
+            if r.type == "all":
+                # All agents in all user's projects — in practice the frontend
+                # knows which project, but we resolve from the first agent found
+                all_agents = [
+                    a async for a in Agent.objects.filter(
+                        project__owner=user
+                    ).exclude(status="stopped")
+                ]
+                agent_ids.extend(str(a.id) for a in all_agents)
+            elif r.type == "agent":
+                try:
+                    agent = await Agent.objects.aget(
+                        name=r.value, project__owner=user
+                    )
+                    agent_ids.append(str(agent.id))
+                except Agent.DoesNotExist:
+                    log.warning("recipient_not_found", type=r.type, value=r.value)
+            elif r.type == "tag":
+                tagged = [
+                    a async for a in Agent.objects.filter(
+                        project__owner=user, tags__contains=[r.value]
+                    ).exclude(status="stopped")
+                ]
+                agent_ids.extend(str(a.id) for a in tagged)
 
-        await authorize_agents(info, input.agent_ids)
-        return await broadcast_message(
-            [str(aid) for aid in input.agent_ids],
-            input.message,
-            input.content,
+        if not agent_ids:
+            return False
+
+        # Deduplicate
+        agent_ids = list(dict.fromkeys(agent_ids))
+
+        # Create user feed item
+        from agents.services.feed import create_feed_item
+
+        # Get project_id from first agent
+        first_agent = await Agent.objects.aget(id=agent_ids[0])
+        target_str = ", ".join(r.value for r in recipients if r.value)
+        await create_feed_item(
+            project_id=str(first_agent.project_id),
+            type="user",
+            text=text,
+            target=target_str or "all",
         )
+
+        if len(agent_ids) == 1:
+            return await _send_single(agent_ids[0], text)
+        else:
+            return await broadcast_message(agent_ids, text)
 
     @strawberry.mutation
     async def answer_question(self, input: AnswerQuestionInput, info: strawberry.types.Info) -> bool:
@@ -205,6 +251,109 @@ class AgentMutation:
 
         await authorize_agent(info, input.agent_id)
         return await answer_question(input.agent_id, input.tool_use_id, input.answer_text)
+
+    @strawberry.mutation
+    async def resolve_permission(
+        self,
+        feed_item_id: ID,
+        verdict: str,
+        info: strawberry.types.Info,
+    ) -> TeamFeedItemType:
+        """Resolve a permission prompt. verdict: 'allowed' | 'denied'."""
+        from agents.models import TeamFeedItem
+        from agents.services.comms import answer_question
+        from agents.services.feed import recompute_attention, update_feed_item
+        from agents.graphql.types import model_to_feed_item_type
+
+        if verdict not in ("allowed", "denied"):
+            raise ValueError(f"Invalid verdict: {verdict}")
+
+        item = await TeamFeedItem.objects.aget(id=feed_item_id)
+
+        # Auth: ensure user owns the project
+        user = info.context["request"].user
+        from projects.models import Project
+        await Project.objects.aget(id=item.project_id, owner=user)
+
+        item = await update_feed_item(item, perm_status=verdict)
+
+        # If allowed, send tool_result back to agent
+        if verdict == "allowed" and item.tool_use_id and item.agent_record_id:
+            await answer_question(
+                str(item.agent_record_id),
+                item.tool_use_id,
+                "Permission granted by user",
+            )
+
+        # Recompute attention for affected agent
+        if item.agent_name:
+            await recompute_attention(str(item.project_id), item.agent_name)
+
+        return model_to_feed_item_type(item)
+
+    @strawberry.mutation
+    async def resolve_plan(
+        self,
+        feed_item_id: ID,
+        verdict: str,
+        info: strawberry.types.Info,
+    ) -> TeamFeedItemType:
+        """Resolve a plan proposal. verdict: 'approved' | 'rejected'."""
+        from agents.models import TeamFeedItem
+        from agents.services.comms import answer_question
+        from agents.services.feed import recompute_attention, update_feed_item
+        from agents.graphql.types import model_to_feed_item_type
+
+        if verdict not in ("approved", "rejected"):
+            raise ValueError(f"Invalid verdict: {verdict}")
+
+        item = await TeamFeedItem.objects.aget(id=feed_item_id)
+
+        user = info.context["request"].user
+        from projects.models import Project
+        await Project.objects.aget(id=item.project_id, owner=user)
+
+        item = await update_feed_item(item, plan_status=verdict)
+
+        # If approved, send tool_result back to agent
+        if verdict == "approved" and item.tool_use_id and item.agent_record_id:
+            await answer_question(
+                str(item.agent_record_id),
+                item.tool_use_id,
+                "Plan approved by user",
+            )
+        elif verdict == "rejected" and item.tool_use_id and item.agent_record_id:
+            await answer_question(
+                str(item.agent_record_id),
+                item.tool_use_id,
+                "Plan rejected by user",
+            )
+
+        if item.agent_name:
+            await recompute_attention(str(item.project_id), item.agent_name)
+
+        return model_to_feed_item_type(item)
+
+    @strawberry.mutation
+    async def create_vnc_token(
+        self,
+        agent_id: ID,
+        info: strawberry.types.Info,
+    ) -> VncTokenResult:
+        """Generate a short-lived token for VNC proxy WebSocket auth."""
+        import secrets
+        from datetime import datetime, timedelta, timezone
+
+        from django.core.cache import cache
+
+        await authorize_agent(info, agent_id)
+
+        token = secrets.token_urlsafe(32)
+        cache_key = f"vnc_token:{token}"
+        cache.set(cache_key, str(agent_id), timeout=60)
+
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
+        return VncTokenResult(token=token, expires_at=expires_at.isoformat())
 
     @strawberry.mutation
     async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:

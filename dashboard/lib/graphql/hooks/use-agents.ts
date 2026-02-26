@@ -2,7 +2,7 @@ import { useQuery, useApolloClient } from "@apollo/client"
 import { useCallback } from "react"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { createLogger } from "@/lib/logger"
-import type { Agent, AttentionLevel, LifecycleStatus } from "@/lib/types"
+import type { Agent, AttentionLevel } from "@/lib/types"
 
 /* ================================================================== */
 /*  AGENT HOOKS                                                         */
@@ -33,40 +33,6 @@ export function useSetAgentMode() {
         id: client.cache.identify({ __typename: "Agent", id: agentId }),
         fields: {
           mode: () => mode,
-        },
-      })
-    },
-    [client],
-  )
-}
-
-export function useSetAgentLifecycle() {
-  const client = useApolloClient()
-
-  return useCallback(
-    (agentId: string, status: LifecycleStatus) => {
-      log("cache.modify", { typename: "Agent", id: agentId, field: "lifecycleStatus", value: status })
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agentId }),
-        fields: {
-          lifecycleStatus: () => status,
-        },
-      })
-    },
-    [client],
-  )
-}
-
-export function useSetAgentAttention() {
-  const client = useApolloClient()
-
-  return useCallback(
-    (agentId: string, level: AttentionLevel) => {
-      log("cache.modify", { typename: "Agent", id: agentId, field: "attentionLevel", value: level })
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agentId }),
-        fields: {
-          attentionLevel: () => level,
         },
       })
     },

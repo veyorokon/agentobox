@@ -1,7 +1,9 @@
-"""Feed queries — raw event log, flat list.
+"""Queries: agents, feed, and metadata.
 
-Returns all meaningful events (excludes stream_event deltas) for the feed.
-No pagination, no cursors. The frontend handles display grouping.
+Two feed layers:
+    teamFeed    → curated TeamFeedItems for the dashboard (materialized view)
+    agentFeed   → raw StreamEvent log for agent detail view (event store)
+    projectFeed → raw StreamEvent log for project-wide view (event store)
 """
 
 import strawberry
@@ -14,7 +16,9 @@ from agents.graphql.types import (
     McpRegistryEntryType,
     ModelEntryType,
     ProjectSecretType,
+    TeamFeedItemType,
     TimelineEntryType,
+    model_to_feed_item_type,
 )
 
 
@@ -61,24 +65,52 @@ class AgentQuery:
             return None
 
     @strawberry.field
+    async def team_feed(
+        self,
+        project_id: ID,
+        info: strawberry.types.Info,
+    ) -> list[TeamFeedItemType]:
+        """Curated feed items for the dashboard team feed."""
+        from agents.models import TeamFeedItem
+
+        await authorize_project(info, project_id)
+
+        items = [
+            item async for item in TeamFeedItem.objects.filter(
+                project_id=project_id,
+            ).order_by("created_at")[:500]
+        ]
+
+        return [model_to_feed_item_type(item) for item in items]
+
+    @strawberry.field
     async def agent_feed(
         self,
         agent_id: ID,
         info: strawberry.types.Info,
+        first: int = 100,
+        after: str | None = None,
     ) -> list[TimelineEntryType]:
         """All events for a single agent, excluding stream deltas."""
         from agents.models import StreamEvent
 
         agent = await authorize_agent(info, agent_id)
 
-        events = await _collect_qs(
-            StreamEvent.objects.filter(
-                agent=agent,
-            ).exclude(
-                event_type="stream_event",
-            ).select_related("agent").order_by("-created_at", "-id")
-        )
+        qs = StreamEvent.objects.filter(
+            agent=agent,
+        ).exclude(
+            event_type="stream_event",
+        ).select_related("agent").order_by("-created_at", "-id")
 
+        if after:
+            # Cursor is the StreamEvent ID — fetch events older than it
+            try:
+                cursor_id = int(after)
+                qs = qs.filter(id__lt=cursor_id)
+            except (ValueError, TypeError):
+                pass
+
+        events = await _collect_qs(qs[:first])
         return _events_to_entries(events)
 
     @strawberry.field
@@ -86,6 +118,7 @@ class AgentQuery:
         self,
         project_id: ID,
         info: strawberry.types.Info,
+        limit: int = 200,
     ) -> list[TimelineEntryType]:
         """All events for all agents in a project, excluding stream deltas."""
         from agents.models import StreamEvent
@@ -97,7 +130,7 @@ class AgentQuery:
                 agent__project_id=project_id,
             ).exclude(
                 event_type="stream_event",
-            ).select_related("agent").order_by("-created_at", "-id")
+            ).select_related("agent").order_by("-created_at", "-id")[:limit]
         )
 
         return _events_to_entries(events)

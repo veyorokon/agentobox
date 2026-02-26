@@ -25,6 +25,7 @@ from asgiref.sync import sync_to_async
 
 from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
+from agents.services.feed import create_feed_item, recompute_attention
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("agents.stream")
@@ -103,11 +104,12 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
     if event_type == "assistant":
         await agent.arefresh_from_db(fields=["status"])
         await _maybe_set_running(agent)
+        await _update_assistant_fields(agent, event)
     elif event_type == "result":
-        await _handle_result(agent, event)
+        await _handle_result(agent, event, stream_event)
     elif event_type == "system":
         await agent.arefresh_from_db(
-            fields=["capabilities", "session_id", "permission_mode", "status", "phase"]
+            fields=["capabilities", "session_id", "permission_mode", "status", "phase", "mode"]
         )
         await _handle_system(agent, event)
     elif event_type == "stream_event":
@@ -123,7 +125,40 @@ async def _maybe_set_running(agent: Agent) -> None:
         await broadcast_agent_update(agent)
 
 
-async def _handle_result(agent: Agent, event: dict) -> None:
+async def _update_assistant_fields(agent: Agent, event: dict) -> None:
+    """Extract last_output and live_action from assistant events."""
+    msg = event.get("message", {})
+    content = msg.get("content", [])
+    if not isinstance(content, list):
+        return
+
+    update_fields = []
+
+    # Extract last text block for last_output
+    text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    if text_blocks:
+        text = text_blocks[-1].get("text", "")
+        if text:
+            agent.last_output = text[:500]
+            update_fields.append("last_output")
+
+    # Extract last tool_use block for live_action
+    tool_blocks = [
+        b for b in content
+        if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use", "mcp_tool_use")
+    ]
+    if tool_blocks:
+        tb = tool_blocks[-1]
+        name = tb.get("name", "")
+        agent.live_action = name[:500]
+        update_fields.append("live_action")
+
+    if update_fields:
+        await agent.asave(update_fields=update_fields)
+        await broadcast_agent_update(agent)
+
+
+async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | None = None) -> None:
     """Insert SessionResult + update agent cost/status on turn completion."""
     session_id = event.get("session_id", "")
     if not session_id:
@@ -142,10 +177,45 @@ async def _handle_result(agent: Agent, event: dict) -> None:
     )
 
     agent.session_cost_usd = event.get("total_cost_usd", 0)
+    agent.duration_ms = event.get("duration_ms", 0)
+    agent.num_turns = event.get("num_turns", 0)
     agent.status = AgentStatus.IDLE
     agent.phase = ""
-    await agent.asave(update_fields=["session_cost_usd", "status", "phase"])
+    agent.live_action = ""
+    await agent.asave(update_fields=[
+        "session_cost_usd", "duration_ms", "num_turns", "status", "phase", "live_action",
+    ])
     await broadcast_agent_update(agent)
+
+    # Create TeamFeedItem for the result
+    is_error = event.get("is_error", False)
+    item_type = "error" if is_error else "summary"
+    duration_ms = event.get("duration_ms", 0)
+    secs = duration_ms // 1000 if duration_ms else 0
+    mins = secs // 60
+    duration_str = f"{mins}m {secs % 60:02d}s" if mins else f"{secs}s"
+
+    feed_kwargs = dict(
+        type=item_type,
+        agent_name=agent.name,
+        agent_record=agent,
+        cost=event.get("total_cost_usd", 0),
+        turns=event.get("num_turns", 0),
+        duration=duration_str,
+        is_error=is_error,
+    )
+    if is_error:
+        feed_kwargs["text"] = agent.last_output[:500] if agent.last_output else "Agent encountered an error"
+    else:
+        feed_kwargs["summary"] = agent.last_output[:500] if agent.last_output else "Turn completed"
+
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        source_event=stream_event,
+        **feed_kwargs,
+    )
+    # Set review attention after turn completion (if no pending perm/plan)
+    await recompute_attention(str(agent.project_id), agent.name)
 
 
 async def _handle_system(agent: Agent, event: dict) -> None:
@@ -174,11 +244,24 @@ async def _handle_system(agent: Agent, event: dict) -> None:
             await broadcast_agent_update(agent)
 
     elif subtype == "status":
-        # Update permission mode from Claude's status event
+        # Update permission mode from Claude's status event + reverse-map to frontend mode
         perm_mode = event.get("permissionMode", "")
         if perm_mode and perm_mode != agent.permission_mode:
             agent.permission_mode = perm_mode
-            await agent.asave(update_fields=["permission_mode"])
+            # Reverse-map Claude Code mode → frontend mode
+            _PERM_TO_MODE = {
+                "bypassPermissions": "auto",
+                "dontAsk": "auto",
+                "plan": "plan",
+                "default": "supervised",
+                "acceptEdits": "supervised",
+            }
+            new_mode = _PERM_TO_MODE.get(perm_mode, agent.mode)
+            update_fields = ["permission_mode"]
+            if new_mode != agent.mode:
+                agent.mode = new_mode
+                update_fields.append("mode")
+            await agent.asave(update_fields=update_fields)
             await broadcast_agent_update(agent)
 
     elif subtype == "process_exit":

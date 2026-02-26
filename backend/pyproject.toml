@@ -23,6 +23,7 @@ dependencies = [
     "strawberry-graphql>=0.291.0",
     "strawberry-graphql-django>=0.75.0",
     "structlog>=25.5.0",
+    "websockets>=14.0",
 ]
 
 [dependency-groups]

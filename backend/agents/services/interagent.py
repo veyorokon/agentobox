@@ -20,6 +20,7 @@ import structlog
 from agents.models import Agent, AgentStatus, StreamEvent
 from agents.services.broadcast import broadcast_event
 from agents.services.comms import _push_to_relay
+from agents.services.feed import create_feed_item
 
 log = structlog.get_logger("agents.interagent")
 
@@ -71,6 +72,17 @@ async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> No
         },
     )
     await broadcast_event(target, stream_event)
+
+    # Create agent-message feed item
+    await create_feed_item(
+        project_id=str(target.project_id),
+        source_event=stream_event,
+        agent_record=target,
+        type="agent-message",
+        from_value=sender_name,
+        to_value=target.name,
+        text=content,
+    )
 
     # Push to relay via WebSocket
     input_msg = {

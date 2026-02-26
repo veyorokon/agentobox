@@ -30,6 +30,7 @@ dependencies = [
     { name = "strawberry-graphql" },
     { name = "strawberry-graphql-django" },
     { name = "structlog" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -61,6 +62,7 @@ requires-dist = [
     { name = "strawberry-graphql", specifier = ">=0.291.0" },
     { name = "strawberry-graphql-django", specifier = ">=0.75.0" },
     { name = "structlog", specifier = ">=25.5.0" },
+    { name = "websockets", specifier = ">=14.0" },
 ]
 
 [package.metadata.requires-dev]

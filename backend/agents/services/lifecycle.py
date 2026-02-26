@@ -11,6 +11,7 @@ from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.models import StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
+from agents.services.feed import create_feed_item
 from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
 from agents.utils import sanitize_name as _sanitize_name
 
@@ -34,6 +35,8 @@ async def create_agent(
     instructions: str = "",
     role: str = "worker",
     volume_mounts: list[dict] | None = None,
+    mode: str = "auto",
+    tags: list[str] | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from config.telemetry import bind_agent_context
@@ -82,6 +85,8 @@ async def create_agent(
         instructions=instructions,
         role=role,
         config_snapshot=config_snapshot,
+        mode=mode,
+        tags=tags or [],
     )
 
     # Resolve project secrets for this agent (default-all with optional scoping)
@@ -93,6 +98,16 @@ async def create_agent(
         data={"name": name, "runtime": runtime_name},
     )
     await broadcast_event(agent, evt)
+
+    # Create system feed item for agent creation
+    await create_feed_item(
+        project_id=str(project_id),
+        source_event=evt,
+        agent_record=agent,
+        type="system",
+        agent_name=name,
+        text=f"Agent {name} created ({runtime_name})",
+    )
 
     op_log.info("agent_created", agent_id=str(agent.id))
 
@@ -306,6 +321,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             team_name=team_name,
             relay_token=relay_token,
             callback_url=callback_url,
+            mode=getattr(agent, "mode", "auto"),
         )
         # Write theme tokens if project has them
         if project.theme_tokens:

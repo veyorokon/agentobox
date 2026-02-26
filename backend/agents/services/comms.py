@@ -20,6 +20,7 @@ from channels.layers import get_channel_layer
 
 from agents.models import Agent, AgentStatus, StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
+from agents.services.feed import create_feed_item
 
 log = structlog.get_logger("agents.comms")
 
@@ -240,24 +241,30 @@ async def broadcast_message(
 
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
-    """Change an agent's permission mode via relay restart."""
-    VALID_MODES = {"default", "plan", "acceptEdits", "bypassPermissions", "dontAsk"}
+    """Change an agent's mode. Accepts frontend vocabulary (auto/plan/supervised)."""
+    from agents.services.provision import MODE_TO_PERMISSION
+
+    # Accept both frontend and Claude Code vocabulary
+    FRONTEND_MODES = {"auto", "plan", "supervised"}
     op_log = log.bind(agent_id=agent_id, mode=mode)
 
-    if mode not in VALID_MODES:
-        raise ValueError(f"Invalid permission mode: {mode}")
+    if mode not in FRONTEND_MODES:
+        raise ValueError(f"Invalid mode: {mode}. Must be one of: {', '.join(FRONTEND_MODES)}")
 
     agent = await Agent.objects.aget(id=agent_id)
 
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
         raise ValueError(f"Agent must be running or idle (current: {agent.status})")
 
-    if agent.permission_mode == mode:
+    perm_mode = MODE_TO_PERMISSION.get(mode, "bypassPermissions")
+
+    if agent.mode == mode:
         op_log.info("mode_change_noop")
         return agent
 
-    agent.permission_mode = mode
-    await agent.asave(update_fields=["permission_mode"])
+    agent.mode = mode
+    agent.permission_mode = perm_mode
+    await agent.asave(update_fields=["mode", "permission_mode"])
 
     await broadcast_agent_update(agent)
 
@@ -266,14 +273,14 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         agent=agent,
         session_id=agent.session_id or "",
         event_type="mode_change",
-        data={"mode": mode},
+        data={"mode": mode, "permission_mode": perm_mode},
     )
     await broadcast_event(agent, stream_event)
 
-    # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "mode", "mode": mode})
+    # Push Claude Code vocabulary to relay
+    await _push_to_relay(agent_id, {"type": "mode", "mode": perm_mode})
 
-    op_log.info("mode_change_sent")
+    op_log.info("mode_change_sent", frontend_mode=mode, permission_mode=perm_mode)
     return agent
 
 

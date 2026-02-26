@@ -66,13 +66,25 @@ async def broadcast_agent_update(agent: Agent) -> None:
     except Exception:
         log.exception("broadcast_agent_update_failed", group=group)
 
-    # Detect status change and emit a status StreamEvent
+    # Detect status change and emit a status StreamEvent + feed item
     old_status = getattr(agent, "_original_status", None)
     if old_status is not None and old_status != agent.status:
         event = await _create_status_event(agent, old_status)
         await broadcast_event(agent, event)
         # Reset to prevent double-emission on subsequent broadcasts
         agent._original_status = agent.status
+
+        # Create status feed item
+        from agents.services.feed import create_feed_item
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            source_event=event,
+            agent_record=agent,
+            type="status",
+            agent_name=agent.name,
+            from_value=old_status,
+            to_value=agent.status,
+        )
 
 
 async def broadcast_event(agent: Agent, stream_event: StreamEvent) -> None:

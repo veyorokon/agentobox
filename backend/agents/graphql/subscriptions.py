@@ -1,11 +1,8 @@
-"""GraphQL subscriptions — two channels, two subscriptions.
+"""GraphQL subscriptions — three channels, three subscriptions.
 
-    agent_updated  → project_{id}_agents  (Agent model state changes)
-    event_stream   → project_{id}_events  (StreamEvent log entries)
-
-Down from 4 subscriptions and 4 channel groups. The event_stream subscription
-replaces message_received + new_event + timeline_stream because they all
-came from the same underlying data (just split across two tables before).
+    agent_updated          → project_{id}_agents     (Agent model state changes)
+    team_feed_item_changed → project_{id}_team_feed   (TeamFeedItem create/update)
+    event_stream           → project_{id}_events      (StreamEvent log entries)
 """
 
 from datetime import datetime
@@ -15,7 +12,7 @@ import strawberry
 import structlog
 from strawberry import ID
 
-from agents.graphql.types import AgentType, TimelineEntryType
+from agents.graphql.types import AgentType, TeamFeedItemType, TimelineEntryType, model_to_feed_item_type
 
 log = structlog.get_logger("agents.subscriptions")
 
@@ -40,6 +37,28 @@ class AgentSubscription:
             async for message in cm:
                 agent = await Agent.objects.aget(id=message["agent_id"])
                 yield agent  # type: ignore[misc]
+
+    @strawberry.subscription
+    async def team_feed_item_changed(
+        self, info: strawberry.Info, project_id: ID
+    ) -> AsyncGenerator[TeamFeedItemType, None]:
+        """Subscribe to TeamFeedItem creation and updates for a project."""
+        from agents.models import TeamFeedItem
+
+        ws = info.context["ws"]
+        channel_layer = ws.channel_layer
+        group = f"project_{project_id}_team_feed"
+
+        await channel_layer.group_add(group, ws.channel_name)
+        log.info("subscription_connected", type="team_feed_item_changed", group=group)
+
+        async with ws.listen_to_channel("team_feed.changed", groups=[group]) as cm:
+            async for msg in cm:
+                try:
+                    item = await TeamFeedItem.objects.aget(id=msg["item_id"])
+                    yield model_to_feed_item_type(item)
+                except TeamFeedItem.DoesNotExist:
+                    log.warning("team_feed_item_not_found", item_id=msg["item_id"])
 
     @strawberry.subscription
     async def event_stream(
