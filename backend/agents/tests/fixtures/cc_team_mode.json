@@ -1,0 +1,112 @@
+[
+  {
+    "type": "system",
+    "subtype": "init",
+    "cwd": "/workspace/project",
+    "session_id": "test-session-001",
+    "tools": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "SendMessage",
+      "TaskCreate"
+    ],
+    "mcp_servers": [
+      {
+        "name": "context7",
+        "status": "connected"
+      }
+    ],
+    "model": "claude-sonnet-4-6",
+    "permissionMode": "default",
+    "slash_commands": [],
+    "apiKeySource": "ANTHROPIC_API_KEY",
+    "claude_code_version": "2.1.59",
+    "output_style": "default",
+    "agents": [
+      "general-purpose"
+    ],
+    "skills": [],
+    "plugins": [],
+    "uuid": "test-uuid-001",
+    "fast_mode_state": "off"
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-4-6",
+      "id": "msg_test_001",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "7"
+        }
+      ],
+      "stop_reason": null,
+      "stop_sequence": null,
+      "usage": {
+        "input_tokens": 3,
+        "cache_creation_input_tokens": 37576,
+        "cache_read_input_tokens": 13988,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 37576,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global"
+      },
+      "context_management": null
+    },
+    "parent_tool_use_id": null,
+    "session_id": "test-session-001",
+    "uuid": "test-uuid-001"
+  },
+  {
+    "type": "result",
+    "subtype": "success",
+    "is_error": false,
+    "duration_ms": 1485,
+    "duration_api_ms": 1452,
+    "num_turns": 1,
+    "result": "7",
+    "stop_reason": null,
+    "session_id": "test-session-001",
+    "total_cost_usd": 0.241984,
+    "usage": {
+      "input_tokens": 3,
+      "cache_creation_input_tokens": 37576,
+      "cache_read_input_tokens": 13988,
+      "output_tokens": 5,
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 37576
+      },
+      "inference_geo": "",
+      "iterations": [],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-sonnet-4-6": {
+        "inputTokens": 3,
+        "outputTokens": 5,
+        "cacheReadInputTokens": 13988,
+        "cacheCreationInputTokens": 37576,
+        "webSearchRequests": 0,
+        "costUSD": 0.241984,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000
+      }
+    },
+    "permission_denials": [],
+    "uuid": "test-uuid-001"
+  }
+]
