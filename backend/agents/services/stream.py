@@ -164,6 +164,10 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
     if not session_id:
         return
 
+    # Refresh last_output — it was set during assistant events but the
+    # cached agent instance may be stale by the time result arrives.
+    await agent.arefresh_from_db(fields=["last_output"])
+
     await SessionResult.objects.acreate(
         agent=agent,
         session_id=session_id,
@@ -215,7 +219,7 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
         **feed_kwargs,
     )
     # Set review attention after turn completion (if no pending perm/plan)
-    await recompute_attention(str(agent.project_id), agent.name)
+    await recompute_attention(str(agent.project_id), agent.name, after_result=True)
 
 
 async def _handle_system(agent: Agent, event: dict) -> None:

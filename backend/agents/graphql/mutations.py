@@ -181,6 +181,7 @@ class AgentMutation:
     @strawberry.mutation
     async def send_message(
         self,
+        project_id: ID,
         text: str,
         recipients: list[RecipientInput],
         info: strawberry.types.Info,
@@ -189,34 +190,30 @@ class AgentMutation:
         from agents.models import Agent
         from agents.services.comms import send_message as _send_single, broadcast_message
 
-        user = info.context["request"].user
-        if not user.is_authenticated:
-            raise PermissionError("Authentication required")
+        await authorize_project(info, project_id)
 
-        # Resolve recipients to agent IDs
+        # Resolve recipients to agent IDs — scoped to the given project
         agent_ids: list[str] = []
         for r in recipients:
             if r.type == "all":
-                # All agents in all user's projects — in practice the frontend
-                # knows which project, but we resolve from the first agent found
                 all_agents = [
                     a async for a in Agent.objects.filter(
-                        project__owner=user
+                        project_id=project_id,
                     ).exclude(status="stopped")
                 ]
                 agent_ids.extend(str(a.id) for a in all_agents)
             elif r.type == "agent":
-                try:
-                    agent = await Agent.objects.aget(
-                        name=r.value, project__owner=user
-                    )
+                agent = await Agent.objects.filter(
+                    name=r.value, project_id=project_id,
+                ).afirst()
+                if agent:
                     agent_ids.append(str(agent.id))
-                except Agent.DoesNotExist:
+                else:
                     log.warning("recipient_not_found", type=r.type, value=r.value)
             elif r.type == "tag":
                 tagged = [
                     a async for a in Agent.objects.filter(
-                        project__owner=user, tags__contains=[r.value]
+                        project_id=project_id, tags__contains=[r.value],
                     ).exclude(status="stopped")
                 ]
                 agent_ids.extend(str(a.id) for a in tagged)
@@ -230,11 +227,9 @@ class AgentMutation:
         # Create user feed item
         from agents.services.feed import create_feed_item
 
-        # Get project_id from first agent
-        first_agent = await Agent.objects.aget(id=agent_ids[0])
         target_str = ", ".join(r.value for r in recipients if r.value)
         await create_feed_item(
-            project_id=str(first_agent.project_id),
+            project_id=str(project_id),
             type="user",
             text=text,
             target=target_str or "all",

@@ -39,8 +39,12 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
     return item
 
 
-async def recompute_attention(project_id, agent_name: str) -> None:
-    """Recompute attention_level from pending TeamFeedItems."""
+async def recompute_attention(project_id, agent_name: str, after_result: bool = False) -> None:
+    """Recompute attention_level from pending TeamFeedItems.
+
+    after_result: if True and no pending items, set "review" instead of "none"
+    (agent just finished a turn, output available for review).
+    """
     has_perm = await TeamFeedItem.objects.filter(
         project_id=project_id,
         agent_name=agent_name,
@@ -57,6 +61,8 @@ async def recompute_attention(project_id, agent_name: str) -> None:
         plan_status="pending",
     ).aexists():
         level = "plan"
+    elif after_result:
+        level = "review"
     else:
         level = "none"
 

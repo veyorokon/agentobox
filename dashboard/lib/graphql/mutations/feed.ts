@@ -7,12 +7,7 @@ import { gql } from "@apollo/client"
 /* ================================================================== */
 
 export const SEND_MESSAGE = gql`
-  mutation SendMessage($text: String!, $recipients: [RecipientInput!]!) {
-    sendMessage(text: $text, recipients: $recipients) {
-      id
-      type
-      text
-      target
-    }
+  mutation SendMessage($projectId: ID!, $text: String!, $recipients: [RecipientInput!]!) {
+    sendMessage(projectId: $projectId, text: $text, recipients: $recipients)
   }
 `

@@ -177,13 +177,19 @@ class AgentType:
         return self.mcp_servers if isinstance(self.mcp_servers, list) else []
 
     @strawberry_django.field
-    def todo_progress(self) -> TodoProgressType | None:
-        tasks = models.AgentTask.objects.filter(agent_id=self.id)
-        total = tasks.count()
-        if not total:
+    async def todo_progress(self) -> TodoProgressType | None:
+        def _count():
+            qs = models.AgentTask.objects.filter(agent_id=self.id)
+            total = qs.count()
+            if not total:
+                return None
+            done = qs.filter(status="completed").count()
+            return (done, total)
+
+        result = await sync_to_async(_count, thread_sensitive=False)()
+        if result is None:
             return None
-        done = tasks.filter(status="completed").count()
-        return TodoProgressType(done=done, total=total)
+        return TodoProgressType(done=result[0], total=result[1])
 
 
 # ── TeamFeedItem type ──
