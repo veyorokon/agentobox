@@ -1,92 +1,56 @@
 import { create } from "zustand"
-import type { FakeAgent, TeamFeedItem, RecipientEntry, AttentionLevel, LifecycleStatus } from "@/lib/types"
-import { INITIAL_AGENTS, TEAM_FEED } from "@/lib/data/mock"
-import { deriveAttentionFromFeed } from "@/lib/attention"
+import type { TeamFeedItem, RecipientEntry } from "@/lib/types"
+import { TEAM_FEED } from "@/lib/data/mock"
 
 /* ================================================================== */
 /*  TEAM STORE                                                         */
 /*                                                                     */
-/*  Owns all team/session data: agents, feed, recipients.              */
-/*  Components subscribe to slices for minimal re-renders.             */
+/*  Owns feed items (until Part 2b migration) and recipients.          */
+/*  Agents moved to Apollo cache — see lib/graphql/hooks/use-agents.   */
 /*                                                                     */
-/*  Attention is DERIVED from feed state — resolving a permission or   */
-/*  plan item recomputes the agent's attention level automatically.    */
+/*  Attention derivation for feed mutations (resolvePermission,        */
+/*  resolvePlan) uses Apollo cache.modify to update agent attention    */
+/*  — see the resolve* actions below.                                  */
 /*                                                                     */
 /*  ┌─────────────────────────────────────────────────────────────────┐ */
-/*  │  STORE vs EPHEMERAL — when does state belong here?             │ */
+/*  │  STORE vs APOLLO — ownership split                              │ */
 /*  │                                                                │ */
-/*  │  IN STORE (here):                                              │ */
-/*  │  • Domain data (agents, feed items, recipients)                │ */
-/*  │  • Settings that persist on the entity (agent mode, model)     │ */
-/*  │  • State that other components derive from (feed → attention)  │ */
+/*  │  APOLLO CACHE:                                                 │ */
+/*  │  • agents (query + cache.modify for mutations)                 │ */
 /*  │                                                                │ */
-/*  │  EPHEMERAL (local useState):                                   │ */
-/*  │  • Textarea content before send                                │ */
-/*  │  • Modal open/closed                                           │ */
-/*  │  • Autocomplete suggestion list                                │ */
+/*  │  THIS STORE:                                                   │ */
+/*  │  • feedItems (moves to Apollo in Part 2b)                      │ */
+/*  │  • recipients (stays permanently — composer input state)       │ */
 /*  └─────────────────────────────────────────────────────────────────┘ */
 /* ================================================================== */
 
 interface TeamState {
-  agents: FakeAgent[]
   feedItems: TeamFeedItem[]
   recipients: RecipientEntry[]
 }
 
 interface TeamActions {
-  // Agent mutations
-  setAgentLifecycle: (agentId: string, status: LifecycleStatus) => void
-  setAgentAttention: (agentId: string, level: AttentionLevel) => void
-  setAgentMode: (agentId: string, mode: FakeAgent["mode"]) => void
-  acknowledgeAgent: (agentId: string) => void
-
-  // Feed mutations (resolve pending items → recompute attention)
+  // Feed mutations (moves to Apollo in Part 2b)
   resolvePermission: (feedItemId: string, verdict: "allowed" | "denied") => void
   resolvePlan: (feedItemId: string, verdict: "approved" | "rejected") => void
 
-  // Recipient mutations
+  // Recipient mutations (stays permanently)
   addRecipient: (entry: RecipientEntry) => void
   removeRecipient: (index: number) => void
   setRecipients: (entries: RecipientEntry[]) => void
-
-  // Compound actions
   reviewAgent: (agentName: string) => void
 }
 
 const DEFAULT_RECIPIENT: RecipientEntry = { type: "agent", value: "team-lead" }
 
-export const useTeamStore = create<TeamState & TeamActions>()((set, get) => ({
-  agents: INITIAL_AGENTS,
+export const useTeamStore = create<TeamState & TeamActions>()((set) => ({
   feedItems: TEAM_FEED,
   recipients: [DEFAULT_RECIPIENT],
 
-  // ── Agent mutations ──────────────────────────────────────────────
-
-  setAgentLifecycle: (agentId, status) =>
-    set(s => ({
-      agents: s.agents.map(a => a.id === agentId ? { ...a, lifecycleStatus: status } : a),
-    })),
-
-  setAgentAttention: (agentId, level) =>
-    set(s => ({
-      agents: s.agents.map(a => a.id === agentId ? { ...a, attentionLevel: level } : a),
-    })),
-
-  setAgentMode: (agentId, mode) =>
-    set(s => ({
-      agents: s.agents.map(a => a.id === agentId ? { ...a, mode } : a),
-    })),
-
-  acknowledgeAgent: (agentId) =>
-    set(s => ({
-      agents: s.agents.map(a =>
-        a.id === agentId && a.attentionLevel === "review"
-          ? { ...a, attentionLevel: "none" }
-          : a,
-      ),
-    })),
-
   // ── Feed mutations ───────────────────────────────────────────────
+  // NOTE: These no longer recompute agent attention — that's handled
+  // by the calling component via Apollo cache.modify after resolving.
+  // In production, backend computes attention and pushes via subscription.
 
   resolvePermission: (feedItemId, verdict) =>
     set(s => {
@@ -97,16 +61,7 @@ export const useTeamStore = create<TeamState & TeamActions>()((set, get) => ({
       if (item.type !== "permission") return s
 
       next[idx] = { ...item, permStatus: verdict }
-      const agentName = item.agent
-      const newAttention = deriveAttentionFromFeed(next, agentName)
-      const agent = s.agents.find(a => a.name === agentName)
-
-      return {
-        feedItems: next,
-        agents: agent
-          ? s.agents.map(a => a.id === agent.id ? { ...a, attentionLevel: newAttention } : a)
-          : s.agents,
-      }
+      return { feedItems: next }
     }),
 
   resolvePlan: (feedItemId, verdict) =>
@@ -118,16 +73,7 @@ export const useTeamStore = create<TeamState & TeamActions>()((set, get) => ({
       if (item.type !== "plan") return s
 
       next[idx] = { ...item, planStatus: verdict }
-      const agentName = item.agent
-      const newAttention = deriveAttentionFromFeed(next, agentName)
-      const agent = s.agents.find(a => a.name === agentName)
-
-      return {
-        feedItems: next,
-        agents: agent
-          ? s.agents.map(a => a.id === agent.id ? { ...a, attentionLevel: newAttention } : a)
-          : s.agents,
-      }
+      return { feedItems: next }
     }),
 
   // ── Recipient mutations ──────────────────────────────────────────

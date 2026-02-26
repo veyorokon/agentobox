@@ -2,7 +2,7 @@
 
 import { Check, X, Shield, AlertTriangle } from "lucide-react"
 import { AgentAvatar, ChatAvatar } from "@/components/agent/avatar"
-import { useTeamStore } from "@/lib/stores/team"
+import { useResolvePermission } from "@/lib/graphql/hooks/use-agents"
 
 export interface PermissionCardProps {
   agent: string
@@ -20,7 +20,7 @@ export function PermissionCard({
   permStatus,
   feedItemId,
 }: PermissionCardProps) {
-  const resolvePermission = useTeamStore(s => s.resolvePermission)
+  const resolvePermission = useResolvePermission()
 
   if (permStatus === "allowed") {
     return (

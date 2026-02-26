@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import { ALL_TAGS } from "@/lib/data/mock"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useTeamStore } from "@/lib/stores/team"
+import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentCardRow } from "@/components/agent/card-row"
 
@@ -27,8 +27,9 @@ export function AgentCardsPanel() {
   const tagFilter = useSidebarStore(s => s.agentTagFilter)
   const setTagFilter = useSidebarStore(s => s.setAgentTagFilter)
 
-  // ── Team store ─────────────────────────────────────────────────────
-  const agents = useTeamStore(s => s.agents)
+  // ── Apollo (agents) ────────────────────────────────────────────────
+  const { data } = useAgents()
+  const agents = data?.agents ?? []
 
   // Ephemeral state
   const [showTagDropdown, setShowTagDropdown] = useState(false)

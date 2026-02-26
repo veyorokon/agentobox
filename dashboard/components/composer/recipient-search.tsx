@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import type { RecipientEntry } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
+import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { ALL_TAGS } from "@/lib/data/mock"
 
 /* ================================================================== */
@@ -26,7 +27,8 @@ export function RecipientSearchBox({
   onSuggestionsChange?: (suggestions: RecipientEntry[]) => void
 }) {
   // ── Store subscriptions ───────────────────────────────────────────
-  const agents = useTeamStore(s => s.agents)
+  const { data } = useAgents()
+  const agents = data?.agents ?? []
   const recipients = useTeamStore(s => s.recipients)
   const addRecipient = useTeamStore(s => s.addRecipient)
   const removeRecipient = useTeamStore(s => s.removeRecipient)

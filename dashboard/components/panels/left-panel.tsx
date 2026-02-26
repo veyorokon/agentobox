@@ -5,7 +5,6 @@ import {
   Users,
   ChevronRight,
   ChevronLeft,
-  Check,
   Plus,
   KeyRound,
   ChevronsUpDown,
@@ -22,7 +21,7 @@ import { ALL_TAGS } from "@/lib/data/mock"
 import { useBreakpoint } from "@/hooks/use-breakpoint"
 import { useWindowWidth } from "@/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useTeamStore } from "@/lib/stores/team"
+import { useAgents, useAcknowledgeAgent } from "@/lib/graphql/hooks/use-agents"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { AgentCardRow } from "@/components/agent/card-row"
@@ -49,9 +48,10 @@ export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void })
   const skillsAllExpanded = useSidebarStore(s => s.skillsAllExpanded)
   const toggleSkillsExpandAll = useSidebarStore(s => s.toggleSkillsExpandAll)
 
-  // ── Team store ─────────────────────────────────────────────────────
-  const agents = useTeamStore(s => s.agents)
-  const acknowledgeAgent = useTeamStore(s => s.acknowledgeAgent)
+  // ── Apollo (agents) ────────────────────────────────────────────────
+  const { data } = useAgents()
+  const agents = data?.agents ?? []
+  const acknowledgeAgent = useAcknowledgeAgent()
 
   // ── Layout metrics (derived from breakpoint + store) ───────────────
   const screenWidth = useWindowWidth()

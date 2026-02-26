@@ -17,6 +17,7 @@ import { LIFECYCLE_CONFIG, ATTENTION_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useTeamStore } from "@/lib/stores/team"
+import { useAcknowledgeAgent, useSetAgentMode, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-agents"
 import { Collapsible } from "@/components/ui/collapsible"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
@@ -56,11 +57,11 @@ export function AgentCardRow({
   // Store state — card subscribes to exactly the slices it needs
   const isExpanded = useSidebarStore(s => s.expandedAgentIds.has(agent.id))
   const toggleAgent = useSidebarStore(s => s.toggleAgent)
-  const acknowledgeAgent = useTeamStore(s => s.acknowledgeAgent)
+  const acknowledgeAgent = useAcknowledgeAgent()
+  const setAgentMode = useSetAgentMode()
   const feedItems = useTeamStore(s => s.feedItems)
-  const resolvePermission = useTeamStore(s => s.resolvePermission)
-  const resolvePlan = useTeamStore(s => s.resolvePlan)
-  const setAgentMode = useTeamStore(s => s.setAgentMode)
+  const resolvePermission = useResolvePermission()
+  const resolvePlan = useResolvePlan()
   const handleModeChange = (mode: FakeAgent["mode"]) => setAgentMode(agent.id, mode)
 
   // Derived from store

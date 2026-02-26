@@ -1,0 +1,55 @@
+import { gql } from "@apollo/client"
+
+/* ================================================================== */
+/*  AGENT MUTATIONS                                                     */
+/*                                                                      */
+/*  Domain verbs, not CRUD. Each mutation maps to a user action.       */
+/*  During mock phase: no network call, just cache.modify().           */
+/*  Production: mutation fires to backend, optimistic update in cache, */
+/*  subscription confirms the final state.                             */
+/* ================================================================== */
+
+export const SET_AGENT_MODE = gql`
+  mutation SetAgentMode($agentId: ID!, $mode: String!) {
+    setAgentMode(agentId: $agentId, mode: $mode) {
+      id
+      mode
+    }
+  }
+`
+
+export const SET_AGENT_LIFECYCLE = gql`
+  mutation SetAgentLifecycle($agentId: ID!, $status: String!) {
+    setAgentLifecycle(agentId: $agentId, status: $status) {
+      id
+      lifecycleStatus
+    }
+  }
+`
+
+export const SET_AGENT_ATTENTION = gql`
+  mutation SetAgentAttention($agentId: ID!, $level: String!) {
+    setAgentAttention(agentId: $agentId, level: $level) {
+      id
+      attentionLevel
+    }
+  }
+`
+
+export const RESOLVE_PERMISSION = gql`
+  mutation ResolvePermission($feedItemId: ID!, $verdict: String!) {
+    resolvePermission(feedItemId: $feedItemId, verdict: $verdict) {
+      id
+      permStatus
+    }
+  }
+`
+
+export const RESOLVE_PLAN = gql`
+  mutation ResolvePlan($feedItemId: ID!, $verdict: String!) {
+    resolvePlan(feedItemId: $feedItemId, verdict: $verdict) {
+      id
+      planStatus
+    }
+  }
+`

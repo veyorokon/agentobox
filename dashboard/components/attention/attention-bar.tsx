@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { PendingItem } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
+import { useAgents, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-agents"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
@@ -17,9 +18,10 @@ import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 export function AttentionBar() {
   // ── Store subscriptions ───────────────────────────────────────────
   const feedItems = useTeamStore(s => s.feedItems)
-  const agents = useTeamStore(s => s.agents)
-  const resolvePermission = useTeamStore(s => s.resolvePermission)
-  const resolvePlan = useTeamStore(s => s.resolvePlan)
+  const { data } = useAgents()
+  const agents = data?.agents ?? []
+  const resolvePermission = useResolvePermission()
+  const resolvePlan = useResolvePlan()
   const reviewAgent = useTeamStore(s => s.reviewAgent)
 
   const focusedAgentId = useSidebarStore(s => s.focusedAgentId)

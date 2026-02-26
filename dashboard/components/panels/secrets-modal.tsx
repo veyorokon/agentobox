@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { FakeSecret } from "@/lib/types"
 import { SECRETS } from "@/lib/data/mock"
-import { useTeamStore } from "@/lib/stores/team"
+import { useAgents } from "@/lib/graphql/hooks/use-agents"
 
 export function SecretsModal({
   open,
@@ -23,7 +23,8 @@ export function SecretsModal({
   open: boolean
   onClose: () => void
 }) {
-  const agents = useTeamStore(s => s.agents)
+  const { data } = useAgents()
+  const agents = data?.agents ?? []
   const [secrets, setSecrets] = useState<FakeSecret[]>(SECRETS)
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [newKey, setNewKey] = useState("")
