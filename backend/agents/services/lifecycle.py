@@ -344,7 +344,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if resume_session_id:
             relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
 
-        # Always set MCP config path (abox-coord is always present)
+        # Always set MCP config path (team coord server is always present)
         # provision.py writes .mcp.json to /home/agent/ (not work_dir)
         relay_env_lines.append("export MCP_CONFIG='/home/agent/.mcp.json'")
 

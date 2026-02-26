@@ -83,7 +83,7 @@ async def provision_workspace(
     )
 
     # MCP servers go in .mcp.json with env blocks for secrets.
-    # Always write when relay_token is set (abox-coord is always injected).
+    # Always write when relay_token is set (team coord server is always injected).
     coord_server = (
         _build_coord_server_config(callback_url, relay_token)
         if relay_token and callback_url else None
@@ -236,7 +236,7 @@ def _build_mcp_json(
     Args:
         mcp_servers: {name: {command, args, ...}} — resolved MCP config
         secret_envs: flat {KEY: VALUE} — decrypted project secrets
-        coord_server: HTTP MCP config for the abox-coord server
+        coord_server: HTTP MCP config for the team coordination server
     """
     servers = {}
     if mcp_servers:
@@ -247,13 +247,13 @@ def _build_mcp_json(
             servers[name] = entry
 
     if coord_server:
-        servers["abox-coord"] = coord_server
+        servers["team"] = coord_server
 
     return json.dumps({"mcpServers": servers}, indent=2)
 
 
 def _build_coord_server_config(callback_url: str, relay_token: str) -> dict:
-    """Build the abox-coord HTTP MCP server config for .mcp.json."""
+    """Build the team coordination HTTP MCP server config for .mcp.json."""
     return {
         "type": "http",
         "url": f"{callback_url}/mcp",
@@ -316,8 +316,9 @@ def _build_claude_md(
         - Your container has a full Linux desktop (X11), browser, and terminal
         - A relay process streams your activity to the backend — your tool calls,
           messages, and outputs are visible in the dashboard
-        - The **abox-coord** MCP server provides team tools: messaging, tasks,
-          spawning teammates. Use these instead of file-based team tools.
+        - The **team** MCP server provides coordination tools: messaging, tasks,
+          spawning teammates. Use these instead of Claude Code's built-in team tools
+          (TaskCreate, TaskUpdate, SendMessage, etc. are disabled).
         - Your workspace is a shared volume — file changes are visible to the host
           and other agents immediately
     """))
@@ -373,9 +374,9 @@ def _build_claude_md(
             sender's name, e.g. `[Team message from team-lead]: ...`. Messages are
             delivered to you automatically via stdin.
 
-            To send messages, use the **abox-coord** MCP tools:
-            - `teammate_message(recipient, content)` — Direct message to a teammate
-            - `teammate_broadcast(content)` — Message all teammates (use sparingly)
+            To send messages, use the **team** MCP tools:
+            - `send_message(type="message", recipient="name", content="...", summary="...")` — Direct message
+            - `send_message(type="broadcast", content="...", summary="...")` — Message all (use sparingly)
 
             Always refer to teammates by their **name** (e.g. "backend", "frontend").
         """))
@@ -387,11 +388,12 @@ def _build_claude_md(
 
             ### Task Management
 
-            Use the **abox-coord** MCP tools to coordinate work:
+            Use the **team** MCP tools to coordinate work. These match Claude Code's
+            native TaskCreate/TaskUpdate interface:
 
-            - `task_add(subject, description)` — Create a task
-            - `task_claim(task_id)` — Claim a task and start working
-            - `task_complete(task_id)` — Mark a task as done
+            - `task_create(subject, description, active_form, metadata)` — Create a task
+            - `task_update(task_id, status, owner, ...)` — Update status, claim, set dependencies
+            - `task_get(task_id)` — Get full task details
             - `task_list()` — See all tasks and their status
             - `team_status()` — See all active agents and their state
 
@@ -404,7 +406,7 @@ def _build_claude_md(
             This deploys a new container agent that:
             - Boots in ~30-60 seconds
             - Shares your workspace (same mounted directory)
-            - Joins the team — message it via `teammate_message`
+            - Joins the team — message it via `send_message`
             - Persists until stopped from the dashboard
 
             **Important:**
@@ -418,14 +420,17 @@ def _build_claude_md(
         sections.append(textwrap.dedent("""\
             ## Tasks
 
-            Use the **abox-coord** MCP tools to manage your work:
+            Use the **team** MCP tools to manage your work. These match Claude Code's
+            native TaskCreate/TaskUpdate interface:
 
             - `task_list()` — See tasks assigned to you
-            - `task_claim(task_id)` — Claim a task and start working
-            - `task_complete(task_id)` — Mark a task as done
+            - `task_update(task_id, status="in_progress")` — Claim a task
+            - `task_update(task_id, status="completed")` — Mark done
+            - `task_get(task_id)` — Get full task details
+            - `task_create(subject, description)` — Create new tasks you discover
 
             When you finish a task, mark it completed and check `task_list` for the
-            next one. If you're blocked, message the team lead via `teammate_message`.
+            next one. If you're blocked, message the team lead via `send_message`.
         """))
 
     # --- 10. How the System Works ---
@@ -436,9 +441,9 @@ def _build_claude_md(
         messages, outputs) to the agentobox backend. This is transparent — you don't
         need to do anything special. The dashboard shows your activity in real-time.
 
-        The **abox-coord** MCP server provides team coordination tools (messaging,
-        tasks, spawning). These tools talk directly to the backend — no file-based
-        config or hook interception needed.
+        The **team** MCP server provides coordination tools (messaging, tasks,
+        spawning). These replace Claude Code's built-in team tools — same interface,
+        but routed through the agentobox backend for dashboard visibility.
     """))
 
     # --- 11. MCP Tools ---
@@ -730,6 +735,14 @@ def _build_settings_json(api_key: str = "", mode: str = "auto") -> str:
         "theme": "dark",
         "defaultMode": perm_mode,
         "enableAllProjectMcpServers": True,
+        # Disable CC's built-in team tools — our MCP `team` server provides
+        # the same interface (same params, same semantics) routed through the
+        # agentobox backend. This makes our DB the single source of truth for
+        # tasks and messages, with no filesystem sync needed.
+        "disallowedTools": [
+            "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+            "SendMessage", "TeamCreate", "TeamDelete",
+        ],
     }
     # Use apiKeyHelper instead of env var for API key (Layer 1)
     if api_key:

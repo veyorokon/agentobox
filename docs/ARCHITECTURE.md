@@ -48,12 +48,15 @@ On restart (`hard_restart_agent`), the old container is terminated, agent is res
 
 ## Communication Architecture
 
-Agents communicate via the **abox-coord** MCP server — a FastMCP HTTP app mounted at `/mcp` on the ASGI server (`config/asgi.py`). Auth is Bearer token per agent (`relay_token`).
+Agents communicate via the **team** MCP server — a FastMCP HTTP app mounted at `/mcp` on the ASGI server (`config/asgi.py`). Auth is Bearer token per agent (`relay_token`). Tool schemas match Claude Code's native team tools; built-ins are disabled via `disallowedTools`.
 
 | MCP Tool | Purpose |
 |----------|---------|
-| `teammate_message(recipient, content)` | Direct message to a named agent |
-| `teammate_broadcast(content)` | Message all active agents in the project |
+| `send_message(type, content, recipient, summary)` | DM, broadcast, or shutdown request |
+| `task_create(subject, description, active_form, metadata)` | Create a task |
+| `task_update(task_id, status, owner, ...)` | Update task fields, claim, set dependencies |
+| `task_get(task_id)` | Get full task details |
+| `task_list()` | List all project tasks |
 | `teammate_spawn(name, instructions, model)` | Create a new agent in the same project |
 | `task_add(subject, description)` | Create a team task |
 | `task_claim(task_id)` | Claim and start a task |

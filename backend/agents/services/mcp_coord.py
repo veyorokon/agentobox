@@ -21,7 +21,7 @@ from fastmcp.server.dependencies import get_http_headers
 
 log = structlog.get_logger("agents.services.mcp_coord")
 
-mcp = FastMCP("abox-coord")
+mcp = FastMCP("team")
 
 
 # ---------------------------------------------------------------------------
