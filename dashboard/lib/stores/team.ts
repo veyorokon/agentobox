@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { zustandLog } from "@/lib/stores/log-middleware"
 import type { RecipientEntry } from "@/lib/types"
 
 /* ================================================================== */
@@ -25,7 +26,7 @@ interface TeamActions {
 
 const DEFAULT_RECIPIENT: RecipientEntry = { type: "agent", value: "team-lead" }
 
-export const useTeamStore = create<TeamState & TeamActions>()((set) => ({
+export const useTeamStore = create<TeamState & TeamActions>()(zustandLog("team", (set) => ({
   recipients: [DEFAULT_RECIPIENT],
 
   // ── Recipient mutations ──────────────────────────────────────────
@@ -53,4 +54,4 @@ export const useTeamStore = create<TeamState & TeamActions>()((set) => ({
 
   reviewAgent: (agentName) =>
     set({ recipients: [{ type: "agent", value: agentName }] }),
-}))
+})))

@@ -1,6 +1,7 @@
 import { useQuery, useApolloClient } from "@apollo/client"
 import { useCallback } from "react"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
+import { createLogger } from "@/lib/logger"
 import type { FakeAgent, AttentionLevel, LifecycleStatus } from "@/lib/types"
 
 /* ================================================================== */
@@ -14,6 +15,8 @@ import type { FakeAgent, AttentionLevel, LifecycleStatus } from "@/lib/types"
 /*  When switching from mock to real backend, only this file changes.  */
 /* ================================================================== */
 
+const log = createLogger("apollo")
+
 type AgentsData = { agents: FakeAgent[] }
 
 export function useAgents() {
@@ -25,6 +28,7 @@ export function useSetAgentMode() {
 
   return useCallback(
     (agentId: string, mode: FakeAgent["mode"]) => {
+      log("cache.modify", { typename: "Agent", id: agentId, field: "mode", value: mode })
       client.cache.modify({
         id: client.cache.identify({ __typename: "Agent", id: agentId }),
         fields: {
@@ -41,6 +45,7 @@ export function useSetAgentLifecycle() {
 
   return useCallback(
     (agentId: string, status: LifecycleStatus) => {
+      log("cache.modify", { typename: "Agent", id: agentId, field: "lifecycleStatus", value: status })
       client.cache.modify({
         id: client.cache.identify({ __typename: "Agent", id: agentId }),
         fields: {
@@ -57,6 +62,7 @@ export function useSetAgentAttention() {
 
   return useCallback(
     (agentId: string, level: AttentionLevel) => {
+      log("cache.modify", { typename: "Agent", id: agentId, field: "attentionLevel", value: level })
       client.cache.modify({
         id: client.cache.identify({ __typename: "Agent", id: agentId }),
         fields: {
@@ -73,6 +79,7 @@ export function useAcknowledgeAgent() {
 
   return useCallback(
     (agentId: string) => {
+      log("cache.modify", { typename: "Agent", id: agentId, field: "attentionLevel", action: "acknowledge" })
       client.cache.modify({
         id: client.cache.identify({ __typename: "Agent", id: agentId }),
         fields: {

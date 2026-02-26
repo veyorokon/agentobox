@@ -3,6 +3,7 @@ import { useCallback } from "react"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { deriveAttentionFromFeed } from "@/lib/attention"
+import { createLogger } from "@/lib/logger"
 import type { FakeAgent, TeamFeedItem } from "@/lib/types"
 
 /* ================================================================== */
@@ -13,6 +14,8 @@ import type { FakeAgent, TeamFeedItem } from "@/lib/types"
 /*                                                                      */
 /*  When switching from mock to real backend, only this file changes.  */
 /* ================================================================== */
+
+const log = createLogger("apollo")
 
 type FeedData = { feed: TeamFeedItem[] }
 
@@ -25,6 +28,8 @@ export function useResolvePermission() {
 
   return useCallback(
     (feedItemId: string, verdict: "allowed" | "denied") => {
+      log("cache.modify", { typename: "FeedItem", id: feedItemId, field: "permStatus", value: verdict })
+
       // 1. Update the FeedItem in Apollo cache
       client.cache.modify({
         id: client.cache.identify({ __typename: "FeedItem", id: feedItemId }),
@@ -41,6 +46,8 @@ export function useResolvePermission() {
 
       const agentName = item.agent
       const newAttention = deriveAttentionFromFeed(feed, agentName)
+
+      log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: "permission resolved" })
 
       // 3. Update agent attention in Apollo cache
       const agentsData = client.readQuery<{ agents: FakeAgent[] }>({ query: GET_AGENTS })
@@ -61,6 +68,8 @@ export function useResolvePlan() {
 
   return useCallback(
     (feedItemId: string, verdict: "approved" | "rejected") => {
+      log("cache.modify", { typename: "FeedItem", id: feedItemId, field: "planStatus", value: verdict })
+
       // 1. Update the FeedItem in Apollo cache
       client.cache.modify({
         id: client.cache.identify({ __typename: "FeedItem", id: feedItemId }),
@@ -77,6 +86,8 @@ export function useResolvePlan() {
 
       const agentName = item.agent
       const newAttention = deriveAttentionFromFeed(feed, agentName)
+
+      log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: "plan resolved" })
 
       // 3. Update agent attention in Apollo cache
       const agentsData = client.readQuery<{ agents: FakeAgent[] }>({ query: GET_AGENTS })

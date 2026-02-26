@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { zustandLog } from "@/lib/stores/log-middleware"
 
 /* ================================================================== */
 /*  SIDEBAR STORE                                                      */
@@ -74,7 +75,7 @@ interface SidebarActions {
   setAttentionExpandedFeedItemId: (id: string | null) => void
 }
 
-export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => ({
+export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLog("sidebar", (set) => ({
   sidebarOpen: true, // component overrides on mount based on breakpoint
   sidebarWidth: null,
   sidebarTab: "agents",
@@ -120,4 +121,4 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => 
 
   setAttentionStepIdx: (idx) => set({ attentionStepIdx: idx }),
   setAttentionExpandedFeedItemId: (id) => set({ attentionExpandedFeedItemId: id }),
-}))
+})))

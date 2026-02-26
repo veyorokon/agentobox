@@ -1,5 +1,6 @@
-import { ApolloClient, InMemoryCache } from "@apollo/client"
+import { ApolloClient, ApolloLink, InMemoryCache, Observable } from "@apollo/client"
 import { seedMockData } from "@/lib/graphql/seed"
+import { createLogger } from "@/lib/logger"
 
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
@@ -16,7 +17,30 @@ import { seedMockData } from "@/lib/graphql/seed"
 /*  6. Remove seedMockData() call + import                             */
 /* ================================================================== */
 
+const log = createLogger("apollo")
+
+/* ── Logging link ────────────────────────────────────────────────── */
+
+const loggingLink = new ApolloLink((operation, forward) => {
+  const { operationName } = operation
+  log("operation.start", { name: operationName, variables: operation.variables })
+
+  if (!forward) return Observable.of()
+
+  return forward(operation).map((result) => {
+    if (result.errors?.length) {
+      log("operation.error", { name: operationName, errors: result.errors }, "error")
+    } else {
+      log("operation.complete", { name: operationName, data: result.data })
+    }
+    return result
+  })
+})
+
+/* ── Client ──────────────────────────────────────────────────────── */
+
 export const client = new ApolloClient({
+  link: loggingLink,
   cache: new InMemoryCache({
     typePolicies: {
       Agent: { keyFields: ["id"] },
@@ -25,7 +49,6 @@ export const client = new ApolloClient({
       TodoProgress: { keyFields: false },
     },
   }),
-  // No link — cache-only during mock phase
 })
 
 // Seed at module scope — before any component renders.
