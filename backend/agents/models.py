@@ -231,6 +231,10 @@ class AgentTask(models.Model):
     description = models.TextField(blank=True)
     status = models.CharField(max_length=32, default="pending")
     owner = models.CharField(max_length=255, blank=True)
+    active_form = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    blocks = models.JSONField(default=list, blank=True)       # task_ids this blocks
+    blocked_by = models.JSONField(default=list, blank=True)   # task_ids blocking this
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

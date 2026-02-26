@@ -44,7 +44,7 @@ class Command(BaseCommand):
     help = "Seed development data matching dashboard mock data"
 
     def handle(self, *args, **options):
-        from agents.models import Agent, AgentStatus, ProjectSecret, TeamFeedItem
+        from agents.models import Agent, AgentStatus, AgentTask, ProjectSecret, TeamFeedItem
         from agents.services.secrets import encrypt_value
         from projects.models import Project
 
@@ -69,6 +69,7 @@ class Command(BaseCommand):
         Agent.objects.filter(project=project).delete()
         TeamFeedItem.objects.filter(project=project).delete()
         ProjectSecret.objects.filter(project=project).delete()
+        AgentTask.objects.filter(project=project).delete()
 
         # ── Agents ──
 
@@ -346,6 +347,75 @@ class Command(BaseCommand):
             TeamFeedItem.objects.create(project=project, **item_data)
         self.stdout.write(f"  Feed items: {len(feed_items)}")
 
+        # ── Tasks ──
+
+        tasks_data = [
+            {
+                "agent": agent_objects["team-lead"],
+                "task_id": "mcp_task_001",
+                "subject": "Fix JWT validation bug in auth.ts",
+                "description": "The token expiry check is off by one hour. Fix the unit mismatch and add clock skew tolerance.",
+                "status": "completed",
+                "owner": "backend",
+                "active_form": "Fixing JWT validation",
+                "metadata": {"priority": "high", "sprint": "2026-w09"},
+                "blocks": [],
+                "blocked_by": [],
+            },
+            {
+                "agent": agent_objects["team-lead"],
+                "task_id": "mcp_task_002",
+                "subject": "Add refresh token rotation",
+                "description": "Implement token rotation on each refresh. Old tokens invalidated after 60s grace period.",
+                "status": "completed",
+                "owner": "backend",
+                "active_form": "Adding refresh token rotation",
+                "metadata": {"priority": "medium"},
+                "blocks": ["mcp_task_003"],
+                "blocked_by": ["mcp_task_001"],
+            },
+            {
+                "agent": agent_objects["team-lead"],
+                "task_id": "mcp_task_003",
+                "subject": "Run full test suite after auth changes",
+                "description": "Verify all 47 tests pass with the new auth flow.",
+                "status": "completed",
+                "owner": "qa",
+                "active_form": "Running test suite",
+                "metadata": {},
+                "blocks": ["mcp_task_004"],
+                "blocked_by": ["mcp_task_002"],
+            },
+            {
+                "agent": agent_objects["team-lead"],
+                "task_id": "mcp_task_004",
+                "subject": "Deploy auth fix to staging",
+                "description": "Build Docker image, run integration tests, blue-green deploy.",
+                "status": "pending",
+                "owner": "devops",
+                "active_form": "Deploying to staging",
+                "metadata": {"environment": "staging"},
+                "blocks": [],
+                "blocked_by": ["mcp_task_003"],
+            },
+            {
+                "agent": agent_objects["team-lead"],
+                "task_id": "mcp_task_005",
+                "subject": "Update API docs for auth changes",
+                "description": "Add refresh token rotation docs, update auth flow diagram.",
+                "status": "completed",
+                "owner": "docs",
+                "active_form": "Updating API docs",
+                "metadata": {},
+                "blocks": [],
+                "blocked_by": [],
+            },
+        ]
+
+        for task_data in tasks_data:
+            AgentTask.objects.create(project=project, **task_data)
+        self.stdout.write(f"  Tasks: {len(tasks_data)}")
+
         # ── Secrets ──
 
         secrets = [
@@ -363,5 +433,6 @@ class Command(BaseCommand):
         self.stdout.write(f"  Secrets: {len(secrets)}")
 
         self.stdout.write(self.style.SUCCESS(
-            f"\nSeeded: {len(agents_data)} agents, {len(feed_items)} feed items, {len(secrets)} secrets"
+            f"\nSeeded: {len(agents_data)} agents, {len(feed_items)} feed items, "
+            f"{len(tasks_data)} tasks, {len(secrets)} secrets"
         ))

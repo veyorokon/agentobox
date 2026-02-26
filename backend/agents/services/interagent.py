@@ -41,7 +41,7 @@ async def _handle_broadcast(
         return
 
     for agent in agents:
-        await _deliver_to_stdin(sender.name, agent, content)
+        await _deliver_to_stdin(sender.name, agent, content, summary=summary)
 
     log.info(
         "interagent_broadcast_routed",
@@ -50,7 +50,7 @@ async def _handle_broadcast(
     )
 
 
-async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> None:
+async def _deliver_to_stdin(sender_name: str, target: Agent, content: str, summary: str = "") -> None:
     """Deliver an inter-agent message via relay WebSocket push.
 
     Formats the message as a stream-json user input so the relay writes it
@@ -73,7 +73,7 @@ async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> No
     )
     await broadcast_event(target, stream_event)
 
-    # Create agent-message feed item
+    # Create agent-message feed item (summary stored for dashboard preview)
     await create_feed_item(
         project_id=str(target.project_id),
         source_event=stream_event,
@@ -82,6 +82,7 @@ async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> No
         from_value=sender_name,
         to_value=target.name,
         text=content,
+        summary=summary,
     )
 
     # Push to relay via WebSocket
