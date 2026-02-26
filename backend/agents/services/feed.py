@@ -78,6 +78,55 @@ async def recompute_attention(project_id, agent_name: str, after_result: bool = 
         await broadcast_agent_update(agent)
 
 
+async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
+    """Resolve a permission prompt feed item.
+
+    verdict: 'allowed' | 'denied'
+    Sends tool_result back to agent if allowed.
+    Recomputes attention for affected agent.
+    """
+    if verdict not in ("allowed", "denied"):
+        raise ValueError(f"Invalid verdict: {verdict}")
+
+    item = await update_feed_item(item, perm_status=verdict)
+
+    if verdict == "allowed" and item.tool_use_id and item.agent_record_id:
+        from agents.services.comms import answer_question
+        await answer_question(
+            str(item.agent_record_id),
+            item.tool_use_id,
+            "Permission granted by user",
+        )
+
+    if item.agent_name:
+        await recompute_attention(str(item.project_id), item.agent_name)
+
+    return item
+
+
+async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
+    """Resolve a plan proposal feed item.
+
+    verdict: 'approved' | 'rejected'
+    Sends tool_result back to agent.
+    Recomputes attention for affected agent.
+    """
+    if verdict not in ("approved", "rejected"):
+        raise ValueError(f"Invalid verdict: {verdict}")
+
+    item = await update_feed_item(item, plan_status=verdict)
+
+    if item.tool_use_id and item.agent_record_id:
+        from agents.services.comms import answer_question
+        msg = "Plan approved by user" if verdict == "approved" else "Plan rejected by user"
+        await answer_question(str(item.agent_record_id), item.tool_use_id, msg)
+
+    if item.agent_name:
+        await recompute_attention(str(item.project_id), item.agent_name)
+
+    return item
+
+
 async def broadcast_feed_item(feed_item: TeamFeedItem) -> None:
     """Push new/updated TeamFeedItem to team_feed subscribers."""
     channel_layer = get_channel_layer()

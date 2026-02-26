@@ -256,12 +256,8 @@ class AgentMutation:
     ) -> TeamFeedItemType:
         """Resolve a permission prompt. verdict: 'allowed' | 'denied'."""
         from agents.models import TeamFeedItem
-        from agents.services.comms import answer_question
-        from agents.services.feed import recompute_attention, update_feed_item
+        from agents.services.feed import resolve_permission
         from agents.graphql.types import model_to_feed_item_type
-
-        if verdict not in ("allowed", "denied"):
-            raise ValueError(f"Invalid verdict: {verdict}")
 
         item = await TeamFeedItem.objects.aget(id=feed_item_id)
 
@@ -270,20 +266,7 @@ class AgentMutation:
         from projects.models import Project
         await Project.objects.aget(id=item.project_id, owner=user)
 
-        item = await update_feed_item(item, perm_status=verdict)
-
-        # If allowed, send tool_result back to agent
-        if verdict == "allowed" and item.tool_use_id and item.agent_record_id:
-            await answer_question(
-                str(item.agent_record_id),
-                item.tool_use_id,
-                "Permission granted by user",
-            )
-
-        # Recompute attention for affected agent
-        if item.agent_name:
-            await recompute_attention(str(item.project_id), item.agent_name)
-
+        item = await resolve_permission(item, verdict)
         return model_to_feed_item_type(item)
 
     @strawberry.mutation
@@ -295,12 +278,8 @@ class AgentMutation:
     ) -> TeamFeedItemType:
         """Resolve a plan proposal. verdict: 'approved' | 'rejected'."""
         from agents.models import TeamFeedItem
-        from agents.services.comms import answer_question
-        from agents.services.feed import recompute_attention, update_feed_item
+        from agents.services.feed import resolve_plan
         from agents.graphql.types import model_to_feed_item_type
-
-        if verdict not in ("approved", "rejected"):
-            raise ValueError(f"Invalid verdict: {verdict}")
 
         item = await TeamFeedItem.objects.aget(id=feed_item_id)
 
@@ -308,25 +287,7 @@ class AgentMutation:
         from projects.models import Project
         await Project.objects.aget(id=item.project_id, owner=user)
 
-        item = await update_feed_item(item, plan_status=verdict)
-
-        # If approved, send tool_result back to agent
-        if verdict == "approved" and item.tool_use_id and item.agent_record_id:
-            await answer_question(
-                str(item.agent_record_id),
-                item.tool_use_id,
-                "Plan approved by user",
-            )
-        elif verdict == "rejected" and item.tool_use_id and item.agent_record_id:
-            await answer_question(
-                str(item.agent_record_id),
-                item.tool_use_id,
-                "Plan rejected by user",
-            )
-
-        if item.agent_name:
-            await recompute_attention(str(item.project_id), item.agent_name)
-
+        item = await resolve_plan(item, verdict)
         return model_to_feed_item_type(item)
 
     @strawberry.mutation
@@ -485,7 +446,8 @@ class AgentMutation:
         )
 
         # Push secrets to all running agents (both create and update)
-        await _push_secrets_for_project(project)
+        from agents.services.secrets import push_secrets_for_project
+        await push_secrets_for_project(project)
 
         return secret
 
@@ -537,30 +499,3 @@ class AgentMutation:
 
         return secret
 
-async def _push_secrets_for_project(project) -> None:
-    """Push merged secrets to all running agents in a project."""
-    from agents.models import Agent, AgentStatus
-    from agents.runtimes import get_runtime
-    from agents.services.lifecycle import resolve_agent_secrets
-    from agents.services.provision import push_secrets_to_agent
-
-    import structlog
-    op_log = structlog.get_logger("agents.secrets")
-
-    running_agents = [
-        a async for a in Agent.objects.filter(
-            project=project,
-            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
-        ).exclude(sandbox_id="")
-    ]
-
-    for agent in running_agents:
-        try:
-            secret_envs = await resolve_agent_secrets(agent, op_log)
-            if secret_envs:
-                runtime = get_runtime(agent.runtime)
-                await push_secrets_to_agent(
-                    runtime, agent.sandbox_id, agent, secret_envs,
-                )
-        except Exception:
-            op_log.exception("secret_push_failed", agent_name=agent.name)

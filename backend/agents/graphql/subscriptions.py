@@ -1,8 +1,8 @@
 """GraphQL subscriptions — three channels, three subscriptions.
 
-    agent_updated          → project_{id}_agents     (Agent model state changes)
-    team_feed_item_changed → project_{id}_team_feed   (TeamFeedItem create/update)
-    event_stream           → project_{id}_events      (StreamEvent log entries)
+    agent_changed      → project_{id}_agents     (Agent model state changes)
+    feed_item_changed  → project_{id}_team_feed   (TeamFeedItem create/update)
+    event_stream       → project_{id}_events      (StreamEvent log entries)
 """
 
 from datetime import datetime
@@ -12,6 +12,7 @@ import strawberry
 import structlog
 from strawberry import ID
 
+from agents.graphql.auth import authorize_project
 from agents.graphql.types import AgentType, TeamFeedItemType, TimelineEntryType, model_to_feed_item_type
 
 log = structlog.get_logger("agents.subscriptions")
@@ -20,7 +21,7 @@ log = structlog.get_logger("agents.subscriptions")
 @strawberry.type
 class AgentSubscription:
     @strawberry.subscription
-    async def agent_updated(
+    async def agent_changed(
         self, info: strawberry.Info, project_id: ID
     ) -> AsyncGenerator[AgentType, None]:
         """Subscribe to agent status changes for a project."""
@@ -31,7 +32,7 @@ class AgentSubscription:
         group = f"project_{project_id}_agents"
 
         await channel_layer.group_add(group, ws.channel_name)
-        log.info("subscription_connected", type="agent_updated", group=group)
+        log.info("subscription_connected", type="agent_changed", group=group)
 
         async with ws.listen_to_channel("agent.update", groups=[group]) as cm:
             async for message in cm:
@@ -39,7 +40,7 @@ class AgentSubscription:
                 yield agent  # type: ignore[misc]
 
     @strawberry.subscription
-    async def team_feed_item_changed(
+    async def feed_item_changed(
         self, info: strawberry.Info, project_id: ID
     ) -> AsyncGenerator[TeamFeedItemType, None]:
         """Subscribe to TeamFeedItem creation and updates for a project."""
@@ -50,7 +51,7 @@ class AgentSubscription:
         group = f"project_{project_id}_team_feed"
 
         await channel_layer.group_add(group, ws.channel_name)
-        log.info("subscription_connected", type="team_feed_item_changed", group=group)
+        log.info("subscription_connected", type="feed_item_changed", group=group)
 
         async with ws.listen_to_channel("team_feed.changed", groups=[group]) as cm:
             async for msg in cm:

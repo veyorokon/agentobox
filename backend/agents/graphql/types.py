@@ -137,7 +137,6 @@ class AgentType:
     mode: auto
     attention_level: auto
     task: auto
-    last_output: auto
 
     @strawberry.field
     def lifecycle_status(self) -> str:
@@ -145,8 +144,17 @@ class AgentType:
         return self.status
 
     @strawberry.field
+    def last_output(self) -> str:
+        from agents.adapters import get_adapter
+        adapter = get_adapter(self.agent_type)
+        return adapter.last_output(self.latest_snapshot)
+
+    @strawberry.field
     def live_action(self) -> str | None:
-        return self.live_action or None
+        from agents.adapters import get_adapter
+        adapter = get_adapter(self.agent_type)
+        result = adapter.live_action(self.latest_snapshot)
+        return result or None
 
     @strawberry.field
     def cost(self) -> float:
@@ -154,16 +162,15 @@ class AgentType:
 
     @strawberry.field
     def duration(self) -> str:
-        ms = self.duration_ms
-        if not ms:
-            return "0s"
-        secs = ms // 1000
-        mins = secs // 60
-        return f"{mins}m {secs % 60:02d}s" if mins else f"{secs}s"
+        from agents.adapters import get_adapter
+        adapter = get_adapter(self.agent_type)
+        return adapter.duration(self.latest_snapshot)
 
     @strawberry.field
     def turns(self) -> int:
-        return self.num_turns
+        from agents.adapters import get_adapter
+        adapter = get_adapter(self.agent_type)
+        return adapter.turns(self.latest_snapshot)
 
     @strawberry.field
     def workspace_path(self) -> str:

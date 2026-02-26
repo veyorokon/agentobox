@@ -7,9 +7,9 @@ import { gql } from "@apollo/client"
 /*  real-time strategy for right column migration (Part 2b).           */
 /* ================================================================== */
 
-export const ON_FEED_ITEM_ADDED = gql`
-  subscription OnFeedItemAdded($projectId: ID!) {
-    feedItemAdded(projectId: $projectId) {
+export const ON_FEED_ITEM_CHANGED = gql`
+  subscription OnFeedItemChanged($projectId: ID!) {
+    feedItemChanged(projectId: $projectId) {
       id
       type
       agent

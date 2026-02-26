@@ -93,6 +93,12 @@ class Agent(models.Model):
     )
     config_snapshot = models.JSONField(default=dict, blank=True)
 
+    # Agent type determines which adapter extracts display fields from snapshots
+    agent_type = models.CharField(max_length=50, default="claude-code")
+    # Latest snapshot: {"assistant": <event>, "result": <event>}
+    # Written by stream.py, read by adapters via GraphQL resolvers
+    latest_snapshot = models.JSONField(default=dict, blank=True)
+
     # Materialized view of agent state — updated as side effects of
     # StreamEvent processing. These are denormalized for fast reads;
     # the source of truth is the StreamEvent log.
@@ -105,13 +111,7 @@ class Agent(models.Model):
     mode = models.CharField(max_length=20, default="auto")               # auto | plan | supervised
     attention_level = models.CharField(max_length=20, default="none")     # none | review | plan | permission
     task = models.CharField(max_length=500, blank=True, default="")       # current task description
-    last_output = models.TextField(blank=True, default="")                # last assistant text (~500 chars)
-    live_action = models.CharField(max_length=500, blank=True, default="")  # last tool_use name + summary
     tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
-
-    # Denormalized from SessionResult (avoid N+1 on agents list query)
-    duration_ms = models.IntegerField(default=0)
-    num_turns = models.IntegerField(default=0)
 
     # Auth token for WebSocket relay connection (generated during provisioning)
     relay_token = models.CharField(max_length=64, blank=True)

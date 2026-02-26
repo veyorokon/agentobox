@@ -6,14 +6,14 @@ import { gql } from "@apollo/client"
 /*  Not active during dev phase — defined here to document the         */
 /*  real-time strategy and ensure the query shapes are ready.          */
 /*                                                                      */
-/*  agentUpdated: fires when any agent field changes (status, cost,    */
+/*  agentChanged: fires when any agent field changes (status, cost,    */
 /*  phase, etc). Backend pushes via Django Channels group_send.        */
 /*  Dashboard receives and Apollo merges into normalized cache.        */
 /* ================================================================== */
 
-export const ON_AGENT_UPDATED = gql`
-  subscription OnAgentUpdated($projectId: ID!) {
-    agentUpdated(projectId: $projectId) {
+export const ON_AGENT_CHANGED = gql`
+  subscription OnAgentChanged($projectId: ID!) {
+    agentChanged(projectId: $projectId) {
       id
       lifecycleStatus
       attentionLevel

@@ -126,36 +126,13 @@ async def _maybe_set_running(agent: Agent) -> None:
 
 
 async def _update_assistant_fields(agent: Agent, event: dict) -> None:
-    """Extract last_output and live_action from assistant events."""
-    msg = event.get("message", {})
-    content = msg.get("content", [])
-    if not isinstance(content, list):
-        return
-
-    update_fields = []
-
-    # Extract last text block for last_output
-    text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
-    if text_blocks:
-        text = text_blocks[-1].get("text", "")
-        if text:
-            agent.last_output = text[:500]
-            update_fields.append("last_output")
-
-    # Extract last tool_use block for live_action
-    tool_blocks = [
-        b for b in content
-        if isinstance(b, dict) and b.get("type") in ("tool_use", "server_tool_use", "mcp_tool_use")
-    ]
-    if tool_blocks:
-        tb = tool_blocks[-1]
-        name = tb.get("name", "")
-        agent.live_action = name[:500]
-        update_fields.append("live_action")
-
-    if update_fields:
-        await agent.asave(update_fields=update_fields)
-        await broadcast_agent_update(agent)
+    """Update latest_snapshot with assistant event data."""
+    snapshot = agent.latest_snapshot or {}
+    snapshot["assistant"] = event
+    snapshot.pop("result", None)  # new turn started, clear previous result
+    agent.latest_snapshot = snapshot
+    await agent.asave(update_fields=["latest_snapshot"])
+    await broadcast_agent_update(agent)
 
 
 async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | None = None) -> None:
@@ -163,10 +140,6 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
     session_id = event.get("session_id", "")
     if not session_id:
         return
-
-    # Refresh last_output — it was set during assistant events but the
-    # cached agent instance may be stale by the time result arrives.
-    await agent.arefresh_from_db(fields=["last_output"])
 
     await SessionResult.objects.acreate(
         agent=agent,
@@ -180,16 +153,23 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
         permission_denials=event.get("permission_denials", []),
     )
 
+    # Update snapshot with result event
+    snapshot = agent.latest_snapshot or {}
+    snapshot["result"] = event
+    agent.latest_snapshot = snapshot
+
     agent.session_cost_usd = event.get("total_cost_usd", 0)
-    agent.duration_ms = event.get("duration_ms", 0)
-    agent.num_turns = event.get("num_turns", 0)
     agent.status = AgentStatus.IDLE
     agent.phase = ""
-    agent.live_action = ""
     await agent.asave(update_fields=[
-        "session_cost_usd", "duration_ms", "num_turns", "status", "phase", "live_action",
+        "latest_snapshot", "session_cost_usd", "status", "phase",
     ])
     await broadcast_agent_update(agent)
+
+    # Read last_output from snapshot via adapter (no DB refresh needed)
+    from agents.adapters import get_adapter
+    adapter = get_adapter(agent.agent_type)
+    last_text = adapter.last_output(agent.latest_snapshot)
 
     # Create TeamFeedItem for the result
     is_error = event.get("is_error", False)
@@ -209,9 +189,9 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
         is_error=is_error,
     )
     if is_error:
-        feed_kwargs["text"] = agent.last_output[:500] if agent.last_output else "Agent encountered an error"
+        feed_kwargs["text"] = last_text or "Agent encountered an error"
     else:
-        feed_kwargs["summary"] = agent.last_output[:500] if agent.last_output else "Turn completed"
+        feed_kwargs["summary"] = last_text or "Turn completed"
 
     await create_feed_item(
         project_id=str(agent.project_id),
@@ -296,7 +276,11 @@ async def _handle_phase(agent: Agent, event: dict) -> None:
         elif block_type in ("tool_use", "server_tool_use", "mcp_tool_use"):
             new_phase = "tool-input"
     elif inner_type == "message_stop":
-        new_phase = "tool-use"
+        # Only transition to tool-use if we were in tool-input phase.
+        # A pure text message ending (responding -> message_stop) should
+        # not set tool-use phase.
+        if agent.phase == "tool-input":
+            new_phase = "tool-use"
 
     if new_phase and new_phase != agent.phase:
         agent.phase = new_phase
