@@ -1,14 +1,15 @@
 "use client"
 
-import { useState } from "react"
 import { Check, X, Shield, AlertTriangle } from "lucide-react"
 import { AgentAvatar, ChatAvatar } from "@/components/agent/avatar"
+import { useTeamStore } from "@/lib/stores/team"
 
 export interface PermissionCardProps {
   agent: string
   command: string
   risk?: string
   permStatus: "pending" | "allowed" | "denied"
+  feedIndex: number
 }
 
 /** Permission request card */
@@ -16,11 +17,12 @@ export function PermissionCard({
   agent,
   command,
   risk,
-  permStatus: initialStatus,
+  permStatus,
+  feedIndex,
 }: PermissionCardProps) {
-  const [status, setStatus] = useState(initialStatus)
+  const resolvePermission = useTeamStore(s => s.resolvePermission)
 
-  if (status === "allowed") {
+  if (permStatus === "allowed") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
         <AgentAvatar name={agent} size="sm" />
@@ -31,7 +33,7 @@ export function PermissionCard({
     )
   }
 
-  if (status === "denied") {
+  if (permStatus === "denied") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
         <AgentAvatar name={agent} size="sm" />
@@ -63,21 +65,21 @@ export function PermissionCard({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setStatus("allowed")}
+              onClick={() => resolvePermission(feedIndex, "allowed")}
               className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
             >
               Allow
             </button>
             <button
               type="button"
-              onClick={() => setStatus("allowed")}
+              onClick={() => resolvePermission(feedIndex, "allowed")}
               className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
             >
               Allow always
             </button>
             <button
               type="button"
-              onClick={() => setStatus("denied")}
+              onClick={() => resolvePermission(feedIndex, "denied")}
               className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
             >
               Deny

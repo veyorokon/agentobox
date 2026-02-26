@@ -91,7 +91,7 @@ export function TeamFeed() {
             case "plan":
               return <PlanCard key={i} agent={item.agent} title={item.title} plan={item.plan} planStatus={item.planStatus} />
             case "permission":
-              return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} />
+              return <PermissionCard key={i} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} feedIndex={i} />
             case "multi-question":
               return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
             case "agent-message":
