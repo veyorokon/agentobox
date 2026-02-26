@@ -1,13 +1,11 @@
 "use client"
 
-type ThinkingIndicatorProps = {
-  /** Text to display, e.g. "Working..." or "backend running" */
+export interface ThinkingIndicatorProps {
   label?: string
 }
 
-export function ThinkingIndicator({
-  label = "Thinking...",
-}: ThinkingIndicatorProps) {
+/** Pulsing dots indicator (used in agent detail feed only) */
+export function ThinkingIndicator({ label = "Thinking..." }: ThinkingIndicatorProps) {
   return (
     <span className="inline-flex items-center gap-1.5 text-muted text-[11px] font-mono">
       <span className="inline-flex items-center gap-[3px]" aria-hidden="true">

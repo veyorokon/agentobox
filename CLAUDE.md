@@ -150,3 +150,5 @@ gh attach --issue <num> --image /path/to/file.png --release --body "description"
 ```
 
 `--release` mode uses GitHub Releases API (CLI auth only, no browser needed). Creates a `gh-attach-assets` release tag in the repo for hosting the images.
+
+@AGENTS.md

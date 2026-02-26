@@ -1,30 +1,29 @@
 "use client"
 
-import { useState, useEffect, type FormEvent } from "react"
+import { useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/hooks/use-auth"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 
 export default function LoginPage() {
   const router = useRouter()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
-  const { login, loading, error, isAuthenticated } = useAuth()
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      router.replace("/")
-    }
-  }, [isAuthenticated, router])
-
-  if (isAuthenticated) {
-    return null
-  }
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    await login(username, password)
+    setLoading(true)
+    setError(null)
+    try {
+      // TODO: wire to real auth when API is ready
+      if (username === "vahid" && password === "test1234") {
+        router.replace("/")
+      } else {
+        setError("Invalid credentials")
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -43,7 +42,7 @@ export default function LoginPage() {
             >
               Username
             </label>
-            <Input
+            <input
               id="username"
               type="text"
               value={username}
@@ -51,6 +50,7 @@ export default function LoginPage() {
               placeholder="Enter username"
               autoComplete="username"
               required
+              className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
 
@@ -61,7 +61,7 @@ export default function LoginPage() {
             >
               Password
             </label>
-            <Input
+            <input
               id="password"
               type="password"
               value={password}
@@ -69,24 +69,21 @@ export default function LoginPage() {
               placeholder="Enter password"
               autoComplete="current-password"
               required
+              className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
 
           {error && (
-            <p className="text-sm text-danger">
-              {error.message || "Login failed"}
-            </p>
+            <p className="text-sm text-danger">{error}</p>
           )}
 
-          <Button
+          <button
             type="submit"
-            variant="accent"
-            size="md"
-            className="w-full"
+            className="w-full rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-emphasis hover:bg-accent/90 transition-colors disabled:opacity-50"
             disabled={loading || !username || !password}
           >
             {loading ? "Signing in..." : "Sign in"}
-          </Button>
+          </button>
         </form>
       </div>
     </div>

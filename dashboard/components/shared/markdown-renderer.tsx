@@ -3,7 +3,7 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn, stripSystemReminders } from "@/lib/utils";
-import { CodeBlock } from "@/components/shared/code-block";
+import { CopyButton } from "@/components/shared/copy-button";
 
 interface MarkdownRendererProps {
   content: string;
@@ -17,7 +17,17 @@ const components: Components = {
 
     // Fenced code blocks have a className with the language
     if (match) {
-      return <CodeBlock code={text} language={match[1]} />;
+      return (
+        <div className="relative group rounded-md border border-border-default bg-surface-sunken overflow-hidden my-2">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-default bg-surface-sunken/50">
+            <span className="text-[10px] font-mono text-muted uppercase tracking-wider">{match[1]}</span>
+            <CopyButton text={text} />
+          </div>
+          <pre className="overflow-x-auto p-3 text-[13px] leading-relaxed">
+            <code className="font-mono text-secondary">{text}</code>
+          </pre>
+        </div>
+      );
     }
 
     // Inline code
@@ -32,7 +42,7 @@ const components: Components = {
   },
 
   pre({ children }) {
-    // Let CodeBlock handle the rendering — pre is just a passthrough
+    // Fenced code blocks are handled by the code component above
     return <>{children}</>;
   },
 
