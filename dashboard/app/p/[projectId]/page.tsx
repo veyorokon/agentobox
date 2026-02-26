@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useMemo } from "react"
 import {
   ChevronRight,
   KeyRound,
@@ -9,7 +9,6 @@ import {
   BookOpen,
 } from "lucide-react"
 import { formatCost } from "@/lib/utils"
-import { ALL_TAGS } from "@/lib/data/mock"
 import { getAllPendingItems } from "@/lib/attention"
 import { useBreakpoint } from "@/hooks/use-breakpoint"
 import { useSidebarStore } from "@/lib/stores/sidebar"
@@ -28,63 +27,29 @@ import { ComposerBar } from "@/components/composer/composer-bar"
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
 /*                                                                     */
-/*  Layout shell — composes panels and wires right-column components.  */
-/*  Left column components subscribe to stores directly (no props).    */
+/*  Pure layout shell — all components subscribe to stores directly.  */
+/*  Page only owns: breakpoint, mobile tab, secrets modal, and the    */
+/*  mobile header (cost display + TabBar badge count).                */
 /* ================================================================== */
 
 export default function ProjectPage() {
   const bp = useBreakpoint()
 
-  // ── Sidebar store (page only needs mobile tab) ────────────────────
+  // ── Sidebar store (mobile tab) ──────────────────────────────────
   const mainTab = useSidebarStore(s => s.mainTab)
   const setMainTab = useSidebarStore(s => s.setMainTab)
-  const focusedAgentId = useSidebarStore(s => s.focusedAgentId)
 
-  // ── Team store (right column still prop-drilled for now) ──────────
+  // ── Team store (only for mobile header cost + TabBar badge) ─────
   const agents = useTeamStore(s => s.agents)
   const feedItems = useTeamStore(s => s.feedItems)
-  const recipients = useTeamStore(s => s.recipients)
-  const resolvePermission = useTeamStore(s => s.resolvePermission)
-  const resolvePlan = useTeamStore(s => s.resolvePlan)
-  const addRecipient = useTeamStore(s => s.addRecipient)
-  const removeRecipient = useTeamStore(s => s.removeRecipient)
-  const reviewAgent = useTeamStore(s => s.reviewAgent)
 
-  // ── Local state (ephemeral — resets on unmount, single-component) ──
+  // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
 
-  // ── Handlers (right column) ───────────────────────────────────────
-
-  const handleReviewAgent = useCallback((agentName: string) => {
-    reviewAgent(agentName)
-    setMainTab("chat")
-  }, [reviewAgent, setMainTab])
-
-  const handleFeedClickAgent = useCallback((agentName: string) => {
-    reviewAgent(agentName)
-    setMainTab("chat")
-  }, [reviewAgent, setMainTab])
-
-  // ── Derived values (right column) ─────────────────────────────────
-
+  // ── Derived (TabBar badge) ──────────────────────────────────────
   const pendingCount = useMemo(() => getAllPendingItems(feedItems).length, [feedItems])
 
-  const isDefaultRecipient = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
-
-  const effectiveAgentFilter = useMemo(() => {
-    if (isDefaultRecipient) return new Set<string>()
-    if (recipients.some(r => r.type === "all")) return new Set<string>()
-    if (recipients.length === 0) return new Set<string>()
-    const names = new Set<string>()
-    for (const r of recipients) {
-      if (r.type === "agent") names.add(r.value)
-      else if (r.type === "tag") for (const a of agents) { if (a.tags.includes(r.value)) names.add(a.name) }
-    }
-    return names
-  }, [recipients, agents, isDefaultRecipient])
-
-  // ── Layout ────────────────────────────────────────────────────────
-
+  // ── Layout ──────────────────────────────────────────────────────
   const showTopTabs = bp === "mobile"
   const showLeftPanel = bp !== "mobile"
 
@@ -94,7 +59,7 @@ export default function ProjectPage() {
     { id: "skills", label: "Skills", icon: <BookOpen className="h-3.5 w-3.5" /> },
   ]
 
-  // ── Render ────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────
 
   return (
     <div className="h-screen flex bg-surface overflow-hidden cursor-default">
@@ -157,26 +122,9 @@ export default function ProjectPage() {
         {/* Center: team feed + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
           <main className="flex-1 min-w-0 flex flex-col min-h-0">
-            <TeamFeed
-              feedItems={feedItems}
-              agentFilter={effectiveAgentFilter}
-              onClickAgent={handleFeedClickAgent}
-            />
-            <AttentionBar
-              feedItems={feedItems}
-              focusedAgentId={focusedAgentId}
-              agents={agents}
-              onResolvePermission={resolvePermission}
-              onResolvePlan={resolvePlan}
-              onReviewAgent={handleReviewAgent}
-            />
-            <ComposerBar
-              recipients={recipients}
-              agents={agents}
-              allTags={ALL_TAGS}
-              onAddRecipient={addRecipient}
-              onRemoveRecipient={removeRecipient}
-            />
+            <TeamFeed />
+            <AttentionBar />
+            <ComposerBar />
           </main>
         )}
 
@@ -184,14 +132,7 @@ export default function ProjectPage() {
         {showTopTabs && mainTab === "agents" && (
           <div className="flex-1 min-w-0 bg-surface flex flex-col overflow-hidden">
             <AgentCardsPanel />
-            <AttentionBar
-              feedItems={feedItems}
-              focusedAgentId={focusedAgentId}
-              agents={agents}
-              onResolvePermission={resolvePermission}
-              onResolvePlan={resolvePlan}
-              onReviewAgent={handleReviewAgent}
-            />
+            <AttentionBar />
           </div>
         )}
 
@@ -199,14 +140,7 @@ export default function ProjectPage() {
         {showTopTabs && mainTab === "skills" && (
           <div className="flex-1 min-w-0 bg-surface overflow-hidden flex flex-col">
             <SkillsPanel />
-            <AttentionBar
-              feedItems={feedItems}
-              focusedAgentId={focusedAgentId}
-              agents={agents}
-              onResolvePermission={resolvePermission}
-              onResolvePlan={resolvePlan}
-              onReviewAgent={handleReviewAgent}
-            />
+            <AttentionBar />
           </div>
         )}
       </div>

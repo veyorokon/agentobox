@@ -2,7 +2,8 @@
 
 import { useState, useCallback } from "react"
 import { ArrowUp, Paperclip, X } from "lucide-react"
-import type { FakeAgent, RecipientEntry } from "@/lib/types"
+import type { RecipientEntry } from "@/lib/types"
+import { useTeamStore } from "@/lib/stores/team"
 import {
   RecipientSearchBox,
   recipientLabel,
@@ -14,19 +15,11 @@ import {
 /*  COMPOSER BAR                                                       */
 /* ================================================================== */
 
-export function ComposerBar({
-  recipients,
-  agents,
-  allTags,
-  onAddRecipient,
-  onRemoveRecipient,
-}: {
-  recipients: RecipientEntry[]
-  agents: FakeAgent[]
-  allTags: string[]
-  onAddRecipient: (entry: RecipientEntry) => void
-  onRemoveRecipient: (index: number) => void
-}) {
+export function ComposerBar() {
+  // ── Store subscriptions ───────────────────────────────────────────
+  const recipients = useTeamStore(s => s.recipients)
+  const addRecipient = useTeamStore(s => s.addRecipient)
+  const removeRecipient = useTeamStore(s => s.removeRecipient)
   const [suggestions, setSuggestions] = useState<RecipientEntry[]>([])
 
   const handleSuggestionsChange = useCallback((s: RecipientEntry[]) => {
@@ -76,11 +69,6 @@ export function ComposerBar({
               <Paperclip className="h-4 w-4" />
             </button>
             <RecipientSearchBox
-              agents={agents}
-              allTags={allTags}
-              recipients={recipients}
-              onAddRecipient={onAddRecipient}
-              onRemoveRecipient={onRemoveRecipient}
               onSuggestionsChange={handleSuggestionsChange}
             />
           </div>
@@ -109,7 +97,7 @@ export function ComposerBar({
             {recipientLabel(r)}
             <button
               type="button"
-              onClick={() => onRemoveRecipient(i)}
+              onClick={() => removeRecipient(i)}
               className="text-muted/40 hover:text-muted transition-colors"
             >
               <X className="h-2.5 w-2.5" />
@@ -125,7 +113,7 @@ export function ComposerBar({
             key={`sug-${recipientKey(s)}`}
             type="button"
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onAddRecipient(s)}
+            onClick={() => addRecipient(s)}
             className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-mono bg-surface-sunken/50 text-muted hover:bg-surface-sunken hover:text-secondary transition-colors border border-border-subtle/50"
           >
             {recipientLabel(s)}

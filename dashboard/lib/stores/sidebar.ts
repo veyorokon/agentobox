@@ -46,6 +46,10 @@ interface SidebarState {
   skillSearch: string
   skillTagFilter: string | null
   skillsAllExpanded: boolean
+
+  /* Attention bar — shared across 3 mobile tab instances */
+  attentionStepIdx: number
+  attentionExpandedFeedIndex: number | null
 }
 
 interface SidebarActions {
@@ -65,6 +69,9 @@ interface SidebarActions {
   setSkillSearch: (query: string) => void
   setSkillTagFilter: (tag: string | null) => void
   toggleSkillsExpandAll: () => void
+
+  setAttentionStepIdx: (idx: number) => void
+  setAttentionExpandedFeedIndex: (idx: number | null) => void
 }
 
 export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => ({
@@ -79,6 +86,8 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => 
   skillSearch: "",
   skillTagFilter: null,
   skillsAllExpanded: false,
+  attentionStepIdx: 0,
+  attentionExpandedFeedIndex: null,
 
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
@@ -108,4 +117,7 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()((set) => 
   setSkillSearch: (query) => set({ skillSearch: query }),
   setSkillTagFilter: (tag) => set({ skillTagFilter: tag }),
   toggleSkillsExpandAll: () => set((s) => ({ skillsAllExpanded: !s.skillsAllExpanded })),
+
+  setAttentionStepIdx: (idx) => set({ attentionStepIdx: idx }),
+  setAttentionExpandedFeedIndex: (idx) => set({ attentionExpandedFeedIndex: idx }),
 }))

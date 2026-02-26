@@ -1,8 +1,9 @@
 "use client"
 
-import { useMemo } from "react"
-import type { TeamFeedItem } from "@/lib/types"
+import { useMemo, useCallback } from "react"
 import { getFeedItemAgent } from "@/lib/attention"
+import { useTeamStore } from "@/lib/stores/team"
+import { useSidebarStore } from "@/lib/stores/sidebar"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SystemMessage } from "@/components/feed/system-message"
 import { TeamUserMessage } from "@/components/feed/user-message"
@@ -14,32 +15,45 @@ import { QuestionCard, MultiQuestionCard } from "@/components/feed/question-card
 import { PlanCard } from "@/components/feed/plan-card"
 import { PermissionCard } from "@/components/feed/permission-card"
 
-export interface TeamFeedProps {
-  feedItems: TeamFeedItem[]
-  agentFilter?: Set<string>
-  onClickAgent?: (agentName: string) => void
-}
+export function TeamFeed() {
+  // ── Store subscriptions ───────────────────────────────────────────
+  const feedItems = useTeamStore(s => s.feedItems)
+  const recipients = useTeamStore(s => s.recipients)
+  const agents = useTeamStore(s => s.agents)
+  const reviewAgent = useTeamStore(s => s.reviewAgent)
+  const setMainTab = useSidebarStore(s => s.setMainTab)
 
-export function TeamFeed({
-  feedItems,
-  agentFilter,
-  onClickAgent,
-}: TeamFeedProps) {
+  // ── Derived: effective agent filter from recipients ────────────────
+  const isDefaultRecipient = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
+
+  const agentFilter = useMemo(() => {
+    if (isDefaultRecipient) return new Set<string>()
+    if (recipients.some(r => r.type === "all")) return new Set<string>()
+    if (recipients.length === 0) return new Set<string>()
+    const names = new Set<string>()
+    for (const r of recipients) {
+      if (r.type === "agent") names.add(r.value)
+      else if (r.type === "tag") for (const a of agents) { if (a.tags.includes(r.value)) names.add(a.name) }
+    }
+    return names
+  }, [recipients, agents, isDefaultRecipient])
+
+  // ── Handlers ──────────────────────────────────────────────────────
+  const handleClickAgent = useCallback((agentName: string) => {
+    reviewAgent(agentName)
+    setMainTab("chat")
+  }, [reviewAgent, setMainTab])
+
+  // ── Filtered items ────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let items = feedItems
-    // Filter by agent
-    if (agentFilter && agentFilter.size > 0) {
+    if (agentFilter.size > 0) {
       items = items.filter(item => {
         const agent = getFeedItemAgent(item)
-        // System messages pass through when filtering (context)
         if (item.type === "system") return true
-        // User messages targeted to a filtered agent pass through
         if (item.type === "user" && item.target && agentFilter.has(item.target)) return true
-        // User messages without target pass through (broadcasts)
         if (item.type === "user" && !item.target) return true
-        // Agent-to-agent messages pass if either participant matches
         if (item.type === "agent-message") return agentFilter.has(item.from) || agentFilter.has(item.to)
-        // Agent items pass if agent matches
         return agent !== null && agentFilter.has(agent)
       })
     }
@@ -65,13 +79,13 @@ export function TeamFeed({
                   turns={item.turns}
                   duration={item.duration}
                   isError={item.isError}
-                  onClickAgent={onClickAgent}
+                  onClickAgent={handleClickAgent}
                 />
               )
             case "status":
-              return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} onClickAgent={onClickAgent} />
+              return <AgentStatusLine key={i} agent={item.agent} from={item.from} to={item.to} onClickAgent={handleClickAgent} />
             case "error":
-              return <TeamErrorAlert key={i} agent={item.agent} text={item.text} onClickAgent={onClickAgent} />
+              return <TeamErrorAlert key={i} agent={item.agent} text={item.text} onClickAgent={handleClickAgent} />
             case "question":
               return <QuestionCard key={i} agent={item.agent} question={item.question} options={item.options} />
             case "plan":
@@ -81,7 +95,7 @@ export function TeamFeed({
             case "multi-question":
               return <MultiQuestionCard key={i} agent={item.agent} questions={item.questions} />
             case "agent-message":
-              return <AgentToAgentMessage key={i} from={item.from} to={item.to} text={item.text} onClickAgent={onClickAgent} />
+              return <AgentToAgentMessage key={i} from={item.from} to={item.to} text={item.text} onClickAgent={handleClickAgent} />
             default:
               return null
           }

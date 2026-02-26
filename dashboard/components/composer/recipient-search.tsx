@@ -1,7 +1,9 @@
 "use client"
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react"
-import type { FakeAgent, RecipientEntry } from "@/lib/types"
+import type { RecipientEntry } from "@/lib/types"
+import { useTeamStore } from "@/lib/stores/team"
+import { ALL_TAGS } from "@/lib/data/mock"
 
 /* ================================================================== */
 /*  RECIPIENT SEARCH — dark search box for @agent / #tag               */
@@ -19,20 +21,16 @@ export function recipientKey(r: RecipientEntry): string {
 }
 
 export function RecipientSearchBox({
-  agents,
-  allTags,
-  recipients,
-  onAddRecipient,
-  onRemoveRecipient,
   onSuggestionsChange,
 }: {
-  agents: FakeAgent[]
-  allTags: string[]
-  recipients: RecipientEntry[]
-  onAddRecipient: (entry: RecipientEntry) => void
-  onRemoveRecipient: (index: number) => void
   onSuggestionsChange?: (suggestions: RecipientEntry[]) => void
 }) {
+  // ── Store subscriptions ───────────────────────────────────────────
+  const agents = useTeamStore(s => s.agents)
+  const recipients = useTeamStore(s => s.recipients)
+  const addRecipient = useTeamStore(s => s.addRecipient)
+  const removeRecipient = useTeamStore(s => s.removeRecipient)
+  const allTags = ALL_TAGS
   const [inputValue, setInputValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
   const measureRef = useRef<HTMLSpanElement>(null)
@@ -75,17 +73,17 @@ export function RecipientSearchBox({
   const commitInput = useCallback(() => {
     if (inputValue.startsWith("@")) {
       const name = inputValue.slice(1).toLowerCase()
-      if (name === "all") { onAddRecipient({ type: "all" }); setInputValue(""); return true }
+      if (name === "all") { addRecipient({ type: "all" }); setInputValue(""); return true }
       const match = agents.find(a => a.name.toLowerCase() === name)
-      if (match) { onAddRecipient({ type: "agent", value: match.name }); setInputValue(""); return true }
+      if (match) { addRecipient({ type: "agent", value: match.name }); setInputValue(""); return true }
     }
     if (inputValue.startsWith("#")) {
       const tag = inputValue.slice(1).toLowerCase()
       const match = allTags.find(t => t.toLowerCase() === tag)
-      if (match) { onAddRecipient({ type: "tag", value: match }); setInputValue(""); return true }
+      if (match) { addRecipient({ type: "tag", value: match }); setInputValue(""); return true }
     }
     return false
-  }, [inputValue, agents, allTags, onAddRecipient])
+  }, [inputValue, agents, allTags, addRecipient])
 
   const acceptGhost = useCallback(() => {
     if (!ghost) return false
@@ -106,14 +104,14 @@ export function RecipientSearchBox({
     }
     if (e.key === "Backspace" && inputValue === "" && recipients.length > 0) {
       e.preventDefault()
-      onRemoveRecipient(recipients.length - 1)
+      removeRecipient(recipients.length - 1)
       return
     }
     if (e.key === "Escape") {
       e.preventDefault()
       setInputValue("")
     }
-  }, [ghost, isCompleteMatch, inputValue, recipients.length, acceptGhost, commitInput, onRemoveRecipient])
+  }, [ghost, isCompleteMatch, inputValue, recipients.length, acceptGhost, commitInput, removeRecipient])
 
   // Autocomplete suggestions
   const suggestions = useMemo((): RecipientEntry[] => {

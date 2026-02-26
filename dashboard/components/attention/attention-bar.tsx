@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useCallback } from "react"
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,40 +8,43 @@ import {
   AlertTriangle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { FakeAgent, TeamFeedItem, PendingItem } from "@/lib/types"
+import type { PendingItem } from "@/lib/types"
+import { useTeamStore } from "@/lib/stores/team"
+import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 
-export function AttentionBar({
-  feedItems,
-  focusedAgentId,
-  agents,
-  onResolvePermission,
-  onResolvePlan,
-  onReviewAgent,
-}: {
-  feedItems: TeamFeedItem[]
-  focusedAgentId: string | null
-  agents: FakeAgent[]
-  onResolvePermission: (feedIndex: number, verdict: "allowed" | "denied") => void
-  onResolvePlan: (feedIndex: number, verdict: "approved" | "rejected") => void
-  onReviewAgent: (agentName: string) => void
-}) {
-  // Collect pending items with their original feed index for resolution
-  const pending: { item: PendingItem; feedIndex: number; agentId?: string }[] = []
-  feedItems.forEach((item, i) => {
-    if (item.type === "permission" && item.permStatus === "pending") {
-      const agent = agents.find(a => a.name === item.agent)
-      pending.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
-    }
-    if (item.type === "plan" && item.planStatus === "pending") {
-      const agent = agents.find(a => a.name === item.agent)
-      pending.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
-    }
-  })
+export function AttentionBar() {
+  // ── Store subscriptions ───────────────────────────────────────────
+  const feedItems = useTeamStore(s => s.feedItems)
+  const agents = useTeamStore(s => s.agents)
+  const resolvePermission = useTeamStore(s => s.resolvePermission)
+  const resolvePlan = useTeamStore(s => s.resolvePlan)
+  const reviewAgent = useTeamStore(s => s.reviewAgent)
 
-  // Expanded plan review state
-  const [expandedFeedIndex, setExpandedFeedIndex] = useState<number | null>(null)
+  const focusedAgentId = useSidebarStore(s => s.focusedAgentId)
+  const setMainTab = useSidebarStore(s => s.setMainTab)
+  const stepIdx = useSidebarStore(s => s.attentionStepIdx)
+  const setStepIdx = useSidebarStore(s => s.setAttentionStepIdx)
+  const expandedFeedIndex = useSidebarStore(s => s.attentionExpandedFeedIndex)
+  const setExpandedFeedIndex = useSidebarStore(s => s.setAttentionExpandedFeedIndex)
+
+  // ── Derived: collect pending items with feed indices ───────────────
+  const pending = useMemo(() => {
+    const result: { item: PendingItem; feedIndex: number; agentId?: string }[] = []
+    feedItems.forEach((item, i) => {
+      if (item.type === "permission" && item.permStatus === "pending") {
+        const agent = agents.find(a => a.name === item.agent)
+        result.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
+      }
+      if (item.type === "plan" && item.planStatus === "pending") {
+        const agent = agents.find(a => a.name === item.agent)
+        result.push({ item: item as PendingItem, feedIndex: i, agentId: agent?.id })
+      }
+    })
+    return result
+  }, [feedItems, agents])
+
   const expandedPlan = expandedFeedIndex !== null
     ? pending.find(p => p.feedIndex === expandedFeedIndex && p.item.type === "plan")
     : null
@@ -54,8 +57,7 @@ export function AttentionBar({
     return (order[a.item.type] ?? 2) - (order[b.item.type] ?? 2)
   })
 
-  // Stepper state — clamp to valid range when items resolve
-  const [stepIdx, setStepIdx] = useState(0)
+  // Clamp stepper to valid range when items resolve
   const clamped = Math.min(stepIdx, sorted.length - 1)
   const current = sorted[clamped]
   const { item, feedIndex, agentId } = current
@@ -64,12 +66,13 @@ export function AttentionBar({
   const hasNext = clamped < sorted.length - 1
 
   const handleReview = (agentName: string, fi: number) => {
-    onReviewAgent(agentName)
+    reviewAgent(agentName)
+    setMainTab("chat")
     setExpandedFeedIndex(fi)
   }
 
   const handleResolvePlanAndCollapse = (fi: number, verdict: "approved" | "rejected") => {
-    onResolvePlan(fi, verdict)
+    resolvePlan(fi, verdict)
     setExpandedFeedIndex(null)
   }
 
@@ -212,14 +215,14 @@ export function AttentionBar({
             <>
               <button
                 type="button"
-                onClick={() => onResolvePermission(feedIndex, "allowed")}
+                onClick={() => resolvePermission(feedIndex, "allowed")}
                 className="px-2 py-1 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
               >
                 Allow
               </button>
               <button
                 type="button"
-                onClick={() => onResolvePermission(feedIndex, "denied")}
+                onClick={() => resolvePermission(feedIndex, "denied")}
                 className="px-2 py-1 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
               >
                 Deny
