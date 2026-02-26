@@ -7,11 +7,11 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react"
-import type { FakeAgent } from "@/lib/types"
+import type { Agent } from "@/lib/types"
 import { TagInput } from "@/components/agent/tag-input"
 
 export interface AgentSettingsPanelProps {
-  agent: FakeAgent
+  agent: Agent
 }
 
 export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {

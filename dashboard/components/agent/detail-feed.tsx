@@ -4,15 +4,15 @@ import { AssistantMessage } from "@/components/feed/assistant-message"
 import { SingleToolRow, MultiToolGroup } from "@/components/feed/tool-row"
 import { ResultPill } from "@/components/feed/result-pill"
 import { ErrorBubble } from "@/components/feed/error-bubble"
-import { FAKE_MARKDOWN } from "@/lib/data/mock"
-import type { FakeAgent } from "@/lib/types"
+import { MOCK_MARKDOWN } from "@/lib/data/mock"
+import type { Agent } from "@/lib/types"
 
 /* ================================================================== */
 /*  AGENT DETAIL FEED                                                  */
 /* ================================================================== */
 
 export interface AgentDetailFeedProps {
-  agent: FakeAgent
+  agent: Agent
 }
 
 /**
@@ -40,7 +40,7 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
             {/* Assistant message (source: text content blocks) */}
             <AssistantMessage
               agent={agent.name}
-              content={FAKE_MARKDOWN}
+              content={MOCK_MARKDOWN}
               showAvatar={false}
             />
 

@@ -4,7 +4,7 @@ import { GET_FEED } from "@/lib/graphql/queries/feed"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { deriveAttentionFromFeed } from "@/lib/attention"
 import { createLogger } from "@/lib/logger"
-import type { FakeAgent, TeamFeedItem } from "@/lib/types"
+import type { Agent, TeamFeedItem } from "@/lib/types"
 
 /* ================================================================== */
 /*  FEED HOOKS                                                          */
@@ -50,7 +50,7 @@ export function useResolvePermission() {
       log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: "permission resolved" })
 
       // 3. Update agent attention in Apollo cache
-      const agentsData = client.readQuery<{ agents: FakeAgent[] }>({ query: GET_AGENTS })
+      const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS })
       const agent = agentsData?.agents.find(a => a.name === agentName)
       if (!agent) return
 
@@ -90,7 +90,7 @@ export function useResolvePlan() {
       log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: "plan resolved" })
 
       // 3. Update agent attention in Apollo cache
-      const agentsData = client.readQuery<{ agents: FakeAgent[] }>({ query: GET_AGENTS })
+      const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS })
       const agent = agentsData?.agents.find(a => a.name === agentName)
       if (!agent) return
 

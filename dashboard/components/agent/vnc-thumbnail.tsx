@@ -1,10 +1,10 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import type { FakeAgent } from "@/lib/types"
+import type { Agent } from "@/lib/types"
 
 export interface VncThumbnailProps {
-  agent: FakeAgent
+  agent: Agent
 }
 
 /** VNC thumbnail placeholder -- aspect ratio matches a 16:10 display */

@@ -12,7 +12,7 @@ import {
   RefreshCw,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { FakeSecret } from "@/lib/types"
+import type { Secret } from "@/lib/types"
 import { SECRETS } from "@/lib/data/mock"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 
@@ -25,7 +25,7 @@ export function SecretsModal({
 }) {
   const { data } = useAgents()
   const agents = data?.agents ?? []
-  const [secrets, setSecrets] = useState<FakeSecret[]>(SECRETS)
+  const [secrets, setSecrets] = useState<Secret[]>(SECRETS)
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [newKey, setNewKey] = useState("")
   const [newValue, setNewValue] = useState("")

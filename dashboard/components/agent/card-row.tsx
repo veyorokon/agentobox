@@ -25,10 +25,10 @@ import { VncThumbnail } from "@/components/agent/vnc-thumbnail"
 import { AgentDetailFeed } from "@/components/agent/detail-feed"
 import { AgentSettingsPanel } from "@/components/agent/settings-panel"
 import { AgentSkillsView } from "@/components/agent/skills-view"
-import type { FakeAgent, AttentionLevel, PendingItem, ViewMode } from "@/lib/types"
+import type { Agent, AttentionLevel, PendingItem, ViewMode } from "@/lib/types"
 
 export interface AgentCardRowProps {
-  agent: FakeAgent
+  agent: Agent
   selectable?: boolean
   selected?: boolean
   onSelect?: () => void
@@ -63,7 +63,7 @@ export function AgentCardRow({
   const feedItems = feedData?.feed ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
-  const handleModeChange = (mode: FakeAgent["mode"]) => setAgentMode(agent.id, mode)
+  const handleModeChange = (mode: Agent["mode"]) => setAgentMode(agent.id, mode)
 
   // Derived from store
   const isOpen = !selectable && isExpanded

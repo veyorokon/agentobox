@@ -10,10 +10,10 @@ import { cn } from "@/lib/utils"
 import { Collapsible } from "@/components/ui/collapsible"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 import { getAgentSkills } from "@/lib/data/mock"
-import type { FakeAgent } from "@/lib/types"
+import type { Agent } from "@/lib/types"
 
 export interface AgentSkillsViewProps {
-  agent: FakeAgent
+  agent: Agent
 }
 
 export function AgentSkillsView({ agent }: AgentSkillsViewProps) {

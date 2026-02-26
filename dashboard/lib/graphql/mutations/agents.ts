@@ -4,7 +4,7 @@ import { gql } from "@apollo/client"
 /*  AGENT MUTATIONS                                                     */
 /*                                                                      */
 /*  Domain verbs, not CRUD. Each mutation maps to a user action.       */
-/*  During mock phase: no network call, just cache.modify().           */
+/*  During dev phase: no network call, just cache.modify().            */
 /*  Production: mutation fires to backend, optimistic update in cache, */
 /*  subscription confirms the final state.                             */
 /* ================================================================== */

@@ -6,7 +6,7 @@ export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "i
 export type AttentionLevel = "none" | "review" | "plan" | "permission"
 export type Breakpoint = "mobile" | "S" | "M" | "L" | "XL"
 
-export type FakeAgent = {
+export type Agent = {
   id: string
   name: string
   lifecycleStatus: LifecycleStatus
@@ -36,7 +36,7 @@ export type RecipientEntry =
   | { type: "tag"; value: string }
   | { type: "all" }
 
-export type FakeSecret = {
+export type Secret = {
   id: string
   key: string
   value: string

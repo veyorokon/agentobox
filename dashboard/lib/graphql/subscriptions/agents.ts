@@ -3,7 +3,7 @@ import { gql } from "@apollo/client"
 /* ================================================================== */
 /*  AGENT SUBSCRIPTIONS                                                 */
 /*                                                                      */
-/*  Not active during mock phase — defined here to document the        */
+/*  Not active during dev phase — defined here to document the         */
 /*  real-time strategy and ensure the query shapes are ready.          */
 /*                                                                      */
 /*  agentUpdated: fires when any agent field changes (status, cost,    */

@@ -1,13 +1,13 @@
 import type { ApolloClient, NormalizedCacheObject } from "@apollo/client"
-import { INITIAL_AGENTS, TEAM_FEED } from "@/lib/data/mock"
+import { MOCK_AGENTS, TEAM_FEED } from "@/lib/data/mock"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
 import type { TeamFeedItem } from "@/lib/types"
 
 /* ================================================================== */
-/*  MOCK DATA SEEDER                                                   */
+/*  DEV DATA SEEDER                                                    */
 /*                                                                     */
-/*  Seeds Apollo cache with fake data for development.                 */
+/*  Seeds Apollo cache with fixture data for development.              */
 /*  This replaces zustand for agents + feed queries.                   */
 /*  Delete this file when connecting to real backend.                  */
 /* ================================================================== */
@@ -46,11 +46,11 @@ function normalizeFeedItem(item: TeamFeedItem) {
   }
 }
 
-export function seedMockData(client: ApolloClient<NormalizedCacheObject>) {
+export function seedDevData(client: ApolloClient<NormalizedCacheObject>) {
   client.writeQuery({
     query: GET_AGENTS,
     data: {
-      agents: INITIAL_AGENTS.map((a) => ({
+      agents: MOCK_AGENTS.map((a) => ({
         __typename: "Agent",
         id: a.id,
         name: a.name,

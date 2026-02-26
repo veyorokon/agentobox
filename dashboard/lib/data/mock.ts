@@ -1,10 +1,10 @@
-import type { FakeAgent, FakeSecret, Skill, TeamFeedItem } from "@/lib/types"
+import type { Agent, Secret, Skill, TeamFeedItem } from "@/lib/types"
 
 /* ================================================================== */
 /*  AGENTS                                                             */
 /* ================================================================== */
 
-export const INITIAL_AGENTS: FakeAgent[] = [
+export const MOCK_AGENTS: Agent[] = [
   {
     id: "0",
     name: "team-lead",
@@ -147,7 +147,7 @@ export const INITIAL_AGENTS: FakeAgent[] = [
 /*  SECRETS                                                            */
 /* ================================================================== */
 
-export const SECRETS: FakeSecret[] = [
+export const SECRETS: Secret[] = [
   { id: "s1", key: "GITHUB_TOKEN", value: "ghp_a1b2c3d4e5f6g7h8i9j0", addedAgo: "2d ago" },
   { id: "s2", key: "ANTHROPIC_API_KEY", value: "sk-ant-api03-xxxxxxxxxxxx", addedAgo: "5d ago" },
   { id: "s3", key: "AWS_ACCESS_KEY_ID", value: "AKIAIOSFODNN7EXAMPLE", addedAgo: "1w ago" },
@@ -413,18 +413,18 @@ If integration tests fail or health checks don't pass within 120s, automatically
 /* ================================================================== */
 
 /** All unique tags across agents */
-export const ALL_TAGS = Array.from(new Set(INITIAL_AGENTS.flatMap(a => a.tags))).sort()
+export const ALL_TAGS = Array.from(new Set(MOCK_AGENTS.flatMap(a => a.tags))).sort()
 
 /** Get skills that match an agent's tags */
-export function getAgentSkills(agent: FakeAgent): Skill[] {
+export function getAgentSkills(agent: Agent): Skill[] {
   return SKILLS.filter(s => s.assignedTags.some(tag => agent.tags.includes(tag)))
 }
 
 /**
- * FAKE_MARKDOWN — used in right-panel agent detail feed.
+ * MOCK_MARKDOWN — used in right-panel agent detail feed.
  * SOURCE: TimelineEntry.content (full assistant message content blocks)
  */
-export const FAKE_MARKDOWN = `I've analyzed the JWT validation issue. The problem is in \`validateToken()\` — the expiry comparison uses **seconds** but \`Date.now()\` returns **milliseconds**.
+export const MOCK_MARKDOWN = `I've analyzed the JWT validation issue. The problem is in \`validateToken()\` — the expiry comparison uses **seconds** but \`Date.now()\` returns **milliseconds**.
 
 Here's the fix:
 
