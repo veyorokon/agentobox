@@ -3,13 +3,13 @@ import textwrap
 
 import structlog
 
+from agents.adapters import get_adapter
+from agents.adapters.claude_code import API_KEY_HELPER_PATH
 from agents.runtimes.base import Runtime
 from projects.models import Project
 
 log = structlog.get_logger("agents.provision")
 
-# Path where the API key helper script lives in the container
-API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
 # tmpfs path for the API key (root:agent 0440)
 API_KEY_TMPFS_PATH = "/run/secrets/anthropic_key"
 
@@ -18,6 +18,7 @@ async def provision_workspace(
     runtime: Runtime,
     sandbox_id: str,
     project: Project,
+    agent_type: str = "claude-code",
     api_key: str = "",
     mcp_servers: dict | None = None,
     variant: str = "debian",
@@ -33,17 +34,23 @@ async def provision_workspace(
     mode: str = "auto",
 ) -> None:
     """
-    Write CLAUDE.md, .claude/settings.json, .mcp.json, and security
+    Write instruction file, settings, .mcp.json, and security
     hardening files into the agent container.
 
+    Delegates agent-type-specific config (settings format, instruction content)
+    to the adapter registered for `agent_type`.
+
     Args:
+        agent_type: Adapter key (e.g. "claude-code"). Determines settings
+            format and instruction file content.
         secret_envs: Flat {key: value} dict of decrypted secrets from
             ProjectSecret. Injected into every MCP server env block.
         agent_role: "lead" or "worker".
         agent_name: This agent's name (for team context).
-        team_members: List of team member dicts for CLAUDE.md roster.
+        team_members: List of team member dicts for instruction file roster.
         team_name: Team name for lead's spawning instructions.
     """
+    adapter = get_adapter(agent_type)
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/agent"
     op_log.info(
@@ -51,34 +58,40 @@ async def provision_workspace(
         context_path=workspace,
         variant=variant,
         workspace_path=workspace_path,
+        agent_type=agent_type,
     )
 
     await runtime.exec(sandbox_id, ["mkdir", "-p", workspace])
 
-    claude_md = _build_claude_md(
-        project,
-        mcp_servers=mcp_servers,
-        variant=variant,
+    # Resolve MCP instruction strings from the registry
+    mcp_instr = _resolve_mcp_instructions(mcp_servers)
+
+    # Build instruction file (e.g. CLAUDE.md) via adapter
+    instruction_content = adapter.build_instructions(
+        project_name=project.name,
+        agent_name=agent_name,
+        agent_role=agent_role,
         workspace_path=workspace_path,
         instructions=instructions,
-        agent_role=agent_role,
-        agent_name=agent_name,
         team_members=team_members,
         team_name=team_name,
+        mcp_instructions=mcp_instr,
+        variant=variant,
     )
     await runtime.write_file(
         sandbox_id,
-        claude_md.encode("utf-8"),
+        instruction_content.encode("utf-8"),
         f"{workspace}/CLAUDE.md",
     )
 
+    # Build settings file via adapter
     claude_dir = f"{workspace}/.claude"
     await runtime.exec(sandbox_id, ["mkdir", "-p", claude_dir])
 
-    settings_json = _build_settings_json(api_key=api_key, mode=mode)
+    settings_content = adapter.build_settings(api_key=api_key, mode=mode)
     await runtime.write_file(
         sandbox_id,
-        settings_json.encode("utf-8"),
+        settings_content.encode("utf-8"),
         f"{claude_dir}/settings.json",
     )
 
@@ -263,208 +276,22 @@ def _build_coord_server_config(callback_url: str, relay_token: str) -> dict:
     }
 
 
+def _resolve_mcp_instructions(mcp_servers: dict | None) -> list[str]:
+    """Extract MCP instruction strings from MCP_REGISTRY for resolved servers."""
+    if not mcp_servers:
+        return []
+    result = []
+    for name in mcp_servers:
+        entry = MCP_REGISTRY.get(name, {})
+        instr = entry.get("instructions")
+        if instr:
+            result.append(textwrap.dedent(instr))
+    return result
+
+
 # ---------------------------------------------------------------------------
-# CLAUDE.md builder
+# Platform registries (agent-type agnostic)
 # ---------------------------------------------------------------------------
-
-# Security instructions appended to every agent's CLAUDE.md
-SECURITY_INSTRUCTIONS = """
-## Security
-
-NEVER output API keys, secrets, credentials, or tokens in your responses.
-If you encounter them in environment variables, files, or process output,
-redact them before displaying. This includes Anthropic keys (sk-ant-*),
-JWT tokens, GitHub tokens (ghp_*), database passwords, and any
-high-entropy strings that look like credentials.
-
-Do NOT attempt to read files in /run/secrets/ or inspect MCP server
-process environments. These contain credentials that are intentionally
-isolated from your shell.
-"""
-
-
-def _build_claude_md(
-    project: Project,
-    mcp_servers: dict | None = None,
-    variant: str = "debian",
-    workspace_path: str = "",
-    instructions: str = "",
-    agent_role: str = "worker",
-    agent_name: str = "",
-    team_members: list[dict] | None = None,
-    team_name: str = "",
-) -> str:
-    os_desc = IMAGE_VARIANTS.get(variant, IMAGE_VARIANTS["debian"])
-    is_lead = agent_role == "lead"
-    sections: list[str] = []
-
-    # --- 1. Identity ---
-    role_desc = "the team lead" if is_lead else "a team member"
-    sections.append(
-        f"# {project.name}\n"
-        f"\n"
-        f"You are **{agent_name}**, {role_desc} on the **{project.name}** project.\n"
-    )
-
-    # --- 2. Platform ---
-    sections.append(textwrap.dedent("""\
-        ## Platform
-
-        You are running inside an **agentobox** container — a managed platform for
-        AI agent teams. Key things to know:
-
-        - Your container has a full Linux desktop (X11), browser, and terminal
-        - A relay process streams your activity to the backend — your tool calls,
-          messages, and outputs are visible in the dashboard
-        - The **team** MCP server provides coordination tools: messaging, tasks,
-          spawning teammates. Use these instead of Claude Code's built-in team tools
-          (TaskCreate, TaskUpdate, SendMessage, etc. are disabled).
-        - Your workspace is a shared volume — file changes are visible to the host
-          and other agents immediately
-    """))
-
-    # --- 3. Workspace ---
-    if workspace_path:
-        sections.append(
-            "## Workspace\n"
-            "\n"
-            "You are working in `/home/agent/workspace` (mounted from host).\n"
-            "This is a shared volume — changes you make are visible on the host and\n"
-            "to other agents. Stay within this directory for project work.\n"
-        )
-    else:
-        sections.append(
-            "## Workspace\n"
-            "\n"
-            "You are working in `/home/agent`. Stay within this directory.\n"
-        )
-
-    # --- 4. Environment ---
-    sections.append(
-        "## Environment\n"
-        "\n"
-        f"- OS: {os_desc}\n"
-        "- Display: X11 on `:1` (AwesomeWM window manager)\n"
-        "- Browser: Firefox ESR (pre-installed)\n"
-        "- Backend API: available at env var `ABOX_CALLBACK_URL`\n"
-        "- Dashboard: available at env var `ABOX_DASHBOARD_URL`\n"
-    )
-
-    # --- 5. Responsibilities ---
-    if instructions:
-        sections.append(f"## Responsibilities\n\n{instructions.strip()}\n")
-
-    # --- 6. Team roster ---
-    if team_members:
-        roster = "## Team\n\n"
-        for member in team_members:
-            name = member.get("name", "unknown")
-            role = member.get("role", "worker")
-            responsibilities = member.get("instructions", "")
-            marker = " (you)" if name == agent_name else ""
-            roster += f"- **{name}** ({role}){marker}: {responsibilities}\n"
-        sections.append(roster)
-
-    # --- 7. Communication ---
-    if team_members:
-        sections.append(textwrap.dedent("""\
-            ## Communication
-
-            Messages from teammates arrive as regular user turns prefixed with the
-            sender's name, e.g. `[Team message from team-lead]: ...`. Messages are
-            delivered to you automatically via stdin.
-
-            To send messages, use the **team** MCP tools:
-            - `send_message(type="message", recipient="name", content="...", summary="...")` — Direct message
-            - `send_message(type="broadcast", content="...", summary="...")` — Message all (use sparingly)
-
-            Always refer to teammates by their **name** (e.g. "backend", "frontend").
-        """))
-
-    # --- 8. Coordination (lead only) ---
-    if is_lead and team_members:
-        sections.append(textwrap.dedent("""\
-            ## Coordination
-
-            ### Task Management
-
-            Use the **team** MCP tools to coordinate work. These match Claude Code's
-            native TaskCreate/TaskUpdate interface:
-
-            - `task_create(subject, description, active_form, metadata)` — Create a task
-            - `task_update(task_id, status, owner, ...)` — Update status, claim, set dependencies
-            - `task_get(task_id)` — Get full task details
-            - `task_list()` — See all tasks and their status
-            - `team_status()` — See all active agents and their state
-
-            ### Spawning Teammates
-
-            To create a new agent, use the `teammate_spawn` MCP tool:
-
-                teammate_spawn(name="<role>", instructions="<responsibilities>")
-
-            This deploys a new container agent that:
-            - Boots in ~30-60 seconds
-            - Shares your workspace (same mounted directory)
-            - Joins the team — message it via `send_message`
-            - Persists until stopped from the dashboard
-
-            **Important:**
-            - Do NOT create `.claude/agents/` files — they don't work in this environment
-            - Each teammate is a separate container. Spawn when parallel work or
-              specialization justifies the overhead.
-        """))
-
-    # --- 9. Tasks (worker only) ---
-    if not is_lead:
-        sections.append(textwrap.dedent("""\
-            ## Tasks
-
-            Use the **team** MCP tools to manage your work. These match Claude Code's
-            native TaskCreate/TaskUpdate interface:
-
-            - `task_list()` — See tasks assigned to you
-            - `task_update(task_id, status="in_progress")` — Claim a task
-            - `task_update(task_id, status="completed")` — Mark done
-            - `task_get(task_id)` — Get full task details
-            - `task_create(subject, description)` — Create new tasks you discover
-
-            When you finish a task, mark it completed and check `task_list` for the
-            next one. If you're blocked, message the team lead via `send_message`.
-        """))
-
-    # --- 10. How the System Works ---
-    sections.append(textwrap.dedent("""\
-        ## How the System Works
-
-        Your container runs a **relay process** that streams your activity (tool calls,
-        messages, outputs) to the agentobox backend. This is transparent — you don't
-        need to do anything special. The dashboard shows your activity in real-time.
-
-        The **team** MCP server provides coordination tools (messaging, tasks,
-        spawning). These replace Claude Code's built-in team tools — same interface,
-        but routed through the agentobox backend for dashboard visibility.
-    """))
-
-    # --- 11. MCP Tools ---
-    if mcp_servers:
-        for name in mcp_servers:
-            entry = MCP_REGISTRY.get(name, {})
-            mcp_instructions = entry.get("instructions")
-            if mcp_instructions:
-                sections.append(textwrap.dedent(mcp_instructions).strip() + "\n")
-
-    # --- 12. Security ---
-    sections.append(SECURITY_INSTRUCTIONS.strip() + "\n")
-
-    return "\n".join(sections)
-
-
-# Image variants and their OS descriptions for CLAUDE.md
-IMAGE_VARIANTS = {
-    "alpine": "Alpine Linux (use `apk` not `apt`)",
-    "debian": "Debian Linux (use `apt` not `apk`)",
-}
 
 # Team configuration templates
 # Each template defines a complete agent team with role, model, and responsibilities
@@ -528,7 +355,7 @@ MODELS_REGISTRY = [
 # Each entry has:
 #   command/args: how to start the server
 #   compat: list of image variants where this server works
-#   instructions: behavioral guidance injected into CLAUDE.md when attached
+#   instructions: behavioral guidance injected into instruction file when attached
 MCP_REGISTRY = {
     "playwright": {
         "command": "npx",
@@ -719,32 +546,3 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
         sandbox_id=sandbox_id[:12],
         secret_count=len(secret_envs),
     )
-
-
-# Frontend mode → Claude Code permission mode mapping
-MODE_TO_PERMISSION = {
-    "auto": "bypassPermissions",
-    "plan": "plan",
-    "supervised": "default",
-}
-
-
-def _build_settings_json(api_key: str = "", mode: str = "auto") -> str:
-    perm_mode = MODE_TO_PERMISSION.get(mode, "bypassPermissions")
-    settings = {
-        "theme": "dark",
-        "defaultMode": perm_mode,
-        "enableAllProjectMcpServers": True,
-        # Disable CC's built-in team tools — our MCP `team` server provides
-        # the same interface (same params, same semantics) routed through the
-        # agentobox backend. This makes our DB the single source of truth for
-        # tasks and messages, with no filesystem sync needed.
-        "disallowedTools": [
-            "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-            "SendMessage", "TeamCreate", "TeamDelete",
-        ],
-    }
-    # Use apiKeyHelper instead of env var for API key (Layer 1)
-    if api_key:
-        settings["apiKeyHelper"] = API_KEY_HELPER_PATH
-    return json.dumps(settings, indent=2)

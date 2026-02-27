@@ -315,7 +315,8 @@ class AgentMutation:
     async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:
         from agents.models import Agent, AgentStatus
         from agents.runtimes import get_runtime
-        from agents.services.provision import _build_claude_md
+        from agents.adapters import get_adapter
+        from agents.services.provision import _resolve_mcp_instructions
 
         agent = await authorize_agent(info, input.agent_id)
         agent.instructions = input.instructions
@@ -339,9 +340,10 @@ class AgentMutation:
 
                 team_name = agent.project.name.lower().replace(" ", "-")
                 runtime = get_runtime(agent.runtime)
-                claude_md = _build_claude_md(
-                    agent.project,
-                    mcp_servers=agent.mcp_servers or None,
+                adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
+                claude_md = adapter.build_instructions(
+                    project_name=agent.project.name,
+                    mcp_instructions=_resolve_mcp_instructions(agent.mcp_servers or None),
                     workspace_path=agent.workspace_path,
                     instructions=input.instructions,
                     agent_role=agent.role,

@@ -67,3 +67,30 @@ class AgentAdapter(Protocol):
         Returns a dict with keys (tool_use_id, title, plan) or None.
         """
         ...
+
+    def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:
+        """Build agent-type-specific settings file content.
+
+        Returns serialized content (e.g. JSON for Claude Code's settings.json).
+        """
+        ...
+
+    def build_instructions(
+        self,
+        *,
+        project_name: str,
+        agent_name: str,
+        agent_role: str = "worker",
+        workspace_path: str = "",
+        instructions: str = "",
+        team_members: list[dict] | None = None,
+        team_name: str = "",
+        mcp_instructions: list[str] | None = None,
+        variant: str = "debian",
+    ) -> str:
+        """Build agent-type-specific instruction file content.
+
+        Returns formatted text (e.g. Markdown for Claude Code's CLAUDE.md).
+        Adapters own the format — provision.py just writes the output to disk.
+        """
+        ...

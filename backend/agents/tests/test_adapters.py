@@ -43,6 +43,9 @@ class TestRegistry:
             def turns(self, snapshot): return 0
             def is_permission_request(self, event): return None
             def is_plan_proposal(self, event): return None
+            def build_settings(self, *, api_key="", mode="auto"): return "{}"
+            def build_instructions(self, *, project_name="", agent_name="",
+                                   agent_role="worker", **kw): return ""
 
         register_adapter("fake-agent", FakeAdapter())
         adapter = get_adapter("fake-agent")
@@ -430,3 +433,160 @@ class TestRealEventParity:
         assert required.issubset(init.keys()), (
             f"Missing system/init keys: {required - init.keys()}"
         )
+
+
+# ── Provisioning config builders ──
+
+
+class TestBuildSettings:
+    """Verify ClaudeCodeAdapter.build_settings produces correct settings.json."""
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def test_default_settings(self, adapter):
+        import json
+        result = json.loads(adapter.build_settings())
+        assert result["theme"] == "dark"
+        assert result["defaultMode"] == "bypassPermissions"
+        assert result["enableAllProjectMcpServers"] is True
+        assert "disallowedTools" in result
+        assert "TaskCreate" in result["disallowedTools"]
+        assert "SendMessage" in result["disallowedTools"]
+
+    def test_api_key_adds_helper(self, adapter):
+        import json
+        result = json.loads(adapter.build_settings(api_key="sk-ant-test-key"))
+        assert "apiKeyHelper" in result
+        assert result["apiKeyHelper"].endswith(".sh")
+
+    def test_no_api_key_no_helper(self, adapter):
+        import json
+        result = json.loads(adapter.build_settings())
+        assert "apiKeyHelper" not in result
+
+    def test_mode_mapping(self, adapter):
+        import json
+        auto = json.loads(adapter.build_settings(mode="auto"))
+        assert auto["defaultMode"] == "bypassPermissions"
+
+        plan = json.loads(adapter.build_settings(mode="plan"))
+        assert plan["defaultMode"] == "plan"
+
+        supervised = json.loads(adapter.build_settings(mode="supervised"))
+        assert supervised["defaultMode"] == "default"
+
+    def test_disallowed_tools_complete(self, adapter):
+        """All CC built-in team tools must be disabled."""
+        import json
+        result = json.loads(adapter.build_settings())
+        expected = {
+            "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+            "SendMessage", "TeamCreate", "TeamDelete",
+        }
+        assert expected == set(result["disallowedTools"])
+
+
+class TestBuildInstructions:
+    """Verify ClaudeCodeAdapter.build_instructions produces correct CLAUDE.md."""
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def test_identity_section(self, adapter):
+        md = adapter.build_instructions(
+            project_name="TestProject",
+            agent_name="backend",
+        )
+        assert "# TestProject" in md
+        assert "**backend**" in md
+        assert "a team member" in md
+
+    def test_lead_role(self, adapter):
+        md = adapter.build_instructions(
+            project_name="TestProject",
+            agent_name="team-lead",
+            agent_role="lead",
+            team_members=[
+                {"name": "team-lead", "role": "lead", "instructions": "Lead"},
+                {"name": "worker", "role": "worker", "instructions": "Code"},
+            ],
+        )
+        assert "the team lead" in md
+        assert "## Coordination" in md
+        assert "teammate_spawn" in md
+
+    def test_worker_gets_tasks_not_coordination(self, adapter):
+        md = adapter.build_instructions(
+            project_name="TestProject",
+            agent_name="worker",
+            agent_role="worker",
+        )
+        assert "## Tasks" in md
+        assert "## Coordination" not in md
+
+    def test_workspace_section_with_path(self, adapter):
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="a",
+            workspace_path="/some/path",
+        )
+        assert "/home/agent/workspace" in md
+        assert "shared volume" in md
+
+    def test_workspace_section_without_path(self, adapter):
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="a",
+        )
+        assert "/home/agent" in md
+
+    def test_team_roster(self, adapter):
+        members = [
+            {"name": "lead", "role": "lead", "instructions": "Coordinate"},
+            {"name": "dev", "role": "worker", "instructions": "Code things"},
+        ]
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="dev",
+            team_members=members,
+        )
+        assert "**lead** (lead)" in md
+        assert "**dev** (worker) (you)" in md
+        assert "## Communication" in md
+
+    def test_responsibilities_section(self, adapter):
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="a",
+            instructions="Build the login page",
+        )
+        assert "## Responsibilities" in md
+        assert "Build the login page" in md
+
+    def test_mcp_instructions_injected(self, adapter):
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="a",
+            mcp_instructions=["## Playwright\n\nUse browser tools."],
+        )
+        assert "## Playwright" in md
+        assert "Use browser tools." in md
+
+    def test_security_section_always_present(self, adapter):
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="a",
+        )
+        assert "## Security" in md
+        assert "NEVER output API keys" in md
+
+    def test_platform_section_mentions_team_mcp(self, adapter):
+        md = adapter.build_instructions(
+            project_name="P",
+            agent_name="a",
+        )
+        assert "**team** MCP server" in md
+        assert "TaskCreate, TaskUpdate, SendMessage" in md

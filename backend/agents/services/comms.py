@@ -242,7 +242,7 @@ async def broadcast_message(
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     """Change an agent's mode. Accepts frontend vocabulary (auto/plan/supervised)."""
-    from agents.services.provision import MODE_TO_PERMISSION
+    from agents.adapters.claude_code import MODE_TO_PERMISSION
 
     # Accept both frontend and Claude Code vocabulary
     FRONTEND_MODES = {"auto", "plan", "supervised"}

@@ -310,6 +310,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         await provision_workspace(
             runtime, sandbox.id, project,
+            agent_type=getattr(agent, "agent_type", "claude-code"),
             api_key=api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
