@@ -17,7 +17,6 @@ import {
 import { cn, formatCost } from "@/lib/utils"
 import type { AttentionLevel } from "@/lib/types"
 import { LIFECYCLE_CONFIG, ATTENTION_CONFIG } from "@/lib/config"
-import { ALL_TAGS } from "@/lib/data/mock"
 import { useBreakpoint } from "@/hooks/use-breakpoint"
 import { useWindowWidth } from "@/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
@@ -52,6 +51,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const { data } = useAgents()
   const agents = data?.agents ?? []
   const acknowledgeAgent = useAcknowledgeAgent()
+  const allTags = useMemo(() => Array.from(new Set(agents.flatMap(a => a.tags ?? []))).sort(), [agents])
 
   // ── Layout metrics (derived from breakpoint + store) ───────────────
   const screenWidth = useWindowWidth()
@@ -381,7 +381,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
                   >
                     All tags
                   </button>
-                  {ALL_TAGS.map(tag => (
+                  {allTags.map(tag => (
                     <button
                       key={tag}
                       type="button"

@@ -4,7 +4,6 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import type { RecipientEntry } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
-import { ALL_TAGS } from "@/lib/data/mock"
 
 /* ================================================================== */
 /*  RECIPIENT SEARCH — dark search box for @agent / #tag               */
@@ -32,7 +31,7 @@ export function RecipientSearchBox({
   const recipients = useTeamStore(s => s.recipients)
   const addRecipient = useTeamStore(s => s.addRecipient)
   const removeRecipient = useTeamStore(s => s.removeRecipient)
-  const allTags = ALL_TAGS
+  const allTags = useMemo(() => Array.from(new Set(agents.flatMap(a => a.tags ?? []))).sort(), [agents])
   const [inputValue, setInputValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
   const measureRef = useRef<HTMLSpanElement>(null)

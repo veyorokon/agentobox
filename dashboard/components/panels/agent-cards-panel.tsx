@@ -12,7 +12,6 @@ import {
   ChevronsDownUp,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { ALL_TAGS } from "@/lib/data/mock"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -30,6 +29,7 @@ export function AgentCardsPanel() {
   // ── Apollo (agents) ────────────────────────────────────────────────
   const { data } = useAgents()
   const agents = data?.agents ?? []
+  const allTags = useMemo(() => Array.from(new Set(agents.flatMap(a => a.tags ?? []))).sort(), [agents])
 
   // Ephemeral state
   const [showTagDropdown, setShowTagDropdown] = useState(false)
@@ -114,7 +114,7 @@ export function AgentCardsPanel() {
               >
                 All tags
               </button>
-              {ALL_TAGS.map(tag => (
+              {allTags.map(tag => (
                 <button
                   key={tag}
                   type="button"
