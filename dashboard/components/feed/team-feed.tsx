@@ -16,6 +16,7 @@ import { TeamErrorAlert } from "@/components/feed/error-alert"
 import { QuestionCard, MultiQuestionCard } from "@/components/feed/question-card"
 import { PlanCard } from "@/components/feed/plan-card"
 import { PermissionCard } from "@/components/feed/permission-card"
+import { TaskFeedCard } from "@/components/feed/task-card"
 
 export function TeamFeed() {
   // ── Store subscriptions ───────────────────────────────────────────
@@ -98,6 +99,8 @@ export function TeamFeed() {
               return <PermissionCard key={item.id} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} feedItemId={item.id} />
             case "multi-question":
               return <MultiQuestionCard key={item.id} agent={item.agent} questions={item.questions} />
+            case "task":
+              return <TaskFeedCard key={item.id} agent={item.agent} text={item.text} from={item.from} to={item.to} target={item.target} />
             case "agent-message":
               return <AgentToAgentMessage key={item.id} from={item.from} to={item.to} text={item.text} onClickAgent={handleClickAgent} />
             default:

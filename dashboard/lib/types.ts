@@ -63,6 +63,7 @@ export type TeamFeedItem =
   | { id: string; type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
   | { id: string; type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
   | { id: string; type: "agent-message"; from: string; to: string; text: string }
+  | { id: string; type: "task"; agent: string; text: string; from: string; to: string; target?: string }
 
 export type PendingItem = Extract<TeamFeedItem, { type: "permission" }> | Extract<TeamFeedItem, { type: "plan" }>
 

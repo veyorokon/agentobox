@@ -35,3 +35,48 @@ export const RESOLVE_PLAN = gql`
     }
   }
 `
+
+export const KILL_AGENT = gql`
+  mutation KillAgent($agentId: ID!) {
+    killAgent(agentId: $agentId)
+  }
+`
+
+export const REMOVE_AGENT = gql`
+  mutation RemoveAgent($agentId: ID!) {
+    removeAgent(agentId: $agentId)
+  }
+`
+
+export const HARD_RESTART_AGENT = gql`
+  mutation HardRestartAgent($agentId: ID!) {
+    hardRestartAgent(agentId: $agentId) {
+      id
+      lifecycleStatus
+    }
+  }
+`
+
+export const RESTART_AGENT = gql`
+  mutation RestartAgent($agentId: ID!) {
+    restartAgent(agentId: $agentId)
+  }
+`
+
+export const UPDATE_AGENT_INSTRUCTIONS = gql`
+  mutation UpdateAgentInstructions($input: UpdateAgentInstructionsInput!) {
+    updateAgentInstructions(input: $input) {
+      id
+      instructions
+    }
+  }
+`
+
+export const UPDATE_AGENT_CONFIG = gql`
+  mutation UpdateAgentConfig($input: UpdateAgentConfigInput!) {
+    updateAgentConfig(input: $input) {
+      id
+      model
+    }
+  }
+`

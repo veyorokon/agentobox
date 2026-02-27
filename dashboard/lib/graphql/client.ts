@@ -1,23 +1,35 @@
-import { ApolloClient, ApolloLink, InMemoryCache, Observable } from "@apollo/client"
-import { seedDevData } from "@/lib/graphql/seed"
+import {
+  ApolloClient,
+  ApolloLink,
+  HttpLink,
+  InMemoryCache,
+  Observable,
+  split,
+} from "@apollo/client"
+import { GraphQLWsLink } from "@apollo/client/link/subscriptions"
+import { getMainDefinition } from "@apollo/client/utilities"
+import { createClient } from "graphql-ws"
 import { createLogger } from "@/lib/logger"
 
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
 /*                                                                     */
-/*  Dev phase: cache-only, no network. Data seeded via writeQuery.     */
-/*  Production: add HTTP + WS links, switch to cache-and-network.      */
-/*                                                                     */
-/*  Migration checklist:                                               */
-/*  1. Add HttpLink pointing to backend /graphql                       */
-/*  2. Add GraphQLWsLink for subscriptions                             */
-/*  3. Add split() to route subscriptions to WS, rest to HTTP          */
-/*  4. Add auth headers (Bearer token) to both links                   */
-/*  5. Change fetchPolicy from 'cache-only' to 'cache-and-network'    */
-/*  6. Remove seedDevData() call + import                             */
+/*  Mock mode (NEXT_PUBLIC_MOCK=1): cache-only, seed data.             */
+/*  Real mode: HTTP + WS links, cache-and-network, subscriptions.      */
 /* ================================================================== */
 
 const log = createLogger("apollo")
+
+export const IS_MOCK = process.env.NEXT_PUBLIC_MOCK === "1"
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? API_URL.replace(/^http/, "ws")
+
+/* ── Auth header helper ───────────────────────────────────────────── */
+
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null
+  return localStorage.getItem("auth_token")
+}
 
 /* ── Logging link ────────────────────────────────────────────────── */
 
@@ -37,10 +49,48 @@ const loggingLink = new ApolloLink((operation, forward) => {
   })
 })
 
+/* ── Network links (real mode only) ──────────────────────────────── */
+
+function buildNetworkLink(): ApolloLink {
+  const httpLink = new HttpLink({
+    uri: API_URL,
+    headers: {
+      get authorization() {
+        const token = getAuthToken()
+        return token ? `Bearer ${token}` : ""
+      },
+    },
+  })
+
+  const wsLink = new GraphQLWsLink(
+    createClient({
+      url: WS_URL,
+      connectionParams: () => {
+        const token = getAuthToken()
+        return token ? { authorization: `Bearer ${token}` } : {}
+      },
+    }),
+  )
+
+  // Route subscriptions → WS, everything else → HTTP
+  return split(
+    ({ query }) => {
+      const def = getMainDefinition(query)
+      return def.kind === "OperationDefinition" && def.operation === "subscription"
+    },
+    wsLink,
+    httpLink,
+  )
+}
+
 /* ── Client ──────────────────────────────────────────────────────── */
 
+const link = IS_MOCK
+  ? loggingLink
+  : ApolloLink.from([loggingLink, buildNetworkLink()])
+
 export const client = new ApolloClient({
-  link: loggingLink,
+  link,
   cache: new InMemoryCache({
     typePolicies: {
       Agent: { keyFields: ["id"] },
@@ -51,7 +101,8 @@ export const client = new ApolloClient({
   }),
 })
 
-// Seed at module scope — before any component renders.
-// writeQuery during React render triggers Apollo cache broadcasts
-// which cause useQuery hooks to re-render, creating infinite loops.
-seedDevData(client)
+// Seed mock data only in mock mode
+if (IS_MOCK) {
+  const { seedDevData } = require("@/lib/graphql/seed")
+  seedDevData(client)
+}

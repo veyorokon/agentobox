@@ -57,6 +57,7 @@ export function getFeedItemAgent(item: TeamFeedItem): string | null {
     case "plan":
     case "permission":
     case "multi-question":
+    case "task":
       return item.agent
     case "agent-message":
       return item.from

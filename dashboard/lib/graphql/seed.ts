@@ -34,9 +34,9 @@ function normalizeFeedItem(item: TeamFeedItem) {
     cost: item.type === "summary" ? item.cost : null,
     turns: item.type === "summary" ? item.turns : null,
     duration: item.type === "summary" ? item.duration : null,
-    from: item.type === "agent-message" ? item.from : (item.type === "status" ? item.from : null),
-    to: item.type === "agent-message" ? item.to : (item.type === "status" ? item.to : null),
-    target: item.type === "user" ? (item.target ?? null) : null,
+    from: "from" in item ? item.from : null,
+    to: "to" in item ? item.to : null,
+    target: "target" in item ? (item.target ?? null) : null,
     question: item.type === "question" ? item.question : null,
     options: item.type === "question" ? item.options : null,
     questions: item.type === "multi-question"

@@ -258,6 +258,8 @@ export const TEAM_FEED: TeamFeedItem[] = [
   { id: "feed-2", type: "user", text: "Fix the JWT validation bug in auth.ts. The token expiry check is off by one hour.", target: "backend" },
   { id: "feed-3", type: "user", text: "Run the test suite after backend finishes and report results.", target: "qa" },
   { id: "feed-4", type: "user", text: "Update the API docs once the fix lands.", target: "docs" },
+  { id: "feed-t1", type: "task", agent: "team-lead", text: "Fix JWT validation bug in auth.ts", from: "", to: "pending" },
+  { id: "feed-t2", type: "task", agent: "backend", text: "Fix JWT validation bug in auth.ts", from: "pending", to: "in_progress", target: "backend" },
   { id: "feed-5", type: "status", agent: "backend", from: "idle", to: "running" },
   { id: "feed-6", type: "status", agent: "qa", from: "idle", to: "waiting" },
   { id: "feed-7", type: "status", agent: "docs", from: "idle", to: "running" },
@@ -405,6 +407,7 @@ If integration tests fail or health checks don't pass within 120s, automatically
     duration: "1m 30s",
   },
   { id: "feed-26", type: "status", agent: "docs", from: "running", to: "stopped" },
+  { id: "feed-t3", type: "task", agent: "qa", text: "Run smoke tests on auth endpoints", from: "in_progress", to: "completed", target: "qa" },
   { id: "feed-27", type: "system", text: "3 agents completed · 18 turns · $0.23 total" },
 ]
 

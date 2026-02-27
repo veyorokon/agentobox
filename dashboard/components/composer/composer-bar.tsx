@@ -1,9 +1,11 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useRef } from "react"
+import { useParams } from "next/navigation"
 import { ArrowUp, Paperclip, X } from "lucide-react"
 import type { RecipientEntry } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
+import { useSendMessage } from "@/lib/graphql/hooks/use-feed"
 import {
   RecipientSearchBox,
   recipientLabel,
@@ -21,10 +23,36 @@ export function ComposerBar() {
   const addRecipient = useTeamStore(s => s.addRecipient)
   const removeRecipient = useTeamStore(s => s.removeRecipient)
   const [suggestions, setSuggestions] = useState<RecipientEntry[]>([])
+  const [text, setText] = useState("")
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const params = useParams()
+  const projectId = params?.projectId as string | undefined
+  const sendMessage = useSendMessage()
 
   const handleSuggestionsChange = useCallback((s: RecipientEntry[]) => {
     setSuggestions(s)
   }, [])
+
+  const canSend = text.trim().length > 0
+
+  const handleSend = useCallback(() => {
+    const msg = text.trim()
+    if (!msg || !projectId) return
+
+    sendMessage(projectId, msg, recipients)
+    setText("")
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
+    }
+  }, [text, projectId, recipients, sendMessage])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }, [handleSend])
 
   const placeholderName = recipients.length === 0
     ? "your team"
@@ -39,14 +67,16 @@ export function ComposerBar() {
   // Dont show committed pills when just the default @team-lead
   const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
 
-  const hasPillContent = (!isDefault && recipients.length > 0) || suggestions.length > 0
-
   return (
     <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
       {/* Composer box */}
       <div className="relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60 focus-within:bg-surface-raised focus-within:border-border-default">
         {/* Text input — auto-grows up to ~6 rows then scrolls */}
         <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
           onInput={(e) => {
@@ -78,7 +108,13 @@ export function ComposerBar() {
             <span className="text-xs text-muted font-mono tabular-nums">$0.30</span>
             <button
               type="button"
-              className="flex items-center justify-center h-8 w-8 rounded-full bg-surface-sunken text-muted cursor-not-allowed"
+              onClick={handleSend}
+              disabled={!canSend}
+              className={`flex items-center justify-center h-8 w-8 rounded-full transition-colors ${
+                canSend
+                  ? "bg-accent text-white cursor-pointer hover:bg-accent/90"
+                  : "bg-surface-sunken text-muted cursor-not-allowed"
+              }`}
             >
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
             </button>

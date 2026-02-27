@@ -186,6 +186,22 @@ async def task_create(
         status="pending",
     )
 
+    # Feed item: task created
+    from agents.services.feed import create_feed_item
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        agent_record=agent,
+        type="task",
+        agent_name=agent.name,
+        text=subject[:200],
+        from_value="",
+        to_value="pending",
+    )
+
+    # Push updated todoProgress to subscribers
+    from agents.services.broadcast import broadcast_agent_update
+    await broadcast_agent_update(agent)
+
     log.info("mcp_task_create", agent_name=agent.name, subject=subject[:80])
     return {"task_id": task.task_id, "subject": task.subject}
 
@@ -226,6 +242,7 @@ async def task_update(
         raise ToolError(f"Task '{task_id}' not found")
 
     update_fields = []
+    old_status = task.status
 
     if status:
         if status == "deleted":
@@ -273,6 +290,25 @@ async def task_update(
 
     if update_fields:
         await task.asave(update_fields=update_fields)
+
+    # Feed item on status changes only
+    if "status" in update_fields and task.status != old_status:
+        from agents.services.feed import create_feed_item
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            agent_record=agent,
+            type="task",
+            agent_name=agent.name,
+            text=task.subject[:200],
+            from_value=old_status,
+            to_value=task.status,
+            target=task.owner or "",
+        )
+
+    # Push updated todoProgress to subscribers
+    if "status" in update_fields or "owner" in update_fields:
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(agent)
 
     log.info("mcp_task_update", agent_name=agent.name, task_id=task_id, fields=update_fields)
     return {"ok": True, "task_id": task_id}

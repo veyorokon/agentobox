@@ -9,6 +9,13 @@ import {
 } from "lucide-react"
 import type { Agent } from "@/lib/types"
 import { TagInput } from "@/components/agent/tag-input"
+import {
+  useRestartAgent,
+  useHardRestartAgent,
+  useRemoveAgent,
+  useUpdateAgentInstructions,
+  useUpdateAgentConfig,
+} from "@/lib/graphql/hooks/use-agents"
 
 export interface AgentSettingsPanelProps {
   agent: Agent
@@ -19,6 +26,35 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
   const [instructions, setInstructions] = useState(agent.instructions)
   const [agentTags, setAgentTags] = useState(agent.tags)
   const dirty = model !== agent.model || instructions !== agent.instructions || JSON.stringify(agentTags) !== JSON.stringify(agent.tags)
+
+  const restart = useRestartAgent()
+  const hardRestart = useHardRestartAgent()
+  const remove = useRemoveAgent()
+  const updateInstructions = useUpdateAgentInstructions()
+  const updateConfig = useUpdateAgentConfig()
+
+  const handleRestart = () => {
+    if (dirty) {
+      // Save changes then hard restart
+      if (instructions !== agent.instructions) {
+        updateInstructions(agent.id, instructions)
+      }
+      if (model !== agent.model) {
+        updateConfig(agent.id, { model })
+      }
+      hardRestart(agent.id)
+    } else {
+      restart(agent.id)
+    }
+  }
+
+  const handleRedeploy = () => {
+    hardRestart(agent.id)
+  }
+
+  const handleRemove = () => {
+    remove(agent.id)
+  }
 
   return (
     <div className="px-3 py-3 space-y-3">
@@ -99,6 +135,7 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
       <div className="flex items-center gap-2 pt-1">
         <button
           type="button"
+          onClick={handleRestart}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-accent/30 text-[11px] text-accent font-medium hover:bg-accent/10 transition-colors"
         >
           <RotateCcw className="h-3 w-3" />
@@ -106,6 +143,7 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
         </button>
         <button
           type="button"
+          onClick={handleRedeploy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border-default text-[11px] text-secondary font-medium hover:bg-surface-sunken/40 transition-colors"
         >
           <RefreshCw className="h-3 w-3" />
@@ -114,6 +152,7 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
         <span className="flex-1" />
         <button
           type="button"
+          onClick={handleRemove}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-danger/30 text-[11px] text-danger font-medium hover:bg-danger-subtle/40 transition-colors"
         >
           <Trash2 className="h-3 w-3" />

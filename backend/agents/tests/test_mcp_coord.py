@@ -104,6 +104,8 @@ _P_AGENT_STATUS = "agents.models.AgentStatus"
 _P_AGENT_TASK = "agents.models.AgentTask"
 _P_DELIVER = "agents.services.interagent._deliver_to_stdin"
 _P_BROADCAST = "agents.services.interagent._handle_broadcast"
+_P_FEED_CREATE = "agents.services.feed.create_feed_item"
+_P_AGENT_BROADCAST = "agents.services.broadcast.broadcast_agent_update"
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +220,8 @@ class TestTaskCreate:
         with (
             _patch_auth(agent),
             patch(_P_AGENT_TASK) as MockTask,
+            patch(_P_FEED_CREATE, new_callable=AsyncMock),
+            patch(_P_AGENT_BROADCAST, new_callable=AsyncMock),
         ):
             MockTask.objects.acreate = AsyncMock(return_value=mock_task)
 
@@ -237,6 +241,8 @@ class TestTaskCreate:
         with (
             _patch_auth(agent),
             patch(_P_AGENT_TASK) as MockTask,
+            patch(_P_FEED_CREATE, new_callable=AsyncMock),
+            patch(_P_AGENT_BROADCAST, new_callable=AsyncMock),
         ):
             MockTask.objects.acreate = AsyncMock(return_value=mock_task)
 
@@ -279,6 +285,8 @@ class TestTaskUpdate:
         with (
             _patch_auth(agent),
             patch(_P_AGENT_TASK) as MockTask,
+            patch(_P_FEED_CREATE, new_callable=AsyncMock),
+            patch(_P_AGENT_BROADCAST, new_callable=AsyncMock),
         ):
             MockTask.objects.aget = AsyncMock(return_value=mock_task)
             MockTask.DoesNotExist = Exception
@@ -298,6 +306,7 @@ class TestTaskUpdate:
         with (
             _patch_auth(agent),
             patch(_P_AGENT_TASK) as MockTask,
+            patch(_P_AGENT_BROADCAST, new_callable=AsyncMock),
         ):
             MockTask.objects.aget = AsyncMock(return_value=mock_task)
             MockTask.DoesNotExist = Exception
