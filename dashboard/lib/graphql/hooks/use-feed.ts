@@ -79,11 +79,11 @@ function useResolveFeedItem(
 
   return useCallback(
     (feedItemId: string, verdict: string) => {
-      log("cache.modify", { typename: "FeedItem", id: feedItemId, field: statusField, value: verdict })
+      log("cache.modify", { typename: "TeamFeedItemType", id: feedItemId, field: statusField, value: verdict })
 
       // 1. Optimistic cache update on the FeedItem
       client.cache.modify({
-        id: client.cache.identify({ __typename: "FeedItem", id: feedItemId }),
+        id: client.cache.identify({ __typename: "TeamFeedItemType", id: feedItemId }),
         fields: {
           [statusField]: () => verdict,
         },
@@ -96,13 +96,13 @@ function useResolveFeedItem(
       if (item && item.type === itemType) {
         const agentName = item.agent
         const newAttention = deriveAttentionFromFeed(feed, agentName)
-        log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: `${itemType} resolved` })
+        log("cache.modify", { typename: "AgentType", agent: agentName, field: "attentionLevel", value: newAttention, reason: `${itemType} resolved` })
 
         const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS, variables: queryVars })
         const agent = agentsData?.agents.find(a => a.name === agentName)
         if (agent) {
           client.cache.modify({
-            id: client.cache.identify({ __typename: "Agent", id: agent.id }),
+            id: client.cache.identify({ __typename: "AgentType", id: agent.id }),
             fields: { attentionLevel: () => newAttention },
           })
         }

@@ -85,10 +85,10 @@ export const client = new ApolloClient({
   link: ApolloLink.from([loggingLink, networkLink]),
   cache: new InMemoryCache({
     typePolicies: {
-      Agent: { keyFields: ["id"] },
-      FeedItem: { keyFields: ["id"] },
-      FeedQuestion: { keyFields: false },
-      TodoProgress: { keyFields: false },
+      AgentType: { keyFields: ["id"] },
+      TeamFeedItemType: { keyFields: ["id"] },
+      FeedQuestionType: { keyFields: false },
+      TodoProgressType: { keyFields: false },
     },
   }),
 })

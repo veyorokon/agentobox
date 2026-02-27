@@ -46,7 +46,7 @@ export function useAgents() {
 
       // Merge into cache — Apollo auto-merges by keyFields (id)
       client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agent.id }),
+        id: client.cache.identify({ __typename: "AgentType", id: agent.id }),
         fields: {
           lifecycleStatus: () => agent.lifecycleStatus,
           attentionLevel: () => agent.attentionLevel,
@@ -72,11 +72,11 @@ export function useSetAgentMode() {
 
   return useCallback(
     (agentId: string, mode: Agent["mode"]) => {
-      log("cache.modify", { typename: "Agent", id: agentId, field: "mode", value: mode })
+      log("cache.modify", { typename: "AgentType", id: agentId, field: "mode", value: mode })
 
       // Optimistic cache update
       client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agentId }),
+        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
         fields: {
           mode: () => mode,
         },
@@ -93,9 +93,9 @@ export function useAcknowledgeAgent() {
 
   return useCallback(
     (agentId: string) => {
-      log("cache.modify", { typename: "Agent", id: agentId, field: "attentionLevel", action: "acknowledge" })
+      log("cache.modify", { typename: "AgentType", id: agentId, field: "attentionLevel", action: "acknowledge" })
       client.cache.modify({
-        id: client.cache.identify({ __typename: "Agent", id: agentId }),
+        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
         fields: {
           attentionLevel: (current: AttentionLevel) =>
             current === "review" ? "none" : current,
