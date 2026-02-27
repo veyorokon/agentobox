@@ -28,7 +28,7 @@ import { AgentCardRow } from "@/components/agent/card-row"
 import { ResizeHandle } from "@/components/layout/resize-handle"
 import { SkillsPanel } from "@/components/panels/skills-panel"
 
-export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void }) {
+export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets: () => void; onCreateAgent?: () => void }) {
   const bp = useBreakpoint()
 
   // ── Sidebar store ──────────────────────────────────────────────────
@@ -412,6 +412,7 @@ export function AgentLeftPanel({ onOpenSecrets }: { onOpenSecrets: () => void })
             </button>
             <button
               type="button"
+              onClick={onCreateAgent}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 text-muted hover:text-secondary hover:bg-surface-raised/50"
             >
               <Plus className="h-3 w-3" />

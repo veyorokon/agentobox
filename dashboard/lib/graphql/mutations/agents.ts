@@ -80,3 +80,32 @@ export const UPDATE_AGENT_CONFIG = gql`
     }
   }
 `
+
+export const CREATE_AGENT = gql`
+  mutation CreateAgent($input: CreateAgentInput!) {
+    createAgent(input: $input) {
+      id
+      name
+      lifecycleStatus
+      attentionLevel
+      mode
+      task
+      cost
+      duration
+      model
+      turns
+      phase
+      liveAction
+      lastOutput
+      tags
+      instructions
+      mcpServers
+      runtime
+      workspacePath
+      todoProgress {
+        done
+        total
+      }
+    }
+  }
+`

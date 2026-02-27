@@ -2,27 +2,28 @@
 
 import { useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
+import { useMutation } from "@apollo/client"
+import { LOGIN } from "@/lib/graphql/mutations/auth"
 
 export default function LoginPage() {
   const router = useRouter()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [login, { loading }] = useMutation(LOGIN)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    setLoading(true)
     setError(null)
     try {
-      // TODO: wire to real auth when API is ready
-      if (username === "vahid" && password === "test1234") {
-        router.replace("/")
-      } else {
-        setError("Invalid credentials")
-      }
-    } finally {
-      setLoading(false)
+      const { data } = await login({
+        variables: { input: { username, password } },
+      })
+      localStorage.setItem("auth_token", data.login.token)
+      router.replace("/")
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Login failed"
+      setError(message)
     }
   }
 

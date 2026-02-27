@@ -16,6 +16,7 @@ import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useFeed } from "@/lib/graphql/hooks/use-feed"
 
 import { SecretsModal } from "@/components/panels/secrets-modal"
+import { CreateAgentModal } from "@/components/agent/create-agent-modal"
 import { AgentLeftPanel } from "@/components/panels/left-panel"
 import { AgentCardsPanel } from "@/components/panels/agent-cards-panel"
 import { SkillsPanel } from "@/components/panels/skills-panel"
@@ -48,6 +49,7 @@ export default function ProjectPage() {
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
+  const [createAgentOpen, setCreateAgentOpen] = useState(false)
 
   // ── Derived (TabBar badge) ──────────────────────────────────────
   const pendingCount = useMemo(() => getAllPendingItems(feedItems).length, [feedItems])
@@ -73,8 +75,16 @@ export default function ProjectPage() {
         onClose={() => setSecretsOpen(false)}
       />
 
+      <CreateAgentModal
+        open={createAgentOpen}
+        onClose={() => setCreateAgentOpen(false)}
+      />
+
       {showLeftPanel && (
-        <AgentLeftPanel onOpenSecrets={() => setSecretsOpen(true)} />
+        <AgentLeftPanel
+          onOpenSecrets={() => setSecretsOpen(true)}
+          onCreateAgent={() => setCreateAgentOpen(true)}
+        />
       )}
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
