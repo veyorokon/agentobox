@@ -18,24 +18,31 @@ import type { Agent, AttentionLevel } from "@/lib/types"
 /* ================================================================== */
 /*  AGENT HOOKS                                                         */
 /*                                                                      */
-/*  cache-and-network + subscription for live updates.                  */
+/*  Query hook (useAgents) is safe to call from multiple components —   */
+/*  Apollo deduplicates queries. Subscription hook must be called ONCE  */
+/*  at the page level to avoid duplicate WebSocket subscriptions.       */
 /* ================================================================== */
 
 const log = createLogger("apollo")
 
 type AgentsData = { agents: Agent[] }
 
+/** Query-only hook — call from any component. */
 export function useAgents() {
   const { projectId } = useParams<{ projectId: string }>()
   const queryVars = useMemo(() => ({ projectId }), [projectId])
 
-  const result = useQuery<AgentsData>(GET_AGENTS, {
+  return useQuery<AgentsData>(GET_AGENTS, {
     fetchPolicy: "cache-and-network",
     variables: queryVars,
     skip: !projectId,
   })
+}
 
-  // Real-time agent updates via subscription
+/** Subscription hook — call ONCE from the page-level component. */
+export function useAgentsSubscription() {
+  const { projectId } = useParams<{ projectId: string }>()
+
   useSubscription(ON_AGENT_CHANGED, {
     variables: { projectId: projectId ?? "" },
     skip: !projectId,
@@ -62,8 +69,6 @@ export function useAgents() {
       })
     },
   })
-
-  return result
 }
 
 export function useSetAgentMode() {
@@ -118,10 +123,14 @@ export function useKillAgent() {
 }
 
 export function useRemoveAgent() {
+  const client = useApolloClient()
   const [mutate] = useMutation(REMOVE_AGENT)
   return useCallback((agentId: string) => {
+    log("cache.evict", { typename: "AgentType", id: agentId })
+    client.cache.evict({ id: client.cache.identify({ __typename: "AgentType", id: agentId }) })
+    client.cache.gc()
     mutate({ variables: { agentId } })
-  }, [mutate])
+  }, [client, mutate])
 }
 
 export function useHardRestartAgent() {

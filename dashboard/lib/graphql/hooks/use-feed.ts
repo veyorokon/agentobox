@@ -23,18 +23,24 @@ type FeedData = { feed: TeamFeedItem[] }
 
 /* ── Query + subscription ────────────────────────────────────────── */
 
+/** Query-only hook — call from any component. */
 export function useFeed() {
   const { projectId } = useParams<{ projectId: string }>()
-  const client = useApolloClient()
   const queryVars = useMemo(() => ({ projectId }), [projectId])
 
-  const result = useQuery<FeedData>(GET_FEED, {
+  return useQuery<FeedData>(GET_FEED, {
     fetchPolicy: "cache-and-network",
     variables: queryVars,
     skip: !projectId,
   })
+}
 
-  // Real-time feed updates via subscription
+/** Subscription hook — call ONCE from the page-level component. */
+export function useFeedSubscription() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const client = useApolloClient()
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
+
   useSubscription(ON_FEED_ITEM_CHANGED, {
     variables: { projectId: projectId ?? "" },
     skip: !projectId,
@@ -57,8 +63,6 @@ export function useFeed() {
       }
     },
   })
-
-  return result
 }
 
 /* ── Resolve hooks (permission + plan) ───────────────────────────── */
