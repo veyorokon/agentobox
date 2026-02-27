@@ -16,7 +16,7 @@ check:
 	cd backend && uv run python manage.py check
 
 schema:
-	cd backend && uv run python -c "from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
+	docker compose exec -T backend uv run python -c "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); import django; django.setup(); from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
 
 VARIANT ?= debian
 PLATFORM ?= linux/amd64

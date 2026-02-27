@@ -21,7 +21,7 @@ services:
       SERVICES: s3,secretsmanager
       DEFAULT_REGION: us-east-1
     ports:
-      - "4566:4566"
+      - "4599:4566"
     volumes:
       - localstack-data:/var/lib/localstack
       - ./localstack-init:/etc/localstack/init/ready.d:ro
@@ -44,7 +44,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
       AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
       ABOX_CALLBACK_URL: http://backend:8000
-      ABOX_DASHBOARD_URL: http://dashboard:3000
+      ABOX_DASHBOARD_URL: http://dashboard:5050
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
@@ -79,7 +79,7 @@ services:
       NEXT_PUBLIC_GRAPHQL_HTTP: http://localhost:8000/graphql
       NEXT_PUBLIC_GRAPHQL_WS: ws://localhost:8000/graphql
     ports:
-      - "3000:3000"
+      - "5050:5050"
     depends_on:
       - backend
     volumes:
