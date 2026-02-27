@@ -6,6 +6,7 @@ TeamFeedItem = curated dashboard feed items created when feed-worthy events occu
 """
 
 import structlog
+from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
 from agents.models import Agent, TeamFeedItem
@@ -15,12 +16,31 @@ log = structlog.get_logger("agents.feed")
 ATTENTION_PRIORITY = {"none": 0, "review": 1, "plan": 2, "permission": 3}
 
 
-async def create_feed_item(project_id, source_event=None, agent_record=None, **kwargs) -> TeamFeedItem:
-    """Create a TeamFeedItem and broadcast it to subscribers."""
-    item = await TeamFeedItem.objects.acreate(
+def _create_feed_item_sync(project_id, source_event, agent_record, **kwargs) -> TeamFeedItem:
+    """Sync helper: create a TeamFeedItem row.
+
+    Used via sync_to_async(thread_sensitive=False) so it gets its own thread
+    instead of the request's CurrentThreadExecutor — which may already be
+    torn down if this runs inside an asyncio.create_task() that outlives
+    the original HTTP request (e.g. _provision_agent).
+    """
+    return TeamFeedItem.objects.create(
         project_id=project_id,
         source_event=source_event,
         agent_record=agent_record,
+        **kwargs,
+    )
+
+
+_create_feed_item_db = sync_to_async(_create_feed_item_sync, thread_sensitive=False)
+
+
+async def create_feed_item(project_id, source_event=None, agent_record=None, **kwargs) -> TeamFeedItem:
+    """Create a TeamFeedItem and broadcast it to subscribers."""
+    item = await _create_feed_item_db(
+        project_id,
+        source_event,
+        agent_record,
         **kwargs,
     )
     await broadcast_feed_item(item)

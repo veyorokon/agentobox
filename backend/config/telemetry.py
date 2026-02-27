@@ -38,9 +38,9 @@ _VERSION = _get_version()
 
 
 def add_service_metadata(logger, method_name, event_dict):
-    """Add service metadata to every log entry (flat root-level keys)."""
-    event_dict["service_name"] = "agentobox-backend"
-    event_dict["service_version"] = _VERSION
+    """Add service metadata to every log entry (OTel semantic convention keys)."""
+    event_dict["service.name"] = "agentobox-backend"
+    event_dict["service.version"] = _VERSION
     event_dict["environment"] = os.getenv("ENVIRONMENT", "dev")
     return event_dict
 
@@ -69,14 +69,15 @@ def extract_otel_exception_fields(logger, method_name, event_dict):
     return event_dict
 
 
-def copy_exception_to_stacktrace(logger, method_name, event_dict):
+def move_exception_to_stacktrace(logger, method_name, event_dict):
     """
-    Copy formatted exception string to exception.stacktrace field.
+    Move formatted exception string to exception.stacktrace field.
 
     Runs AFTER format_exc_info to complete the OTel exception fields.
-    Keeps the "exception" field for backward compatibility.
+    Removes the redundant "exception" key — exception.type/message/stacktrace
+    are the only exception fields in the output.
     """
-    exception_str = event_dict.get("exception")
+    exception_str = event_dict.pop("exception", None)
     if exception_str and isinstance(exception_str, str):
         # Only add stacktrace if we already have type/message (from extract_otel_exception_fields)
         if "exception.type" in event_dict and "exception.message" in event_dict:
@@ -173,6 +174,71 @@ def orjson_renderer(_, __, event_dict):
     return orjson.dumps(event_dict).decode("utf-8")
 
 
+# ANSI color codes for pretty dev formatter
+_LEVEL_COLORS = {
+    "debug": "\033[2m",       # dim
+    "info": "\033[36m",       # cyan
+    "warning": "\033[33m",    # yellow
+    "error": "\033[31m",      # red
+    "critical": "\033[1;31m", # bold red
+}
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+_BOLD = "\033[1m"
+
+
+def pretty_renderer(_, __, event_dict):
+    """Human-readable colored log output for local dev.
+
+    Gated on LOG_FORMAT=pretty. Shows level, event, and key fields
+    on a single line with ANSI colors. Exceptions render below.
+    """
+    level = event_dict.pop("level", "info")
+    event = event_dict.pop("event", "")
+    timestamp = event_dict.pop("timestamp", "")
+
+    # Remove noise fields for dev output
+    for k in ("service.name", "service.version", "environment", "logger"):
+        event_dict.pop(k, None)
+
+    color = _LEVEL_COLORS.get(level, "")
+    level_str = f"{color}{level.upper():>8}{_RESET}"
+
+    # Format timestamp to just time portion
+    time_str = ""
+    if timestamp:
+        t = timestamp.split("T")[-1].split(".")[0] if "T" in timestamp else timestamp
+        time_str = f"{_DIM}{t}{_RESET} "
+
+    # Build context string from remaining fields
+    exc_stacktrace = event_dict.pop("exception.stacktrace", None)
+    exc_type = event_dict.pop("exception.type", None)
+    exc_message = event_dict.pop("exception.message", None)
+
+    ctx_parts = []
+    for k, v in event_dict.items():
+        if isinstance(v, str) and len(v) > 80:
+            v = v[:80] + "..."
+        ctx_parts.append(f"{_DIM}{k}={_RESET}{v}")
+    ctx_str = f" {' '.join(ctx_parts)}" if ctx_parts else ""
+
+    line = f"{time_str}{level_str} {_BOLD}{event}{_RESET}{ctx_str}"
+
+    # Append exception below if present
+    if exc_type and exc_message:
+        line += f"\n  {color}{exc_type}: {exc_message}{_RESET}"
+    if exc_stacktrace:
+        # Show last few frames, indented
+        frames = exc_stacktrace.strip().split("\n")
+        # Keep header + last 6 lines (3 frames)
+        if len(frames) > 7:
+            frames = [frames[0], "  ..."] + frames[-6:]
+        for frame in frames:
+            line += f"\n  {_DIM}{frame}{_RESET}"
+
+    return line
+
+
 def get_log_queue():
     """Get the log queue for QueueHandler setup."""
     return _log_queue
@@ -210,13 +276,16 @@ def start_queue_listener():
     # Create console handler with ProcessorFormatter
     console_handler = logging.StreamHandler()
 
-    # Apply ProcessorFormatter to render queued event_dicts as JSON.
+    # LOG_FORMAT=pretty for colored dev output, default JSON for production
+    renderer = pretty_renderer if os.getenv("LOG_FORMAT") == "pretty" else orjson_renderer
+
+    # Apply ProcessorFormatter to render queued event_dicts.
     # structlog logs arrive pre-processed (via wrap_for_formatter).
     # Foreign (stdlib) logs need the pre_chain to add structlog fields.
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            orjson_renderer,
+            renderer,
         ],
         foreign_pre_chain=[
             structlog.contextvars.merge_contextvars,
@@ -229,7 +298,7 @@ def start_queue_listener():
             structlog.processors.StackInfoRenderer(),
             extract_otel_exception_fields,
             structlog.processors.format_exc_info,
-            copy_exception_to_stacktrace,
+            move_exception_to_stacktrace,
         ],
     )
     console_handler.setFormatter(formatter)
@@ -342,7 +411,7 @@ def setup():
             structlog.processors.StackInfoRenderer(),
             extract_otel_exception_fields,  # Extract type/message from exc_info
             structlog.processors.format_exc_info,  # Format exc_info to exception string
-            copy_exception_to_stacktrace,  # Copy exception string to exception.stacktrace
+            move_exception_to_stacktrace,  # Copy exception string to exception.stacktrace
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
