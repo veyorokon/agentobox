@@ -77,6 +77,9 @@ export const UPDATE_AGENT_CONFIG = gql`
     updateAgentConfig(input: $input) {
       id
       model
+      role
+      tags
+      mcpServers
     }
   }
 `

@@ -6,7 +6,7 @@
 docker compose up -d          # postgres, redis, backend, dashboard
 ```
 
-- Dashboard: http://localhost:5050
+- Dashboard: http://localhost:5051
 - Backend GraphQL: http://localhost:8000/graphql
 
 ### Test credentials
@@ -56,7 +56,7 @@ Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before
 
 Key implications:
 - **Networking**: Don't design agent networking around reaching "the dashboard." In prod, agents have no reason to talk to agentobox's dashboard. Agent-to-agent and agent-to-backend are the real requirements.
-- **QA testing**: In dogfooding, QA tests `localhost:5050` (our dashboard). In prod, QA tests the customer's app — which could need any stack. QA either runs unit tests (no infra needed), the customer provides a preview URL, or the platform provides ephemeral environments (future PaaS-like feature).
+- **QA testing**: In dogfooding, QA tests `localhost:5051` (our dashboard). In prod, QA tests the customer's app — which could need any stack. QA either runs unit tests (no infra needed), the customer provides a preview URL, or the platform provides ephemeral environments (future PaaS-like feature).
 - **Workspace mounts**: In dogfooding, agents mount this repo. In prod, agents mount the customer's project (Docker bind mount or Modal named volume).
 - **Don't let dogfooding specifics leak into the product.** If a feature only makes sense because we're building agentobox with agentobox, it doesn't belong in the platform.
 
