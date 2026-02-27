@@ -1,10 +1,10 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useParams } from "next/navigation"
+import { useQuery, useMutation } from "@apollo/client"
 import {
   KeyRound,
-  Eye,
-  EyeOff,
   Trash2,
   X,
   Check,
@@ -12,9 +12,27 @@ import {
   RefreshCw,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Secret } from "@/lib/types"
-import { SECRETS } from "@/lib/data/mock"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
+import { GET_PROJECT_SECRETS } from "@/lib/graphql/queries/secrets"
+import { SET_SECRET, DELETE_SECRET } from "@/lib/graphql/mutations/secrets"
+
+type SecretEntry = {
+  id: string
+  key: string
+  createdAt: string
+  updatedAt: string
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "just now"
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
 
 export function SecretsModal({
   open,
@@ -23,16 +41,30 @@ export function SecretsModal({
   open: boolean
   onClose: () => void
 }) {
-  const { data } = useAgents()
-  const agents = data?.agents ?? []
-  const [secrets, setSecrets] = useState<Secret[]>(SECRETS)
-  const [revealed, setRevealed] = useState<Set<string>>(new Set())
+  const { projectId } = useParams<{ projectId: string }>()
+  const { data: agentsData } = useAgents()
+  const agents = agentsData?.agents ?? []
+
+  const { data } = useQuery<{ projectSecrets: SecretEntry[] }>(GET_PROJECT_SECRETS, {
+    variables: { projectId },
+    skip: !open || !projectId,
+    fetchPolicy: "cache-and-network",
+  })
+  const secrets = data?.projectSecrets ?? []
+
+  const [setSecret] = useMutation(SET_SECRET, {
+    refetchQueries: [{ query: GET_PROJECT_SECRETS, variables: { projectId } }],
+  })
+  const [deleteSecret] = useMutation(DELETE_SECRET, {
+    refetchQueries: [{ query: GET_PROJECT_SECRETS, variables: { projectId } }],
+  })
+
   const [newKey, setNewKey] = useState("")
   const [newValue, setNewValue] = useState("")
   const [dirty, setDirty] = useState(false)
   const [restarted, setRestarted] = useState(false)
 
-  // Document-level Escape handler — works regardless of focus
+  // Escape handler
   useEffect(() => {
     if (!open) return
     function handleKeyDown(e: KeyboardEvent) {
@@ -42,45 +74,41 @@ export function SecretsModal({
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [open, onClose])
 
+  // Reset state on close
+  useEffect(() => {
+    if (!open) {
+      setDirty(false)
+      setRestarted(false)
+      setNewKey("")
+      setNewValue("")
+    }
+  }, [open])
+
   if (!open) return null
 
   const activeAgents = agents.filter((a) => a.lifecycleStatus === "running" || a.lifecycleStatus === "idle" || a.lifecycleStatus === "deploying")
   const needsRestart = dirty && !restarted
 
-  const toggleReveal = (id: string) => {
-    setRevealed((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  const handleAdd = async () => {
+    if (!newKey.trim() || !newValue.trim() || !projectId) return
+    await setSecret({
+      variables: { input: { projectId, key: newKey.trim().toUpperCase(), value: newValue.trim() } },
     })
-  }
-
-  const handleAdd = () => {
-    if (!newKey.trim() || !newValue.trim()) return
-    setSecrets((prev) => [
-      ...prev,
-      { id: `s${Date.now()}`, key: newKey.trim().toUpperCase(), value: newValue.trim(), addedAgo: "just now" },
-    ])
     setNewKey("")
     setNewValue("")
     setDirty(true)
     setRestarted(false)
   }
 
-  const handleDelete = (id: string) => {
-    setSecrets((prev) => prev.filter((s) => s.id !== id))
+  const handleDelete = async (key: string) => {
+    if (!projectId) return
+    await deleteSecret({ variables: { projectId, key } })
     setDirty(true)
     setRestarted(false)
   }
 
   const handleRestart = () => {
     setRestarted(true)
-  }
-
-  const maskValue = (val: string) => {
-    if (val.length <= 8) return "\u25CF".repeat(val.length)
-    return val.slice(0, 4) + "\u25CF".repeat(Math.min(val.length - 8, 12)) + val.slice(-4)
   }
 
   return (
@@ -135,38 +163,23 @@ export function SecretsModal({
                   key={secret.id}
                   className="group flex items-center gap-3 py-2.5 border-b border-border-subtle last:border-b-0"
                 >
-                  {/* Key name */}
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-mono font-medium text-default block truncate">
                       {secret.key}
                     </span>
                     <span className="text-[10px] text-muted/50 font-mono">
-                      {secret.addedAgo}
+                      {timeAgo(secret.updatedAt)}
                     </span>
                   </div>
 
-                  {/* Value (masked or revealed) */}
-                  <span className="text-[11px] font-mono text-muted truncate max-w-[160px]">
-                    {revealed.has(secret.id) ? secret.value : maskValue(secret.value)}
+                  <span className="text-[11px] font-mono text-muted/40">
+                    {"●".repeat(12)}
                   </span>
 
-                  {/* Actions */}
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                     <button
                       type="button"
-                      onClick={() => toggleReveal(secret.id)}
-                      className="p-1 rounded text-muted hover:text-secondary transition-colors"
-                      title={revealed.has(secret.id) ? "Hide" : "Reveal"}
-                    >
-                      {revealed.has(secret.id) ? (
-                        <EyeOff className="h-3 w-3" />
-                      ) : (
-                        <Eye className="h-3 w-3" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(secret.id)}
+                      onClick={() => handleDelete(secret.key)}
                       className="p-1 rounded text-muted hover:text-danger transition-colors"
                       title="Delete"
                     >
