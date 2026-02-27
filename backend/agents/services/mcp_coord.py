@@ -111,6 +111,13 @@ async def send_message(
         shutdown_msg = f"Shutdown requested by {agent.name}: {content}"
         await _deliver_to_stdin(agent.name, target, shutdown_msg, summary=summary)
 
+        # Broadcast status change so dashboard sees the agent stop
+        try:
+            from agents.services.broadcast import broadcast_agent_update
+            await broadcast_agent_update(target)
+        except Exception:
+            log.exception("shutdown_broadcast_failed", target=recipient)
+
         log.info("mcp_shutdown_request", sender=agent.name, target=recipient)
         return {"ok": True, "recipient": recipient}
 

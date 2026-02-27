@@ -66,6 +66,7 @@ class UpdateAgentConfigInput:
     agent_id: ID
     model: str | None = None
     role: str | None = None
+    tags: list[str] | None = None
     mcp_registry_names: list[str] | None = None
     mcp_custom_servers: JSON | None = None
 
@@ -401,6 +402,8 @@ class AgentMutation:
             agent.model = input.model
         if input.role is not None:
             agent.role = input.role
+        if input.tags is not None:
+            agent.tags = input.tags
 
         # Merge registry MCPs + custom MCPs
         mcp_servers = agent.mcp_servers or {}
@@ -420,9 +423,10 @@ class AgentMutation:
         config["mcp_servers"] = agent.mcp_servers
         agent.config_snapshot = config
 
-        await agent.asave(update_fields=[
-            "model", "role", "mcp_servers", "config_snapshot",
-        ])
+        update_fields = ["model", "role", "mcp_servers", "config_snapshot"]
+        if input.tags is not None:
+            update_fields.append("tags")
+        await agent.asave(update_fields=update_fields)
 
         return await hard_restart_agent(str(agent.id))
 

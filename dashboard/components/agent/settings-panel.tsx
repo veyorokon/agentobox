@@ -33,18 +33,28 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
   const updateInstructions = useUpdateAgentInstructions()
   const updateConfig = useUpdateAgentConfig()
 
-  const handleRestart = () => {
-    if (dirty) {
-      // Save changes then hard restart
-      if (instructions !== agent.instructions) {
-        updateInstructions(agent.id, instructions)
-      }
-      if (model !== agent.model) {
-        updateConfig(agent.id, { model })
-      }
-      hardRestart(agent.id)
-    } else {
+  const handleRestart = async () => {
+    if (!dirty) {
       restart(agent.id)
+      return
+    }
+
+    // Save instructions first (doesn't restart)
+    if (instructions !== agent.instructions) {
+      updateInstructions(agent.id, instructions)
+    }
+
+    // Collect config changes — updateConfig internally hard-restarts
+    const configDelta: { model?: string; tags?: string[] } = {}
+    if (model !== agent.model) configDelta.model = model
+    if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
+
+    if (Object.keys(configDelta).length > 0) {
+      // updateConfig triggers hard restart on the backend
+      updateConfig(agent.id, configDelta)
+    } else {
+      // Only instructions changed — need explicit restart
+      hardRestart(agent.id)
     }
   }
 
