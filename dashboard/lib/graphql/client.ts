@@ -14,13 +14,11 @@ import { createLogger } from "@/lib/logger"
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
 /*                                                                     */
-/*  Mock mode (NEXT_PUBLIC_MOCK=1): cache-only, seed data.             */
-/*  Real mode: HTTP + WS links, cache-and-network, subscriptions.      */
+/*  HTTP + WS links, cache-and-network, subscriptions.                 */
 /* ================================================================== */
 
 const log = createLogger("apollo")
 
-export const IS_MOCK = process.env.NEXT_PUBLIC_MOCK === "1"
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? API_URL.replace(/^http/, "ws")
 
@@ -49,48 +47,42 @@ const loggingLink = new ApolloLink((operation, forward) => {
   })
 })
 
-/* ── Network links (real mode only) ──────────────────────────────── */
+/* ── Network links ───────────────────────────────────────────────── */
 
-function buildNetworkLink(): ApolloLink {
-  const httpLink = new HttpLink({
-    uri: API_URL,
-    headers: {
-      get authorization() {
-        const token = getAuthToken()
-        return token ? `Bearer ${token}` : ""
-      },
+const httpLink = new HttpLink({
+  uri: API_URL,
+  headers: {
+    get authorization() {
+      const token = getAuthToken()
+      return token ? `Bearer ${token}` : ""
     },
-  })
+  },
+})
 
-  const wsLink = new GraphQLWsLink(
-    createClient({
-      url: WS_URL,
-      connectionParams: () => {
-        const token = getAuthToken()
-        return token ? { authorization: `Bearer ${token}` } : {}
-      },
-    }),
-  )
-
-  // Route subscriptions → WS, everything else → HTTP
-  return split(
-    ({ query }) => {
-      const def = getMainDefinition(query)
-      return def.kind === "OperationDefinition" && def.operation === "subscription"
+const wsLink = new GraphQLWsLink(
+  createClient({
+    url: WS_URL,
+    connectionParams: () => {
+      const token = getAuthToken()
+      return token ? { authorization: `Bearer ${token}` } : {}
     },
-    wsLink,
-    httpLink,
-  )
-}
+  }),
+)
+
+// Route subscriptions → WS, everything else → HTTP
+const networkLink = split(
+  ({ query }) => {
+    const def = getMainDefinition(query)
+    return def.kind === "OperationDefinition" && def.operation === "subscription"
+  },
+  wsLink,
+  httpLink,
+)
 
 /* ── Client ──────────────────────────────────────────────────────── */
 
-const link = IS_MOCK
-  ? loggingLink
-  : ApolloLink.from([loggingLink, buildNetworkLink()])
-
 export const client = new ApolloClient({
-  link,
+  link: ApolloLink.from([loggingLink, networkLink]),
   cache: new InMemoryCache({
     typePolicies: {
       Agent: { keyFields: ["id"] },
@@ -100,9 +92,3 @@ export const client = new ApolloClient({
     },
   }),
 })
-
-// Seed mock data only in mock mode
-if (IS_MOCK) {
-  const { seedDevData } = require("@/lib/graphql/seed")
-  seedDevData(client)
-}

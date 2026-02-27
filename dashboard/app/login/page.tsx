@@ -2,28 +2,42 @@
 
 import { useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { useMutation } from "@apollo/client"
-import { LOGIN } from "@/lib/graphql/mutations/auth"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
 
 export default function LoginPage() {
   const router = useRouter()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
-  const [login, { loading }] = useMutation(LOGIN)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    setLoading(true)
     setError(null)
     try {
-      const { data } = await login({
-        variables: { input: { username, password } },
+      // Direct fetch — login is pre-auth so it bypasses Apollo's mock/auth layer
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `mutation Login($input: LoginInput!) { login(input: $input) { user { id username } token } }`,
+          variables: { input: { username, password } },
+        }),
       })
-      localStorage.setItem("auth_token", data.login.token)
+      const json = await res.json()
+      if (json.errors?.length) {
+        setError(json.errors[0].message)
+        return
+      }
+      localStorage.setItem("auth_token", json.data.login.token)
       router.replace("/")
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed"
       setError(message)
+    } finally {
+      setLoading(false)
     }
   }
 

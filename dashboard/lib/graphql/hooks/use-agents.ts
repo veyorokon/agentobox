@@ -12,15 +12,13 @@ import {
   UPDATE_AGENT_INSTRUCTIONS,
   UPDATE_AGENT_CONFIG,
 } from "@/lib/graphql/mutations/agents"
-import { IS_MOCK } from "@/lib/graphql/client"
 import { createLogger } from "@/lib/logger"
 import type { Agent, AttentionLevel } from "@/lib/types"
 
 /* ================================================================== */
 /*  AGENT HOOKS                                                         */
 /*                                                                      */
-/*  Mock mode: cache-only, no network.                                  */
-/*  Real mode: cache-and-network + subscription for live updates.       */
+/*  cache-and-network + subscription for live updates.                  */
 /* ================================================================== */
 
 const log = createLogger("apollo")
@@ -29,20 +27,18 @@ type AgentsData = { agents: Agent[] }
 
 export function useAgents() {
   const { projectId } = useParams<{ projectId: string }>()
-  const queryVars = useMemo(() => (IS_MOCK ? undefined : { projectId }), [projectId])
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
 
   const result = useQuery<AgentsData>(GET_AGENTS, {
-    fetchPolicy: IS_MOCK ? "cache-only" : "cache-and-network",
+    fetchPolicy: "cache-and-network",
     variables: queryVars,
-    // In mock mode: cache-only reads from seed (no variables needed).
-    // In real mode: skip until projectId is available from the route.
-    skip: !IS_MOCK && !projectId,
+    skip: !projectId,
   })
 
   // Real-time agent updates via subscription
   useSubscription(ON_AGENT_CHANGED, {
     variables: { projectId: projectId ?? "" },
-    skip: IS_MOCK || !projectId,
+    skip: !projectId,
     onData: ({ client, data: subData }) => {
       const agent = subData.data?.agentChanged
       if (!agent) return
@@ -86,10 +82,7 @@ export function useSetAgentMode() {
         },
       })
 
-      // Fire mutation to backend (noop in mock mode)
-      if (!IS_MOCK) {
-        mutate({ variables: { agentId, mode } })
-      }
+      mutate({ variables: { agentId, mode } })
     },
     [client, mutate],
   )
@@ -120,41 +113,41 @@ export function useAcknowledgeAgent() {
 export function useKillAgent() {
   const [mutate] = useMutation(KILL_AGENT)
   return useCallback((agentId: string) => {
-    if (!IS_MOCK) mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } })
   }, [mutate])
 }
 
 export function useRemoveAgent() {
   const [mutate] = useMutation(REMOVE_AGENT)
   return useCallback((agentId: string) => {
-    if (!IS_MOCK) mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } })
   }, [mutate])
 }
 
 export function useHardRestartAgent() {
   const [mutate] = useMutation(HARD_RESTART_AGENT)
   return useCallback((agentId: string) => {
-    if (!IS_MOCK) mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } })
   }, [mutate])
 }
 
 export function useRestartAgent() {
   const [mutate] = useMutation(RESTART_AGENT)
   return useCallback((agentId: string) => {
-    if (!IS_MOCK) mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } })
   }, [mutate])
 }
 
 export function useUpdateAgentInstructions() {
   const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS)
   return useCallback((agentId: string, instructions: string) => {
-    if (!IS_MOCK) mutate({ variables: { input: { agentId, instructions } } })
+    mutate({ variables: { input: { agentId, instructions } } })
   }, [mutate])
 }
 
 export function useUpdateAgentConfig() {
   const [mutate] = useMutation(UPDATE_AGENT_CONFIG)
   return useCallback((agentId: string, config: { model?: string; role?: string; tags?: string[]; mcpRegistryNames?: string[] }) => {
-    if (!IS_MOCK) mutate({ variables: { input: { agentId, ...config } } })
+    mutate({ variables: { input: { agentId, ...config } } })
   }, [mutate])
 }

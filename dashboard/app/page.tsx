@@ -37,7 +37,7 @@ export default function HomePage() {
 
   const { data, loading } = useQuery<{ projects: Project[] }>(GET_PROJECTS, {
     skip: !authed,
-    fetchPolicy: "cache-and-network",
+    fetchPolicy: "network-only",
   })
 
   const [createProject, { loading: creating }] = useMutation(CREATE_PROJECT, {

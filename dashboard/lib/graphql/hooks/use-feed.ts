@@ -8,59 +8,42 @@ import { ON_FEED_ITEM_CHANGED } from "@/lib/graphql/subscriptions/feed"
 import { RESOLVE_PERMISSION, RESOLVE_PLAN } from "@/lib/graphql/mutations/agents"
 import { SEND_MESSAGE } from "@/lib/graphql/mutations/feed"
 import { deriveAttentionFromFeed } from "@/lib/attention"
-import { IS_MOCK } from "@/lib/graphql/client"
 import { createLogger } from "@/lib/logger"
 import type { Agent, TeamFeedItem, RecipientEntry } from "@/lib/types"
 
 /* ================================================================== */
 /*  FEED HOOKS                                                          */
 /*                                                                      */
-/*  Mock mode: cache-only, no network.                                  */
-/*  Real mode: cache-and-network + subscription for live updates.       */
+/*  cache-and-network + subscription for live updates.                  */
 /* ================================================================== */
 
 const log = createLogger("apollo")
 
 type FeedData = { feed: TeamFeedItem[] }
 
-/* ── Shared helpers ──────────────────────────────────────────────── */
-
-/**
- * Stable query variables for feed + agent cache reads/writes.
- * In mock mode: undefined (matches seed data written without variables).
- * In real mode: { projectId } (matches backend query signature).
- */
-function useQueryVars(): { projectId: string } | undefined {
-  const { projectId } = useParams<{ projectId: string }>()
-  return useMemo(
-    () => (IS_MOCK ? undefined : { projectId }),
-    [projectId],
-  )
-}
-
 /* ── Query + subscription ────────────────────────────────────────── */
 
 export function useFeed() {
   const { projectId } = useParams<{ projectId: string }>()
   const client = useApolloClient()
-  const queryVars = useQueryVars()
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
 
   const result = useQuery<FeedData>(GET_FEED, {
-    fetchPolicy: IS_MOCK ? "cache-only" : "cache-and-network",
+    fetchPolicy: "cache-and-network",
     variables: queryVars,
-    skip: !IS_MOCK && !projectId,
+    skip: !projectId,
   })
 
   // Real-time feed updates via subscription
   useSubscription(ON_FEED_ITEM_CHANGED, {
     variables: { projectId: projectId ?? "" },
-    skip: IS_MOCK || !projectId,
+    skip: !projectId,
     onData: ({ data: subData }) => {
       const item = subData.data?.feedItemChanged
       if (!item) return
       log("subscription.feed_item_changed", { id: item.id, type: item.type })
 
-      // Upsert into feed cache (subscription only runs in real mode)
+      // Upsert into feed cache
       const existing = client.readQuery<FeedData>({ query: GET_FEED, variables: queryVars })
       const feed = existing?.feed ?? []
       const idx = feed.findIndex(f => f.id === item.id)
@@ -91,7 +74,8 @@ function useResolveFeedItem(
 ) {
   const client = useApolloClient()
   const [mutate] = useMutation(mutation)
-  const queryVars = useQueryVars()
+  const { projectId } = useParams<{ projectId: string }>()
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
 
   return useCallback(
     (feedItemId: string, verdict: string) => {
@@ -125,9 +109,7 @@ function useResolveFeedItem(
       }
 
       // 3. Fire mutation to backend
-      if (!IS_MOCK) {
-        mutate({ variables: { feedItemId, verdict } })
-      }
+      mutate({ variables: { feedItemId, verdict } })
     },
     [client, mutate, queryVars, statusField, itemType],
   )
@@ -149,10 +131,7 @@ export function useSendMessage() {
 
   return useCallback(
     (text: string, recipients: RecipientEntry[]) => {
-      if (IS_MOCK || !projectId) {
-        log("mock.sendMessage", { projectId, text, recipients })
-        return
-      }
+      if (!projectId) return
 
       const recipientInputs = recipients.map(r => {
         if (r.type === "all") return { type: "all", value: "" }
