@@ -59,7 +59,7 @@ services:
       MEDIA_BUCKET: ${MEDIA_BUCKET:-agentobox-media}
       MEDIA_CDN_URL: ${MEDIA_CDN_URL:-http://localhost:4566/agentobox-media}
       AGENT_ROOTFS_PATH: ${AGENT_ROOTFS_PATH:-}
-      LOG_FORMAT: ${LOG_FORMAT:-pretty}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     ports:
       - "8000:8000"
     depends_on:
