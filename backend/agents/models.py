@@ -262,7 +262,7 @@ class TeamFeedItem(models.Model):
 
     # Discriminator
     type = models.CharField(max_length=30)
-    # system | user | summary | status | error | question | plan | permission | multi-question | agent-message
+    # system | user | summary | status | error | question | plan | permission | multi-question | agent-message | task
 
     # Shared
     agent_name = models.CharField(max_length=100, blank=True, default="")
