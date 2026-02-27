@@ -1,5 +1,6 @@
 import { useQuery, useSubscription, useMutation, useApolloClient } from "@apollo/client"
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
+import { useParams } from "next/navigation"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { ON_AGENT_CHANGED } from "@/lib/graphql/subscriptions/agents"
 import {
@@ -26,9 +27,16 @@ const log = createLogger("apollo")
 
 type AgentsData = { agents: Agent[] }
 
-export function useAgents(projectId?: string) {
+export function useAgents() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const queryVars = useMemo(() => (IS_MOCK ? undefined : { projectId }), [projectId])
+
   const result = useQuery<AgentsData>(GET_AGENTS, {
     fetchPolicy: IS_MOCK ? "cache-only" : "cache-and-network",
+    variables: queryVars,
+    // In mock mode: cache-only reads from seed (no variables needed).
+    // In real mode: skip until projectId is available from the route.
+    skip: !IS_MOCK && !projectId,
   })
 
   // Real-time agent updates via subscription
@@ -146,7 +154,7 @@ export function useUpdateAgentInstructions() {
 
 export function useUpdateAgentConfig() {
   const [mutate] = useMutation(UPDATE_AGENT_CONFIG)
-  return useCallback((agentId: string, config: { model?: string; role?: string; mcpRegistryNames?: string[] }) => {
+  return useCallback((agentId: string, config: { model?: string; role?: string; tags?: string[]; mcpRegistryNames?: string[] }) => {
     if (!IS_MOCK) mutate({ variables: { input: { agentId, ...config } } })
   }, [mutate])
 }

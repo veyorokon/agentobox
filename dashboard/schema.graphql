@@ -1,4 +1,3 @@
-
 type AgentFeedbackType {
   id: UUID!
   rating: Int!
@@ -238,6 +237,7 @@ input UpdateAgentConfigInput {
   agentId: ID!
   model: String = null
   role: String = null
+  tags: [String!] = null
   mcpRegistryNames: [String!] = null
   mcpCustomServers: JSON = null
 }

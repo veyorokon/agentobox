@@ -1,5 +1,7 @@
 import { useQuery, useSubscription, useMutation, useApolloClient } from "@apollo/client"
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
+import { useParams } from "next/navigation"
+import type { DocumentNode } from "graphql"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { ON_FEED_ITEM_CHANGED } from "@/lib/graphql/subscriptions/feed"
@@ -21,11 +23,32 @@ const log = createLogger("apollo")
 
 type FeedData = { feed: TeamFeedItem[] }
 
-export function useFeed(projectId?: string) {
+/* ── Shared helpers ──────────────────────────────────────────────── */
+
+/**
+ * Stable query variables for feed + agent cache reads/writes.
+ * In mock mode: undefined (matches seed data written without variables).
+ * In real mode: { projectId } (matches backend query signature).
+ */
+function useQueryVars(): { projectId: string } | undefined {
+  const { projectId } = useParams<{ projectId: string }>()
+  return useMemo(
+    () => (IS_MOCK ? undefined : { projectId }),
+    [projectId],
+  )
+}
+
+/* ── Query + subscription ────────────────────────────────────────── */
+
+export function useFeed() {
+  const { projectId } = useParams<{ projectId: string }>()
   const client = useApolloClient()
+  const queryVars = useQueryVars()
 
   const result = useQuery<FeedData>(GET_FEED, {
     fetchPolicy: IS_MOCK ? "cache-only" : "cache-and-network",
+    variables: queryVars,
+    skip: !IS_MOCK && !projectId,
   })
 
   // Real-time feed updates via subscription
@@ -37,19 +60,17 @@ export function useFeed(projectId?: string) {
       if (!item) return
       log("subscription.feed_item_changed", { id: item.id, type: item.type })
 
-      // Upsert into feed cache
-      const existing = client.readQuery<FeedData>({ query: GET_FEED })
+      // Upsert into feed cache (subscription only runs in real mode)
+      const existing = client.readQuery<FeedData>({ query: GET_FEED, variables: queryVars })
       const feed = existing?.feed ?? []
       const idx = feed.findIndex(f => f.id === item.id)
 
       if (idx >= 0) {
-        // Update existing item
         const updated = [...feed]
         updated[idx] = item
-        client.writeQuery({ query: GET_FEED, data: { feed: updated } })
+        client.writeQuery({ query: GET_FEED, variables: queryVars, data: { feed: updated } })
       } else {
-        // Append new item
-        client.writeQuery({ query: GET_FEED, data: { feed: [...feed, item] } })
+        client.writeQuery({ query: GET_FEED, variables: queryVars, data: { feed: [...feed, item] } })
       }
     },
   })
@@ -57,32 +78,43 @@ export function useFeed(projectId?: string) {
   return result
 }
 
-export function useResolvePermission() {
+/* ── Resolve hooks (permission + plan) ───────────────────────────── */
+
+/**
+ * Shared logic for resolving actionable feed items (permissions, plans).
+ * Both follow the same flow: optimistic cache update → derive attention → fire mutation.
+ */
+function useResolveFeedItem(
+  mutation: DocumentNode,
+  statusField: "permStatus" | "planStatus",
+  itemType: "permission" | "plan",
+) {
   const client = useApolloClient()
-  const [mutate] = useMutation(RESOLVE_PERMISSION)
+  const [mutate] = useMutation(mutation)
+  const queryVars = useQueryVars()
 
   return useCallback(
-    (feedItemId: string, verdict: "allowed" | "denied") => {
-      log("cache.modify", { typename: "FeedItem", id: feedItemId, field: "permStatus", value: verdict })
+    (feedItemId: string, verdict: string) => {
+      log("cache.modify", { typename: "FeedItem", id: feedItemId, field: statusField, value: verdict })
 
       // 1. Optimistic cache update on the FeedItem
       client.cache.modify({
         id: client.cache.identify({ __typename: "FeedItem", id: feedItemId }),
         fields: {
-          permStatus: () => verdict,
+          [statusField]: () => verdict,
         },
       })
 
       // 2. Derive and update agent attention
-      const feedData = client.readQuery<FeedData>({ query: GET_FEED })
+      const feedData = client.readQuery<FeedData>({ query: GET_FEED, variables: queryVars })
       const feed = feedData?.feed ?? []
       const item = feed.find(fi => fi.id === feedItemId)
-      if (item && item.type === "permission") {
+      if (item && item.type === itemType) {
         const agentName = item.agent
         const newAttention = deriveAttentionFromFeed(feed, agentName)
-        log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: "permission resolved" })
+        log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: `${itemType} resolved` })
 
-        const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS })
+        const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS, variables: queryVars })
         const agent = agentsData?.agents.find(a => a.name === agentName)
         if (agent) {
           client.cache.modify({
@@ -97,60 +129,27 @@ export function useResolvePermission() {
         mutate({ variables: { feedItemId, verdict } })
       }
     },
-    [client, mutate],
+    [client, mutate, queryVars, statusField, itemType],
   )
+}
+
+export function useResolvePermission() {
+  return useResolveFeedItem(RESOLVE_PERMISSION, "permStatus", "permission")
 }
 
 export function useResolvePlan() {
-  const client = useApolloClient()
-  const [mutate] = useMutation(RESOLVE_PLAN)
-
-  return useCallback(
-    (feedItemId: string, verdict: "approved" | "rejected") => {
-      log("cache.modify", { typename: "FeedItem", id: feedItemId, field: "planStatus", value: verdict })
-
-      // 1. Optimistic cache update on the FeedItem
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "FeedItem", id: feedItemId }),
-        fields: {
-          planStatus: () => verdict,
-        },
-      })
-
-      // 2. Derive and update agent attention
-      const feedData = client.readQuery<FeedData>({ query: GET_FEED })
-      const feed = feedData?.feed ?? []
-      const item = feed.find(fi => fi.id === feedItemId)
-      if (item && item.type === "plan") {
-        const agentName = item.agent
-        const newAttention = deriveAttentionFromFeed(feed, agentName)
-        log("cache.modify", { typename: "Agent", agent: agentName, field: "attentionLevel", value: newAttention, reason: "plan resolved" })
-
-        const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS })
-        const agent = agentsData?.agents.find(a => a.name === agentName)
-        if (agent) {
-          client.cache.modify({
-            id: client.cache.identify({ __typename: "Agent", id: agent.id }),
-            fields: { attentionLevel: () => newAttention },
-          })
-        }
-      }
-
-      // 3. Fire mutation to backend
-      if (!IS_MOCK) {
-        mutate({ variables: { feedItemId, verdict } })
-      }
-    },
-    [client, mutate],
-  )
+  return useResolveFeedItem(RESOLVE_PLAN, "planStatus", "plan")
 }
 
+/* ── Send message ────────────────────────────────────────────────── */
+
 export function useSendMessage() {
+  const { projectId } = useParams<{ projectId: string }>()
   const [mutate] = useMutation(SEND_MESSAGE)
 
   return useCallback(
-    (projectId: string, text: string, recipients: RecipientEntry[]) => {
-      if (IS_MOCK) {
+    (text: string, recipients: RecipientEntry[]) => {
+      if (IS_MOCK || !projectId) {
         log("mock.sendMessage", { projectId, text, recipients })
         return
       }
@@ -162,6 +161,6 @@ export function useSendMessage() {
 
       mutate({ variables: { projectId, text, recipients: recipientInputs } })
     },
-    [mutate],
+    [mutate, projectId],
   )
 }

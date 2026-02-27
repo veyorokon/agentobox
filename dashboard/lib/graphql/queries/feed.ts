@@ -7,8 +7,8 @@ import { gql } from "@apollo/client"
 /* ================================================================== */
 
 export const GET_FEED = gql`
-  query GetFeed {
-    feed {
+  query GetFeed($projectId: ID!) {
+    feed: teamFeed(projectId: $projectId) {
       id
       type
       agent

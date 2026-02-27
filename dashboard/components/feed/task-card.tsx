@@ -30,9 +30,9 @@ export function TaskFeedCard({ agent, text, from, to, target }: TaskFeedCardProp
 
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
-      <button type="button" className="shrink-0">
+      <div className="shrink-0">
         <AgentAvatar name={actor} size="sm" />
-      </button>
+      </div>
       <span className="text-[10px] text-muted font-mono truncate max-w-md">
         {actor} {verb(from, to)} &ldquo;{text}&rdquo;
       </span>

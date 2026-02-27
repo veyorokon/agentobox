@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useCallback, useRef } from "react"
-import { useParams } from "next/navigation"
 import { ArrowUp, Paperclip, X } from "lucide-react"
 import type { RecipientEntry } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
@@ -26,8 +25,6 @@ export function ComposerBar() {
   const [text, setText] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const params = useParams()
-  const projectId = params?.projectId as string | undefined
   const sendMessage = useSendMessage()
 
   const handleSuggestionsChange = useCallback((s: RecipientEntry[]) => {
@@ -38,14 +35,14 @@ export function ComposerBar() {
 
   const handleSend = useCallback(() => {
     const msg = text.trim()
-    if (!msg || !projectId) return
+    if (!msg) return
 
-    sendMessage(projectId, msg, recipients)
+    sendMessage(msg, recipients)
     setText("")
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [text, projectId, recipients, sendMessage])
+  }, [text, recipients, sendMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
