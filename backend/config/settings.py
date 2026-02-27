@@ -218,6 +218,7 @@ SESSION_COOKIE_NAME = "agentobox_sessionid"
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:5050",
 ]
 CORS_ALLOW_HEADERS = [
     "accept",
