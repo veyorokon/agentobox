@@ -24,7 +24,7 @@ is negligible compared to the value of having complete agent telemetry.
 from datetime import timedelta
 
 import structlog
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
 
 from agents.models import StreamEvent
@@ -149,7 +149,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event["command"])
 
 
-class VncProxyConsumer(AsyncJsonWebsocketConsumer):
+class VncProxyConsumer(AsyncWebsocketConsumer):
     """Binary WebSocket proxy: browser ↔ backend ↔ websockify ↔ x11vnc.
 
     Auth: short-lived token from Redis cache (set by createVncToken mutation).
@@ -228,7 +228,7 @@ class VncProxyConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4003)
             return
 
-        await self.accept()
+        await self.accept(subprotocol="binary")
 
         # Start relay task: upstream → downstream
         self._relay_task = asyncio.create_task(self._relay_upstream())
