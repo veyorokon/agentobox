@@ -102,9 +102,10 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
     # The agent instance is cached on the consumer for the WS lifetime,
     # so refresh before reads that gate writes to avoid stale-state bugs.
     if event_type == "assistant":
-        await agent.arefresh_from_db(fields=["status"])
+        await agent.arefresh_from_db(fields=["status", "mode"])
         await _maybe_set_running(agent)
         await _update_assistant_fields(agent, event)
+        await _maybe_create_plan_item(agent, event, stream_event)
     elif event_type == "result":
         await _handle_result(agent, event, stream_event)
     elif event_type == "system":
@@ -115,6 +116,57 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
     elif event_type == "stream_event":
         await agent.arefresh_from_db(fields=["phase"])
         await _handle_phase(agent, event)
+
+
+async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:
+    """Detect ExitPlanMode tool_use and create a plan feed item.
+
+    Supervised/plan mode: pending item → attention bar → user approves/rejects.
+    Auto mode: pre-approved item → immediate tool_result so agent unblocks.
+    """
+    from agents.adapters import get_adapter
+
+    adapter = get_adapter(agent.agent_type)
+    plan_info = adapter.is_plan_proposal(event)
+    if not plan_info:
+        return
+
+    tool_use_id = plan_info["tool_use_id"]
+    plan_text = plan_info["plan"]
+    title = plan_info["title"]
+
+    # Auto mode: agent shouldn't block. Create approved item + send tool_result.
+    if agent.mode == "auto":
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            source_event=source_event,
+            agent_record=agent,
+            type="plan",
+            agent_name=agent.name,
+            title=title,
+            plan=plan_text,
+            plan_status="approved",
+            tool_use_id=tool_use_id,
+        )
+        from agents.services.comms import answer_question
+        await answer_question(str(agent.id), tool_use_id, "Plan approved (auto mode)")
+        log.info("plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
+        return
+
+    # Supervised/plan mode: pending item, user must approve via dashboard.
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        source_event=source_event,
+        agent_record=agent,
+        type="plan",
+        agent_name=agent.name,
+        title=title,
+        plan=plan_text,
+        plan_status="pending",
+        tool_use_id=tool_use_id,
+    )
+    await recompute_attention(str(agent.project_id), str(agent.id))
+    log.info("plan_pending_approval", agent_id=str(agent.id), tool_use_id=tool_use_id)
 
 
 async def _maybe_set_running(agent: Agent) -> None:

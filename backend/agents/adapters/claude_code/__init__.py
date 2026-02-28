@@ -218,6 +218,8 @@ class ClaudeCodeAdapter:
         """Detect plan proposal in assistant event.
 
         Claude Code emits plan proposals via ExitPlanMode tool_use.
+        Plan text lives in the tool input (input.plan), with preceding
+        text blocks as fallback.
         """
         content = event.get("message", {}).get("content", [])
         if not isinstance(content, list):
@@ -227,20 +229,27 @@ class ClaudeCodeAdapter:
                 continue
             if block.get("type") != "tool_use":
                 continue
-            name = block.get("name", "")
-            if name == "ExitPlanMode":
-                # Extract plan text from preceding text blocks
+            if block.get("name") != "ExitPlanMode":
+                continue
+
+            # Primary: plan text from tool input (how CC actually sends it)
+            tool_input = block.get("input", {})
+            plan_text = tool_input.get("plan", "") if isinstance(tool_input, dict) else ""
+
+            # Fallback: preceding text blocks in the same message
+            if not plan_text:
                 text_blocks = [
                     b.get("text", "")
                     for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 ]
                 plan_text = "\n".join(text_blocks)
-                return {
-                    "tool_use_id": block.get("id", ""),
-                    "title": "Implementation Plan",
-                    "plan": plan_text,
-                }
+
+            return {
+                "tool_use_id": block.get("id", ""),
+                "title": "Implementation Plan",
+                "plan": plan_text,
+            }
         return None
 
     def wire_to_mode(self, wire_mode: str) -> str:
