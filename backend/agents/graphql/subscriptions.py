@@ -12,6 +12,7 @@ import strawberry
 import structlog
 from strawberry import ID
 
+from agents.graphql.auth import authorize_project
 from agents.graphql.types import AgentType, TeamFeedItemType, TimelineEntryType, model_to_feed_item_type
 
 log = structlog.get_logger("agents.subscriptions")
@@ -26,8 +27,7 @@ class AgentSubscription:
         """Subscribe to agent status changes for a project."""
         from agents.models import Agent
 
-        # TODO: WS auth — connectionParams Bearer token not read by AuthMiddlewareStack.
-        # Need custom Channels middleware to parse token from connectionParams.
+        await authorize_project(info, project_id)
         ws = info.context["ws"]
         channel_layer = ws.channel_layer
         group = f"project_{project_id}_agents"
@@ -47,6 +47,7 @@ class AgentSubscription:
         """Subscribe to TeamFeedItem creation and updates for a project."""
         from agents.models import TeamFeedItem
 
+        await authorize_project(info, project_id)
         ws = info.context["ws"]
         channel_layer = ws.channel_layer
         group = f"project_{project_id}_team_feed"
@@ -72,6 +73,7 @@ class AgentSubscription:
         Every StreamEvent broadcast (from broadcast_event) arrives here
         as a TimelineEntryType for the frontend to process.
         """
+        await authorize_project(info, project_id)
         ws = info.context["ws"]
         channel_layer = ws.channel_layer
         group = f"project_{project_id}_events"
