@@ -24,6 +24,7 @@ type AgentType {
   cost: Float!
   duration: String!
   turns: Int!
+  allowedTools: [String!]!
   workspacePath: String!
   mcpServers: [String!]!
   todoProgress: TodoProgressType
@@ -137,7 +138,7 @@ type Mutation {
   setAgentMode(agentId: ID!, mode: String!): AgentType!
   sendMessage(projectId: ID!, text: String!, recipients: [RecipientInput!]!): Boolean!
   answerQuestion(input: AnswerQuestionInput!): Boolean!
-  resolvePermission(feedItemId: ID!, verdict: String!): TeamFeedItemType!
+  resolvePermission(feedItemId: ID!, verdict: String!, alwaysAllow: Boolean! = false): TeamFeedItemType!
   resolvePlan(feedItemId: ID!, verdict: String!): TeamFeedItemType!
   createVncToken(agentId: ID!): VncTokenResult!
   updateAgentInstructions(input: UpdateAgentInstructionsInput!): AgentType!

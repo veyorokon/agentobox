@@ -218,6 +218,11 @@ class AgentType:
         return adapter.turns(self.latest_snapshot)
 
     @strawberry.field
+    def allowed_tools(self) -> list[str]:
+        """Pre-authorized tool names — SDK skips can_use_tool for these."""
+        return self.allowed_tools if isinstance(self.allowed_tools, list) else []
+
+    @strawberry.field
     def workspace_path(self) -> str:
         return self.workspace_path
 

@@ -100,9 +100,25 @@ class Agent(models.Model):
     parent_session_id = models.CharField(max_length=255, blank=True)
     session_id = models.CharField(max_length=255, blank=True)
 
-    # Claude Code native fields (updated from hook common fields)
+    # ── State facets ──────────────────────────────────────────────────
+    # Fields synchronized to the in-container relay at session launch.
+    # The DB is the source of truth; the relay reads these via env vars
+    # or _build_options() and passes them to ClaudeAgentOptions.
+    #
+    # To add a new facet:
+    #   1. Add the field here
+    #   2. Wire it in lifecycle.py (provision → relay env) or relay.py (_build_options)
+    #   3. If live-updatable: add a set_* service function in comms.py
+    #      that saves to DB + pushes command to relay (see set_agent_mode)
+    #   4. If provision-only: just save to DB — next spawn picks it up
+    #
+    # Current facets: model, permission_mode, allowed_tools, mcp_servers
     model = models.CharField(max_length=100, blank=True)
     permission_mode = models.CharField(max_length=30, blank=True)
+    # Pre-authorized tool names — SDK skips can_use_tool callback for these.
+    # Populated by "Always Allow" on permission cards. Provision-only facet:
+    # changes take effect on next spawn, no live push needed.
+    allowed_tools = models.JSONField(default=list, blank=True)
 
     # MCP server config: {"server-name": {"command": "...", "args": [...]}}
     mcp_servers = models.JSONField(default=dict, blank=True)

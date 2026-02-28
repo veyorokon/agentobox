@@ -275,8 +275,13 @@ class AgentMutation:
         feed_item_id: ID,
         verdict: str,
         info: strawberry.types.Info,
+        always_allow: bool = False,
     ) -> TeamFeedItemType:
-        """Resolve a permission prompt. verdict: 'allowed' | 'denied'."""
+        """Resolve a permission prompt. verdict: 'allowed' | 'denied'.
+
+        always_allow: if True, persist the tool to Agent.allowed_tools
+        so future sessions pre-authorize it (no more prompts).
+        """
         from agents.models import TeamFeedItem
         from agents.services.feed import resolve_permission
         from agents.graphql.types import model_to_feed_item_type
@@ -288,7 +293,7 @@ class AgentMutation:
         from projects.models import Project
         await Project.objects.aget(id=item.project_id, owner=user)
 
-        item = await resolve_permission(item, verdict)
+        item = await resolve_permission(item, verdict, always_allow=always_allow)
         return model_to_feed_item_type(item)
 
     @strawberry.mutation

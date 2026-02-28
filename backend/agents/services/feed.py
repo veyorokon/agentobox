@@ -98,10 +98,17 @@ async def recompute_attention(project_id, agent_id: str, after_result: bool = Fa
         await broadcast_agent_update(agent)
 
 
-async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
+async def resolve_permission(
+    item: TeamFeedItem, verdict: str, *, always_allow: bool = False,
+) -> TeamFeedItem:
     """Resolve a permission prompt feed item.
 
     verdict: 'allowed' | 'denied'
+    always_allow: if True and verdict is 'allowed', persist the tool name
+        to Agent.allowed_tools so the SDK skips can_use_tool for it on
+        future sessions. This is the "Always Allow" button flow — a
+        state facet update (see Agent model docstring for the pattern).
+
     Sends callback_response to relay, resolving the pending Future
     so the SDK's can_use_tool callback returns.
     Recomputes attention for affected agent.
@@ -127,10 +134,36 @@ async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
             "result": result,
         })
 
+    # Persist "Always Allow" — add tool to agent's allowed_tools facet.
+    # Takes effect on next SDK session spawn (provision-only facet).
+    if always_allow and verdict == "allowed" and item.agent_record_id and item.source_event_id:
+        await _persist_allowed_tool(item)
+
     if item.agent_record_id:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))
 
     return item
+
+
+async def _persist_allowed_tool(item: TeamFeedItem) -> None:
+    """Extract tool_name from source event and add to Agent.allowed_tools."""
+    from agents.models import Agent, StreamEvent
+
+    try:
+        event = await StreamEvent.objects.aget(id=item.source_event_id)
+    except StreamEvent.DoesNotExist:
+        return
+
+    tool_name = event.data.get("tool_name", "")
+    if not tool_name:
+        return
+
+    agent = await Agent.objects.aget(id=item.agent_record_id)
+    if tool_name not in agent.allowed_tools:
+        agent.allowed_tools = [*agent.allowed_tools, tool_name]
+        await agent.asave(update_fields=["allowed_tools"])
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(agent)
 
 
 async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:

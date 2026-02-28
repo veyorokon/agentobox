@@ -1,4 +1,5 @@
 import asyncio
+import json
 import secrets
 
 import structlog
@@ -332,6 +333,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
             f"export CLAUDE_MODEL='{_shell_escape(agent.model)}'",
         ]
+
+        # State facet: allowed_tools (provision-only, applied at SDK session start)
+        if agent.allowed_tools:
+            relay_env_lines.append(f"export ALLOWED_TOOLS='{_shell_escape(json.dumps(agent.allowed_tools))}'")
 
         # Pass resume session so relay can --resume the prior conversation
         if resume_session_id:

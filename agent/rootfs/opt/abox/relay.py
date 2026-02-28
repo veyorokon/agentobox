@@ -337,16 +337,26 @@ class SDKRelay:
     def _build_options(self, resume_session_id: str = "", permission_mode: str = "") -> ClaudeAgentOptions:
         """Build SDK client options from relay environment variables.
 
-        Reads the same env vars that lifecycle.py writes to .relay_env and
-        translates them into ClaudeAgentOptions fields. Team agent flags
-        (--agent-id, --agent-name, etc.) go through extra_args since the
-        SDK doesn't expose them as first-class options.
+        State facet reader — translates env vars (written by lifecycle.py
+        at provision time) into ClaudeAgentOptions fields. This is the
+        relay-side half of the state facet pattern:
+
+            DB field → lifecycle.py writes .relay_env → relay reads env
+            → ClaudeAgentOptions → SDK session
+
+        Facets that support live update (permission_mode) are also passed
+        as a parameter when the relay re-spawns mid-session. Provision-only
+        facets (model, allowed_tools, mcp_servers) just read from env.
+
+        Team agent flags go through extra_args since the SDK doesn't
+        expose them as first-class options.
         """
         agent_name = os.environ.get("AGENT_NAME", "")
         team_name = os.environ.get("TEAM_NAME", "")
         parent_session_id = os.environ.get("PARENT_SESSION_ID", "")
         model = os.environ.get("CLAUDE_MODEL", "")
         mcp_config = os.environ.get("MCP_CONFIG", "")
+        allowed_tools_raw = os.environ.get("ALLOWED_TOOLS", "")
 
         # Team agent flags — not natively supported by SDK options.
         # Keys must NOT include "--" prefix — the SDK prepends it automatically.
@@ -365,9 +375,18 @@ class SDKRelay:
         # In bypassPermissions the SDK never fires the callback — keep None.
         can_use_tool = self._make_can_use_tool_callback() if perm == "default" else None
 
+        # Parse allowed_tools facet (JSON list from env, e.g. '["Read","Glob"]')
+        allowed_tools: list[str] | None = None
+        if allowed_tools_raw:
+            try:
+                allowed_tools = json.loads(allowed_tools_raw)
+            except json.JSONDecodeError:
+                log.warning("Invalid ALLOWED_TOOLS env: %s", allowed_tools_raw)
+
         return ClaudeAgentOptions(
             model=model or None,
             permission_mode=perm,
+            allowed_tools=allowed_tools or None,
             resume=resume_session_id or None,
             include_partial_messages=True,
             cli_path="claude",
