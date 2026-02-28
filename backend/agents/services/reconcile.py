@@ -21,7 +21,7 @@ import structlog
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentStatus, StreamEvent
 from agents.services.broadcast import broadcast_agent_update
 
 log = structlog.get_logger("agents.reconcile")
@@ -82,6 +82,16 @@ def _mark_error(agent_id):
 
 
 @_db
+def _persist_crash_info(agent_id, session_id, crash_info):
+    StreamEvent.objects.create(
+        agent_id=agent_id,
+        session_id=session_id,
+        event_type="container_crash",
+        data=crash_info,
+    )
+
+
+@_db
 def _mark_stopped(agent_id):
     agent = Agent.objects.get(id=agent_id)
     agent.status = AgentStatus.STOPPED
@@ -132,7 +142,11 @@ async def _reap_orphans():
 # ---------------------------------------------------------------------------
 
 async def _detect_dead_containers():
-    """Mark agents ERROR when their Docker container is exited/dead/missing."""
+    """Mark agents ERROR when their Docker container is exited/dead/missing.
+
+    Captures container crash info (exit code, OOM, last logs) as a StreamEvent
+    before marking error — otherwise the info is lost when the container is reaped.
+    """
     from agents.runtimes import get_runtime
     runtime = get_runtime("docker")
     agents = await _get_agents(
@@ -144,6 +158,11 @@ async def _detect_dead_containers():
     for agent in agents:
         container_status = await runtime.get_status(agent.sandbox_id)
         if container_status in ("exited", "dead"):
+            # Capture crash info before it's lost to container reaping
+            crash_info = await runtime.get_crash_info(agent.sandbox_id)
+            if crash_info:
+                await _persist_crash_info(agent.id, agent.session_id or "", crash_info)
+
             agent = await _mark_error(agent.id)
             await broadcast_agent_update(agent)
             log.info(
@@ -151,6 +170,8 @@ async def _detect_dead_containers():
                 agent_id=str(agent.id),
                 agent_name=agent.name,
                 container_status=container_status,
+                exit_code=crash_info.get("exit_code") if crash_info else None,
+                oom_killed=crash_info.get("oom_killed") if crash_info else None,
             )
 
 

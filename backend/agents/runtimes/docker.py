@@ -185,3 +185,22 @@ class DockerRuntime:
                 return "dead"
 
         return await self._run_sync(_status)
+
+    async def get_crash_info(self, sandbox_id: str) -> dict | None:
+        """Capture exit code, OOM status, and last 50 log lines from a dead container."""
+
+        def _inspect():
+            try:
+                container = self._client.containers.get(sandbox_id)
+                container.reload()
+                state = container.attrs.get("State", {})
+                logs = container.logs(tail=50, timestamps=True).decode(errors="replace")
+                return {
+                    "exit_code": state.get("ExitCode", -1),
+                    "oom_killed": state.get("OOMKilled", False),
+                    "logs": logs,
+                }
+            except docker.errors.NotFound:
+                return None
+
+        return await self._run_sync(_inspect)
