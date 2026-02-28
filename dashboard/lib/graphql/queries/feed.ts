@@ -2,9 +2,21 @@ import { gql } from "@apollo/client"
 
 /* ================================================================== */
 /*  FEED QUERIES                                                        */
-/*                                                                      */
-/*  Defined for Part 2b (right column migration). Not wired yet.       */
 /* ================================================================== */
+
+export const GET_AGENT_FEED = gql`
+  query GetAgentFeed($agentId: ID!, $first: Int, $after: String) {
+    agentFeed(agentId: $agentId, first: $first, after: $after) {
+      id
+      entryType
+      agentId
+      agentName
+      summary
+      data
+      createdAt
+    }
+  }
+`
 
 export const GET_FEED = gql`
   query GetFeed($projectId: ID!) {
@@ -12,6 +24,7 @@ export const GET_FEED = gql`
       id
       type
       agent
+      agentId
       text
       command
       risk

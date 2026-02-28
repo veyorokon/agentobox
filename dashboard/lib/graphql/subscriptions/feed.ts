@@ -13,6 +13,7 @@ export const ON_FEED_ITEM_CHANGED = gql`
       id
       type
       agent
+      agentId
       text
       command
       risk

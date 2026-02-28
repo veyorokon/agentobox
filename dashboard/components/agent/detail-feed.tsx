@@ -1,11 +1,15 @@
 "use client"
 
+import { useRef, useEffect } from "react"
+import type { Agent, TimelineEntry } from "@/lib/types"
+import { formatDuration, friendlyToolName, friendlyModelName } from "@/lib/utils"
+import { useAgentFeed } from "@/lib/graphql/hooks/use-feed"
 import { AssistantMessage } from "@/components/feed/assistant-message"
 import { SingleToolRow, MultiToolGroup } from "@/components/feed/tool-row"
 import { ResultPill } from "@/components/feed/result-pill"
+import { SystemMessage } from "@/components/feed/system-message"
+import { TeamUserMessage } from "@/components/feed/user-message"
 import { ErrorBubble } from "@/components/feed/error-bubble"
-import { MOCK_MARKDOWN } from "@/lib/data/mock"
-import type { Agent } from "@/lib/types"
 
 /* ================================================================== */
 /*  AGENT DETAIL FEED                                                  */
@@ -15,108 +19,153 @@ export interface AgentDetailFeedProps {
   agent: Agent
 }
 
-/**
- * Agent detail mini-feed — shows VERBOSE output for a single agent.
- * This is the drill-in view. Content comes from TimelineEntry.content
- * (full content blocks), NOT from the summary field.
- *
- * SOURCE: TimelineEntry.content — tool_use blocks, assistant text,
- *   thinking blocks, tool_result blocks. Everything the team feed hides.
- */
+/* ── Data mapping helpers ─────────────────────────────────────────── */
+
+type ContentBlock = Record<string, unknown>
+
+/** Extract the most useful input field from a tool_use block for display. */
+function summarizeToolInput(toolUse: ContentBlock): string {
+  const input = (toolUse.input ?? {}) as Record<string, unknown>
+  if (input.file_path) return String(input.file_path)
+  if (input.command) return String(input.command).slice(0, 100)
+  if (input.pattern) return String(input.pattern)
+  if (input.query) return String(input.query).slice(0, 100)
+  if (input.url) return String(input.url)
+  const json = JSON.stringify(input)
+  return json.length > 80 ? json.slice(0, 77) + "..." : json
+}
+
+/** Render a single TimelineEntry based on its entryType and raw data. */
+function TimelineEntryRow({ entry, agentName }: { entry: TimelineEntry; agentName: string }) {
+  const data = entry.data as Record<string, unknown>
+
+  switch (entry.entryType) {
+    case "assistant": {
+      const message = data?.message as Record<string, unknown> | undefined
+      const content = (message?.content ?? []) as ContentBlock[]
+      const textBlocks = content.filter(b => b.type === "text")
+      const toolUses = content.filter(b => b.type === "tool_use")
+      const text = textBlocks.map(b => String(b.text ?? "")).join("\n\n").trim()
+
+      return (
+        <>
+          {text && <AssistantMessage agent={agentName} content={text} showAvatar={true} />}
+          {toolUses.length === 1 && (
+            <SingleToolRow
+              toolName={friendlyToolName(String(toolUses[0].name ?? "tool"))}
+              summary={summarizeToolInput(toolUses[0])}
+            />
+          )}
+          {toolUses.length > 1 && (
+            <MultiToolGroup
+              tools={toolUses.map(t => ({
+                name: friendlyToolName(String(t.name ?? "tool")),
+                summary: summarizeToolInput(t),
+              }))}
+            />
+          )}
+        </>
+      )
+    }
+
+    case "result": {
+      const cost = Number(data?.total_cost_usd ?? 0)
+      const durationMs = Number(data?.duration_ms ?? 0)
+      const turns = Number(data?.num_turns ?? 0)
+      const isError = Boolean(data?.is_error)
+
+      if (isError) {
+        const errorText = String(data?.error ?? "Agent encountered an error")
+        return <ErrorBubble agent={agentName} text={errorText} />
+      }
+
+      return (
+        <ResultPill
+          cost={cost}
+          duration={formatDuration(durationMs)}
+          turns={turns}
+          model={friendlyModelName(String(data?.model ?? ""))}
+          isError={false}
+        />
+      )
+    }
+
+    case "system": {
+      const subtype = String(data?.subtype ?? "system")
+      if (subtype === "init") return <SystemMessage text="Session initialized" />
+      if (subtype === "process_exit") {
+        const code = data?.exit_code
+        return <SystemMessage text={`Process exited (code ${code ?? "?"})`} />
+      }
+      return <SystemMessage text={subtype} />
+    }
+
+    case "user": {
+      const message = data?.message as Record<string, unknown> | undefined
+      const content = (message?.content ?? []) as ContentBlock[]
+      const text = content
+        .filter(b => b.type === "text")
+        .map(b => String(b.text ?? ""))
+        .join("\n")
+        .trim()
+      // Skip tool_result-only messages (those are tool outputs, not user input)
+      if (!text) return null
+      return <TeamUserMessage text={text} />
+    }
+
+    case "status": {
+      const from = String(data?.from ?? "")
+      const to = String(data?.to ?? "")
+      return <SystemMessage text={`${from} → ${to}`} />
+    }
+
+    default:
+      return null
+  }
+}
+
+/* ── Main component ───────────────────────────────────────────────── */
+
 export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
-  const isError = agent.lifecycleStatus === "error"
+  const { data, loading } = useAgentFeed(agent.id)
+  const entries = data?.agentFeed ?? []
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to bottom when new entries arrive
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    // Only auto-scroll if already near the bottom (within 80px)
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (nearBottom) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [entries.length])
+
+  const isEmpty = !loading && entries.length === 0
 
   return (
     <div className="border-t border-border-subtle flex flex-col">
-
-      {/* Historical content only — scrollable mini-feed */}
-      <div className="flex-1 min-h-0 max-h-[320px] overflow-y-auto px-3 py-2 space-y-2">
-        {agent.name === "backend" ? (
-          <>
-            {/* Tool calls (source: tool_use content blocks) */}
-            <SingleToolRow toolName="Read" summary="src/auth.ts" />
-            <SingleToolRow toolName="Read" summary="src/middleware/auth.ts" />
-
-            {/* Assistant message (source: text content blocks) */}
-            <AssistantMessage
-              agent={agent.name}
-              content={MOCK_MARKDOWN}
-              showAvatar={false}
-            />
-
-            {/* More tool calls */}
-            <MultiToolGroup
-              tools={[
-                { name: "Edit", summary: "src/auth.ts — fix validateToken()" },
-                { name: "Edit", summary: "src/middleware/auth.ts — reorder handlers" },
-                { name: "Bash", summary: "npm run lint" },
-              ]}
-            />
-
-            <AssistantMessage
-              agent={agent.name}
-              content="Applied the fix and ran the linter. All clean."
-              showAvatar={false}
-            />
-
-            {/* Result pill (source: result message) */}
-            <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
-          </>
-        ) : agent.name === "qa" ? (
-          <>
-            <SingleToolRow toolName="Bash" summary="npm test -- --filter auth" />
-            {isError ? (
-              <ErrorBubble
-                agent={agent.name}
-                text={"FAIL src/auth.test.ts\n\nExpected: 200\nReceived: 401\n\nThe refresh endpoint middleware ordering is wrong."}
-              />
-            ) : (
-              <>
-                <AssistantMessage
-                  agent={agent.name}
-                  content="Running the full auth test suite. 47 tests found."
-                  showAvatar={false}
-                />
-                <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
-              </>
-            )}
-          </>
-        ) : agent.name === "frontend" ? (
-          <>
-            <SingleToolRow toolName="Read" summary="src/components/Button.tsx" />
-            <SingleToolRow toolName="Read" summary="src/styles/tokens.css" />
-            <AssistantMessage
-              agent={agent.name}
-              content="Scanning Tailwind classes in Button, Card, and Input components..."
-              showAvatar={false}
-            />
-          </>
-        ) : agent.name === "docs" ? (
-          <>
-            <SingleToolRow toolName="Read" summary="docs/api-reference.md" />
-            <MultiToolGroup
-              tools={[
-                { name: "Edit", summary: "docs/api-reference.md — add rotation docs" },
-                { name: "Edit", summary: "docs/auth-flow.md — update diagram" },
-              ]}
-            />
-            <AssistantMessage
-              agent={agent.name}
-              content="Updated API reference with refresh token rotation documentation and migration notes."
-              showAvatar={false}
-            />
-            <ResultPill cost={agent.cost} duration={agent.duration} turns={agent.turns} model={agent.model} />
-          </>
-        ) : (
-          /* Generic fallback for devops, infra, etc. */
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 max-h-[320px] overflow-y-auto px-3 py-2 space-y-2"
+      >
+        {loading && entries.length === 0 && (
+          <div className="flex items-center justify-center py-4">
+            <span className="text-[10px] text-muted/50 font-mono animate-pulse">Loading...</span>
+          </div>
+        )}
+        {isEmpty && (
           <div className="flex items-center justify-center py-4">
             <span className="text-[10px] text-muted/50 font-mono">
               {agent.lifecycleStatus === "deploying" ? "Initializing workspace..." : "No activity yet"}
             </span>
           </div>
         )}
+        {entries.map(entry => (
+          <TimelineEntryRow key={entry.id} entry={entry} agentName={agent.name} />
+        ))}
       </div>
-
     </div>
   )
 }

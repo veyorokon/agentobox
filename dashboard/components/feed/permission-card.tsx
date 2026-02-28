@@ -72,13 +72,6 @@ export function PermissionCard({
             </button>
             <button
               type="button"
-              onClick={() => resolvePermission(feedItemId, "allowed")}
-              className="px-3 py-1.5 rounded-md border border-border-default text-xs font-medium text-secondary hover:bg-surface-sunken/40 transition-colors"
-            >
-              Allow always
-            </button>
-            <button
-              type="button"
               onClick={() => resolvePermission(feedItemId, "denied")}
               className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
             >

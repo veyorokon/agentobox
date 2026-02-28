@@ -32,6 +32,7 @@ async def provision_workspace(
     relay_token: str = "",
     callback_url: str = "",
     mode: str = "auto",
+    agent_tags: list[str] | None = None,
 ) -> None:
     """
     Write instruction file, settings, .mcp.json, and security
@@ -111,6 +112,9 @@ async def provision_workspace(
             f"{workspace}/.mcp.json",
         )
 
+    # Write project skills that match this agent's tags as .claude/skills/<name>/SKILL.md
+    await _provision_skills(runtime, sandbox_id, project, agent_tags or [], workspace, op_log)
+
     # Mark onboarding complete and pre-approve the API key so Claude Code
     # starts without interactive prompts
     claude_state = {
@@ -128,7 +132,6 @@ async def provision_workspace(
         claude_json.encode("utf-8"),
         f"{workspace}/.claude.json",
     )
-
     # --- Security hardening ---
     await _provision_api_key_helper(runtime, sandbox_id, api_key, op_log)
     await _provision_scoped_sudo(runtime, sandbox_id, op_log)
@@ -228,6 +231,56 @@ async def _provision_scoped_sudo(
     )
 
     op_log.info("scoped_sudo_provisioned")
+
+
+# ---------------------------------------------------------------------------
+# Skill provisioning
+# ---------------------------------------------------------------------------
+
+
+async def _provision_skills(
+    runtime: Runtime,
+    sandbox_id: str,
+    project: Project,
+    agent_tags: list[str],
+    workspace: str,
+    op_log,
+) -> None:
+    """Write project skills matching the agent's tags as .claude/skills/<name>/SKILL.md."""
+    from asgiref.sync import sync_to_async
+    from agents.models import Skill
+
+    # Use sync_to_async because this runs in a detached asyncio.create_task
+    # where the original HTTP request's CurrentThreadExecutor is already dead.
+    skills = await sync_to_async(
+        lambda: list(Skill.objects.filter(project=project)),
+        thread_sensitive=False,
+    )()
+    matching = [
+        s for s in skills
+        if s.assigned_to_all or any(tag in agent_tags for tag in (s.assigned_tags or []))
+    ]
+
+    if not matching:
+        return
+
+    skills_base = f"{workspace}/.claude/skills"
+    await runtime.exec(sandbox_id, ["mkdir", "-p", skills_base])
+
+    for skill in matching:
+        # Sanitize skill name to prevent path traversal
+        safe_name = skill.name.replace("/", "_").replace("..", "_").strip(".")
+        if not safe_name:
+            continue
+        skill_dir = f"{skills_base}/{safe_name}"
+        await runtime.exec(sandbox_id, ["mkdir", "-p", skill_dir])
+        await runtime.write_file(
+            sandbox_id,
+            skill.content.encode("utf-8"),
+            f"{skill_dir}/SKILL.md",
+        )
+
+    op_log.info("skills_provisioned", count=len(matching))
 
 
 # ---------------------------------------------------------------------------

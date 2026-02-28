@@ -44,6 +44,37 @@ class ProjectSecret(models.Model):
         return f"{self.key} → {self.project.name}"
 
 
+class Skill(models.Model):
+    """Project-scoped skill — markdown content injected into agent workspaces.
+
+    Skills connect to agents via tags: if an agent's tags overlap with a
+    skill's assigned_tags, the skill is written as .claude/skills/<name>/SKILL.md
+    during provisioning.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="skills"
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    content = models.TextField()
+    assigned_tags = models.JSONField(default=list)
+    assigned_to_all = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="unique_project_skill"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.name} → {self.project.name}"
+
+
 class Agent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
 

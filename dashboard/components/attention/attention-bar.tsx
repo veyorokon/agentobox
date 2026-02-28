@@ -10,7 +10,6 @@ import {
 import { cn } from "@/lib/utils"
 import type { PendingItem } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
-import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentAvatar } from "@/components/agent/avatar"
@@ -20,8 +19,6 @@ export function AttentionBar() {
   // ── Store subscriptions ───────────────────────────────────────────
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
-  const { data } = useAgents()
-  const agents = data?.agents ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
   const reviewAgent = useTeamStore(s => s.reviewAgent)
@@ -38,16 +35,14 @@ export function AttentionBar() {
     const result: { item: PendingItem; feedItemId: string; agentId?: string }[] = []
     for (const item of feedItems) {
       if (item.type === "permission" && item.permStatus === "pending") {
-        const agent = agents.find(a => a.name === item.agent)
-        result.push({ item: item as PendingItem, feedItemId: item.id, agentId: agent?.id })
+        result.push({ item: item as PendingItem, feedItemId: item.id, agentId: item.agentId })
       }
       if (item.type === "plan" && item.planStatus === "pending") {
-        const agent = agents.find(a => a.name === item.agent)
-        result.push({ item: item as PendingItem, feedItemId: item.id, agentId: agent?.id })
+        result.push({ item: item as PendingItem, feedItemId: item.id, agentId: item.agentId })
       }
     }
     return result
-  }, [feedItems, agents])
+  }, [feedItems])
 
   const expandedPlan = expandedFeedItemId !== null
     ? pending.find(p => p.feedItemId === expandedFeedItemId && p.item.type === "plan")

@@ -59,7 +59,7 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
     return item
 
 
-async def recompute_attention(project_id, agent_name: str, after_result: bool = False) -> None:
+async def recompute_attention(project_id, agent_id: str, after_result: bool = False) -> None:
     """Recompute attention_level from pending TeamFeedItems.
 
     after_result: if True and no pending items, set "review" instead of "none"
@@ -67,7 +67,7 @@ async def recompute_attention(project_id, agent_name: str, after_result: bool = 
     """
     has_perm = await TeamFeedItem.objects.filter(
         project_id=project_id,
-        agent_name=agent_name,
+        agent_record_id=agent_id,
         type="permission",
         perm_status="pending",
     ).aexists()
@@ -76,7 +76,7 @@ async def recompute_attention(project_id, agent_name: str, after_result: bool = 
         level = "permission"
     elif await TeamFeedItem.objects.filter(
         project_id=project_id,
-        agent_name=agent_name,
+        agent_record_id=agent_id,
         type="plan",
         plan_status="pending",
     ).aexists():
@@ -87,7 +87,7 @@ async def recompute_attention(project_id, agent_name: str, after_result: bool = 
         level = "none"
 
     try:
-        agent = await Agent.objects.aget(project_id=project_id, name=agent_name)
+        agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
         return
 
@@ -118,8 +118,8 @@ async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
             "Permission granted by user",
         )
 
-    if item.agent_name:
-        await recompute_attention(str(item.project_id), item.agent_name)
+    if item.agent_record_id:
+        await recompute_attention(str(item.project_id), str(item.agent_record_id))
 
     return item
 
@@ -141,8 +141,8 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
         msg = "Plan approved by user" if verdict == "approved" else "Plan rejected by user"
         await answer_question(str(item.agent_record_id), item.tool_use_id, msg)
 
-    if item.agent_name:
-        await recompute_attention(str(item.project_id), item.agent_name)
+    if item.agent_record_id:
+        await recompute_attention(str(item.project_id), str(item.agent_record_id))
 
     return item
 

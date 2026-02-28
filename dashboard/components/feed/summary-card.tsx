@@ -2,6 +2,7 @@
 
 import { cn, formatCost } from "@/lib/utils"
 import { ChatAvatar } from "@/components/agent/avatar"
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 
 export interface AgentSummaryCardProps {
   agent: string
@@ -48,12 +49,13 @@ export function AgentSummaryCard({
               : "border-border-subtle bg-surface-raised/40",
           )}
         >
-          <p className={cn(
-            "text-sm leading-relaxed",
-            isError ? "text-danger" : "text-default",
-          )}>
-            {summary}
-          </p>
+          <MarkdownRenderer
+            content={summary}
+            className={cn(
+              "text-sm leading-relaxed",
+              isError ? "text-danger" : "text-default",
+            )}
+          />
         </div>
       </div>
     </div>

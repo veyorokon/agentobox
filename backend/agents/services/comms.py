@@ -262,6 +262,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         op_log.info("mode_change_noop")
         return agent
 
+    old_mode = agent.mode
     agent.mode = mode
     agent.permission_mode = perm_mode
     await agent.asave(update_fields=["mode", "permission_mode"])
@@ -276,6 +277,17 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         data={"mode": mode, "permission_mode": perm_mode},
     )
     await broadcast_event(agent, stream_event)
+
+    # Feed item for mode change (visible in team feed)
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        source_event=stream_event,
+        agent_record=agent,
+        type="status",
+        agent_name=agent.name,
+        from_value=f"mode:{old_mode}",
+        to_value=f"mode:{mode}",
+    )
 
     # Push Claude Code vocabulary to relay
     await _push_to_relay(agent_id, {"type": "mode", "mode": perm_mode})

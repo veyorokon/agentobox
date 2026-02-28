@@ -199,7 +199,7 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
         **feed_kwargs,
     )
     # Set review attention after turn completion (if no pending perm/plan)
-    await recompute_attention(str(agent.project_id), agent.name, after_result=True)
+    await recompute_attention(str(agent.project_id), str(agent.id), after_result=True)
 
 
 async def _handle_system(agent: Agent, event: dict) -> None:

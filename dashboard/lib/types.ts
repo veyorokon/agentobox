@@ -49,22 +49,43 @@ export type Skill = {
   description: string
   content: string
   assignedTags: string[]
-  steps?: number
+  assignedToAll: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type McpRegistryServer = {
+  name: string
+  description: string
+  version: string
+  websiteUrl: string | null
+  hasRemote: boolean
+  packages: { registryType: string; identifier: string; transportType: string }[]
 }
 
 export type TeamFeedItem =
   | { id: string; type: "system"; text: string }
   | { id: string; type: "user"; text: string; target?: string }
-  | { id: string; type: "summary"; agent: string; summary: string; cost: number; turns: number; duration: string; isError?: boolean }
-  | { id: string; type: "status"; agent: string; from: string; to: string }
-  | { id: string; type: "error"; agent: string; text: string }
-  | { id: string; type: "question"; agent: string; question: string; options: string[] }
-  | { id: string; type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
-  | { id: string; type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
-  | { id: string; type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
+  | { id: string; type: "summary"; agent: string; agentId?: string; summary: string; cost: number; turns: number; duration: string; isError?: boolean }
+  | { id: string; type: "status"; agent: string; agentId?: string; from: string; to: string }
+  | { id: string; type: "error"; agent: string; agentId?: string; text: string }
+  | { id: string; type: "question"; agent: string; agentId?: string; question: string; options: string[] }
+  | { id: string; type: "plan"; agent: string; agentId?: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
+  | { id: string; type: "permission"; agent: string; agentId?: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
+  | { id: string; type: "multi-question"; agent: string; agentId?: string; questions: { text: string; options: string[] }[] }
   | { id: string; type: "agent-message"; from: string; to: string; text: string }
-  | { id: string; type: "task"; agent: string; text: string; from: string; to: string; target?: string }
+  | { id: string; type: "task"; agent: string; agentId?: string; text: string; from: string; to: string; target?: string }
 
 export type PendingItem = Extract<TeamFeedItem, { type: "permission" }> | Extract<TeamFeedItem, { type: "plan" }>
+
+export type TimelineEntry = {
+  id: string
+  entryType: string
+  agentId: string
+  agentName: string
+  summary: string | null
+  data: Record<string, unknown>
+  createdAt: string
+}
 
 export type ViewMode = "terminal" | "feed" | "settings" | "skills"

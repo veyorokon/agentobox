@@ -1,15 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import {
   ChevronRight,
   Tag,
   BookOpen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useSkills } from "@/lib/graphql/hooks/use-skills"
 import { Collapsible } from "@/components/ui/collapsible"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
-import { getAgentSkills } from "@/lib/data/mock"
 import type { Agent } from "@/lib/types"
 
 export interface AgentSkillsViewProps {
@@ -17,7 +17,13 @@ export interface AgentSkillsViewProps {
 }
 
 export function AgentSkillsView({ agent }: AgentSkillsViewProps) {
-  const skills = getAgentSkills(agent)
+  const { data: skillsData } = useSkills()
+  const allSkills = skillsData?.skills ?? []
+  // Filter skills: assignedToAll OR tags overlap with agent tags
+  const skills = useMemo(
+    () => allSkills.filter(s => s.assignedToAll || s.assignedTags.some(tag => agent.tags.includes(tag))),
+    [allSkills, agent.tags],
+  )
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
 
   return (
@@ -52,13 +58,13 @@ export function AgentSkillsView({ agent }: AgentSkillsViewProps) {
         {skills.length === 0 ? (
           <div className="py-4 text-center rounded-md border border-border-subtle bg-surface-sunken/20">
             <BookOpen className="h-5 w-5 text-muted/20 mx-auto mb-1" />
-            <p className="text-[11px] text-muted/50">No skills assigned via tags</p>
+            <p className="text-[11px] text-muted/50">No skills assigned to this agent</p>
           </div>
         ) : (
           <div className="space-y-1.5">
             {skills.map((skill) => {
               const isExpanded = expandedSkill === skill.id
-              const sourceTag = skill.assignedTags.find(t => agent.tags.includes(t))
+              const sourceTag = skill.assignedToAll ? null : skill.assignedTags.find(t => agent.tags.includes(t))
               return (
                 <div key={skill.id} className="rounded-md border border-border-subtle overflow-hidden">
                   <button
@@ -76,16 +82,15 @@ export function AgentSkillsView({ agent }: AgentSkillsViewProps) {
                     <span className="text-xs font-medium text-default flex-1 min-w-0 truncate">
                       {skill.name}
                     </span>
-                    {sourceTag && (
+                    {skill.assignedToAll ? (
+                      <span className="text-[9px] font-mono text-accent/60 shrink-0">
+                        all agents
+                      </span>
+                    ) : sourceTag ? (
                       <span className="text-[9px] font-mono text-muted/60 shrink-0">
                         via {sourceTag}
                       </span>
-                    )}
-                    {skill.steps && (
-                      <span className="text-[9px] font-mono text-info/60 shrink-0">
-                        {skill.steps} steps
-                      </span>
-                    )}
+                    ) : null}
                   </button>
                   <Collapsible open={isExpanded}>
                     <div className="px-2.5 pb-2.5 border-t border-border-subtle">

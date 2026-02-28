@@ -13,9 +13,13 @@ from agents.graphql.auth import authorize_agent, authorize_project
 from agents.models import Agent
 from agents.graphql.types import (
     AgentType,
+    McpPackageType,
     McpRegistryEntryType,
+    McpRegistrySearchResult,
+    McpRegistryServerType,
     ModelEntryType,
     ProjectSecretType,
+    SkillType,
     TeamFeedItemType,
     TimelineEntryType,
     model_to_feed_item_type,
@@ -152,6 +156,53 @@ class AgentQuery:
             McpRegistryEntryType(name=name, compat=entry.get("compat", []))
             for name, entry in MCP_REGISTRY.items()
         ]
+
+    @strawberry.field
+    async def search_mcp_registry(
+        self,
+        query: str = "",
+        limit: int = 30,
+        cursor: str | None = None,
+    ) -> McpRegistrySearchResult:
+        """Search the official MCP registry. Public endpoint, no auth required."""
+        from agents.services.mcp_registry import search_registry
+
+        limit = min(limit, 100)
+        data = await search_registry(query, limit, cursor)
+        servers = []
+        for entry in data.get("servers", []):
+            srv = entry.get("server", {})
+            packages = [
+                McpPackageType(
+                    registry_type=pkg.get("registryType", ""),
+                    identifier=pkg.get("identifier", ""),
+                    transport_type=pkg.get("transport", {}).get("type", "stdio"),
+                )
+                for pkg in srv.get("packages", [])
+            ]
+            servers.append(McpRegistryServerType(
+                name=srv.get("name", ""),
+                description=srv.get("description", ""),
+                version=srv.get("version", ""),
+                website_url=srv.get("websiteUrl"),
+                has_remote=bool(srv.get("remotes")),
+                packages=packages,
+            ))
+        metadata = data.get("metadata", {})
+        return McpRegistrySearchResult(
+            servers=servers,
+            next_cursor=metadata.get("nextCursor"),
+        )
+
+    @strawberry.field
+    async def skills(
+        self, project_id: ID, info: strawberry.types.Info,
+    ) -> list[SkillType]:
+        """All skills for a project."""
+        from agents.models import Skill
+
+        await authorize_project(info, project_id)
+        return [s async for s in Skill.objects.filter(project_id=project_id)]
 
     @strawberry.field
     async def project_secrets(self, project_id: ID, info: strawberry.types.Info) -> list[ProjectSecretType]:

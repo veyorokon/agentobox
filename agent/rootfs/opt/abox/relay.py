@@ -28,6 +28,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from urllib.parse import urlparse, urlunparse
 
 import websockets
@@ -459,13 +460,17 @@ class SDKRelay:
         process_exit event with the exit code and stderr.
         """
         msg_count = 0
+        forwarded_count = 0
+        t0 = time.monotonic()
         try:
             async for msg in self.client.receive_messages():
                 msg_count += 1
                 event = self._message_to_event(msg)
                 if event:
+                    forwarded_count += 1
                     await self._send_event(event)
-            log.info("receive_messages iterator ended normally (forwarded %d messages)", msg_count)
+            elapsed = time.monotonic() - t0
+            log.info("Turn complete: %d messages received, %d forwarded, %.1fs elapsed", msg_count, forwarded_count, elapsed)
         except ProcessError as e:
             log.warning("Claude exited: code=%s (after %d messages)", e.exit_code, msg_count)
             # Use accumulated stderr (from _on_stderr callback) over the
@@ -513,6 +518,7 @@ class SDKRelay:
         routing target changes (SDK methods instead of process signals/stdin).
         """
         cmd_type = cmd.get("type", "")
+        log.info("Handling command: type=%s (client_active=%s)", cmd_type, self.client is not None)
 
         if cmd_type == "input":
             payload = cmd.get("payload")
@@ -544,11 +550,12 @@ class SDKRelay:
 
         elif cmd_type == "mode":
             mode = cmd.get("mode", "")
-            if mode and self.client:
-                log.info("Mode change via WS: %s", mode)
+            if mode:
+                log.info("Mode change via WS: %s (deferred to next turn)", mode)
                 self.next_permission_mode = mode
-                self.restart_requested = True
-                await self.client.interrupt()
+                # Don't interrupt or restart — mode takes effect on next spawn.
+                # Interrupting idle Claude doesn't cause an exit, so the restart
+                # path is never reached. Deferring is both correct and less disruptive.
 
     # ── Synthetic events ──
 
@@ -680,7 +687,7 @@ class SDKRelay:
                 await asyncio.sleep(delay)
                 continue
 
-            log.info("SDK client connected")
+            log.info("SDK client connected (perm=%s, resume=%s)", permission_mode, resume_session_id or "fresh")
 
             # Two tasks: forward messages upstream, receive commands downstream
             forward_task = asyncio.create_task(self._forward_messages(), name="forward")
@@ -690,6 +697,7 @@ class SDKRelay:
             # start so forward_task is already iterating receive_messages() and
             # will capture Claude's response.
             if self._pending_input:
+                log.info("Draining pending input from idle wait")
                 pending_payload = self._pending_input
                 self._pending_input = None
                 await self._handle_command({"type": "input", "payload": pending_payload})
@@ -728,6 +736,8 @@ class SDKRelay:
             except Exception:
                 pass
             self.client = None
+            log.info("SDK client disconnected, evaluating exit path (fatal=%s, restart=%s, clear=%s, exit_posted=%s)",
+                     fatal, self.restart_requested, self.clear_requested, self._exit_posted)
 
             if fatal:
                 break
@@ -775,7 +785,13 @@ class SDKRelay:
                 resume_session_id = self.session_id
             self.session_id = ""
 
-            log.info("Claude finished turn, waiting for next input (resume=%s)", resume_session_id)
+            # Apply deferred mode change (set during active session)
+            if self.next_permission_mode:
+                permission_mode = self.next_permission_mode
+                self.next_permission_mode = ""
+                log.info("Applying deferred mode change: %s", permission_mode)
+
+            log.info("Claude finished turn, entering idle wait (resume=%s, mode=%s)", resume_session_id, permission_mode)
 
             idle_fatal = False
             while True:
@@ -813,8 +829,9 @@ class SDKRelay:
                     mode = cmd.get("mode", "")
                     if mode:
                         permission_mode = mode
-                        log.info("Idle: permission mode changed to %s", mode)
-                        break
+                        log.info("Idle: permission mode updated to %s (effective next spawn)", mode)
+                        # Don't break — no need to respawn just for a mode change.
+                        # The new mode takes effect when the next input arrives.
 
             if idle_fatal:
                 break

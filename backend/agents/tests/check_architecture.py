@@ -106,7 +106,7 @@ def check_service_naming():
         "restart", "interrupt", "clear", "recompute", "push", "process",
         "resolve", "provision", "ensure", "answer", "hard_restart",
         "write", "externalize", "upload", "encrypt", "decrypt",
-        "reconcile", "teammate", "task", "team",
+        "reconcile", "teammate", "task", "team", "search",
     )
     for f in _python_files(SERVICES_DIR):
         tree = ast.parse(_read_source(f))

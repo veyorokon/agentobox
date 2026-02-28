@@ -11,6 +11,20 @@ import { gql } from "@apollo/client"
 /*  Dashboard receives and Apollo merges into normalized cache.        */
 /* ================================================================== */
 
+export const ON_EVENT_STREAM = gql`
+  subscription OnEventStream($projectId: ID!) {
+    eventStream(projectId: $projectId) {
+      id
+      entryType
+      agentId
+      agentName
+      summary
+      data
+      createdAt
+    }
+  }
+`
+
 export const ON_AGENT_CHANGED = gql`
   subscription OnAgentChanged($projectId: ID!) {
     agentChanged(projectId: $projectId) {

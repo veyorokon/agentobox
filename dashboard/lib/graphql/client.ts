@@ -62,6 +62,8 @@ const httpLink = new HttpLink({
 const wsLink = new GraphQLWsLink(
   createClient({
     url: WS_URL,
+    retryAttempts: Infinity,
+    shouldRetry: () => true,
     connectionParams: () => {
       const token = getAuthToken()
       return token ? { authorization: `Bearer ${token}` } : {}
@@ -87,8 +89,12 @@ export const client = new ApolloClient({
     typePolicies: {
       AgentType: { keyFields: ["id"] },
       TeamFeedItemType: { keyFields: ["id"] },
+      SkillType: { keyFields: ["id"] },
       FeedQuestionType: { keyFields: false },
       TodoProgressType: { keyFields: false },
+      McpPackageType: { keyFields: false },
+      McpRegistryServerType: { keyFields: ["name"] },
+      TimelineEntryType: { keyFields: ["id"] },
     },
   }),
 })

@@ -134,17 +134,29 @@ export function useRemoveAgent() {
 }
 
 export function useHardRestartAgent() {
+  const client = useApolloClient()
   const [mutate] = useMutation(HARD_RESTART_AGENT)
   return useCallback((agentId: string) => {
+    log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
+    client.cache.modify({
+      id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+      fields: { lifecycleStatus: () => "deploying" },
+    })
     mutate({ variables: { agentId } })
-  }, [mutate])
+  }, [client, mutate])
 }
 
 export function useRestartAgent() {
+  const client = useApolloClient()
   const [mutate] = useMutation(RESTART_AGENT)
   return useCallback((agentId: string) => {
+    log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
+    client.cache.modify({
+      id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+      fields: { lifecycleStatus: () => "deploying" },
+    })
     mutate({ variables: { agentId } })
-  }, [mutate])
+  }, [client, mutate])
 }
 
 export function useUpdateAgentInstructions() {
@@ -156,7 +168,13 @@ export function useUpdateAgentInstructions() {
 
 export function useUpdateAgentConfig() {
   const [mutate] = useMutation(UPDATE_AGENT_CONFIG)
-  return useCallback((agentId: string, config: { model?: string; role?: string; tags?: string[]; mcpRegistryNames?: string[] }) => {
+  return useCallback((agentId: string, config: {
+    model?: string
+    role?: string
+    tags?: string[]
+    mcpRegistryNames?: string[]
+    mcpCustomServers?: Record<string, { command: string; args: string[] }>
+  }) => {
     mutate({ variables: { input: { agentId, ...config } } })
   }, [mutate])
 }

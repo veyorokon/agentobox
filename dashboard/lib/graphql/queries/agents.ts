@@ -15,6 +15,26 @@ import { gql } from "@apollo/client"
 /*  - Config: model, mode, instructions, tags, mcpServers, etc.       */
 /* ================================================================== */
 
+export const SEARCH_MCP_REGISTRY = gql`
+  query SearchMcpRegistry($query: String, $limit: Int, $cursor: String) {
+    searchMcpRegistry(query: $query, limit: $limit, cursor: $cursor) {
+      servers {
+        name
+        description
+        version
+        websiteUrl
+        hasRemote
+        packages {
+          registryType
+          identifier
+          transportType
+        }
+      }
+      nextCursor
+    }
+  }
+`
+
 export const GET_AGENTS = gql`
   query GetAgents($projectId: ID!) {
     agents(projectId: $projectId) {

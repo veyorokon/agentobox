@@ -1,15 +1,15 @@
 import { useQuery, useSubscription, useMutation, useApolloClient } from "@apollo/client"
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 import { useParams } from "next/navigation"
 import type { DocumentNode } from "graphql"
-import { GET_FEED } from "@/lib/graphql/queries/feed"
-import { GET_AGENTS } from "@/lib/graphql/queries/agents"
+import { GET_FEED, GET_AGENT_FEED } from "@/lib/graphql/queries/feed"
 import { ON_FEED_ITEM_CHANGED } from "@/lib/graphql/subscriptions/feed"
+import { ON_EVENT_STREAM } from "@/lib/graphql/subscriptions/agents"
 import { RESOLVE_PERMISSION, RESOLVE_PLAN } from "@/lib/graphql/mutations/agents"
 import { SEND_MESSAGE } from "@/lib/graphql/mutations/feed"
 import { deriveAttentionFromFeed } from "@/lib/attention"
 import { createLogger } from "@/lib/logger"
-import type { Agent, TeamFeedItem, RecipientEntry } from "@/lib/types"
+import type { TeamFeedItem, TimelineEntry, RecipientEntry } from "@/lib/types"
 
 /* ================================================================== */
 /*  FEED HOOKS                                                          */
@@ -65,6 +65,46 @@ export function useFeedSubscription() {
   })
 }
 
+/* ── Agent detail feed (per-agent timeline) ────────────────────── */
+
+type AgentFeedData = { agentFeed: TimelineEntry[] }
+type EventStreamData = { eventStream: TimelineEntry }
+
+/** Fetches agent-specific timeline entries with real-time updates via event_stream subscription. */
+export function useAgentFeed(agentId: string) {
+  const { projectId } = useParams<{ projectId: string }>()
+
+  const result = useQuery<AgentFeedData>(GET_AGENT_FEED, {
+    variables: { agentId },
+    skip: !agentId,
+    fetchPolicy: "cache-and-network",
+  })
+
+  // Subscribe to event_stream for real-time updates, filtered to this agent
+  useEffect(() => {
+    if (!agentId || !projectId) return
+    const unsub = result.subscribeToMore<EventStreamData>({
+      document: ON_EVENT_STREAM,
+      variables: { projectId },
+      updateQuery: (prev, { subscriptionData }) => {
+        const entry = subscriptionData.data?.eventStream
+        if (!entry || entry.agentId !== agentId) return prev
+        // Skip stream_event (phase transitions) — same as backend query filter
+        if (entry.entryType === "stream_event") return prev
+
+        const existing = prev.agentFeed ?? []
+        if (existing.some(e => e.id === entry.id)) return prev
+
+        log("agent_feed.subscription_append", { id: entry.id, type: entry.entryType, agent: agentId })
+        return { agentFeed: [...existing, entry] }
+      },
+    })
+    return unsub
+  }, [agentId, projectId, result.subscribeToMore])
+
+  return result
+}
+
 /* ── Resolve hooks (permission + plan) ───────────────────────────── */
 
 /**
@@ -99,14 +139,13 @@ function useResolveFeedItem(
       const item = feed.find(fi => fi.id === feedItemId)
       if (item && item.type === itemType) {
         const agentName = item.agent
+        const agentId = "agentId" in item ? item.agentId : undefined
         const newAttention = deriveAttentionFromFeed(feed, agentName)
         log("cache.modify", { typename: "AgentType", agent: agentName, field: "attentionLevel", value: newAttention, reason: `${itemType} resolved` })
 
-        const agentsData = client.readQuery<{ agents: Agent[] }>({ query: GET_AGENTS, variables: queryVars })
-        const agent = agentsData?.agents.find(a => a.name === agentName)
-        if (agent) {
+        if (agentId) {
           client.cache.modify({
-            id: client.cache.identify({ __typename: "AgentType", id: agent.id }),
+            id: client.cache.identify({ __typename: "AgentType", id: agentId }),
             fields: { attentionLevel: () => newAttention },
           })
         }

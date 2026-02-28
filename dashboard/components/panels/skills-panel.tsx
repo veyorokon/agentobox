@@ -13,11 +13,11 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useSidebarStore } from "@/lib/stores/sidebar"
+import { useSkills, useCreateSkill, useDeleteSkill } from "@/lib/graphql/hooks/use-skills"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Collapsible } from "@/components/ui/collapsible"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 import { TagInput } from "@/components/agent/tag-input"
-import { SKILLS } from "@/lib/data/mock"
 
 export function SkillsPanel() {
   // Store state — shared across desktop and mobile skill views
@@ -27,20 +27,43 @@ export function SkillsPanel() {
   const setSkillTagFilter = useSidebarStore(s => s.setSkillTagFilter)
   const allExpanded = useSidebarStore(s => s.skillsAllExpanded)
 
+  // Data hooks
+  const { data: skillsData } = useSkills()
+  const skills = skillsData?.skills ?? []
+  const createSkill = useCreateSkill()
+  const deleteSkill = useDeleteSkill()
+
   // Ephemeral state
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState("")
   const [newContent, setNewContent] = useState("")
   const [newTags, setNewTags] = useState<string[]>([])
+  const [newAssignAll, setNewAssignAll] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
   const [showSkillTagDropdown, setShowSkillTagDropdown] = useState(false)
 
-  const allSkillTags = useMemo(() => Array.from(new Set(SKILLS.flatMap(s => s.assignedTags))).sort(), [])
+  const allSkillTags = useMemo(() => Array.from(new Set(skills.flatMap(s => s.assignedTags))).sort(), [skills])
+
+  const handleCreateSkill = () => {
+    if (!newName.trim()) return
+    createSkill(newName.trim(), newContent, "", newTags, newAssignAll)
+    setNewName("")
+    setNewContent("")
+    setNewTags([])
+    setNewAssignAll(false)
+    setShowCreate(false)
+  }
+
+  const handleBulkDelete = () => {
+    selectedSkills.forEach(id => deleteSkill(id))
+    setSelectedSkills(new Set())
+    setSelectMode(false)
+  }
 
   const filtered = useMemo(() => {
-    let result = SKILLS
+    let result = skills
     if (search.trim()) {
       const q = search.toLowerCase()
       result = result.filter(s =>
@@ -51,7 +74,7 @@ export function SkillsPanel() {
       result = result.filter(s => s.assignedTags.includes(skillTagFilter))
     }
     return result
-  }, [search, skillTagFilter])
+  }, [skills, search, skillTagFilter])
 
   return (
     <div className="flex flex-col h-full">
@@ -170,10 +193,20 @@ export function SkillsPanel() {
               <TagInput tags={newTags} onChange={setNewTags} placeholder="Add tag..." />
             </div>
           </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={newAssignAll}
+              onChange={(e) => setNewAssignAll(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-border-default bg-surface-sunken accent-accent"
+            />
+            <span className="text-[11px] text-secondary">Assign to all agents</span>
+          </label>
           <div className="flex justify-end">
             <button
               type="button"
               disabled={!newName.trim()}
+              onClick={handleCreateSkill}
               className={cn(
                 "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
                 newName.trim()
@@ -249,13 +282,9 @@ export function SkillsPanel() {
                       <span className="text-xs font-medium text-default flex-1 min-w-0 truncate">
                         {skill.name}
                       </span>
-                      {skill.steps ? (
-                        <span className="text-[9px] font-mono text-info/60 shrink-0">
-                          {skill.steps} steps
-                        </span>
-                      ) : (
-                        <span className="text-[9px] font-mono text-muted/40 shrink-0">
-                          skill
+                      {skill.assignedToAll && (
+                        <span className="text-[9px] font-mono text-accent/60 bg-accent/8 px-1.5 py-px rounded border border-accent/15 shrink-0">
+                          all agents
                         </span>
                       )}
                     </div>
@@ -307,6 +336,7 @@ export function SkillsPanel() {
           <span className="flex-1" />
           <button
             type="button"
+            onClick={handleBulkDelete}
             className={cn(
               "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
               selectedSkills.size > 0

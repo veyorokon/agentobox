@@ -17,7 +17,7 @@ import { LIFECYCLE_CONFIG, ATTENTION_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAcknowledgeAgent, useSetAgentMode } from "@/lib/graphql/hooks/use-agents"
-import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
+import { useFeed, useResolvePermission, useResolvePlan, useSendMessage } from "@/lib/graphql/hooks/use-feed"
 import { Collapsible } from "@/components/ui/collapsible"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
@@ -63,6 +63,7 @@ export function AgentCardRow({
   const feedItems = feedData?.feed ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
+  const sendMessage = useSendMessage()
   const handleModeChange = (mode: Agent["mode"]) => setAgentMode(agent.id, mode)
 
   // Derived from store
@@ -71,6 +72,14 @@ export function AgentCardRow({
 
   // Ephemeral state — view tab resets when card collapses
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
+  const [composerText, setComposerText] = useState("")
+
+  const handleSendMessage = () => {
+    const text = composerText.trim()
+    if (!text) return
+    sendMessage(text, [{ type: "agent", value: agent.name }])
+    setComposerText("")
+  }
 
   const hasAttention = agent.attentionLevel !== "none"
   const attCfg = hasAttention ? ATTENTION_CONFIG[agent.attentionLevel as Exclude<AttentionLevel, "none">] : null
@@ -282,12 +291,21 @@ export function AgentCardRow({
               <span className="text-[9px] text-accent font-mono shrink-0">@{agent.name}</span>
               <input
                 type="text"
+                value={composerText}
+                onChange={(e) => setComposerText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMessage() } }}
                 placeholder="Message..."
                 className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
               />
               <button
                 type="button"
-                className="flex items-center justify-center h-4 w-4 rounded-full bg-surface text-muted shrink-0"
+                onClick={handleSendMessage}
+                className={cn(
+                  "flex items-center justify-center h-4 w-4 rounded-full shrink-0 transition-colors",
+                  composerText.trim()
+                    ? "bg-accent text-on-emphasis"
+                    : "bg-surface text-muted",
+                )}
               >
                 <ArrowUp className="h-2.5 w-2.5" strokeWidth={2.5} />
               </button>

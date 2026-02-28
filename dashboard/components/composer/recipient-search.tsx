@@ -141,9 +141,11 @@ export function RecipientSearchBox({
     return []
   }, [inputValue, agents, allTags, recipients])
 
+  const suggestionsKey = suggestions.map(s => `${s.type}:${"value" in s ? s.value : ""}`).join(",")
   useEffect(() => {
     onSuggestionsChange?.(suggestions)
-  }, [suggestions, onSuggestionsChange])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionsKey, onSuggestionsChange])
 
   return (
     <div className="min-w-0">

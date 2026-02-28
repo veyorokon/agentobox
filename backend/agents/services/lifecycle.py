@@ -323,6 +323,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             relay_token=relay_token,
             callback_url=callback_url,
             mode=getattr(agent, "mode", "auto"),
+            agent_tags=agent.tags or [],
         )
         # Write theme tokens if project has them
         if project.theme_tokens:
@@ -344,6 +345,11 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Pass resume session so relay can --resume the prior conversation
         if resume_session_id:
             relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
+
+        # Map frontend mode to Claude Code permission mode for the relay
+        from agents.adapters.claude_code import MODE_TO_PERMISSION
+        perm_mode = MODE_TO_PERMISSION.get(getattr(agent, "mode", "auto"), "bypassPermissions")
+        relay_env_lines.append(f"export PERMISSION_MODE='{_shell_escape(perm_mode)}'")
 
         # Always set MCP config path (team coord server is always present)
         # provision.py writes .mcp.json to /home/agent/ (not work_dir)

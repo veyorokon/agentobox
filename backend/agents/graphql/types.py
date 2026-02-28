@@ -120,6 +120,51 @@ class McpRegistryEntryType:
     compat: list[str]
 
 
+# ── MCP registry search types (proxied from registry.modelcontextprotocol.io) ──
+
+
+@strawberry.type
+class McpPackageType:
+    registry_type: str
+    identifier: str
+    transport_type: str
+
+
+@strawberry.type
+class McpRegistryServerType:
+    name: str
+    description: str
+    version: str
+    website_url: str | None
+    has_remote: bool
+    packages: list[McpPackageType]
+
+
+@strawberry.type
+class McpRegistrySearchResult:
+    servers: list[McpRegistryServerType]
+    next_cursor: str | None
+
+
+# ── Skill type (model-backed) ──
+
+
+@strawberry_django.type(models.Skill)
+class SkillType:
+    id: auto
+    name: auto
+    description: auto
+    content: auto
+    assigned_tags: auto
+    assigned_to_all: auto
+    created_at: auto
+    updated_at: auto
+
+    @strawberry.field
+    def project_id(self) -> str:
+        return str(self.project_id)  # type: ignore[return-value]
+
+
 @strawberry_django.type(models.Agent)
 class AgentType:
     """Agent type matching the dashboard's Agent shape.
@@ -208,6 +253,7 @@ class TeamFeedItemType:
     id: strawberry.ID
     type: str
     agent: str | None = None
+    agent_id: str | None = None
     text: str | None = None
     command: str | None = None
     risk: str | None = None
@@ -241,6 +287,7 @@ def model_to_feed_item_type(item: models.TeamFeedItem) -> TeamFeedItemType:
         id=strawberry.ID(str(item.id)),
         type=item.type,
         agent=item.agent_name or None,
+        agent_id=str(item.agent_record_id) if item.agent_record_id else None,
         text=item.text or None,
         command=item.command or None,
         risk=item.risk or None,

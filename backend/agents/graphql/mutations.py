@@ -6,7 +6,7 @@ from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
-from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType, TeamFeedItemType, VncTokenResult
+from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("agents.mutations")
 
@@ -83,6 +83,26 @@ class ScopeSecretInput:
     project_id: ID
     key: str
     agent_ids: list[ID]  # empty = all agents (unscoped)
+
+
+@strawberry.input
+class CreateSkillInput:
+    project_id: ID
+    name: str
+    content: str
+    description: str = ""
+    assigned_tags: list[str] | None = None
+    assigned_to_all: bool = False
+
+
+@strawberry.input
+class UpdateSkillInput:
+    skill_id: ID
+    name: str | None = None
+    description: str | None = None
+    content: str | None = None
+    assigned_tags: list[str] | None = None
+    assigned_to_all: bool | None = None
 
 
 @strawberry.type
@@ -429,6 +449,75 @@ class AgentMutation:
         await agent.asave(update_fields=update_fields)
 
         return await hard_restart_agent(str(agent.id))
+
+    # --- Skills ---
+
+    @strawberry.mutation
+    async def create_skill(self, input: CreateSkillInput, info: strawberry.types.Info) -> SkillType:
+        from agents.models import Skill
+
+        await authorize_project(info, input.project_id)
+
+        from django.db import IntegrityError
+
+        try:
+            return await Skill.objects.acreate(
+                project_id=input.project_id,
+                name=input.name,
+                description=input.description,
+                content=input.content,
+                assigned_tags=input.assigned_tags or [],
+                assigned_to_all=input.assigned_to_all,
+            )
+        except IntegrityError:
+            raise ValueError(f"A skill named '{input.name}' already exists in this project")
+
+    @strawberry.mutation
+    async def update_skill(self, input: UpdateSkillInput, info: strawberry.types.Info) -> SkillType:
+        from agents.models import Skill
+
+        skill = await Skill.objects.select_related("project").aget(id=input.skill_id)
+        await authorize_project(info, str(skill.project_id))
+
+        update_fields = []
+        if input.name is not None:
+            skill.name = input.name
+            update_fields.append("name")
+        if input.description is not None:
+            skill.description = input.description
+            update_fields.append("description")
+        if input.content is not None:
+            skill.content = input.content
+            update_fields.append("content")
+        if input.assigned_tags is not None:
+            skill.assigned_tags = input.assigned_tags
+            update_fields.append("assigned_tags")
+        if input.assigned_to_all is not None:
+            skill.assigned_to_all = input.assigned_to_all
+            update_fields.append("assigned_to_all")
+
+        if update_fields:
+            from django.db import IntegrityError
+
+            try:
+                await skill.asave(update_fields=update_fields)
+            except IntegrityError:
+                raise ValueError(f"A skill named '{skill.name}' already exists in this project")
+
+        return skill
+
+    @strawberry.mutation
+    async def delete_skill(self, skill_id: ID, info: strawberry.types.Info) -> bool:
+        from agents.models import Skill
+
+        try:
+            skill = await Skill.objects.select_related("project").aget(id=skill_id)
+        except Skill.DoesNotExist:
+            return False
+
+        await authorize_project(info, str(skill.project_id))
+        await skill.adelete()
+        return True
 
     # --- Project Secrets ---
 

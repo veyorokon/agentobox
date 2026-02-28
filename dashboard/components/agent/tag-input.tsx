@@ -58,6 +58,7 @@ export function TagInput({
             removeTag(tags[tags.length - 1])
           }
         }}
+        onBlur={() => { if (input.trim()) addTag(input.trim()) }}
         placeholder={tags.length === 0 ? placeholder : ""}
         className="flex-1 min-w-[60px] bg-transparent border-none outline-none text-[11px] font-mono text-default placeholder:text-muted/40"
       />
