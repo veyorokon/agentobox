@@ -82,42 +82,44 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         from agents.services.reconcile import ensure_running
         ensure_running()
 
-        # Backfill pending user messages that arrived while relay was disconnected.
-        # Uses agent.updated_at (set by _atomic_reset_for_restart) as the cutoff,
-        # minus 30s buffer to catch messages created just before the restart reset
-        # updated_at. Safe because the relay skips duplicate text echoes.
-        backfill_cutoff = self.agent.updated_at - timedelta(seconds=30)
-        pending = StreamEvent.objects.filter(
-            agent_id=self.agent_id,
-            event_type="user",
-            created_at__gte=backfill_cutoff,
-        ).order_by("created_at")
+        # Backfill pending user messages that arrived while the relay was
+        # genuinely down (container freshly created). On transient WS reconnects
+        # (backend restart, network blip) the relay stayed alive — Claude already
+        # has these messages in context. Replaying them causes duplicate turns.
+        from agents.models import AgentStatus
+        if self.agent.status == AgentStatus.DEPLOYING:
+            backfill_cutoff = self.agent.updated_at - timedelta(seconds=30)
+            pending = StreamEvent.objects.filter(
+                agent_id=self.agent_id,
+                event_type="user",
+                created_at__gte=backfill_cutoff,
+            ).order_by("created_at")
 
-        # Valid Anthropic content block types — anything prefixed with _ is
-        # internal metadata (e.g. _broadcast) and must be stripped before
-        # sending to Claude's stdin.
-        _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
+            # Valid Anthropic content block types — anything prefixed with _ is
+            # internal metadata (e.g. _broadcast) and must be stripped before
+            # sending to Claude's stdin.
+            _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
 
-        async for event in pending:
-            data = event.data
-            msg = data.get("message", {})
-            content = msg.get("content", "")
-            # Only replay text user messages, not tool_result events
-            if isinstance(content, str) and content.strip():
-                await self.send_json({
-                    "type": "input",
-                    "payload": {"type": "user", "message": {"role": "user", "content": content}},
-                })
-            elif isinstance(content, list):
-                # Strip internal metadata blocks (type starting with _)
-                clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
-                # Check if it's a text-only content block list (not tool_result)
-                text_parts = [b for b in clean if b.get("type") == "text"]
-                if text_parts and not any(b.get("type") == "tool_result" for b in clean):
+            async for event in pending:
+                data = event.data
+                msg = data.get("message", {})
+                content = msg.get("content", "")
+                # Only replay text user messages, not tool_result events
+                if isinstance(content, str) and content.strip():
                     await self.send_json({
                         "type": "input",
-                        "payload": {"type": "user", "message": {"role": "user", "content": clean}},
+                        "payload": {"type": "user", "message": {"role": "user", "content": content}},
                     })
+                elif isinstance(content, list):
+                    # Strip internal metadata blocks (type starting with _)
+                    clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
+                    # Check if it's a text-only content block list (not tool_result)
+                    text_parts = [b for b in clean if b.get("type") == "text"]
+                    if text_parts and not any(b.get("type") == "tool_result" for b in clean):
+                        await self.send_json({
+                            "type": "input",
+                            "payload": {"type": "user", "message": {"role": "user", "content": clean}},
+                        })
 
         log.info("relay_ws_connected", agent_id=self.agent_id)
 
