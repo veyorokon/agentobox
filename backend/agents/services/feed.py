@@ -102,7 +102,8 @@ async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
     """Resolve a permission prompt feed item.
 
     verdict: 'allowed' | 'denied'
-    Sends tool_result back to agent if allowed.
+    Sends callback_response to relay, resolving the pending Future
+    so the SDK's can_use_tool callback returns.
     Recomputes attention for affected agent.
     """
     if verdict not in ("allowed", "denied"):
@@ -110,13 +111,19 @@ async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
 
     item = await update_feed_item(item, perm_status=verdict)
 
-    if verdict == "allowed" and item.tool_use_id and item.agent_record_id:
-        from agents.services.comms import answer_question
-        await answer_question(
-            str(item.agent_record_id),
-            item.tool_use_id,
-            "Permission granted by user",
+    # Send callback_response to relay (resolves the pending Future)
+    if item.tool_use_id and item.agent_record_id:
+        from agents.services.comms import _push_to_relay
+        result = (
+            {"behavior": "allow"}
+            if verdict == "allowed"
+            else {"behavior": "deny", "message": "Denied by user"}
         )
+        await _push_to_relay(str(item.agent_record_id), {
+            "type": "callback_response",
+            "request_id": item.tool_use_id,
+            "result": result,
+        })
 
     if item.agent_record_id:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))

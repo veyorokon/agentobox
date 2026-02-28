@@ -101,6 +101,8 @@ from claude_agent_sdk import (  # noqa: E402
     CLINotFoundError,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ProcessError,
     UserMessage,
 )
@@ -329,6 +331,7 @@ class SDKRelay:
         self._exit_posted = False  # guards against double process_exit events
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
+        self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
         self.ws = WSTransport()
 
     def _build_options(self, resume_session_id: str = "", permission_mode: str = "") -> ClaudeAgentOptions:
@@ -358,6 +361,10 @@ class SDKRelay:
 
         perm = permission_mode if permission_mode else "bypassPermissions"
 
+        # Only register can_use_tool in supervised mode ("default").
+        # In bypassPermissions the SDK never fires the callback — keep None.
+        can_use_tool = self._make_can_use_tool_callback() if perm == "default" else None
+
         return ClaudeAgentOptions(
             model=model or None,
             permission_mode=perm,
@@ -365,6 +372,7 @@ class SDKRelay:
             include_partial_messages=True,
             cli_path="claude",
             cwd=os.getcwd(),
+            can_use_tool=can_use_tool,
             # IS_SANDBOX=1 tells the Claude CLI this is a sandboxed container,
             # so it accepts bypassPermissions even when the user has sudo.
             # Without this, the CLI detects sudo capability and refuses to start.
@@ -379,6 +387,46 @@ class SDKRelay:
             mcp_servers=mcp_config if mcp_config else {},
             stderr=self._on_stderr,
         )
+
+    # ── Generic callback bridge ──
+
+    async def _request_callback(self, callback_type: str, payload: dict) -> dict:
+        """Send callback request to backend, wait for response.
+
+        Creates a Future, sends the request upstream via WS, and awaits
+        the backend's callback_response which resolves the Future.
+        """
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        self._pending_callbacks[request_id] = future
+        await self._send_event({
+            "type": "callback",
+            "callback_type": callback_type,
+            "request_id": request_id,
+            "payload": payload,
+        })
+        try:
+            return await future
+        finally:
+            self._pending_callbacks.pop(request_id, None)
+
+    def _make_can_use_tool_callback(self):
+        """Build the can_use_tool callback for supervised mode.
+
+        Thin wrapper translating SDK callback ↔ our generic bridge.
+        """
+        async def _can_use_tool(tool_name, tool_input, context):
+            result = await self._request_callback("can_use_tool", {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+            })
+            if result.get("behavior") == "allow":
+                return PermissionResultAllow(updated_input=result.get("updated_input"))
+            return PermissionResultDeny(
+                message=result.get("message", "Denied by user"),
+            )
+        return _can_use_tool
 
     def _on_stderr(self, line: str):
         """Capture CLI stderr for diagnostics.
@@ -555,6 +603,15 @@ class SDKRelay:
             elif sig == "SIGINT":
                 log.info("SIGINT requested via WS")
                 await self.client.interrupt()
+
+        elif cmd_type == "callback_response":
+            request_id = cmd.get("request_id", "")
+            result = cmd.get("result", {})
+            future = self._pending_callbacks.get(request_id)
+            if future and not future.done():
+                future.set_result(result)
+            else:
+                log.warning("Stale callback_response: request_id=%s", request_id)
 
         elif cmd_type == "mode":
             # Backend sends our vocabulary (auto/plan/supervised),
@@ -754,6 +811,14 @@ class SDKRelay:
             except Exception:
                 pass
             self.client = None
+
+            # Cancel any pending callback Futures — the SDK process that
+            # would consume the response is gone.
+            for fut in self._pending_callbacks.values():
+                if not fut.done():
+                    fut.cancel()
+            self._pending_callbacks.clear()
+
             log.info("SDK client disconnected, evaluating exit path (fatal=%s, restart=%s, clear=%s, exit_posted=%s)",
                      fatal, self.restart_requested, self.clear_requested, self._exit_posted)
 
@@ -843,6 +908,17 @@ class SDKRelay:
                         break
                     elif sig == "restart":
                         break
+                elif cmd_type == "callback_response":
+                    # Resolve pending callback Future (agent might be idle
+                    # when user responds to a late permission prompt).
+                    request_id = cmd.get("request_id", "")
+                    result = cmd.get("result", {})
+                    future = self._pending_callbacks.get(request_id)
+                    if future and not future.done():
+                        future.set_result(result)
+                    else:
+                        log.warning("Stale callback_response (idle): request_id=%s", request_id)
+                    # Don't break — no need to respawn for a callback response.
                 elif cmd_type == "mode":
                     our_mode = cmd.get("mode", "")
                     if our_mode:

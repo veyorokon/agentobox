@@ -128,8 +128,20 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content):
         """Each message from relay = one raw stream-json event.
 
-        No batching, no filtering — store verbatim, broadcast, side-effect.
+        Callback requests are routed to the callbacks service before
+        reaching stream processing — they create feed items, not stream events.
+        Everything else: store verbatim, broadcast, side-effect.
         """
+        event_type = content.get("type", "")
+
+        if event_type == "callback":
+            from agents.services.callbacks import process_callback
+            try:
+                await process_callback(self.agent, content)
+            except Exception:
+                log.exception("callback_request_failed", agent_id=self.agent_id)
+            return
+
         from agents.services.stream import process_stream_event
 
         try:
@@ -138,7 +150,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             log.exception(
                 "relay_ws_event_failed",
                 agent_id=self.agent_id,
-                event_type=content.get("type"),
+                event_type=event_type,
             )
 
     # ── Downstream: backend → relay ──
