@@ -70,7 +70,7 @@ export type TeamFeedItem =
   | { id: string; type: "status"; agent: string; agentId?: string; from: string; to: string }
   | { id: string; type: "error"; agent: string; agentId?: string; text: string }
   | { id: string; type: "question"; agent: string; agentId?: string; question: string; options: string[] }
-  | { id: string; type: "plan"; agent: string; agentId?: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
+  | { id: string; type: "plan"; agent: string; agentId?: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" | "superseded" }
   | { id: string; type: "permission"; agent: string; agentId?: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
   | { id: string; type: "multi-question"; agent: string; agentId?: string; questions: { text: string; options: string[] }[] }
   | { id: string; type: "agent-message"; from: string; to: string; text: string }

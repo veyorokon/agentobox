@@ -25,7 +25,7 @@ from asgiref.sync import sync_to_async
 
 from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
-from agents.services.feed import create_feed_item, recompute_attention
+from agents.services.feed import broadcast_feed_item, create_feed_item, recompute_attention
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("agents.stream")
@@ -118,6 +118,33 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
         await _handle_phase(agent, event)
 
 
+async def _supersede_pending_plans(agent: Agent) -> None:
+    """Auto-reject any existing pending plan items for this agent.
+
+    An agent can only have one pending plan at a time (CC is sequential).
+    When a new plan arrives, the old one is stale — supersede it so it
+    doesn't pile up in the attention bar.
+    """
+    from agents.models import TeamFeedItem
+
+    stale_qs = TeamFeedItem.objects.filter(
+        agent_record=agent,
+        type="plan",
+        plan_status="pending",
+    )
+    # Fetch before bulk update so we can broadcast each one
+    stale_ids = [item.id async for item in stale_qs.only("id")]
+    if not stale_ids:
+        return
+
+    await stale_qs.aupdate(plan_status="superseded")
+    # Broadcast so dashboard subscribers see the status change
+    for item_id in stale_ids:
+        item = await TeamFeedItem.objects.aget(id=item_id)
+        await broadcast_feed_item(item)
+    log.info("plans_superseded", agent_id=str(agent.id), count=len(stale_ids))
+
+
 async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:
     """Detect ExitPlanMode tool_use and create a plan feed item.
 
@@ -148,12 +175,15 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
             plan_status="approved",
             tool_use_id=tool_use_id,
         )
-        from agents.services.comms import answer_question
-        await answer_question(str(agent.id), tool_use_id, "Plan approved (auto mode)")
+        from agents.services.comms import send_message
+        await send_message(str(agent.id), "Plan approved. Proceed with the implementation.")
         log.info("plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
         return
 
     # Supervised/plan mode: pending item, user must approve via dashboard.
+    # Supersede any existing pending plan for this agent (one at a time).
+    await _supersede_pending_plans(agent)
+
     await create_feed_item(
         project_id=str(agent.project_id),
         source_event=source_event,

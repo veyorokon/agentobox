@@ -143,10 +143,14 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
 
     item = await update_feed_item(item, plan_status=verdict)
 
-    if item.tool_use_id and item.agent_record_id:
-        from agents.services.comms import answer_question
-        msg = "Plan approved by user" if verdict == "approved" else "Plan rejected by user"
-        await answer_question(str(item.agent_record_id), item.tool_use_id, msg)
+    if item.agent_record_id:
+        from agents.services.comms import send_message
+        msg = (
+            "Plan approved. Proceed with the implementation."
+            if verdict == "approved"
+            else "Plan rejected. Stop and wait for new instructions."
+        )
+        await send_message(str(item.agent_record_id), msg)
 
     if item.agent_record_id:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))
