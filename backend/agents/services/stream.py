@@ -232,15 +232,10 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         perm_mode = event.get("permissionMode", "")
         if perm_mode and perm_mode != agent.permission_mode:
             agent.permission_mode = perm_mode
-            # Reverse-map Claude Code mode → frontend mode
-            _PERM_TO_MODE = {
-                "bypassPermissions": "auto",
-                "dontAsk": "auto",
-                "plan": "plan",
-                "default": "supervised",
-                "acceptEdits": "supervised",
-            }
-            new_mode = _PERM_TO_MODE.get(perm_mode, agent.mode)
+            # Reverse-map Claude Code mode -> frontend mode via adapter
+            from agents.adapters import get_adapter
+            adapter = get_adapter(agent.agent_type)
+            new_mode = adapter.wire_to_mode(perm_mode) or agent.mode
             update_fields = ["permission_mode"]
             if new_mode != agent.mode:
                 agent.mode = new_mode

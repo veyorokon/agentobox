@@ -26,7 +26,7 @@ def _read_source(path: Path) -> str:
 
 
 def _python_files(directory: Path) -> list[Path]:
-    return [f for f in directory.glob("*.py") if f.name != "__init__.py"]
+    return [f for f in directory.rglob("*.py") if f.name != "__init__.py"]
 
 
 def fail(msg: str) -> None:

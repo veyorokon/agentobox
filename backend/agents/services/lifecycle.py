@@ -12,17 +12,12 @@ from agents.runtimes.base import VolumeMount
 from agents.models import StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
 from agents.services.feed import create_feed_item
-from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
+from agents.services.provision import provision_workspace, write_secrets_env, write_theme_files
 from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 
 log = structlog.get_logger("agents.lifecycle")
-
-
-def _shell_escape(val: str) -> str:
-    """Escape a value for safe use inside single quotes in shell."""
-    return val.replace("'", "'\\''")
 
 
 async def create_agent(
@@ -329,33 +324,22 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if project.theme_tokens:
             await write_theme_files(runtime, sandbox.id, project.theme_tokens)
 
-        # Build relay environment variables
-        # The relay reads these into ClaudeAgentOptions (SDK) and WS config
-        relay_env_lines = [
-            f"export AGENT_ID='{_shell_escape(agent_id)}'",
-            f"export AGENT_NAME='{_shell_escape(agent.name)}'",
-            f"export TEAM_NAME='{_shell_escape(team_name)}'",
-            f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
-            f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
-            f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
-            f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
-            f"export CLAUDE_MODEL='{_shell_escape(agent.model)}'",
-        ]
-
-        # Pass resume session so relay can --resume the prior conversation
-        if resume_session_id:
-            relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
-
-        # Map frontend mode to Claude Code permission mode for the relay
-        from agents.adapters.claude_code import MODE_TO_PERMISSION
-        perm_mode = MODE_TO_PERMISSION.get(getattr(agent, "mode", "auto"), "bypassPermissions")
-        relay_env_lines.append(f"export PERMISSION_MODE='{_shell_escape(perm_mode)}'")
-
-        # Always set MCP config path (team coord server is always present)
-        # provision.py writes .mcp.json to /home/agent/ (not work_dir)
-        relay_env_lines.append("export MCP_CONFIG='/home/agent/.mcp.json'")
-
-        relay_env_content = "\n".join(relay_env_lines) + "\n"
+        # Build relay environment variables via adapter
+        from agents.adapters import get_adapter
+        adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
+        relay_env_content = adapter.build_relay_env(
+            agent_id=agent_id,
+            agent_name=agent.name,
+            team_name=team_name,
+            parent_session_id=parent_session_id,
+            callback_url=callback_url,
+            relay_token=relay_token,
+            api_key=api_key,
+            model=agent.model,
+            mode=getattr(agent, "mode", "auto"),
+            resume_session_id=resume_session_id,
+            mcp_config_path="/home/agent/.mcp.json",
+        )
         await runtime.write_file(
             sandbox.id,
             relay_env_content.encode("utf-8"),

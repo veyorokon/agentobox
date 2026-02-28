@@ -1,8 +1,9 @@
 """Claude Code adapter — translates Claude Code stream-json into our vocabulary.
 
-Also owns the provisioning config builders: settings.json and CLAUDE.md.
-These are CC-specific formats — other agent types (Gemini, Codex) would have
-their own adapters with different file formats and content.
+Also owns provisioning config builders: settings.json, CLAUDE.md, .mcp.json,
+.claude.json, relay env, and API key delivery. These are CC-specific formats —
+other agent types (Gemini, Codex) would have their own adapters with different
+file formats and content.
 
 Claude Code snapshot structure:
     {
@@ -30,25 +31,45 @@ Claude Code snapshot structure:
 Semantics:
     - New assistant event pops "result" (new turn started)
     - Result event adds "result" (turn complete)
-    - live_action checks for "result" key: if present, turn is done → empty string
+    - live_action checks for "result" key: if present, turn is done -> empty string
 """
 
 import json
 import textwrap
 
+from agents.adapters.claude_code.registries import (
+    MCP_REGISTRY,
+    MODELS_REGISTRY,
+    TEAM_CONFIGS,
+)
 
 # ---------------------------------------------------------------------------
-# CC-specific constants
+# CC-specific constants (private — services never import these directly)
 # ---------------------------------------------------------------------------
 
 # Path where the API key helper script lives in the container
-API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
+_API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
 
-# Frontend mode → Claude Code permission mode mapping
-MODE_TO_PERMISSION = {
+# tmpfs path for the API key (root:agent 0440)
+_API_KEY_TMPFS_PATH = "/run/secrets/anthropic_key"
+
+# Frontend mode -> Claude Code permission mode mapping
+# Internal to adapter — used by build_settings() and build_relay_env().
+# Services send our vocabulary; the relay translates to SDK format at runtime.
+_MODE_TO_PERMISSION = {
     "auto": "bypassPermissions",
     "plan": "plan",
     "supervised": "default",
+}
+
+# Reverse: Claude Code wire format -> our vocabulary
+# Used by wire_to_mode() when parsing system events FROM the agent.
+_PERM_TO_MODE = {
+    "bypassPermissions": "auto",
+    "dontAsk": "auto",
+    "plan": "plan",
+    "default": "supervised",
+    "acceptEdits": "supervised",
 }
 
 # Image variants and their OS descriptions for CLAUDE.md
@@ -73,10 +94,15 @@ isolated from your shell.
 """
 
 
+def _shell_escape(val: str) -> str:
+    """Escape a value for safe use inside single quotes in shell."""
+    return val.replace("'", "'\\''")
+
+
 class ClaudeCodeAdapter:
     """Adapter for Claude Code stream-json events and provisioning config."""
 
-    # -- Snapshot extraction (read path) --
+    # ── Read path (extract from snapshot/event) ──
 
     def last_output(self, snapshot: dict) -> str:
         """Last text block from the assistant event.
@@ -203,7 +229,6 @@ class ClaudeCodeAdapter:
                 continue
             name = block.get("name", "")
             if name == "ExitPlanMode":
-                inp = block.get("input", {})
                 # Extract plan text from preceding text blocks
                 text_blocks = [
                     b.get("text", "")
@@ -218,14 +243,22 @@ class ClaudeCodeAdapter:
                 }
         return None
 
-    # -- Provisioning config (write path) --
+    def wire_to_mode(self, wire_mode: str) -> str:
+        """Agent wire format -> our mode. e.g. "bypassPermissions" -> "auto".
+
+        Used by stream.py when parsing system events FROM the agent.
+        Returns "" if wire_mode is unrecognized.
+        """
+        return _PERM_TO_MODE.get(wire_mode, "")
+
+    # ── Provisioning config builders (pure data, no I/O) ──
 
     def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:
         """Build .claude/settings.json content.
 
         CC-specific: permission modes, disallowed built-in tools, API key helper.
         """
-        perm_mode = MODE_TO_PERMISSION.get(mode, "bypassPermissions")
+        perm_mode = _MODE_TO_PERMISSION.get(mode, "bypassPermissions")
         settings = {
             "theme": "dark",
             "defaultMode": perm_mode,
@@ -240,7 +273,7 @@ class ClaudeCodeAdapter:
             ],
         }
         if api_key:
-            settings["apiKeyHelper"] = API_KEY_HELPER_PATH
+            settings["apiKeyHelper"] = _API_KEY_HELPER_PATH
         return json.dumps(settings, indent=2)
 
     def build_instructions(
@@ -422,3 +455,167 @@ class ClaudeCodeAdapter:
         sections.append(SECURITY_INSTRUCTIONS.strip() + "\n")
 
         return "\n".join(sections)
+
+    def build_onboarding_state(self, *, api_key: str = "") -> str:
+        """Build .claude.json content — marks onboarding complete, pre-approves API key.
+
+        CC-specific: Claude Code reads .claude.json on startup. Without this,
+        it prompts interactively for onboarding and API key approval.
+        """
+        state = {
+            "hasCompletedOnboarding": True,
+            "bypassPermissionsModeAccepted": True,
+        }
+        if api_key and len(api_key) >= 20:
+            state["customApiKeyResponses"] = {
+                "approved": [api_key[-20:]],
+                "rejected": [],
+            }
+        return json.dumps(state)
+
+    def build_mcp_config(
+        self,
+        *,
+        mcp_servers: dict | None = None,
+        secret_envs: dict[str, str] | None = None,
+        coord_server: dict | None = None,
+    ) -> str:
+        """Build .mcp.json content with secrets injected into every server's env block.
+
+        CC-specific: Claude Code reads .mcp.json for MCP server configs.
+        The format is {"mcpServers": {name: {command, args, env}}}.
+
+        All project secrets are merged flat and injected into every MCP server's
+        env block. MCP servers ignore keys they don't recognize, so extra keys
+        are harmless. This avoids needing per-server secret routing.
+        """
+        servers = {}
+        if mcp_servers:
+            for name, config in mcp_servers.items():
+                entry = {"command": config["command"], "args": config["args"]}
+                if secret_envs:
+                    entry["env"] = dict(secret_envs)
+                servers[name] = entry
+
+        if coord_server:
+            servers["team"] = coord_server
+
+        return json.dumps({"mcpServers": servers}, indent=2)
+
+    def build_api_key_files(self, api_key: str) -> list[dict]:
+        """File specs for API key delivery.
+
+        Returns [{path, content, mode, owner}]. Services iterate and write.
+        Empty list if no key needed.
+
+        CC-specific: Claude Code reads the API key via apiKeyHelper setting
+        which runs a script that cats a tmpfs file. This keeps the key out
+        of env vars where Claude Code could read it.
+        """
+        if not api_key:
+            return []
+        return [
+            {
+                "path": _API_KEY_TMPFS_PATH,
+                "content": api_key,
+                "mode": "0440",
+                "owner": "root:agent",
+            },
+            {
+                "path": _API_KEY_HELPER_PATH,
+                "content": f"#!/bin/bash\ncat {_API_KEY_TMPFS_PATH}\n",
+                "mode": "0555",
+                "owner": "root:root",
+            },
+        ]
+
+    def build_relay_env(
+        self,
+        *,
+        agent_id: str,
+        agent_name: str,
+        team_name: str,
+        parent_session_id: str,
+        callback_url: str,
+        relay_token: str,
+        api_key: str,
+        model: str,
+        mode: str,
+        resume_session_id: str = "",
+        mcp_config_path: str = "",
+    ) -> str:
+        """Build relay process env file content.
+
+        Uses OUR vocabulary for mode (e.g. "auto" not "bypassPermissions").
+        The relay translates to SDK format at runtime. This keeps the
+        backend-relay protocol stable across agent types.
+        """
+        lines = [
+            f"export AGENT_ID='{_shell_escape(agent_id)}'",
+            f"export AGENT_NAME='{_shell_escape(agent_name)}'",
+            f"export TEAM_NAME='{_shell_escape(team_name)}'",
+            f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
+            f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
+            f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
+            f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
+            f"export CLAUDE_MODEL='{_shell_escape(model)}'",
+        ]
+
+        if resume_session_id:
+            lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
+
+        # Our vocabulary — the relay maps to SDK format at runtime
+        lines.append(f"export AGENT_MODE='{_shell_escape(mode)}'")
+
+        if mcp_config_path:
+            lines.append(f"export MCP_CONFIG='{_shell_escape(mcp_config_path)}'")
+
+        return "\n".join(lines) + "\n"
+
+    # ── Registries (static data) ──
+
+    def available_models(self) -> list[dict]:
+        """[{value, label}] of models this agent type supports."""
+        return list(MODELS_REGISTRY)
+
+    def mcp_registry_entries(self) -> list[dict]:
+        """[{name, compat}] of known MCP servers for this agent type."""
+        return [
+            {"name": name, "compat": entry.get("compat", [])}
+            for name, entry in MCP_REGISTRY.items()
+        ]
+
+    def resolve_mcp_servers(self, names: list[str], variant: str = "debian") -> dict:
+        """Resolve MCP names -> {name: {command, args}} config.
+
+        Skips servers incompatible with the given image variant.
+        """
+        resolved = {}
+        for name in names:
+            entry = MCP_REGISTRY.get(name)
+            if not entry:
+                continue
+            compat = entry.get("compat")
+            if compat and variant not in compat:
+                continue
+            resolved[name] = {
+                "command": entry["command"],
+                "args": entry["args"],
+            }
+        return resolved
+
+    def resolve_mcp_instructions(self, mcp_servers: dict | None) -> list[str]:
+        """Instruction strings for resolved MCP servers."""
+        if not mcp_servers:
+            return []
+        result = []
+        for name in mcp_servers:
+            entry = MCP_REGISTRY.get(name, {})
+            instr = entry.get("instructions")
+            if instr:
+                result.append(textwrap.dedent(instr))
+        return result
+
+    def team_configs(self) -> dict:
+        """Team configuration templates."""
+        return dict(TEAM_CONFIGS)

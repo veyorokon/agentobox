@@ -26,10 +26,11 @@ def auto_deploy_team_lead(sender, instance, created, **kwargs):
     op_log.info("auto_deploying_team_lead")
 
     try:
+        from agents.adapters import get_adapter
         from agents.services.lifecycle import create_agent
-        from agents.services.provision import TEAM_CONFIGS
 
-        template = TEAM_CONFIGS["solo"]
+        adapter = get_adapter("claude-code")
+        template = adapter.team_configs()["solo"]
         lead_config = template["agents"][0]
 
         # Check if we're inside an existing event loop (e.g. ASGI)
@@ -59,13 +60,14 @@ def auto_deploy_team_lead(sender, instance, created, **kwargs):
 
 async def _create_team_lead(project_id: str, config: dict, op_log):
     """Async helper to create the team lead agent."""
+    from agents.adapters import get_adapter
     from agents.services.lifecycle import create_agent
-    from agents.services.provision import resolve_mcp_servers
 
     # Resolve MCP server names to full config
+    adapter = get_adapter("claude-code")
     mcp_config = None
     if config.get("mcp_servers"):
-        mcp_config = resolve_mcp_servers(config["mcp_servers"])
+        mcp_config = adapter.resolve_mcp_servers(config["mcp_servers"])
 
     agent = await create_agent(
         project_id=project_id,

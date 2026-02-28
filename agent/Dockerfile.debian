@@ -1,3 +1,18 @@
+# ── Base layer (generic, any agent type) ──
+# s6-overlay, system packages, Xvfb/VNC/noVNC, AwesomeWM, Node.js,
+# GitHub CLI, Firefox, fonts, user setup, rootfs overlay, env vars
+#
+# ── Claude Code layer (agent-type-specific) ──
+# Lines 33-35: Python websockets + claude-agent-sdk
+# Lines 75-77: Claude Code CLI (npm install -g @anthropic-ai/claude-code)
+# Lines 79-89: Computer Use MCP server
+#
+# When adding a second agent type, split this file:
+#   Dockerfile.base  — everything above
+#   Dockerfile.claude — FROM agentobox-base, adds CC-specific deps
+#   Dockerfile.codex  — FROM agentobox-base, adds Codex-specific deps
+# Each adapter dir can own an image/ subdir with its Dockerfile + relay.
+
 FROM debian:bookworm-slim
 
 ARG S6_OVERLAY_VERSION=3.2.2.0

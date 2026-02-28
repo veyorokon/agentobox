@@ -141,20 +141,22 @@ class AgentQuery:
 
     @strawberry.field
     def available_models(self) -> list[ModelEntryType]:
-        from agents.services.provision import MODELS_REGISTRY
+        from agents.adapters import get_adapter
 
+        adapter = get_adapter("claude-code")
         return [
             ModelEntryType(value=m["value"], label=m["label"])
-            for m in MODELS_REGISTRY
+            for m in adapter.available_models()
         ]
 
     @strawberry.field
     def mcp_registry(self) -> list[McpRegistryEntryType]:
-        from agents.services.provision import MCP_REGISTRY
+        from agents.adapters import get_adapter
 
+        adapter = get_adapter("claude-code")
         return [
-            McpRegistryEntryType(name=name, compat=entry.get("compat", []))
-            for name, entry in MCP_REGISTRY.items()
+            McpRegistryEntryType(name=e["name"], compat=e["compat"])
+            for e in adapter.mcp_registry_entries()
         ]
 
     @strawberry.field

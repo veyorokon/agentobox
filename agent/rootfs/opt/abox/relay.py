@@ -136,6 +136,14 @@ CALLBACK_URL = os.environ.get("ABOX_CALLBACK_URL", "").rstrip("/")
 RELAY_AUTH_TOKEN = os.environ.get("RELAY_AUTH_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Mode mapping: backend sends our vocabulary, relay translates to SDK format.
+# The backend never touches Claude Code wire format for live commands.
+_MODE_MAP = {
+    "auto": "bypassPermissions",
+    "plan": "plan",
+    "supervised": "default",
+}
+
 # WebSocket reconnect
 WS_RECONNECT_DELAY_S = 1.0
 WS_MAX_RECONNECT_DELAY_S = 30.0
@@ -549,13 +557,21 @@ class SDKRelay:
                 await self.client.interrupt()
 
         elif cmd_type == "mode":
-            mode = cmd.get("mode", "")
-            if mode:
-                log.info("Mode change via WS: %s (deferred to next turn)", mode)
-                self.next_permission_mode = mode
-                # Don't interrupt or restart — mode takes effect on next spawn.
-                # Interrupting idle Claude doesn't cause an exit, so the restart
-                # path is never reached. Deferring is both correct and less disruptive.
+            # Backend sends our vocabulary (auto/plan/supervised),
+            # relay translates to SDK format (bypassPermissions/plan/default)
+            our_mode = cmd.get("mode", "")
+            if our_mode:
+                sdk_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                if self.client:
+                    log.info("Mode change via WS: %s -> %s (applying immediately via SDK)", our_mode, sdk_mode)
+                    try:
+                        await self.client.set_permission_mode(sdk_mode)
+                    except Exception as e:
+                        log.error("set_permission_mode failed: %s", e)
+                        self.next_permission_mode = sdk_mode
+                else:
+                    log.info("Mode change via WS: %s -> %s (no client, deferred to next spawn)", our_mode, sdk_mode)
+                    self.next_permission_mode = sdk_mode
 
     # ── Synthetic events ──
 
@@ -609,7 +625,9 @@ class SDKRelay:
             loop.add_signal_handler(sig, self._on_signal, sig)
 
         resume_session_id = os.environ.get("RESUME_SESSION_ID", "")
-        permission_mode = os.environ.get("PERMISSION_MODE", "")
+        # Read our vocabulary, translate to SDK format
+        agent_mode = os.environ.get("AGENT_MODE", "auto")
+        permission_mode = _MODE_MAP.get(agent_mode, "bypassPermissions")
         sdk_connect_failures = 0
         SDK_MAX_CONNECT_RETRIES = 3
         SDK_CONNECT_RETRY_DELAY_S = 5.0
@@ -826,10 +844,10 @@ class SDKRelay:
                     elif sig == "restart":
                         break
                 elif cmd_type == "mode":
-                    mode = cmd.get("mode", "")
-                    if mode:
-                        permission_mode = mode
-                        log.info("Idle: permission mode updated to %s (effective next spawn)", mode)
+                    our_mode = cmd.get("mode", "")
+                    if our_mode:
+                        permission_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                        log.info("Idle: mode %s -> %s (effective next spawn)", our_mode, permission_mode)
                         # Don't break — no need to respawn just for a mode change.
                         # The new mode takes effect when the next input arrives.
 
@@ -856,7 +874,7 @@ def main():
 
     # Log env diagnostics at startup — these go to tmux pane AND
     # are visible in container logs before the container is cleaned up.
-    diag_keys = ["AGENT_ID", "AGENT_NAME", "CLAUDECODE", "IS_SANDBOX",
+    diag_keys = ["AGENT_ID", "AGENT_NAME", "AGENT_MODE", "CLAUDECODE", "IS_SANDBOX",
                  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
                  "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ABOX_CALLBACK_URL"]
     diag = {k: ("set" if k == "ANTHROPIC_API_KEY" and os.environ.get(k) else os.environ.get(k, ""))

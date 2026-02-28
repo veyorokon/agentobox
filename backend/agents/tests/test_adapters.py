@@ -43,9 +43,20 @@ class TestRegistry:
             def turns(self, snapshot): return 0
             def is_permission_request(self, event): return None
             def is_plan_proposal(self, event): return None
+            def wire_to_mode(self, wire_mode): return ""
             def build_settings(self, *, api_key="", mode="auto"): return "{}"
             def build_instructions(self, *, project_name="", agent_name="",
                                    agent_role="worker", **kw): return ""
+            def build_onboarding_state(self, *, api_key=""): return ""
+            def build_mcp_config(self, *, mcp_servers=None, secret_envs=None,
+                                 coord_server=None): return "{}"
+            def build_api_key_files(self, api_key): return []
+            def build_relay_env(self, **kw): return ""
+            def available_models(self): return []
+            def mcp_registry_entries(self): return []
+            def resolve_mcp_servers(self, names, variant="debian"): return {}
+            def resolve_mcp_instructions(self, mcp_servers): return []
+            def team_configs(self): return {}
 
         register_adapter("fake-agent", FakeAdapter())
         adapter = get_adapter("fake-agent")

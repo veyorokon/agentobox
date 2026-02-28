@@ -109,8 +109,8 @@ class UpdateSkillInput:
 class AgentMutation:
     @strawberry.mutation
     async def create_agent(self, input: CreateAgentInput, info: strawberry.types.Info) -> AgentType:
+        from agents.adapters import get_adapter
         from agents.services.lifecycle import create_agent
-        from agents.services.provision import resolve_mcp_servers
 
         await authorize_project(info, input.project_id)
 
@@ -118,7 +118,8 @@ class AgentMutation:
         mcp_config = None
         if input.mcp_servers:
             if isinstance(input.mcp_servers, list):
-                mcp_config = resolve_mcp_servers(input.mcp_servers)
+                adapter = get_adapter("claude-code")
+                mcp_config = adapter.resolve_mcp_servers(input.mcp_servers)
             elif isinstance(input.mcp_servers, dict):
                 mcp_config = input.mcp_servers
 
@@ -337,7 +338,6 @@ class AgentMutation:
         from agents.models import Agent, AgentStatus
         from agents.runtimes import get_runtime
         from agents.adapters import get_adapter
-        from agents.services.provision import _resolve_mcp_instructions
 
         agent = await authorize_agent(info, input.agent_id)
         agent.instructions = input.instructions
@@ -364,7 +364,7 @@ class AgentMutation:
                 adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
                 claude_md = adapter.build_instructions(
                     project_name=agent.project.name,
-                    mcp_instructions=_resolve_mcp_instructions(agent.mcp_servers or None),
+                    mcp_instructions=adapter.resolve_mcp_instructions(agent.mcp_servers or None),
                     workspace_path=agent.workspace_path,
                     instructions=input.instructions,
                     agent_role=agent.role,
@@ -412,9 +412,9 @@ class AgentMutation:
 
     @strawberry.mutation
     async def update_agent_config(self, input: UpdateAgentConfigInput, info: strawberry.types.Info) -> AgentType:
+        from agents.adapters import get_adapter
         from agents.models import Agent
         from agents.services.lifecycle import hard_restart_agent
-        from agents.services.provision import resolve_mcp_servers
 
         agent = await authorize_agent(info, input.agent_id)
 
@@ -426,11 +426,12 @@ class AgentMutation:
             agent.tags = input.tags
 
         # Merge registry MCPs + custom MCPs
+        adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
         mcp_servers = agent.mcp_servers or {}
         if input.mcp_registry_names is not None or input.mcp_custom_servers is not None:
             resolved = {}
             if input.mcp_registry_names is not None:
-                resolved = resolve_mcp_servers(input.mcp_registry_names)
+                resolved = adapter.resolve_mcp_servers(input.mcp_registry_names)
             if input.mcp_custom_servers and isinstance(input.mcp_custom_servers, dict):
                 resolved.update(input.mcp_custom_servers)
             mcp_servers = resolved

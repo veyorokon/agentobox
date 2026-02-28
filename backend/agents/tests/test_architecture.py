@@ -122,7 +122,7 @@ class TestNamingConventions:
             "restart", "interrupt", "clear", "recompute", "push", "process",
             "resolve", "provision", "ensure", "answer", "hard_restart",
             "write", "externalize", "upload", "encrypt", "decrypt",
-            "reconcile", "teammate", "task", "team",
+            "reconcile", "teammate", "task", "team", "search",
         )
         violations = []
 

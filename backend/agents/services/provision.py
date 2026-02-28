@@ -1,17 +1,12 @@
 import json
-import textwrap
 
 import structlog
 
 from agents.adapters import get_adapter
-from agents.adapters.claude_code import API_KEY_HELPER_PATH
 from agents.runtimes.base import Runtime
 from projects.models import Project
 
 log = structlog.get_logger("agents.provision")
-
-# tmpfs path for the API key (root:agent 0440)
-API_KEY_TMPFS_PATH = "/run/secrets/anthropic_key"
 
 
 async def provision_workspace(
@@ -64,8 +59,8 @@ async def provision_workspace(
 
     await runtime.exec(sandbox_id, ["mkdir", "-p", workspace])
 
-    # Resolve MCP instruction strings from the registry
-    mcp_instr = _resolve_mcp_instructions(mcp_servers)
+    # Resolve MCP instruction strings via adapter
+    mcp_instr = adapter.resolve_mcp_instructions(mcp_servers)
 
     # Build instruction file (e.g. CLAUDE.md) via adapter
     instruction_content = adapter.build_instructions(
@@ -103,8 +98,9 @@ async def provision_workspace(
         if relay_token and callback_url else None
     )
     if mcp_servers or coord_server:
-        mcp_config = _build_mcp_json(
-            mcp_servers, secret_envs=secret_envs, coord_server=coord_server,
+        mcp_config = adapter.build_mcp_config(
+            mcp_servers=mcp_servers, secret_envs=secret_envs,
+            coord_server=coord_server,
         )
         await runtime.write_file(
             sandbox_id,
@@ -115,78 +111,53 @@ async def provision_workspace(
     # Write project skills that match this agent's tags as .claude/skills/<name>/SKILL.md
     await _provision_skills(runtime, sandbox_id, project, agent_tags or [], workspace, op_log)
 
-    # Mark onboarding complete and pre-approve the API key so Claude Code
-    # starts without interactive prompts
-    claude_state = {
-        "hasCompletedOnboarding": True,
-        "bypassPermissionsModeAccepted": True,
-    }
-    if api_key and len(api_key) >= 20:
-        claude_state["customApiKeyResponses"] = {
-            "approved": [api_key[-20:]],
-            "rejected": [],
-        }
-    claude_json = json.dumps(claude_state)
-    await runtime.write_file(
-        sandbox_id,
-        claude_json.encode("utf-8"),
-        f"{workspace}/.claude.json",
-    )
+    # Mark onboarding complete via adapter
+    onboarding_content = adapter.build_onboarding_state(api_key=api_key)
+    if onboarding_content:
+        await runtime.write_file(
+            sandbox_id,
+            onboarding_content.encode("utf-8"),
+            f"{workspace}/.claude.json",
+        )
+
     # --- Security hardening ---
-    await _provision_api_key_helper(runtime, sandbox_id, api_key, op_log)
+    await _provision_api_key_files(runtime, sandbox_id, adapter.build_api_key_files(api_key), op_log)
     await _provision_scoped_sudo(runtime, sandbox_id, op_log)
 
     op_log.info("workspace_provisioned")
 
 
 # ---------------------------------------------------------------------------
-# API key helper (Layer 1: blocks env var leak)
+# API key file provisioning (generic writer for adapter-provided file specs)
 # ---------------------------------------------------------------------------
 
-async def _provision_api_key_helper(
-    runtime: Runtime, sandbox_id: str, api_key: str, op_log,
+async def _provision_api_key_files(
+    runtime: Runtime, sandbox_id: str, file_specs: list[dict], op_log,
 ) -> None:
-    """
-    Write the Anthropic API key to tmpfs and create a helper script that
-    outputs it. Claude Code reads the key via apiKeyHelper in settings.json
-    instead of from an env var.
+    """Write API key files from adapter-provided specs.
 
-    File layout:
-        /run/secrets/anthropic_key  (root:agent 0440) — the key
-        /opt/abox/api-key-helper.sh (root:root 0555) — cat helper
+    Each spec is {path, content, mode, owner}. The adapter decides WHAT
+    files to write; this function handles the I/O.
     """
-    if not api_key:
+    if not file_specs:
         op_log.warning("api_key_helper_skipped", reason="no api key")
         return
 
-    # Ensure /run/secrets exists (tmpfs in the agent image)
-    await runtime.exec(
-        sandbox_id,
-        ["bash", "-c", "mkdir -p /run/secrets"],
-        user="root",
-    )
-
-    # Write the key to tmpfs
-    await runtime.write_file(sandbox_id, api_key.encode("utf-8"), API_KEY_TMPFS_PATH)
-    await runtime.exec(
-        sandbox_id,
-        ["bash", "-c", f"chown root:agent {API_KEY_TMPFS_PATH} && chmod 0440 {API_KEY_TMPFS_PATH}"],
-        user="root",
-    )
-
-    # Write the helper script
-    helper_script = f"#!/bin/bash\ncat {API_KEY_TMPFS_PATH}\n"
-    await runtime.exec(sandbox_id, ["mkdir", "-p", "/opt/abox"], user="root")
-    await runtime.write_file(
-        sandbox_id,
-        helper_script.encode("utf-8"),
-        API_KEY_HELPER_PATH,
-    )
-    await runtime.exec(
-        sandbox_id,
-        ["bash", "-c", f"chown root:root {API_KEY_HELPER_PATH} && chmod 0555 {API_KEY_HELPER_PATH}"],
-        user="root",
-    )
+    for spec in file_specs:
+        parent = spec["path"].rsplit("/", 1)[0]
+        await runtime.exec(sandbox_id, ["bash", "-c", f"mkdir -p {parent}"], user="root")
+        await runtime.write_file(
+            sandbox_id,
+            spec["content"].encode("utf-8"),
+            spec["path"],
+        )
+        owner = spec.get("owner", "root:root")
+        mode = spec.get("mode", "0644")
+        await runtime.exec(
+            sandbox_id,
+            ["bash", "-c", f"chown {owner} {spec['path']} && chmod {mode} {spec['path']}"],
+            user="root",
+        )
 
     op_log.info("api_key_helper_provisioned")
 
@@ -284,39 +255,8 @@ async def _provision_skills(
 
 
 # ---------------------------------------------------------------------------
-# MCP config builder
+# Coord server config (generic — any agent type needs team coordination)
 # ---------------------------------------------------------------------------
-
-def _build_mcp_json(
-    mcp_servers: dict | None = None,
-    secret_envs: dict[str, str] | None = None,
-    coord_server: dict | None = None,
-) -> str:
-    """
-    Build .mcp.json content with secrets injected into every server's env block.
-
-    All project secrets are merged flat and injected into every MCP server's
-    env block. MCP servers ignore keys they don't recognize, so extra keys
-    are harmless. This avoids needing per-server secret routing.
-
-    Args:
-        mcp_servers: {name: {command, args, ...}} — resolved MCP config
-        secret_envs: flat {KEY: VALUE} — decrypted project secrets
-        coord_server: HTTP MCP config for the team coordination server
-    """
-    servers = {}
-    if mcp_servers:
-        for name, config in mcp_servers.items():
-            entry = {"command": config["command"], "args": config["args"]}
-            if secret_envs:
-                entry["env"] = dict(secret_envs)
-            servers[name] = entry
-
-    if coord_server:
-        servers["team"] = coord_server
-
-    return json.dumps({"mcpServers": servers}, indent=2)
-
 
 def _build_coord_server_config(callback_url: str, relay_token: str) -> dict:
     """Build the team coordination HTTP MCP server config for .mcp.json."""
@@ -329,191 +269,9 @@ def _build_coord_server_config(callback_url: str, relay_token: str) -> dict:
     }
 
 
-def _resolve_mcp_instructions(mcp_servers: dict | None) -> list[str]:
-    """Extract MCP instruction strings from MCP_REGISTRY for resolved servers."""
-    if not mcp_servers:
-        return []
-    result = []
-    for name in mcp_servers:
-        entry = MCP_REGISTRY.get(name, {})
-        instr = entry.get("instructions")
-        if instr:
-            result.append(textwrap.dedent(instr))
-    return result
-
-
 # ---------------------------------------------------------------------------
-# Platform registries (agent-type agnostic)
+# Shared utilities (any agent type)
 # ---------------------------------------------------------------------------
-
-# Team configuration templates
-# Each template defines a complete agent team with role, model, and responsibilities
-TEAM_CONFIGS = {
-    "solo": {
-        "agents": [
-            {
-                "name": "team-lead",
-                "role": "lead",
-                "model": "claude-opus-4-6",
-                "instructions": "You are the team lead and sole agent. Handle all aspects of the project.",
-                "mcp_servers": ["computer-use"],
-            }
-        ]
-    },
-    "fullstack": {
-        "agents": [
-            {
-                "name": "team-lead",
-                "role": "lead",
-                "model": "claude-opus-4-6",
-                "instructions": "Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
-                "mcp_servers": ["computer-use"],
-            },
-            {
-                "name": "backend",
-                "role": "worker",
-                "model": "claude-sonnet-4-5-20250929",
-                "instructions": "Backend development: APIs, database models, business logic, services.",
-                "mcp_servers": [],
-            },
-            {
-                "name": "frontend",
-                "role": "worker",
-                "model": "claude-sonnet-4-5-20250929",
-                "instructions": "Frontend development: UI components, styling, client-side logic, user experience.",
-                "mcp_servers": [],
-            },
-            {
-                "name": "qa",
-                "role": "worker",
-                "model": "claude-sonnet-4-5-20250929",
-                "instructions": "Quality assurance: testing, verification, bug reports, test automation.",
-                "mcp_servers": ["playwright"],
-            },
-        ]
-    },
-}
-
-# Available models for agent provisioning.
-# value = Anthropic model ID passed to Claude Code via --model
-# label = human-friendly name shown in the dashboard
-MODELS_REGISTRY = [
-    {"value": "claude-sonnet-4-5-20250929", "label": "Sonnet 4.5"},
-    {"value": "claude-opus-4-20250514", "label": "Opus 4"},
-    {"value": "claude-opus-4-6", "label": "Opus 4.6"},
-]
-
-# Known MCP servers bundled into the agent image.
-# Keys match checkbox values in the deploy modal.
-# Each entry has:
-#   command/args: how to start the server
-#   compat: list of image variants where this server works
-#   instructions: behavioral guidance injected into instruction file when attached
-MCP_REGISTRY = {
-    "playwright": {
-        "command": "npx",
-        "args": ["@playwright/mcp@latest"],
-        "compat": ["debian"],
-        "instructions": """
-            ## Playwright
-
-            You have Playwright MCP for browser automation and testing.
-            Use it to navigate pages, click elements, fill forms, take
-            screenshots, and assert page state.
-
-            ### Usage
-
-            - Use `browser_navigate` to open URLs
-            - Use `browser_snapshot` to get the accessibility tree (preferred over screenshots)
-            - Use `browser_click`, `browser_type`, `browser_fill_form` for interactions
-            - Use `browser_take_screenshot` for visual verification
-
-            ### Rules
-
-            - Always take a snapshot or screenshot after navigation to see the page state
-            - Use accessibility snapshots over screenshots when possible — they're faster and actionable
-            - Close the browser when done with `browser_close`
-        """,
-    },
-    "computer-use": {
-        "command": "node",
-        "args": ["/opt/mcp-servers/computer-use/dist/main.js"],
-        "compat": ["debian"],
-        "instructions": """
-            ## Computer Use
-
-            You have a desktop environment with a display, mouse, and keyboard
-            accessible through the `computer` MCP tool. **Use the computer
-            tool for GUI interactions** — clicking, typing, scrolling, and
-            taking screenshots.
-
-            ### Desktop
-
-            There is a dock bar at the bottom of the screen with app launchers
-            (Firefox, Terminal). To open an app, click its icon in the dock.
-            If the app you need is not in the dock, you may launch it from
-            bash — this is the only acceptable reason to use bash for GUI apps.
-
-            ### How to interact
-
-            1. **Screenshot first** — before every action, take a screenshot
-               to see the current screen state.
-            2. **Click, type, scroll** — interact with what you see, like a
-               human sitting at the computer. Click buttons, type into fields,
-               scroll to find content.
-            3. **Screenshot after** — verify your action had the expected
-               effect before proceeding.
-
-            ### Browser
-
-            - Firefox is in the dock. Click its icon to open it.
-            - To navigate: click the address bar, type the URL, press Enter.
-            - To follow a link: click it. To go back: click the back button.
-            - To search: click the search/address bar, type your query, press
-              Enter.
-
-            ### Rules
-
-            - **Use the dock to launch apps.** Click the app icon in the
-              bottom dock bar. Only use bash to launch apps not in the dock.
-            - **Never use bash to type into GUI apps.** Use the computer tool's
-              `type` and `key` actions instead.
-            - **Always verify with screenshots.** After clicking or typing,
-              take a screenshot to confirm the result before your next action.
-            - **Be patient.** Pages and apps take time to load. If a click
-              doesn't seem to work, take another screenshot after a moment —
-              don't immediately retry.
-        """,
-    },
-}
-
-
-
-def resolve_mcp_servers(names: list[str], variant: str = "debian") -> dict:
-    """Resolve a list of MCP names to their full config from the registry.
-
-    Skips servers incompatible with the given image variant.
-    """
-    resolved = {}
-    for name in names:
-        entry = MCP_REGISTRY.get(name)
-        if not entry:
-            continue
-        compat = entry.get("compat")
-        if compat and variant not in compat:
-            log.warning(
-                "mcp_server_incompatible",
-                server=name,
-                variant=variant,
-                compat=compat,
-            )
-            continue
-        resolved[name] = {
-            "command": entry["command"],
-            "args": entry["args"],
-        }
-    return resolved
-
 
 async def write_secrets_env(runtime: Runtime, sandbox_id: str, secret_envs: dict[str, str] | None) -> None:
     """Write project secrets to /mnt/abox-state/secrets/env for shell access.
@@ -571,6 +329,7 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
     from django.conf import settings as django_settings
 
     workspace = "/home/agent"
+    adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
 
     # Rebuild coord server config if agent has a relay_token
     coord_server = None
@@ -580,8 +339,8 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
             coord_server = _build_coord_server_config(callback_url, agent.relay_token)
 
     if agent.mcp_servers or coord_server:
-        mcp_config = _build_mcp_json(
-            agent.mcp_servers, secret_envs=secret_envs,
+        mcp_config = adapter.build_mcp_config(
+            mcp_servers=agent.mcp_servers, secret_envs=secret_envs,
             coord_server=coord_server,
         )
         await runtime.write_file(

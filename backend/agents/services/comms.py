@@ -242,9 +242,6 @@ async def broadcast_message(
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     """Change an agent's mode. Accepts frontend vocabulary (auto/plan/supervised)."""
-    from agents.adapters.claude_code import MODE_TO_PERMISSION
-
-    # Accept both frontend and Claude Code vocabulary
     FRONTEND_MODES = {"auto", "plan", "supervised"}
     op_log = log.bind(agent_id=agent_id, mode=mode)
 
@@ -256,16 +253,13 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
         raise ValueError(f"Agent must be running or idle (current: {agent.status})")
 
-    perm_mode = MODE_TO_PERMISSION.get(mode, "bypassPermissions")
-
     if agent.mode == mode:
         op_log.info("mode_change_noop")
         return agent
 
     old_mode = agent.mode
     agent.mode = mode
-    agent.permission_mode = perm_mode
-    await agent.asave(update_fields=["mode", "permission_mode"])
+    await agent.asave(update_fields=["mode"])
 
     await broadcast_agent_update(agent)
 
@@ -274,7 +268,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         agent=agent,
         session_id=agent.session_id or "",
         event_type="mode_change",
-        data={"mode": mode, "permission_mode": perm_mode},
+        data={"mode": mode},
     )
     await broadcast_event(agent, stream_event)
 
@@ -289,10 +283,10 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         to_value=f"mode:{mode}",
     )
 
-    # Push Claude Code vocabulary to relay
-    await _push_to_relay(agent_id, {"type": "mode", "mode": perm_mode})
+    # Send our vocabulary to relay — the relay translates to SDK format
+    await _push_to_relay(agent_id, {"type": "mode", "mode": mode})
 
-    op_log.info("mode_change_sent", frontend_mode=mode, permission_mode=perm_mode)
+    op_log.info("mode_change_sent", mode=mode)
     return agent
 
 

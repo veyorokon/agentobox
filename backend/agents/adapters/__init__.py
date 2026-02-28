@@ -5,6 +5,10 @@ Public API:
     register_adapter(agent_type, adapter) -> None
 
 Auto-registers ClaudeCodeAdapter for "claude-code" on import.
+
+To add a new agent type:
+    1. Create adapters/<name>/ package implementing AgentAdapter
+    2. Import and register here: register_adapter("<name>", <Adapter>())
 """
 
 from agents.adapters.base import AgentAdapter
