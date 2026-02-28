@@ -48,7 +48,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const toggleSkillsExpandAll = useSidebarStore(s => s.toggleSkillsExpandAll)
 
   // ── Apollo (agents) ────────────────────────────────────────────────
-  const { data } = useAgents()
+  const { data, loading } = useAgents()
   const agents = data?.agents ?? []
   const acknowledgeAgent = useAcknowledgeAgent()
   const allTags = useMemo(() => Array.from(new Set(agents.flatMap(a => a.tags ?? []))).sort(), [agents])
@@ -432,7 +432,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
                   onSelect={() => handleSelectAgent(agent.id)}
                 />
               ))}
-              {filteredAgents.length === 0 && (
+              {filteredAgents.length === 0 && !loading && (
                 <div className="py-6 text-center">
                   <Users className="h-5 w-5 text-muted/20 mx-auto mb-1" />
                   <p className="text-[11px] text-muted/50">No agents match filters</p>
