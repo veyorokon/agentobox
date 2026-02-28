@@ -25,6 +25,7 @@ from asgiref.sync import sync_to_async
 
 from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
+from agents.services.feed import broadcast_feed_item, create_feed_item, recompute_attention
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("agents.stream")
@@ -101,18 +102,101 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
     # The agent instance is cached on the consumer for the WS lifetime,
     # so refresh before reads that gate writes to avoid stale-state bugs.
     if event_type == "assistant":
-        await agent.arefresh_from_db(fields=["status"])
+        await agent.arefresh_from_db(fields=["status", "mode"])
         await _maybe_set_running(agent)
+        await _update_assistant_fields(agent, event)
+        await _maybe_create_plan_item(agent, event, stream_event)
     elif event_type == "result":
-        await _handle_result(agent, event)
+        await _handle_result(agent, event, stream_event)
     elif event_type == "system":
         await agent.arefresh_from_db(
-            fields=["capabilities", "session_id", "permission_mode", "status", "phase"]
+            fields=["capabilities", "session_id", "permission_mode", "status", "phase", "mode"]
         )
         await _handle_system(agent, event)
     elif event_type == "stream_event":
         await agent.arefresh_from_db(fields=["phase"])
         await _handle_phase(agent, event)
+
+
+async def _supersede_pending_plans(agent: Agent) -> None:
+    """Auto-reject any existing pending plan items for this agent.
+
+    An agent can only have one pending plan at a time (CC is sequential).
+    When a new plan arrives, the old one is stale — supersede it so it
+    doesn't pile up in the attention bar.
+    """
+    from agents.models import TeamFeedItem
+
+    stale_qs = TeamFeedItem.objects.filter(
+        agent_record=agent,
+        type="plan",
+        plan_status="pending",
+    )
+    # Fetch before bulk update so we can broadcast each one
+    stale_ids = [item.id async for item in stale_qs.only("id")]
+    if not stale_ids:
+        return
+
+    await stale_qs.aupdate(plan_status="superseded")
+    # Broadcast so dashboard subscribers see the status change
+    for item_id in stale_ids:
+        item = await TeamFeedItem.objects.aget(id=item_id)
+        await broadcast_feed_item(item)
+    log.info("plans_superseded", agent_id=str(agent.id), count=len(stale_ids))
+
+
+async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:
+    """Detect ExitPlanMode tool_use and create a plan feed item.
+
+    Supervised/plan mode: pending item → attention bar → user approves/rejects.
+    Auto mode: pre-approved item → immediate tool_result so agent unblocks.
+    """
+    from agents.adapters import get_adapter
+
+    adapter = get_adapter(agent.agent_type)
+    plan_info = adapter.is_plan_proposal(event)
+    if not plan_info:
+        return
+
+    tool_use_id = plan_info["tool_use_id"]
+    plan_text = plan_info["plan"]
+    title = plan_info["title"]
+
+    # Auto mode: agent shouldn't block. Create approved item + send tool_result.
+    if agent.mode == "auto":
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            source_event=source_event,
+            agent_record=agent,
+            type="plan",
+            agent_name=agent.name,
+            title=title,
+            plan=plan_text,
+            plan_status="approved",
+            tool_use_id=tool_use_id,
+        )
+        from agents.services.comms import send_message
+        await send_message(str(agent.id), "Plan approved. Proceed with the implementation.")
+        log.info("plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
+        return
+
+    # Supervised/plan mode: pending item, user must approve via dashboard.
+    # Supersede any existing pending plan for this agent (one at a time).
+    await _supersede_pending_plans(agent)
+
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        source_event=source_event,
+        agent_record=agent,
+        type="plan",
+        agent_name=agent.name,
+        title=title,
+        plan=plan_text,
+        plan_status="pending",
+        tool_use_id=tool_use_id,
+    )
+    await recompute_attention(str(agent.project_id), str(agent.id))
+    log.info("plan_pending_approval", agent_id=str(agent.id), tool_use_id=tool_use_id)
 
 
 async def _maybe_set_running(agent: Agent) -> None:
@@ -123,11 +207,23 @@ async def _maybe_set_running(agent: Agent) -> None:
         await broadcast_agent_update(agent)
 
 
-async def _handle_result(agent: Agent, event: dict) -> None:
+async def _update_assistant_fields(agent: Agent, event: dict) -> None:
+    """Update latest_snapshot with assistant event data."""
+    snapshot = agent.latest_snapshot or {}
+    snapshot["assistant"] = event
+    snapshot.pop("result", None)  # new turn started, clear previous result
+    agent.latest_snapshot = snapshot
+    await agent.asave(update_fields=["latest_snapshot"])
+    await broadcast_agent_update(agent)
+
+
+async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | None = None) -> None:
     """Insert SessionResult + update agent cost/status on turn completion."""
     session_id = event.get("session_id", "")
     if not session_id:
         return
+
+    await agent.arefresh_from_db(fields=["latest_snapshot", "status", "phase"])
 
     await SessionResult.objects.acreate(
         agent=agent,
@@ -141,11 +237,53 @@ async def _handle_result(agent: Agent, event: dict) -> None:
         permission_denials=event.get("permission_denials", []),
     )
 
+    # Update snapshot with result event
+    snapshot = agent.latest_snapshot or {}
+    snapshot["result"] = event
+    agent.latest_snapshot = snapshot
+
     agent.session_cost_usd = event.get("total_cost_usd", 0)
     agent.status = AgentStatus.IDLE
     agent.phase = ""
-    await agent.asave(update_fields=["session_cost_usd", "status", "phase"])
+    await agent.asave(update_fields=[
+        "latest_snapshot", "session_cost_usd", "status", "phase",
+    ])
     await broadcast_agent_update(agent)
+
+    # Read last_output from snapshot via adapter (no DB refresh needed)
+    from agents.adapters import get_adapter
+    adapter = get_adapter(agent.agent_type)
+    last_text = adapter.last_output(agent.latest_snapshot)
+
+    # Create TeamFeedItem for the result
+    is_error = event.get("is_error", False)
+    item_type = "error" if is_error else "summary"
+    duration_ms = event.get("duration_ms", 0)
+    secs = duration_ms // 1000 if duration_ms else 0
+    mins = secs // 60
+    duration_str = f"{mins}m {secs % 60:02d}s" if mins else f"{secs}s"
+
+    feed_kwargs = dict(
+        type=item_type,
+        agent_name=agent.name,
+        agent_record=agent,
+        cost=event.get("total_cost_usd", 0),
+        turns=event.get("num_turns", 0),
+        duration=duration_str,
+        is_error=is_error,
+    )
+    if is_error:
+        feed_kwargs["text"] = last_text or "Agent encountered an error"
+    else:
+        feed_kwargs["summary"] = last_text or "Turn completed"
+
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        source_event=stream_event,
+        **feed_kwargs,
+    )
+    # Set review attention after turn completion (if no pending perm/plan)
+    await recompute_attention(str(agent.project_id), str(agent.id), after_result=True)
 
 
 async def _handle_system(agent: Agent, event: dict) -> None:
@@ -174,11 +312,19 @@ async def _handle_system(agent: Agent, event: dict) -> None:
             await broadcast_agent_update(agent)
 
     elif subtype == "status":
-        # Update permission mode from Claude's status event
+        # Update permission mode from Claude's status event + reverse-map to frontend mode
         perm_mode = event.get("permissionMode", "")
         if perm_mode and perm_mode != agent.permission_mode:
             agent.permission_mode = perm_mode
-            await agent.asave(update_fields=["permission_mode"])
+            # Reverse-map Claude Code mode -> frontend mode via adapter
+            from agents.adapters import get_adapter
+            adapter = get_adapter(agent.agent_type)
+            new_mode = adapter.wire_to_mode(perm_mode) or agent.mode
+            update_fields = ["permission_mode"]
+            if new_mode != agent.mode:
+                agent.mode = new_mode
+                update_fields.append("mode")
+            await agent.asave(update_fields=update_fields)
             await broadcast_agent_update(agent)
 
     elif subtype == "process_exit":
@@ -209,7 +355,11 @@ async def _handle_phase(agent: Agent, event: dict) -> None:
         elif block_type in ("tool_use", "server_tool_use", "mcp_tool_use"):
             new_phase = "tool-input"
     elif inner_type == "message_stop":
-        new_phase = "tool-use"
+        # Only transition to tool-use if we were in tool-input phase.
+        # A pure text message ending (responding -> message_stop) should
+        # not set tool-use phase.
+        if agent.phase == "tool-input":
+            new_phase = "tool-use"
 
     if new_phase and new_phase != agent.phase:
         agent.phase = new_phase

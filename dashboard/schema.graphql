@@ -10,26 +10,24 @@ type AgentFeedbackType {
 type AgentType {
   id: UUID!
   name: String!
-  runtime: String!
-  sandboxId: String!
-  vncUrl: String!
-  status: String!
-  phase: String!
-  teamName: String!
-  parentSessionId: String!
-  sessionId: String!
   model: String!
-  permissionMode: String!
-  mcpServers: JSON!
-  workspacePath: String!
-  volumeMounts: JSON!
   instructions: String!
-  role: String!
-  sessionCostUsd: Decimal!
-  capabilities: JSON
-  createdAt: DateTime!
-  sessionResult: SessionResultType
-  feedback(limit: Int! = 50, offset: Int! = 0): [AgentFeedbackType!]!
+  runtime: String!
+  phase: String!
+  tags: JSON!
+  mode: String!
+  attentionLevel: String!
+  task: String!
+  lifecycleStatus: String!
+  lastOutput: String!
+  liveAction: String
+  cost: Float!
+  duration: String!
+  turns: Int!
+  allowedTools: [String!]!
+  workspacePath: String!
+  mcpServers: [String!]!
+  todoProgress: TodoProgressType
 }
 
 input AnswerQuestionInput {
@@ -43,12 +41,6 @@ type AuthPayload {
   token: String!
 }
 
-input BroadcastMessageInput {
-  agentIds: [ID!]!
-  message: String! = ""
-  content: JSON = null
-}
-
 input CreateAgentInput {
   projectId: ID!
   name: String!
@@ -59,6 +51,8 @@ input CreateAgentInput {
   volumeMounts: [VolumeMountInput!] = null
   instructions: String! = ""
   role: String! = "worker"
+  mode: String! = "auto"
+  tags: [String!] = null
 }
 
 input CreateProjectInput {
@@ -66,11 +60,22 @@ input CreateProjectInput {
   description: String! = ""
 }
 
+input CreateSkillInput {
+  projectId: ID!
+  name: String!
+  content: String!
+  description: String! = ""
+  assignedTags: [String!] = null
+  assignedToAll: Boolean! = false
+}
+
 """Date with time (isoformat)"""
 scalar DateTime
 
-"""Decimal (fixed-point)"""
-scalar Decimal
+type FeedQuestionType {
+  text: String!
+  options: [String!]!
+}
 
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf).
@@ -82,9 +87,29 @@ input LoginInput {
   password: String!
 }
 
+type McpPackageType {
+  registryType: String!
+  identifier: String!
+  transportType: String!
+}
+
 type McpRegistryEntryType {
   name: String!
   compat: [String!]!
+}
+
+type McpRegistrySearchResult {
+  servers: [McpRegistryServerType!]!
+  nextCursor: String
+}
+
+type McpRegistryServerType {
+  name: String!
+  description: String!
+  version: String!
+  websiteUrl: String
+  hasRemote: Boolean!
+  packages: [McpPackageType!]!
 }
 
 type ModelEntryType {
@@ -111,12 +136,17 @@ type Mutation {
   restartAgent(agentId: ID!): Boolean!
   clearAgentSession(agentId: ID!): Boolean!
   setAgentMode(agentId: ID!, mode: String!): AgentType!
-  sendMessage(input: SendMessageInput!): Boolean!
-  broadcastMessage(input: BroadcastMessageInput!): Boolean!
+  sendMessage(projectId: ID!, text: String!, recipients: [RecipientInput!]!): Boolean!
   answerQuestion(input: AnswerQuestionInput!): Boolean!
+  resolvePermission(feedItemId: ID!, verdict: String!, alwaysAllow: Boolean! = false): TeamFeedItemType!
+  resolvePlan(feedItemId: ID!, verdict: String!): TeamFeedItemType!
+  createVncToken(agentId: ID!): VncTokenResult!
   updateAgentInstructions(input: UpdateAgentInstructionsInput!): AgentType!
   rateAgent(input: RateFeedbackInput!): AgentFeedbackType
   updateAgentConfig(input: UpdateAgentConfigInput!): AgentType!
+  createSkill(input: CreateSkillInput!): SkillType!
+  updateSkill(input: UpdateSkillInput!): SkillType!
+  deleteSkill(skillId: ID!): Boolean!
   setSecret(input: SetSecretInput!): ProjectSecretType!
   deleteSecret(projectId: ID!, key: String!): Boolean!
   scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
@@ -146,10 +176,13 @@ type Query {
   project(id: ID!): ProjectType
   agents(projectId: ID!): [AgentType!]!
   agent(agentId: ID!): AgentType
-  agentFeed(agentId: ID!): [TimelineEntryType!]!
-  projectFeed(projectId: ID!): [TimelineEntryType!]!
+  teamFeed(projectId: ID!): [TeamFeedItemType!]!
+  agentFeed(agentId: ID!, first: Int! = 100, after: String = null): [TimelineEntryType!]!
+  projectFeed(projectId: ID!, limit: Int! = 200): [TimelineEntryType!]!
   availableModels: [ModelEntryType!]!
   mcpRegistry: [McpRegistryEntryType!]!
+  searchMcpRegistry(query: String! = "", limit: Int! = 30, cursor: String = null): McpRegistrySearchResult!
+  skills(projectId: ID!): [SkillType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!
 }
 
@@ -158,6 +191,11 @@ input RateFeedbackInput {
   messageId: ID = null
   rating: Int!
   comment: String! = ""
+}
+
+input RecipientInput {
+  type: String!
+  value: String! = ""
 }
 
 input RegisterInput {
@@ -172,27 +210,6 @@ input ScopeSecretInput {
   agentIds: [ID!]!
 }
 
-input SendMessageInput {
-  agentId: ID!
-  message: String! = ""
-  content: JSON = null
-}
-
-type SessionResultType {
-  id: ID!
-  sessionId: String!
-  isError: Boolean!
-  totalCostUsd: Decimal!
-  durationMs: Int!
-  durationApiMs: Int!
-  numTurns: Int!
-  modelUsage: JSON!
-  permissionDenials: JSON!
-  createdAt: DateTime!
-  updatedAt: DateTime!
-  agentId: String!
-}
-
 input SetProjectThemeInput {
   projectId: ID!
   tokens: JSON!
@@ -204,9 +221,47 @@ input SetSecretInput {
   value: String!
 }
 
+type SkillType {
+  id: UUID!
+  name: String!
+  description: String!
+  content: String!
+  assignedTags: JSON!
+  assignedToAll: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  projectId: String!
+}
+
 type Subscription {
-  agentUpdated(projectId: ID!): AgentType!
+  agentChanged(projectId: ID!): AgentType!
+  feedItemChanged(projectId: ID!): TeamFeedItemType!
   eventStream(projectId: ID!): TimelineEntryType!
+}
+
+type TeamFeedItemType {
+  id: ID!
+  type: String!
+  agent: String
+  agentId: String
+  text: String
+  command: String
+  risk: String
+  permStatus: String
+  title: String
+  plan: String
+  planStatus: String
+  summary: String
+  cost: Float
+  turns: Int
+  duration: String
+  isError: Boolean
+  target: String
+  question: String
+  options: [String!]
+  questions: [FeedQuestionType!]
+  from: String
+  to: String
 }
 
 type TimelineEntryType {
@@ -219,12 +274,18 @@ type TimelineEntryType {
   createdAt: DateTime!
 }
 
+type TodoProgressType {
+  done: Int!
+  total: Int!
+}
+
 scalar UUID
 
 input UpdateAgentConfigInput {
   agentId: ID!
   model: String = null
   role: String = null
+  tags: [String!] = null
   mcpRegistryNames: [String!] = null
   mcpCustomServers: JSON = null
 }
@@ -241,10 +302,24 @@ input UpdateProjectInput {
   settings: JSON = null
 }
 
+input UpdateSkillInput {
+  skillId: ID!
+  name: String = null
+  description: String = null
+  content: String = null
+  assignedTags: [String!] = null
+  assignedToAll: Boolean = null
+}
+
 type UserType {
   id: ID!
   username: String!
   email: String!
+}
+
+type VncTokenResult {
+  token: String!
+  expiresAt: String!
 }
 
 input VolumeMountInput {

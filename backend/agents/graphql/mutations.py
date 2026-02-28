@@ -6,7 +6,7 @@ from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
-from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType
+from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("agents.mutations")
 
@@ -30,20 +30,14 @@ class CreateAgentInput:
     volume_mounts: list[VolumeMountInput] | None = None
     instructions: str = ""
     role: str = "worker"
+    mode: str = "auto"
+    tags: list[str] | None = None
 
 
 @strawberry.input
-class SendMessageInput:
-    agent_id: ID
-    message: str = ""
-    content: JSON | None = None  # ContentBlock[] — takes precedence over message
-
-
-@strawberry.input
-class BroadcastMessageInput:
-    agent_ids: list[ID]
-    message: str = ""
-    content: JSON | None = None  # ContentBlock[] — takes precedence over message
+class RecipientInput:
+    type: str   # "agent" | "tag" | "all"
+    value: str = ""
 
 
 @strawberry.input
@@ -72,6 +66,7 @@ class UpdateAgentConfigInput:
     agent_id: ID
     model: str | None = None
     role: str | None = None
+    tags: list[str] | None = None
     mcp_registry_names: list[str] | None = None
     mcp_custom_servers: JSON | None = None
 
@@ -90,12 +85,32 @@ class ScopeSecretInput:
     agent_ids: list[ID]  # empty = all agents (unscoped)
 
 
+@strawberry.input
+class CreateSkillInput:
+    project_id: ID
+    name: str
+    content: str
+    description: str = ""
+    assigned_tags: list[str] | None = None
+    assigned_to_all: bool = False
+
+
+@strawberry.input
+class UpdateSkillInput:
+    skill_id: ID
+    name: str | None = None
+    description: str | None = None
+    content: str | None = None
+    assigned_tags: list[str] | None = None
+    assigned_to_all: bool | None = None
+
+
 @strawberry.type
 class AgentMutation:
     @strawberry.mutation
     async def create_agent(self, input: CreateAgentInput, info: strawberry.types.Info) -> AgentType:
+        from agents.adapters import get_adapter
         from agents.services.lifecycle import create_agent
-        from agents.services.provision import resolve_mcp_servers
 
         await authorize_project(info, input.project_id)
 
@@ -103,7 +118,8 @@ class AgentMutation:
         mcp_config = None
         if input.mcp_servers:
             if isinstance(input.mcp_servers, list):
-                mcp_config = resolve_mcp_servers(input.mcp_servers)
+                adapter = get_adapter("claude-code")
+                mcp_config = adapter.resolve_mcp_servers(input.mcp_servers)
             elif isinstance(input.mcp_servers, dict):
                 mcp_config = input.mcp_servers
 
@@ -130,6 +146,8 @@ class AgentMutation:
             instructions=input.instructions,
             role=input.role,
             volume_mounts=vm_dicts,
+            mode=input.mode,
+            tags=input.tags,
         )
 
     @strawberry.mutation
@@ -176,28 +194,73 @@ class AgentMutation:
 
     @strawberry.mutation
     async def set_agent_mode(self, agent_id: ID, mode: str, info: strawberry.types.Info) -> AgentType:
+        """Accept frontend vocabulary (auto/plan/supervised), map to Claude Code mode."""
         from agents.services.comms import set_agent_mode
 
         await authorize_agent(info, agent_id)
         return await set_agent_mode(agent_id, mode)
 
     @strawberry.mutation
-    async def send_message(self, input: SendMessageInput, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import send_message
+    async def send_message(
+        self,
+        project_id: ID,
+        text: str,
+        recipients: list[RecipientInput],
+        info: strawberry.types.Info,
+    ) -> bool:
+        """Send message to resolved agents. Recipients can be agent names, tags, or 'all'."""
+        from agents.models import Agent
+        from agents.services.comms import send_message as _send_single, broadcast_message
 
-        await authorize_agent(info, input.agent_id)
-        return await send_message(input.agent_id, input.message, input.content)
+        await authorize_project(info, project_id)
 
-    @strawberry.mutation
-    async def broadcast_message(self, input: BroadcastMessageInput, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import broadcast_message
+        # Resolve recipients to agent IDs — scoped to the given project
+        agent_ids: list[str] = []
+        for r in recipients:
+            if r.type == "all":
+                all_agents = [
+                    a async for a in Agent.objects.filter(
+                        project_id=project_id,
+                    ).exclude(status="stopped")
+                ]
+                agent_ids.extend(str(a.id) for a in all_agents)
+            elif r.type == "agent":
+                agent = await Agent.objects.filter(
+                    name=r.value, project_id=project_id,
+                ).afirst()
+                if agent:
+                    agent_ids.append(str(agent.id))
+                else:
+                    log.warning("recipient_not_found", type=r.type, value=r.value)
+            elif r.type == "tag":
+                tagged = [
+                    a async for a in Agent.objects.filter(
+                        project_id=project_id, tags__contains=[r.value],
+                    ).exclude(status="stopped")
+                ]
+                agent_ids.extend(str(a.id) for a in tagged)
 
-        await authorize_agents(info, input.agent_ids)
-        return await broadcast_message(
-            [str(aid) for aid in input.agent_ids],
-            input.message,
-            input.content,
+        if not agent_ids:
+            return False
+
+        # Deduplicate
+        agent_ids = list(dict.fromkeys(agent_ids))
+
+        # Create user feed item
+        from agents.services.feed import create_feed_item
+
+        target_str = ", ".join(r.value for r in recipients if r.value)
+        await create_feed_item(
+            project_id=str(project_id),
+            type="user",
+            text=text,
+            target=target_str or "all",
         )
+
+        if len(agent_ids) == 1:
+            return await _send_single(agent_ids[0], text)
+        else:
+            return await broadcast_message(agent_ids, text)
 
     @strawberry.mutation
     async def answer_question(self, input: AnswerQuestionInput, info: strawberry.types.Info) -> bool:
@@ -207,10 +270,79 @@ class AgentMutation:
         return await answer_question(input.agent_id, input.tool_use_id, input.answer_text)
 
     @strawberry.mutation
+    async def resolve_permission(
+        self,
+        feed_item_id: ID,
+        verdict: str,
+        info: strawberry.types.Info,
+        always_allow: bool = False,
+    ) -> TeamFeedItemType:
+        """Resolve a permission prompt. verdict: 'allowed' | 'denied'.
+
+        always_allow: if True, persist the tool to Agent.allowed_tools
+        so future sessions pre-authorize it (no more prompts).
+        """
+        from agents.models import TeamFeedItem
+        from agents.services.feed import resolve_permission
+        from agents.graphql.types import model_to_feed_item_type
+
+        item = await TeamFeedItem.objects.aget(id=feed_item_id)
+
+        # Auth: ensure user owns the project
+        user = info.context["request"].user
+        from projects.models import Project
+        await Project.objects.aget(id=item.project_id, owner=user)
+
+        item = await resolve_permission(item, verdict, always_allow=always_allow)
+        return model_to_feed_item_type(item)
+
+    @strawberry.mutation
+    async def resolve_plan(
+        self,
+        feed_item_id: ID,
+        verdict: str,
+        info: strawberry.types.Info,
+    ) -> TeamFeedItemType:
+        """Resolve a plan proposal. verdict: 'approved' | 'rejected'."""
+        from agents.models import TeamFeedItem
+        from agents.services.feed import resolve_plan
+        from agents.graphql.types import model_to_feed_item_type
+
+        item = await TeamFeedItem.objects.aget(id=feed_item_id)
+
+        user = info.context["request"].user
+        from projects.models import Project
+        await Project.objects.aget(id=item.project_id, owner=user)
+
+        item = await resolve_plan(item, verdict)
+        return model_to_feed_item_type(item)
+
+    @strawberry.mutation
+    async def create_vnc_token(
+        self,
+        agent_id: ID,
+        info: strawberry.types.Info,
+    ) -> VncTokenResult:
+        """Generate a short-lived token for VNC proxy WebSocket auth."""
+        import secrets
+        from datetime import datetime, timedelta, timezone
+
+        from django.core.cache import cache
+
+        await authorize_agent(info, agent_id)
+
+        token = secrets.token_urlsafe(32)
+        cache_key = f"vnc_token:{token}"
+        cache.set(cache_key, str(agent_id), timeout=60)
+
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
+        return VncTokenResult(token=token, expires_at=expires_at.isoformat())
+
+    @strawberry.mutation
     async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:
         from agents.models import Agent, AgentStatus
         from agents.runtimes import get_runtime
-        from agents.services.provision import _build_claude_md
+        from agents.adapters import get_adapter
 
         agent = await authorize_agent(info, input.agent_id)
         agent.instructions = input.instructions
@@ -234,9 +366,10 @@ class AgentMutation:
 
                 team_name = agent.project.name.lower().replace(" ", "-")
                 runtime = get_runtime(agent.runtime)
-                claude_md = _build_claude_md(
-                    agent.project,
-                    mcp_servers=agent.mcp_servers or None,
+                adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
+                claude_md = adapter.build_instructions(
+                    project_name=agent.project.name,
+                    mcp_instructions=adapter.resolve_mcp_instructions(agent.mcp_servers or None),
                     workspace_path=agent.workspace_path,
                     instructions=input.instructions,
                     agent_role=agent.role,
@@ -284,9 +417,9 @@ class AgentMutation:
 
     @strawberry.mutation
     async def update_agent_config(self, input: UpdateAgentConfigInput, info: strawberry.types.Info) -> AgentType:
+        from agents.adapters import get_adapter
         from agents.models import Agent
         from agents.services.lifecycle import hard_restart_agent
-        from agents.services.provision import resolve_mcp_servers
 
         agent = await authorize_agent(info, input.agent_id)
 
@@ -294,13 +427,16 @@ class AgentMutation:
             agent.model = input.model
         if input.role is not None:
             agent.role = input.role
+        if input.tags is not None:
+            agent.tags = input.tags
 
         # Merge registry MCPs + custom MCPs
+        adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
         mcp_servers = agent.mcp_servers or {}
         if input.mcp_registry_names is not None or input.mcp_custom_servers is not None:
             resolved = {}
             if input.mcp_registry_names is not None:
-                resolved = resolve_mcp_servers(input.mcp_registry_names)
+                resolved = adapter.resolve_mcp_servers(input.mcp_registry_names)
             if input.mcp_custom_servers and isinstance(input.mcp_custom_servers, dict):
                 resolved.update(input.mcp_custom_servers)
             mcp_servers = resolved
@@ -313,11 +449,81 @@ class AgentMutation:
         config["mcp_servers"] = agent.mcp_servers
         agent.config_snapshot = config
 
-        await agent.asave(update_fields=[
-            "model", "role", "mcp_servers", "config_snapshot",
-        ])
+        update_fields = ["model", "role", "mcp_servers", "config_snapshot"]
+        if input.tags is not None:
+            update_fields.append("tags")
+        await agent.asave(update_fields=update_fields)
 
         return await hard_restart_agent(str(agent.id))
+
+    # --- Skills ---
+
+    @strawberry.mutation
+    async def create_skill(self, input: CreateSkillInput, info: strawberry.types.Info) -> SkillType:
+        from agents.models import Skill
+
+        await authorize_project(info, input.project_id)
+
+        from django.db import IntegrityError
+
+        try:
+            return await Skill.objects.acreate(
+                project_id=input.project_id,
+                name=input.name,
+                description=input.description,
+                content=input.content,
+                assigned_tags=input.assigned_tags or [],
+                assigned_to_all=input.assigned_to_all,
+            )
+        except IntegrityError:
+            raise ValueError(f"A skill named '{input.name}' already exists in this project")
+
+    @strawberry.mutation
+    async def update_skill(self, input: UpdateSkillInput, info: strawberry.types.Info) -> SkillType:
+        from agents.models import Skill
+
+        skill = await Skill.objects.select_related("project").aget(id=input.skill_id)
+        await authorize_project(info, str(skill.project_id))
+
+        update_fields = []
+        if input.name is not None:
+            skill.name = input.name
+            update_fields.append("name")
+        if input.description is not None:
+            skill.description = input.description
+            update_fields.append("description")
+        if input.content is not None:
+            skill.content = input.content
+            update_fields.append("content")
+        if input.assigned_tags is not None:
+            skill.assigned_tags = input.assigned_tags
+            update_fields.append("assigned_tags")
+        if input.assigned_to_all is not None:
+            skill.assigned_to_all = input.assigned_to_all
+            update_fields.append("assigned_to_all")
+
+        if update_fields:
+            from django.db import IntegrityError
+
+            try:
+                await skill.asave(update_fields=update_fields)
+            except IntegrityError:
+                raise ValueError(f"A skill named '{skill.name}' already exists in this project")
+
+        return skill
+
+    @strawberry.mutation
+    async def delete_skill(self, skill_id: ID, info: strawberry.types.Info) -> bool:
+        from agents.models import Skill
+
+        try:
+            skill = await Skill.objects.select_related("project").aget(id=skill_id)
+        except Skill.DoesNotExist:
+            return False
+
+        await authorize_project(info, str(skill.project_id))
+        await skill.adelete()
+        return True
 
     # --- Project Secrets ---
 
@@ -341,7 +547,8 @@ class AgentMutation:
         )
 
         # Push secrets to all running agents (both create and update)
-        await _push_secrets_for_project(project)
+        from agents.services.secrets import push_secrets_for_project
+        await push_secrets_for_project(project)
 
         return secret
 
@@ -393,30 +600,3 @@ class AgentMutation:
 
         return secret
 
-async def _push_secrets_for_project(project) -> None:
-    """Push merged secrets to all running agents in a project."""
-    from agents.models import Agent, AgentStatus
-    from agents.runtimes import get_runtime
-    from agents.services.lifecycle import resolve_agent_secrets
-    from agents.services.provision import push_secrets_to_agent
-
-    import structlog
-    op_log = structlog.get_logger("agents.secrets")
-
-    running_agents = [
-        a async for a in Agent.objects.filter(
-            project=project,
-            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
-        ).exclude(sandbox_id="")
-    ]
-
-    for agent in running_agents:
-        try:
-            secret_envs = await resolve_agent_secrets(agent, op_log)
-            if secret_envs:
-                runtime = get_runtime(agent.runtime)
-                await push_secrets_to_agent(
-                    runtime, agent.sandbox_id, agent, secret_envs,
-                )
-        except Exception:
-            op_log.exception("secret_push_failed", agent_name=agent.name)

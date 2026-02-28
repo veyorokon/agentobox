@@ -1,4 +1,5 @@
 import asyncio
+import json
 import secrets
 
 import structlog
@@ -6,12 +7,12 @@ from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import transaction
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentStatus, StreamEvent
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
-from agents.models import StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
 from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
+from agents.services.utils import create_and_broadcast_event, terminate_sandbox
 from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
@@ -42,6 +43,15 @@ async def create_agent(
     name = _sanitize_name(name)
     if not name:
         raise ValueError("Agent name cannot be empty")
+
+    # Reject container-internal paths — Docker bind mounts need host paths
+    if workspace_path and not workspace_path.startswith("/"):
+        raise ValueError(f"workspace_path must be an absolute host path, got: {workspace_path}")
+    if workspace_path and workspace_path.startswith(("/workspace", "/home/agent")):
+        raise ValueError(
+            f"workspace_path looks like a container-internal path ({workspace_path}). "
+            "Use the host filesystem path instead."
+        )
 
     op_log = log.bind(project_id=str(project_id), agent=name)
     op_log.info("creating_agent", runtime=runtime_name, workspace_path=workspace_path)
@@ -88,11 +98,11 @@ async def create_agent(
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id="", event_type="created",
+    await create_and_broadcast_event(
+        agent, event_type="created",
         data={"name": name, "runtime": runtime_name},
+        session_id="",
     )
-    await broadcast_event(agent, evt)
 
     op_log.info("agent_created", agent_id=str(agent.id))
 
@@ -324,6 +334,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             f"export CLAUDE_MODEL='{_shell_escape(agent.model)}'",
         ]
 
+        # State facet: allowed_tools (provision-only, applied at SDK session start)
+        if agent.allowed_tools:
+            relay_env_lines.append(f"export ALLOWED_TOOLS='{_shell_escape(json.dumps(agent.allowed_tools))}'")
+
         # Pass resume session so relay can --resume the prior conversation
         if resume_session_id:
             relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
@@ -422,21 +436,13 @@ async def kill_agent(agent_id: str) -> bool:
         project_id=str(agent.project_id),
     )
 
-    if agent.sandbox_id:
-        try:
-            runtime = get_runtime(agent.runtime)
-            await runtime.terminate(agent.sandbox_id)
-        except Exception:
-            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+    await terminate_sandbox(agent, op_log)
 
     agent.status = AgentStatus.STOPPED
     await agent.asave(update_fields=["status"])
 
     await broadcast_agent_update(agent)
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id=agent.session_id or "", event_type="stopped", data={},
-    )
-    await broadcast_event(agent, evt)
+    await create_and_broadcast_event(agent, event_type="stopped", data={})
 
     op_log.info("agent_killed")
     clear_agent_context()
@@ -467,22 +473,15 @@ async def remove_agent(agent_id: str) -> bool:
     )
 
     # Safety: terminate sandbox if somehow still running
-    if agent.sandbox_id:
-        try:
-            runtime = get_runtime(agent.runtime)
-            await runtime.terminate(agent.sandbox_id)
-        except Exception:
-            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+    await terminate_sandbox(agent, op_log)
 
     project_id = agent.project_id
     agent_name = agent.name
 
-    # Broadcast before delete — the event FK needs the agent row to exist
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id=agent.session_id or "", event_type="removed",
-        data={"agent_id": agent_id},
+    # Broadcast before delete -- the event FK needs the agent row to exist
+    await create_and_broadcast_event(
+        agent, event_type="removed", data={"agent_id": agent_id},
     )
-    await broadcast_event(agent, evt)
 
     await agent.adelete()
 
@@ -601,11 +600,9 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id=agent.session_id or "", event_type="restarted",
-        data={"agent_id": agent_id},
+    await create_and_broadcast_event(
+        agent, event_type="restarted", data={"agent_id": agent_id},
     )
-    await broadcast_event(agent, evt)
 
     op_log.info("agent_reset_complete", agent_id=agent_id)
 

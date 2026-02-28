@@ -1,4 +1,4 @@
-"""WebSocket consumer for the agent relay.
+"""WebSocket consumers: agent relay and VNC proxy.
 
 Replaces the HTTP POST /agents/<id>/stream endpoint + piggyback pattern.
 The relay connects via WebSocket and we get a persistent bidirectional channel:
@@ -24,7 +24,7 @@ is negligible compared to the value of having complete agent telemetry.
 from datetime import timedelta
 
 import structlog
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
 
 from agents.models import StreamEvent
@@ -82,42 +82,44 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         from agents.services.reconcile import ensure_running
         ensure_running()
 
-        # Backfill pending user messages that arrived while relay was disconnected.
-        # Uses agent.updated_at (set by _atomic_reset_for_restart) as the cutoff,
-        # minus 30s buffer to catch messages created just before the restart reset
-        # updated_at. Safe because the relay skips duplicate text echoes.
-        backfill_cutoff = self.agent.updated_at - timedelta(seconds=30)
-        pending = StreamEvent.objects.filter(
-            agent_id=self.agent_id,
-            event_type="user",
-            created_at__gte=backfill_cutoff,
-        ).order_by("created_at")
+        # Backfill pending user messages that arrived while the relay was
+        # genuinely down (container freshly created). On transient WS reconnects
+        # (backend restart, network blip) the relay stayed alive — Claude already
+        # has these messages in context. Replaying them causes duplicate turns.
+        from agents.models import AgentStatus
+        if self.agent.status == AgentStatus.DEPLOYING:
+            backfill_cutoff = self.agent.updated_at - timedelta(seconds=30)
+            pending = StreamEvent.objects.filter(
+                agent_id=self.agent_id,
+                event_type="user",
+                created_at__gte=backfill_cutoff,
+            ).order_by("created_at")
 
-        # Valid Anthropic content block types — anything prefixed with _ is
-        # internal metadata (e.g. _broadcast) and must be stripped before
-        # sending to Claude's stdin.
-        _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
+            # Valid Anthropic content block types — anything prefixed with _ is
+            # internal metadata (e.g. _broadcast) and must be stripped before
+            # sending to Claude's stdin.
+            _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
 
-        async for event in pending:
-            data = event.data
-            msg = data.get("message", {})
-            content = msg.get("content", "")
-            # Only replay text user messages, not tool_result events
-            if isinstance(content, str) and content.strip():
-                await self.send_json({
-                    "type": "input",
-                    "payload": {"type": "user", "message": {"role": "user", "content": content}},
-                })
-            elif isinstance(content, list):
-                # Strip internal metadata blocks (type starting with _)
-                clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
-                # Check if it's a text-only content block list (not tool_result)
-                text_parts = [b for b in clean if b.get("type") == "text"]
-                if text_parts and not any(b.get("type") == "tool_result" for b in clean):
+            async for event in pending:
+                data = event.data
+                msg = data.get("message", {})
+                content = msg.get("content", "")
+                # Only replay text user messages, not tool_result events
+                if isinstance(content, str) and content.strip():
                     await self.send_json({
                         "type": "input",
-                        "payload": {"type": "user", "message": {"role": "user", "content": clean}},
+                        "payload": {"type": "user", "message": {"role": "user", "content": content}},
                     })
+                elif isinstance(content, list):
+                    # Strip internal metadata blocks (type starting with _)
+                    clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
+                    # Check if it's a text-only content block list (not tool_result)
+                    text_parts = [b for b in clean if b.get("type") == "text"]
+                    if text_parts and not any(b.get("type") == "tool_result" for b in clean):
+                        await self.send_json({
+                            "type": "input",
+                            "payload": {"type": "user", "message": {"role": "user", "content": clean}},
+                        })
 
         log.info("relay_ws_connected", agent_id=self.agent_id)
 
@@ -128,8 +130,20 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content):
         """Each message from relay = one raw stream-json event.
 
-        No batching, no filtering — store verbatim, broadcast, side-effect.
+        Callback requests are routed to the callbacks service before
+        reaching stream processing — they create feed items, not stream events.
+        Everything else: store verbatim, broadcast, side-effect.
         """
+        event_type = content.get("type", "")
+
+        if event_type == "callback":
+            from agents.services.callbacks import process_callback
+            try:
+                await process_callback(self.agent, content)
+            except Exception:
+                log.exception("callback_request_failed", agent_id=self.agent_id)
+            return
+
         from agents.services.stream import process_stream_event
 
         try:
@@ -138,7 +152,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             log.exception(
                 "relay_ws_event_failed",
                 agent_id=self.agent_id,
-                event_type=content.get("type"),
+                event_type=event_type,
             )
 
     # ── Downstream: backend → relay ──
@@ -147,3 +161,124 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
     async def relay_command(self, event):
         """Forward a command (input, signal, mode) to the relay."""
         await self.send_json(event["command"])
+
+
+class VncProxyConsumer(AsyncWebsocketConsumer):
+    """Binary WebSocket proxy: browser ↔ backend ↔ websockify ↔ x11vnc.
+
+    Auth: short-lived token from Redis cache (set by createVncToken mutation).
+    Token is consumed on first use (single-use).
+
+    Route: /ws/vnc/<agent_id>/?token=xxx
+    """
+
+    async def connect(self):
+        import asyncio
+        import websockets
+
+        self.agent_id = str(self.scope["url_route"]["kwargs"]["agent_id"])
+        self.upstream_ws = None
+        self._relay_task = None
+
+        # Extract token from query string
+        query_string = self.scope.get("query_string", b"").decode()
+        params = dict(p.split("=", 1) for p in query_string.split("&") if "=" in p)
+        token = params.get("token", "")
+
+        if not token:
+            log.warning("vnc_proxy_reject", reason="no_token", agent_id=self.agent_id)
+            await self.accept()
+            await self.close(code=4001)
+            return
+
+        # Validate and consume token from cache
+        from django.core.cache import cache
+        cache_key = f"vnc_token:{token}"
+        cached_agent_id = cache.get(cache_key)
+
+        if not cached_agent_id or str(cached_agent_id) != self.agent_id:
+            log.warning("vnc_proxy_reject", reason="bad_token", agent_id=self.agent_id)
+            await self.accept()
+            await self.close(code=4001)
+            return
+
+        # Consume the token (single-use)
+        cache.delete(cache_key)
+
+        # Look up agent's VNC URL
+        from agents.models import Agent
+        try:
+            agent = await Agent.objects.aget(id=self.agent_id)
+        except Agent.DoesNotExist:
+            log.warning("vnc_proxy_reject", reason="agent_not_found", agent_id=self.agent_id)
+            await self.accept()
+            await self.close(code=4004)
+            return
+
+        if not agent.vnc_url:
+            log.warning("vnc_proxy_reject", reason="no_vnc_url", agent_id=self.agent_id)
+            await self.accept()
+            await self.close(code=4002)
+            return
+
+        # Convert HTTP VNC URL to websockify WS URL
+        # e.g. http://host:6080/vnc.html → ws://host:6080/websockify
+        vnc_ws_url = agent.vnc_url.replace("http://", "ws://").replace("https://", "wss://")
+        if "/vnc" in vnc_ws_url:
+            vnc_ws_url = vnc_ws_url.split("/vnc")[0] + "/websockify"
+        elif not vnc_ws_url.endswith("/websockify"):
+            vnc_ws_url = vnc_ws_url.rstrip("/") + "/websockify"
+
+        try:
+            self.upstream_ws = await websockets.connect(
+                vnc_ws_url,
+                subprotocols=["binary"],
+                max_size=2**20,
+                open_timeout=10,
+            )
+        except Exception:
+            log.exception("vnc_proxy_upstream_failed", agent_id=self.agent_id, url=vnc_ws_url)
+            await self.accept()
+            await self.close(code=4003)
+            return
+
+        await self.accept(subprotocol="binary")
+
+        # Start relay task: upstream → downstream
+        self._relay_task = asyncio.create_task(self._relay_upstream())
+        log.info("vnc_proxy_connected", agent_id=self.agent_id)
+
+    async def _relay_upstream(self):
+        """Read frames from upstream websockify and send to browser."""
+        try:
+            async for message in self.upstream_ws:
+                if isinstance(message, bytes):
+                    await self.send(bytes_data=message)
+                else:
+                    await self.send(text_data=message)
+        except Exception:
+            log.debug("vnc_proxy_upstream_closed", agent_id=self.agent_id)
+        finally:
+            await self.close()
+
+    async def receive(self, text_data=None, bytes_data=None):
+        """Forward browser frames to upstream websockify."""
+        if self.upstream_ws:
+            try:
+                if bytes_data:
+                    await self.upstream_ws.send(bytes_data)
+                elif text_data:
+                    await self.upstream_ws.send(text_data)
+            except Exception:
+                log.debug("vnc_proxy_send_failed", agent_id=self.agent_id)
+                await self.close()
+
+    async def disconnect(self, code):
+        if self._relay_task:
+            self._relay_task.cancel()
+        if self.upstream_ws:
+            try:
+                await self.upstream_ws.close()
+            except Exception:
+                pass
+        log.info("vnc_proxy_disconnected", agent_id=self.agent_id, code=code)

@@ -1,6 +1,5 @@
 import type { Metadata } from "next"
-import { Providers } from "@/components/providers"
-import { ToastContainer } from "@/components/shared/toast-container"
+import { GraphQLProvider } from "@/lib/graphql/provider"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -16,10 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" data-theme="claude" data-mode="dark">
       <body className="font-ui">
-        <Providers>
-          {children}
-          <ToastContainer />
-        </Providers>
+        <GraphQLProvider>{children}</GraphQLProvider>
       </body>
     </html>
   )

@@ -1,6 +1,6 @@
-"""Tests for agents.services.lifecycle — shell escape utility."""
+"""Tests for agents.adapters.claude_code — shell escape utility."""
 
-from agents.services.lifecycle import _shell_escape
+from agents.adapters.claude_code import _shell_escape
 
 
 def test_shell_escape_basic():

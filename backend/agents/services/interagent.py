@@ -17,9 +17,9 @@ import uuid
 
 import structlog
 
-from agents.models import Agent, AgentStatus, StreamEvent
-from agents.services.broadcast import broadcast_event
+from agents.models import Agent, AgentStatus
 from agents.services.comms import _push_to_relay
+from agents.services.utils import create_and_broadcast_event
 
 log = structlog.get_logger("agents.interagent")
 
@@ -59,18 +59,16 @@ async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> No
     parts = [{"type": "text", "text": team_msg}]
 
     # Store as StreamEvent so the dashboard feed shows inbound team messages
-    stream_event = await StreamEvent.objects.acreate(
-        agent=target,
-        session_id=target.session_id or "",
+    stream_event = await create_and_broadcast_event(
+        target,
         event_type="user",
-        message_id=f"team_{uuid.uuid4().hex[:16]}",
         data={
             "type": "user",
             "message": {"role": "user", "content": parts},
             "session_id": target.session_id or "",
         },
+        message_id=f"team_{uuid.uuid4().hex[:16]}",
     )
-    await broadcast_event(target, stream_event)
 
     # Push to relay via WebSocket
     input_msg = {

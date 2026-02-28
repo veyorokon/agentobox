@@ -60,6 +60,23 @@ class ProjectMutation:
             description=input.description,
             owner=user,
         )
+
+        # Auto-create a team-lead agent for every new project
+        try:
+            from agents.services.lifecycle import create_agent
+
+            await create_agent(
+                project_id=str(project.id),
+                name="team-lead",
+                runtime_name="docker",
+                model="claude-opus-4-6",
+                role="lead",
+                instructions="You are the team lead. Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
+                mode="plan",
+            )
+        except Exception:
+            log.exception("auto_team_lead_failed", project_id=str(project.id))
+
         return project
 
     @strawberry.mutation

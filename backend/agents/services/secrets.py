@@ -46,3 +46,33 @@ def decrypt_value(encrypted: bytes) -> str:
     """Decrypt a single Fernet token back to a string value."""
     f = _get_fernet()
     return f.decrypt(encrypted).decode("utf-8")
+
+
+async def push_secrets_for_project(project) -> None:
+    """Push merged secrets to all running agents in a project."""
+    import structlog
+
+    from agents.models import Agent, AgentStatus
+    from agents.runtimes import get_runtime
+    from agents.services.lifecycle import resolve_agent_secrets
+    from agents.services.provision import push_secrets_to_agent
+
+    op_log = structlog.get_logger("agents.secrets")
+
+    running_agents = [
+        a async for a in Agent.objects.filter(
+            project=project,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        ).exclude(sandbox_id="")
+    ]
+
+    for agent in running_agents:
+        try:
+            secret_envs = await resolve_agent_secrets(agent, op_log)
+            if secret_envs:
+                runtime = get_runtime(agent.runtime)
+                await push_secrets_to_agent(
+                    runtime, agent.sandbox_id, agent, secret_envs,
+                )
+        except Exception:
+            op_log.exception("secret_push_failed", agent_name=agent.name)

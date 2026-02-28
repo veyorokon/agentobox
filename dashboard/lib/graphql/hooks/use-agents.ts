@@ -1,0 +1,206 @@
+import { useQuery, useSubscription, useMutation, useApolloClient, gql } from "@apollo/client"
+import { useCallback, useMemo } from "react"
+import { useParams } from "next/navigation"
+import { GET_AGENTS } from "@/lib/graphql/queries/agents"
+import { ON_AGENT_CHANGED } from "@/lib/graphql/subscriptions/agents"
+import {
+  SET_AGENT_MODE,
+  KILL_AGENT,
+  REMOVE_AGENT,
+  HARD_RESTART_AGENT,
+  RESTART_AGENT,
+  UPDATE_AGENT_INSTRUCTIONS,
+  UPDATE_AGENT_CONFIG,
+} from "@/lib/graphql/mutations/agents"
+import { createLogger } from "@/lib/logger"
+import type { Agent, AttentionLevel } from "@/lib/types"
+
+/* ================================================================== */
+/*  AGENT HOOKS                                                         */
+/*                                                                      */
+/*  Query hook (useAgents) is safe to call from multiple components —   */
+/*  Apollo deduplicates queries. Subscription hook must be called ONCE  */
+/*  at the page level to avoid duplicate WebSocket subscriptions.       */
+/* ================================================================== */
+
+const log = createLogger("apollo")
+
+type AgentsData = { agents: Agent[] }
+
+/** Query-only hook — call from any component. */
+export function useAgents() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
+
+  return useQuery<AgentsData>(GET_AGENTS, {
+    fetchPolicy: "cache-and-network",
+    variables: queryVars,
+    skip: !projectId,
+  })
+}
+
+/** Subscription hook — call ONCE from the page-level component. */
+export function useAgentsSubscription() {
+  const { projectId } = useParams<{ projectId: string }>()
+
+  useSubscription(ON_AGENT_CHANGED, {
+    variables: { projectId: projectId ?? "" },
+    skip: !projectId,
+    onData: ({ client, data: subData }) => {
+      const agent = subData.data?.agentChanged
+      if (!agent) return
+      log("subscription.agent_changed", { id: agent.id })
+
+      // Merge into cache — Apollo auto-merges by keyFields (id)
+      client.cache.modify({
+        id: client.cache.identify({ __typename: "AgentType", id: agent.id }),
+        fields: {
+          lifecycleStatus: () => agent.lifecycleStatus,
+          attentionLevel: () => agent.attentionLevel,
+          mode: () => agent.mode,
+          cost: () => agent.cost,
+          duration: () => agent.duration,
+          turns: () => agent.turns,
+          phase: () => agent.phase,
+          task: () => agent.task,
+          liveAction: () => agent.liveAction,
+          todoProgress: () => agent.todoProgress,
+        },
+      })
+    },
+  })
+}
+
+export function useSetAgentMode() {
+  const client = useApolloClient()
+  const [mutate] = useMutation(SET_AGENT_MODE)
+
+  return useCallback(
+    (agentId: string, mode: Agent["mode"]) => {
+      log("cache.modify", { typename: "AgentType", id: agentId, field: "mode", value: mode })
+
+      // Read previous value for rollback
+      const prev = client.cache.readFragment<{ mode: string }>({
+        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+        fragment: gql`fragment ModeSnap on AgentType { mode }`,
+      })
+
+      // Optimistic cache update
+      client.cache.modify({
+        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+        fields: {
+          mode: () => mode,
+        },
+      })
+
+      mutate({ variables: { agentId, mode } }).catch(err => {
+        log("mutation.error", { mutation: "setAgentMode", agentId, error: err.message })
+        if (prev) {
+          client.cache.modify({
+            id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+            fields: { mode: () => prev.mode },
+          })
+        }
+      })
+    },
+    [client, mutate],
+  )
+}
+
+export function useAcknowledgeAgent() {
+  const client = useApolloClient()
+
+  return useCallback(
+    (agentId: string) => {
+      log("cache.modify", { typename: "AgentType", id: agentId, field: "attentionLevel", action: "acknowledge" })
+      client.cache.modify({
+        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+        fields: {
+          attentionLevel: (current: AttentionLevel) =>
+            current === "review" ? "none" : current,
+        },
+      })
+    },
+    [client],
+  )
+}
+
+/* ================================================================== */
+/*  LIFECYCLE HOOKS                                                     */
+/* ================================================================== */
+
+export function useKillAgent() {
+  const [mutate] = useMutation(KILL_AGENT)
+  return useCallback((agentId: string) => {
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "killAgent", agentId, error: err.message })
+    })
+  }, [mutate])
+}
+
+export function useRemoveAgent() {
+  const client = useApolloClient()
+  const [mutate] = useMutation(REMOVE_AGENT)
+  return useCallback((agentId: string) => {
+    log("cache.evict", { typename: "AgentType", id: agentId })
+    client.cache.evict({ id: client.cache.identify({ __typename: "AgentType", id: agentId }) })
+    client.cache.gc()
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "removeAgent", agentId, error: err.message })
+    })
+  }, [client, mutate])
+}
+
+export function useHardRestartAgent() {
+  const client = useApolloClient()
+  const [mutate] = useMutation(HARD_RESTART_AGENT)
+  return useCallback((agentId: string) => {
+    log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
+    client.cache.modify({
+      id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+      fields: { lifecycleStatus: () => "deploying" },
+    })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "hardRestartAgent", agentId, error: err.message })
+    })
+  }, [client, mutate])
+}
+
+export function useRestartAgent() {
+  const client = useApolloClient()
+  const [mutate] = useMutation(RESTART_AGENT)
+  return useCallback((agentId: string) => {
+    log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
+    client.cache.modify({
+      id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+      fields: { lifecycleStatus: () => "deploying" },
+    })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "restartAgent", agentId, error: err.message })
+    })
+  }, [client, mutate])
+}
+
+export function useUpdateAgentInstructions() {
+  const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS)
+  return useCallback((agentId: string, instructions: string) => {
+    mutate({ variables: { input: { agentId, instructions } } }).catch(err => {
+      log("mutation.error", { mutation: "updateAgentInstructions", agentId, error: err.message })
+    })
+  }, [mutate])
+}
+
+export function useUpdateAgentConfig() {
+  const [mutate] = useMutation(UPDATE_AGENT_CONFIG)
+  return useCallback((agentId: string, config: {
+    model?: string
+    role?: string
+    tags?: string[]
+    mcpRegistryNames?: string[]
+    mcpCustomServers?: Record<string, { command: string; args: string[] }>
+  }) => {
+    mutate({ variables: { input: { agentId, ...config } } }).catch(err => {
+      log("mutation.error", { mutation: "updateAgentConfig", agentId, error: err.message })
+    })
+  }, [mutate])
+}

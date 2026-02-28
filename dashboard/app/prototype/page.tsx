@@ -389,7 +389,7 @@ type TeamFeedItem =
   | { type: "status"; agent: string; from: string; to: string }
   | { type: "error"; agent: string; text: string }
   | { type: "question"; agent: string; question: string; options: string[] }
-  | { type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" }
+  | { type: "plan"; agent: string; title: string; plan: string; planStatus: "pending" | "approved" | "rejected" | "superseded" }
   | { type: "permission"; agent: string; command: string; risk?: string; permStatus: "pending" | "allowed" | "denied" }
   | { type: "multi-question"; agent: string; questions: { text: string; options: string[] }[] }
   | { type: "agent-message"; from: string; to: string; text: string }
@@ -1152,8 +1152,19 @@ function PlanCard({
   agent: string
   title: string
   plan: string
-  planStatus: "pending" | "approved" | "rejected"
+  planStatus: "pending" | "approved" | "rejected" | "superseded"
 }) {
+  if (planStatus === "superseded") {
+    return (
+      <div className="flex items-center gap-2 py-0.5 justify-center">
+        <AgentAvatar name={agent} size="sm" />
+        <span className="text-[10px] font-mono text-muted">
+          Plan: {title} · superseded
+        </span>
+      </div>
+    )
+  }
+
   if (planStatus === "approved") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">

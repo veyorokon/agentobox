@@ -23,6 +23,7 @@ from django.utils import timezone
 
 from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
+from agents.services.utils import terminate_sandbox
 
 log = structlog.get_logger("agents.reconcile")
 
@@ -164,7 +165,6 @@ async def _detect_stuck_deploys(now):
     Uses each agent's own runtime for sandbox termination.
     """
     deploy_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
-    from agents.runtimes import get_runtime
 
     stuck_agents = await _get_agents(
         status=AgentStatus.DEPLOYING,
@@ -172,12 +172,7 @@ async def _detect_stuck_deploys(now):
     )
 
     for agent in stuck_agents:
-        if agent.sandbox_id:
-            try:
-                runtime = get_runtime(agent.runtime)
-                await runtime.terminate(agent.sandbox_id)
-            except Exception:
-                log.exception("stuck_deploy_cleanup_failed", agent_id=str(agent.id))
+        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
         agent = await _mark_error(agent.id)
         await broadcast_agent_update(agent)
         log.info(
@@ -198,7 +193,6 @@ async def _reap_errored_agents(now):
     keeping dead containers alive wastes resources. The grace period ensures
     final relay events have time to flush before cleanup.
     """
-    from agents.runtimes import get_runtime
 
     reap_cutoff = now - timedelta(seconds=ERROR_REAP_GRACE_S)
     errored_agents = await _get_agents(
@@ -207,15 +201,7 @@ async def _reap_errored_agents(now):
     )
 
     for agent in errored_agents:
-        if agent.sandbox_id:
-            try:
-                runtime = get_runtime(agent.runtime)
-                await runtime.terminate(agent.sandbox_id)
-            except Exception:
-                log.exception(
-                    "error_reap_terminate_failed",
-                    agent_id=str(agent.id),
-                )
+        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
         agent = await _mark_stopped(agent.id)
         await broadcast_agent_update(agent)
         log.info(

@@ -28,18 +28,6 @@ def _get_s3_client():
     return _s3_client
 
 
-def _ensure_bucket(client):
-    """Create bucket if it doesn't exist (idempotent, needed for LocalStack)."""
-    try:
-        client.head_bucket(Bucket=settings.MEDIA_BUCKET)
-    except client.exceptions.ClientError as e:
-        error_code = e.response.get("Error", {}).get("Code", "")
-        if error_code in ("404", "NoSuchBucket"):
-            client.create_bucket(Bucket=settings.MEDIA_BUCKET)
-        else:
-            raise
-
-
 def _ext_from_media_type(media_type: str) -> str:
     ext = mimetypes.guess_extension(media_type or "image/png")
     return ext or ".png"

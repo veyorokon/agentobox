@@ -6,6 +6,7 @@ from django.db import models
 class AgentStatus(models.TextChoices):
     DEPLOYING = "deploying"
     RUNNING = "running"
+    WAITING = "waiting"
     IDLE = "idle"
     STOPPED = "stopped"
     ERROR = "error"
@@ -43,6 +44,37 @@ class ProjectSecret(models.Model):
         return f"{self.key} → {self.project.name}"
 
 
+class Skill(models.Model):
+    """Project-scoped skill — markdown content injected into agent workspaces.
+
+    Skills connect to agents via tags: if an agent's tags overlap with a
+    skill's assigned_tags, the skill is written as .claude/skills/<name>/SKILL.md
+    during provisioning.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="skills"
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    content = models.TextField()
+    assigned_tags = models.JSONField(default=list)
+    assigned_to_all = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"], name="unique_project_skill"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.name} → {self.project.name}"
+
+
 class Agent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
 
@@ -68,9 +100,25 @@ class Agent(models.Model):
     parent_session_id = models.CharField(max_length=255, blank=True)
     session_id = models.CharField(max_length=255, blank=True)
 
-    # Claude Code native fields (updated from hook common fields)
+    # ── State facets ──────────────────────────────────────────────────
+    # Fields synchronized to the in-container relay at session launch.
+    # The DB is the source of truth; the relay reads these via env vars
+    # or _build_options() and passes them to ClaudeAgentOptions.
+    #
+    # To add a new facet:
+    #   1. Add the field here
+    #   2. Wire it in lifecycle.py (provision → relay env) or relay.py (_build_options)
+    #   3. If live-updatable: add a set_* service function in comms.py
+    #      that saves to DB + pushes command to relay (see set_agent_mode)
+    #   4. If provision-only: just save to DB — next spawn picks it up
+    #
+    # Current facets: model, permission_mode, allowed_tools, mcp_servers
     model = models.CharField(max_length=100, blank=True)
     permission_mode = models.CharField(max_length=30, blank=True)
+    # Pre-authorized tool names — SDK skips can_use_tool callback for these.
+    # Populated by "Always Allow" on permission cards. Provision-only facet:
+    # changes take effect on next spawn, no live push needed.
+    allowed_tools = models.JSONField(default=list, blank=True)
 
     # MCP server config: {"server-name": {"command": "...", "args": [...]}}
     mcp_servers = models.JSONField(default=dict, blank=True)
@@ -92,6 +140,12 @@ class Agent(models.Model):
     )
     config_snapshot = models.JSONField(default=dict, blank=True)
 
+    # Agent type determines which adapter extracts display fields from snapshots
+    agent_type = models.CharField(max_length=50, default="claude-code")
+    # Latest snapshot: {"assistant": <event>, "result": <event>}
+    # Written by stream.py, read by adapters via GraphQL resolvers
+    latest_snapshot = models.JSONField(default=dict, blank=True)
+
     # Materialized view of agent state — updated as side effects of
     # StreamEvent processing. These are denormalized for fast reads;
     # the source of truth is the StreamEvent log.
@@ -99,6 +153,12 @@ class Agent(models.Model):
     capabilities = models.JSONField(null=True, blank=True)
     # Current activity phase from stream_event (thinking, responding, tool-input, tool-use)
     phase = models.CharField(max_length=20, blank=True, default="")
+
+    # Frontend-facing state
+    mode = models.CharField(max_length=20, default="auto")               # auto | plan | supervised
+    attention_level = models.CharField(max_length=20, default="none")     # none | review | plan | permission
+    task = models.CharField(max_length=500, blank=True, default="")       # current task description
+    tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
 
     # Auth token for WebSocket relay connection (generated during provisioning)
     relay_token = models.CharField(max_length=64, blank=True)
@@ -218,6 +278,10 @@ class AgentTask(models.Model):
     description = models.TextField(blank=True)
     status = models.CharField(max_length=32, default="pending")
     owner = models.CharField(max_length=255, blank=True)
+    active_form = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    blocks = models.JSONField(default=list, blank=True)       # task_ids this blocks
+    blocked_by = models.JSONField(default=list, blank=True)   # task_ids blocking this
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -231,6 +295,71 @@ class AgentTask(models.Model):
 
     def __str__(self):
         return f"{self.subject[:50]} ({self.status}) -> {self.agent.name}"
+
+
+class TeamFeedItem(models.Model):
+    """Curated feed items for the dashboard team feed.
+
+    Flat union: every field on every row, null/empty where not applicable.
+    Matches the frontend's discriminated union TeamFeedItem type.
+    StreamEvent = raw audit log (untouched). TeamFeedItem = dashboard view.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="feed_items")
+
+    # Discriminator
+    type = models.CharField(max_length=30)
+    # system | user | summary | status | error | question | plan | permission | multi-question | agent-message | task
+
+    # Shared
+    agent_name = models.CharField(max_length=100, blank=True, default="")
+    text = models.TextField(blank=True, default="")
+
+    # Permission
+    command = models.TextField(blank=True, default="")
+    risk = models.CharField(max_length=200, blank=True, default="")
+    perm_status = models.CharField(max_length=20, blank=True, default="")
+    tool_use_id = models.CharField(max_length=100, blank=True, default="")
+
+    # Plan
+    title = models.CharField(max_length=500, blank=True, default="")
+    plan = models.TextField(blank=True, default="")
+    plan_status = models.CharField(max_length=20, blank=True, default="")
+
+    # Summary
+    summary = models.TextField(blank=True, default="")
+    cost = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    turns = models.IntegerField(null=True, blank=True)
+    duration = models.CharField(max_length=30, blank=True, default="")
+    is_error = models.BooleanField(null=True, blank=True)
+
+    # Status change / agent-message (from/to serve double duty)
+    from_value = models.CharField(max_length=100, blank=True, default="")
+    to_value = models.CharField(max_length=100, blank=True, default="")
+
+    # User message
+    target = models.CharField(max_length=100, blank=True, default="")
+
+    # Question
+    question = models.CharField(max_length=1000, blank=True, default="")
+    options = models.JSONField(default=list, blank=True)
+    questions = models.JSONField(default=list, blank=True)
+
+    # Traceability
+    agent_record = models.ForeignKey(Agent, on_delete=models.SET_NULL, null=True, blank=True, related_name="feed_items")
+    source_event = models.ForeignKey(StreamEvent, on_delete=models.SET_NULL, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["project", "created_at"]),
+            models.Index(fields=["project", "agent_name", "type", "perm_status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.type} ({self.agent_name}) {self.created_at:%H:%M}"
 
 
 class AgentFeedback(models.Model):

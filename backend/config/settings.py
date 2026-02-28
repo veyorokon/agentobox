@@ -149,7 +149,7 @@ MEDIA_CDN_URL = env("MEDIA_CDN_URL", default="")
 import structlog  # noqa: E402
 from config.telemetry import (  # noqa: E402
     RawQueueHandler,
-    copy_exception_to_stacktrace,
+    move_exception_to_stacktrace,
     extract_otel_exception_fields,
     get_log_queue,
     merge_agent_context,
@@ -179,7 +179,7 @@ LOGGING = {
                 structlog.processors.StackInfoRenderer(),
                 extract_otel_exception_fields,
                 structlog.processors.format_exc_info,
-                copy_exception_to_stacktrace,
+                move_exception_to_stacktrace,
             ],
         },
     },
@@ -218,6 +218,7 @@ SESSION_COOKIE_NAME = "agentobox_sessionid"
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:5051",
 ]
 CORS_ALLOW_HEADERS = [
     "accept",

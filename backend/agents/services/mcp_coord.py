@@ -1,9 +1,10 @@
 """
 MCP Coordination Server for agent-to-agent communication.
 
-Exposes tools for messaging, task management, and team status via the
-MCP protocol. Mounted at /mcp on the ASGI server so agents can call
-these tools directly without going through stream observation.
+Tool names and parameter shapes align with Claude Code's native team tools
+(SendMessage, TaskCreate, TaskUpdate, TaskGet, TaskList). Transport differs
+(MCP HTTP → backend routing instead of filesystem), but the interface is
+identical so models trained on CC's native schemas work out of the box.
 
 Auth: Each tool call authenticates by extracting the Bearer token from
 the Authorization header and looking up the Agent by relay_token.
@@ -20,7 +21,7 @@ from fastmcp.server.dependencies import get_http_headers
 
 log = structlog.get_logger("agents.services.mcp_coord")
 
-mcp = FastMCP("abox-coord")
+mcp = FastMCP("team")
 
 
 # ---------------------------------------------------------------------------
@@ -47,49 +48,86 @@ async def _authenticate():
 
 
 # ---------------------------------------------------------------------------
-# Messaging tools
+# Messaging — matches CC's SendMessage tool
 # ---------------------------------------------------------------------------
 
 @mcp.tool
-async def teammate_message(recipient: str, content: str) -> dict:
-    """Send a direct message to a teammate by name.
+async def send_message(
+    type: str,
+    content: str = "",
+    recipient: str = "",
+    summary: str = "",
+) -> dict:
+    """Send messages to agent teammates.
 
     Args:
-        recipient: The teammate's name (e.g. "backend", "frontend").
-        content: The message content to send.
+        type: Message type — "message" for DMs, "broadcast" to all teammates,
+              "shutdown_request" to request a teammate shut down.
+        content: The message text.
+        recipient: Agent name of the recipient (required for "message" and
+                   "shutdown_request").
+        summary: A 5-10 word summary shown as preview in the UI.
     """
     agent = await _authenticate()
-    from agents.models import Agent
+    from agents.models import Agent, AgentStatus
 
-    try:
-        target = await Agent.objects.aget(
-            project_id=agent.project_id, name=recipient,
-        )
-    except Agent.DoesNotExist:
-        raise ToolError(f"Teammate '{recipient}' not found")
+    if type == "message":
+        if not recipient:
+            raise ToolError("recipient is required for type='message'")
+        try:
+            target = await Agent.objects.aget(
+                project_id=agent.project_id, name=recipient,
+            )
+        except Agent.DoesNotExist:
+            raise ToolError(f"Teammate '{recipient}' not found")
 
-    from agents.services.interagent import _deliver_to_stdin
-    await _deliver_to_stdin(agent.name, target, content)
+        from agents.services.interagent import _deliver_to_stdin
+        await _deliver_to_stdin(agent.name, target, content, summary=summary)
 
-    log.info("mcp_teammate_message", sender=agent.name, recipient=recipient)
-    return {"ok": True, "recipient": recipient}
+        log.info("mcp_send_message", sender=agent.name, recipient=recipient)
+        return {"ok": True, "recipient": recipient}
+
+    elif type == "broadcast":
+        from agents.services.interagent import _handle_broadcast
+        await _handle_broadcast(agent, content, summary)
+
+        log.info("mcp_send_broadcast", sender=agent.name)
+        return {"ok": True}
+
+    elif type == "shutdown_request":
+        if not recipient:
+            raise ToolError("recipient is required for type='shutdown_request'")
+        try:
+            target = await Agent.objects.aget(
+                project_id=agent.project_id, name=recipient,
+            )
+        except Agent.DoesNotExist:
+            raise ToolError(f"Teammate '{recipient}' not found")
+
+        target.status = AgentStatus.STOPPED
+        await target.asave(update_fields=["status"])
+
+        from agents.services.interagent import _deliver_to_stdin
+        shutdown_msg = f"Shutdown requested by {agent.name}: {content}"
+        await _deliver_to_stdin(agent.name, target, shutdown_msg, summary=summary)
+
+        # Broadcast status change so dashboard sees the agent stop
+        try:
+            from agents.services.broadcast import broadcast_agent_update
+            await broadcast_agent_update(target)
+        except Exception:
+            log.exception("shutdown_broadcast_failed", target=recipient)
+
+        log.info("mcp_shutdown_request", sender=agent.name, target=recipient)
+        return {"ok": True, "recipient": recipient}
+
+    else:
+        raise ToolError(f"Invalid message type: {type}. Must be 'message', 'broadcast', or 'shutdown_request'.")
 
 
-@mcp.tool
-async def teammate_broadcast(content: str) -> dict:
-    """Broadcast a message to all teammates. Use sparingly.
-
-    Args:
-        content: The message content to broadcast.
-    """
-    agent = await _authenticate()
-
-    from agents.services.interagent import _handle_broadcast
-    await _handle_broadcast(agent, content, "")
-
-    log.info("mcp_teammate_broadcast", sender=agent.name)
-    return {"ok": True}
-
+# ---------------------------------------------------------------------------
+# Spawning — agentobox extra (CC uses Task tool for spawning)
+# ---------------------------------------------------------------------------
 
 @mcp.tool
 async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
@@ -122,16 +160,24 @@ async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Task tools
+# Task tools — matches CC's TaskCreate/TaskUpdate/TaskGet/TaskList
 # ---------------------------------------------------------------------------
 
 @mcp.tool
-async def task_add(subject: str, description: str = "") -> dict:
+async def task_create(
+    subject: str,
+    description: str = "",
+    active_form: str = "",
+    metadata: dict | None = None,
+) -> dict:
     """Create a new task for the team.
 
     Args:
-        subject: Brief task title in imperative form.
+        subject: Brief task title in imperative form (e.g. "Fix auth bug").
         description: Detailed description of what needs to be done.
+        active_form: Present continuous form shown in spinner when in_progress
+                     (e.g. "Fixing auth bug").
+        metadata: Arbitrary metadata to attach to the task.
     """
     agent = await _authenticate()
     from agents.models import AgentTask
@@ -142,53 +188,175 @@ async def task_add(subject: str, description: str = "") -> dict:
         task_id=f"mcp_{uuid.uuid4().hex[:12]}",
         subject=subject[:500],
         description=description,
+        active_form=active_form,
+        metadata=metadata or {},
         status="pending",
     )
 
-    log.info("mcp_task_add", agent_name=agent.name, subject=subject[:80])
-    return {"ok": True, "task_id": task.task_id}
+    # Secondary: feed item + broadcast. Must not fail the tool call.
+    try:
+        from agents.services.feed import create_feed_item
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            agent_record=agent,
+            type="task",
+            agent_name=agent.name,
+            text=subject[:200],
+            from_value="",
+            to_value="pending",
+        )
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(agent)
+    except Exception:
+        log.exception("task_create_feed_broadcast_failed", agent_name=agent.name)
+
+    log.info("mcp_task_create", agent_name=agent.name, subject=subject[:80])
+    return {"task_id": task.task_id, "subject": task.subject}
 
 
 @mcp.tool
-async def task_claim(task_id: str) -> dict:
-    """Claim a task and mark it as in-progress.
+async def task_update(
+    task_id: str,
+    status: str = "",
+    subject: str = "",
+    description: str = "",
+    owner: str = "",
+    active_form: str = "",
+    add_blocks: list[str] | None = None,
+    add_blocked_by: list[str] | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Update a task. Only provided (non-empty) fields are changed.
 
     Args:
-        task_id: The ID of the task to claim.
+        task_id: The ID of the task to update.
+        status: New status — "pending", "in_progress", "completed", or "deleted".
+        subject: New task title.
+        description: New description.
+        owner: New owner (agent name).
+        active_form: Present continuous form for spinner.
+        add_blocks: Task IDs that this task blocks (appended).
+        add_blocked_by: Task IDs that block this task (appended).
+        metadata: Metadata keys to merge. Set a key to null to delete it.
     """
     agent = await _authenticate()
     from agents.models import AgentTask
 
-    updated = await AgentTask.objects.filter(
-        project_id=agent.project_id, task_id=task_id,
-    ).aupdate(owner=agent.name, status="in_progress")
-
-    if not updated:
+    try:
+        task = await AgentTask.objects.aget(
+            project_id=agent.project_id, task_id=task_id,
+        )
+    except AgentTask.DoesNotExist:
         raise ToolError(f"Task '{task_id}' not found")
 
-    log.info("mcp_task_claim", agent_name=agent.name, task_id=task_id)
-    return {"ok": True}
+    update_fields = []
+    old_status = task.status
+
+    if status:
+        if status == "deleted":
+            await task.adelete()
+            try:
+                from agents.services.broadcast import broadcast_agent_update
+                await broadcast_agent_update(agent)
+            except Exception:
+                log.exception("task_delete_broadcast_failed", agent_name=agent.name)
+            log.info("mcp_task_delete", agent_name=agent.name, task_id=task_id)
+            return {"ok": True, "deleted": True}
+        task.status = status
+        update_fields.append("status")
+
+    if subject:
+        task.subject = subject[:500]
+        update_fields.append("subject")
+
+    if description:
+        task.description = description
+        update_fields.append("description")
+
+    if owner:
+        task.owner = owner
+        update_fields.append("owner")
+
+    if active_form:
+        task.active_form = active_form
+        update_fields.append("active_form")
+
+    if add_blocks:
+        existing = task.blocks or []
+        task.blocks = list(set(existing + add_blocks))
+        update_fields.append("blocks")
+
+    if add_blocked_by:
+        existing = task.blocked_by or []
+        task.blocked_by = list(set(existing + add_blocked_by))
+        update_fields.append("blocked_by")
+
+    if metadata is not None:
+        merged = task.metadata or {}
+        for k, v in metadata.items():
+            if v is None:
+                merged.pop(k, None)
+            else:
+                merged[k] = v
+        task.metadata = merged
+        update_fields.append("metadata")
+
+    if update_fields:
+        await task.asave(update_fields=update_fields)
+
+    # Secondary: feed item + broadcast. Must not fail the tool call.
+    try:
+        if "status" in update_fields and task.status != old_status:
+            from agents.services.feed import create_feed_item
+            await create_feed_item(
+                project_id=str(agent.project_id),
+                agent_record=agent,
+                type="task",
+                agent_name=agent.name,
+                text=task.subject[:200],
+                from_value=old_status,
+                to_value=task.status,
+                target=task.owner or "",
+            )
+
+        if "status" in update_fields or "owner" in update_fields:
+            from agents.services.broadcast import broadcast_agent_update
+            await broadcast_agent_update(agent)
+    except Exception:
+        log.exception("task_update_feed_broadcast_failed", agent_name=agent.name)
+
+    log.info("mcp_task_update", agent_name=agent.name, task_id=task_id, fields=update_fields)
+    return {"ok": True, "task_id": task_id}
 
 
 @mcp.tool
-async def task_complete(task_id: str) -> dict:
-    """Mark a task as completed.
+async def task_get(task_id: str) -> dict:
+    """Get full details of a task by ID.
 
     Args:
-        task_id: The ID of the task to complete.
+        task_id: The ID of the task to retrieve.
     """
     agent = await _authenticate()
     from agents.models import AgentTask
 
-    updated = await AgentTask.objects.filter(
-        project_id=agent.project_id, task_id=task_id,
-    ).aupdate(status="completed")
-
-    if not updated:
+    try:
+        task = await AgentTask.objects.aget(
+            project_id=agent.project_id, task_id=task_id,
+        )
+    except AgentTask.DoesNotExist:
         raise ToolError(f"Task '{task_id}' not found")
 
-    log.info("mcp_task_complete", agent_name=agent.name, task_id=task_id)
-    return {"ok": True}
+    return {
+        "task_id": task.task_id,
+        "subject": task.subject,
+        "description": task.description,
+        "status": task.status,
+        "owner": task.owner,
+        "active_form": task.active_form,
+        "metadata": task.metadata,
+        "blocks": task.blocks,
+        "blocked_by": task.blocked_by,
+    }
 
 
 @mcp.tool
@@ -199,21 +367,23 @@ async def task_list() -> list[dict]:
 
     tasks = [
         {
-            "task_id": t.task_id,
+            "id": t.task_id,
             "subject": t.subject,
             "status": t.status,
             "owner": t.owner,
+            "active_form": t.active_form,
+            "blocked_by": t.blocked_by,
         }
         async for t in AgentTask.objects.filter(
             project_id=agent.project_id,
-        ).order_by("-created_at")
+        ).order_by("created_at")
     ]
 
     return tasks
 
 
 # ---------------------------------------------------------------------------
-# Team tools
+# Team tools — agentobox extra (no CC equivalent)
 # ---------------------------------------------------------------------------
 
 @mcp.tool

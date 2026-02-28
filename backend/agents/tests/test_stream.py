@@ -1,0 +1,191 @@
+"""Tests for stream.py snapshot writes and phase logic."""
+
+import pytest
+from unittest.mock import AsyncMock, patch
+
+from agents.models import Agent, AgentStatus
+
+
+@pytest.fixture
+def mock_broadcast():
+    """Patch broadcast functions to no-op."""
+    with (
+        patch("agents.services.stream.broadcast_agent_update", new_callable=AsyncMock) as ba,
+        patch("agents.services.stream.broadcast_event", new_callable=AsyncMock) as be,
+        patch("agents.services.stream.create_feed_item", new_callable=AsyncMock) as cf,
+        patch("agents.services.stream.recompute_attention", new_callable=AsyncMock) as ra,
+    ):
+        yield {"broadcast_agent": ba, "broadcast_event": be, "create_feed": cf, "recompute": ra}
+
+
+@pytest.mark.django_db(transaction=True)
+class TestSnapshotWrites:
+    @pytest.fixture
+    def agent(self, db):
+        from projects.models import Project
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.create_user(username="test_stream", password="test")
+        project = Project.objects.create(name="Test Stream", owner=user)
+        return Agent.objects.create(
+            name="stream-test",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.RUNNING,
+            session_id="session_001",
+            agent_type="claude-code",
+        )
+
+    @pytest.mark.asyncio
+    async def test_assistant_event_updates_snapshot(self, agent, mock_broadcast):
+        from agents.services.stream import _update_assistant_fields
+
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "Hello world"}]
+            },
+        }
+        await _update_assistant_fields(agent, event)
+
+        assert agent.latest_snapshot["assistant"] == event
+        assert "result" not in agent.latest_snapshot
+
+    @pytest.mark.asyncio
+    async def test_result_event_updates_snapshot(self, agent, mock_broadcast):
+        from agents.services.stream import _handle_result
+
+        # First set an assistant snapshot
+        agent.latest_snapshot = {
+            "assistant": {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Done."}]},
+            }
+        }
+        await agent.asave(update_fields=["latest_snapshot"])
+
+        result_event = {
+            "type": "result",
+            "session_id": "session_001",
+            "duration_ms": 5000,
+            "num_turns": 3,
+            "total_cost_usd": 0.01,
+            "is_error": False,
+        }
+        await _handle_result(agent, result_event)
+
+        assert agent.latest_snapshot["result"] == result_event
+        assert agent.latest_snapshot["assistant"]["type"] == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_new_assistant_clears_result(self, agent, mock_broadcast):
+        from agents.services.stream import _update_assistant_fields
+
+        # Start with a snapshot that has both assistant and result
+        agent.latest_snapshot = {
+            "assistant": {"type": "assistant", "message": {"content": []}},
+            "result": {"type": "result", "duration_ms": 1000},
+        }
+
+        new_event = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "New turn"}]},
+        }
+        await _update_assistant_fields(agent, new_event)
+
+        assert "result" not in agent.latest_snapshot
+        assert agent.latest_snapshot["assistant"] == new_event
+
+
+@pytest.mark.django_db(transaction=True)
+class TestPhaseLogic:
+    @pytest.fixture
+    def agent(self, db):
+        from projects.models import Project
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.create_user(username="test_phase", password="test")
+        project = Project.objects.create(name="Test Phase", owner=user)
+        return Agent.objects.create(
+            name="phase-test",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.RUNNING,
+            session_id="session_002",
+            phase="responding",
+        )
+
+    @pytest.mark.asyncio
+    async def test_message_stop_after_text_no_tool_use(self, agent, mock_broadcast):
+        """message_stop after pure text (responding) should NOT set tool-use."""
+        from agents.services.stream import _handle_phase
+
+        agent.phase = "responding"
+        event = {
+            "type": "stream_event",
+            "event": {"type": "message_stop"},
+        }
+        await _handle_phase(agent, event)
+
+        # Phase should remain "responding" — no change because message_stop
+        # only transitions to tool-use from tool-input
+        assert agent.phase == "responding"
+
+    @pytest.mark.asyncio
+    async def test_message_stop_after_tool_input_sets_tool_use(self, agent, mock_broadcast):
+        """message_stop after tool-input should set tool-use."""
+        from agents.services.stream import _handle_phase
+
+        agent.phase = "tool-input"
+        event = {
+            "type": "stream_event",
+            "event": {"type": "message_stop"},
+        }
+        await _handle_phase(agent, event)
+
+        assert agent.phase == "tool-use"
+
+    @pytest.mark.asyncio
+    async def test_content_block_start_text_sets_responding(self, agent, mock_broadcast):
+        from agents.services.stream import _handle_phase
+
+        agent.phase = ""
+        event = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "content_block": {"type": "text"},
+            },
+        }
+        await _handle_phase(agent, event)
+        assert agent.phase == "responding"
+
+    @pytest.mark.asyncio
+    async def test_content_block_start_thinking_sets_thinking(self, agent, mock_broadcast):
+        from agents.services.stream import _handle_phase
+
+        agent.phase = ""
+        event = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "content_block": {"type": "thinking"},
+            },
+        }
+        await _handle_phase(agent, event)
+        assert agent.phase == "thinking"
+
+    @pytest.mark.asyncio
+    async def test_content_block_start_tool_use_sets_tool_input(self, agent, mock_broadcast):
+        from agents.services.stream import _handle_phase
+
+        agent.phase = ""
+        event = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "content_block": {"type": "tool_use"},
+            },
+        }
+        await _handle_phase(agent, event)
+        assert agent.phase == "tool-input"

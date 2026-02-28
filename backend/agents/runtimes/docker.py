@@ -70,14 +70,12 @@ class DockerRuntime:
                 network=network,
                 volumes=docker_volumes or None,
             )
-            # Reload to get port mappings
-            container.reload()
-            port_bindings = container.ports.get("6080/tcp")
-            if port_bindings:
-                host_port = port_bindings[0]["HostPort"]
-                vnc_url = f"http://localhost:{host_port}"
-            else:
-                vnc_url = ""
+            # VNC URL uses container name DNS — the backend proxies VNC
+            # to the browser (via VncProxyConsumer), so this URL only needs
+            # to be resolvable from the backend container, not the browser.
+            # Both containers share the Docker network, so container name
+            # DNS works. Same pattern as Guacamole / Kasm Workspaces.
+            vnc_url = f"http://{container_name}:6080"
             return SandboxInstance(id=container.id, vnc_url=vnc_url)
 
         result = await self._run_sync(_create)
@@ -162,12 +160,8 @@ class DockerRuntime:
             )
             results = []
             for c in containers:
-                port_bindings = c.ports.get("6080/tcp")
-                if port_bindings:
-                    host_port = port_bindings[0]["HostPort"]
-                    vnc_url = f"http://localhost:{host_port}"
-                else:
-                    vnc_url = ""
+                # Container name DNS — see comment in create() for rationale
+                vnc_url = f"http://{c.name}:6080"
                 results.append(SandboxInstance(id=c.id, vnc_url=vnc_url))
             return results
 
@@ -191,3 +185,22 @@ class DockerRuntime:
                 return "dead"
 
         return await self._run_sync(_status)
+
+    async def get_crash_info(self, sandbox_id: str) -> dict | None:
+        """Capture exit code, OOM status, and last 50 log lines from a dead container."""
+
+        def _inspect():
+            try:
+                container = self._client.containers.get(sandbox_id)
+                container.reload()
+                state = container.attrs.get("State", {})
+                logs = container.logs(tail=50, timestamps=True).decode(errors="replace")
+                return {
+                    "exit_code": state.get("ExitCode", -1),
+                    "oom_killed": state.get("OOMKilled", False),
+                    "logs": logs,
+                }
+            except docker.errors.NotFound:
+                return None
+
+        return await self._run_sync(_inspect)

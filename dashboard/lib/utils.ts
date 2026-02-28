@@ -33,7 +33,7 @@ export function formatDuration(ms: number): string {
   return `${mins}m ${remainSecs}s`
 }
 
-/** Strip MCP server prefix: "mcp__abox-coord__task_list" → "task_list" */
+/** Strip MCP server prefix: "mcp__team__task_list" → "task_list" */
 export function friendlyToolName(name: string): string {
   if (name.startsWith("mcp__")) {
     const parts = name.split("__")

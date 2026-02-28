@@ -46,3 +46,11 @@ class Runtime(Protocol):
     async def list_sandboxes(self) -> list[SandboxInstance]: ...
 
     async def get_status(self, sandbox_id: str) -> str: ...
+
+    async def get_crash_info(self, sandbox_id: str) -> dict | None:
+        """Return exit code and last log lines for a dead/exited container.
+
+        Returns None if the container is not found or info is unavailable.
+        Result shape: {exit_code: int, oom_killed: bool, logs: str}
+        """
+        ...

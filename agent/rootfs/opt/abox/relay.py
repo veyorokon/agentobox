@@ -28,6 +28,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from urllib.parse import urlparse, urlunparse
 
 import websockets
@@ -100,6 +101,8 @@ from claude_agent_sdk import (  # noqa: E402
     CLINotFoundError,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ProcessError,
     UserMessage,
 )
@@ -134,6 +137,14 @@ AGENT_ID = os.environ.get("AGENT_ID", "")
 CALLBACK_URL = os.environ.get("ABOX_CALLBACK_URL", "").rstrip("/")
 RELAY_AUTH_TOKEN = os.environ.get("RELAY_AUTH_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# Mode mapping: backend sends our vocabulary, relay translates to SDK format.
+# The backend never touches Claude Code wire format for live commands.
+_MODE_MAP = {
+    "auto": "bypassPermissions",
+    "plan": "plan",
+    "supervised": "default",
+}
 
 # WebSocket reconnect
 WS_RECONNECT_DELAY_S = 1.0
@@ -320,21 +331,32 @@ class SDKRelay:
         self._exit_posted = False  # guards against double process_exit events
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
+        self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
         self.ws = WSTransport()
 
     def _build_options(self, resume_session_id: str = "", permission_mode: str = "") -> ClaudeAgentOptions:
         """Build SDK client options from relay environment variables.
 
-        Reads the same env vars that lifecycle.py writes to .relay_env and
-        translates them into ClaudeAgentOptions fields. Team agent flags
-        (--agent-id, --agent-name, etc.) go through extra_args since the
-        SDK doesn't expose them as first-class options.
+        State facet reader — translates env vars (written by lifecycle.py
+        at provision time) into ClaudeAgentOptions fields. This is the
+        relay-side half of the state facet pattern:
+
+            DB field → lifecycle.py writes .relay_env → relay reads env
+            → ClaudeAgentOptions → SDK session
+
+        Facets that support live update (permission_mode) are also passed
+        as a parameter when the relay re-spawns mid-session. Provision-only
+        facets (model, allowed_tools, mcp_servers) just read from env.
+
+        Team agent flags go through extra_args since the SDK doesn't
+        expose them as first-class options.
         """
         agent_name = os.environ.get("AGENT_NAME", "")
         team_name = os.environ.get("TEAM_NAME", "")
         parent_session_id = os.environ.get("PARENT_SESSION_ID", "")
         model = os.environ.get("CLAUDE_MODEL", "")
         mcp_config = os.environ.get("MCP_CONFIG", "")
+        allowed_tools_raw = os.environ.get("ALLOWED_TOOLS", "")
 
         # Team agent flags — not natively supported by SDK options.
         # Keys must NOT include "--" prefix — the SDK prepends it automatically.
@@ -349,13 +371,27 @@ class SDKRelay:
 
         perm = permission_mode if permission_mode else "bypassPermissions"
 
+        # Only register can_use_tool in supervised mode ("default").
+        # In bypassPermissions the SDK never fires the callback — keep None.
+        can_use_tool = self._make_can_use_tool_callback() if perm == "default" else None
+
+        # Parse allowed_tools facet (JSON list from env, e.g. '["Read","Glob"]')
+        allowed_tools: list[str] | None = None
+        if allowed_tools_raw:
+            try:
+                allowed_tools = json.loads(allowed_tools_raw)
+            except json.JSONDecodeError:
+                log.warning("Invalid ALLOWED_TOOLS env: %s", allowed_tools_raw)
+
         return ClaudeAgentOptions(
             model=model or None,
             permission_mode=perm,
+            allowed_tools=allowed_tools or None,
             resume=resume_session_id or None,
             include_partial_messages=True,
             cli_path="claude",
             cwd=os.getcwd(),
+            can_use_tool=can_use_tool,
             # IS_SANDBOX=1 tells the Claude CLI this is a sandboxed container,
             # so it accepts bypassPermissions even when the user has sudo.
             # Without this, the CLI detects sudo capability and refuses to start.
@@ -371,6 +407,61 @@ class SDKRelay:
             stderr=self._on_stderr,
         )
 
+    # ── Generic callback bridge ──
+
+    async def _request_callback(self, callback_type: str, payload: dict) -> dict:
+        """Send callback request to backend, wait for response.
+
+        Creates a Future, sends the request upstream via WS, and awaits
+        the backend's callback_response which resolves the Future.
+        """
+        import uuid as _uuid
+        request_id = _uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        self._pending_callbacks[request_id] = future
+        await self._send_event({
+            "type": "callback",
+            "callback_type": callback_type,
+            "request_id": request_id,
+            "payload": payload,
+        })
+        try:
+            return await asyncio.wait_for(future, timeout=300)
+        except asyncio.TimeoutError:
+            log.warning("Callback timeout after 300s: request_id=%s type=%s",
+                        request_id, callback_type)
+            return {"behavior": "deny", "message": "Timed out waiting for user response"}
+        finally:
+            self._pending_callbacks.pop(request_id, None)
+
+    def _make_can_use_tool_callback(self):
+        """Build the can_use_tool callback for supervised mode.
+
+        Thin wrapper translating SDK callback ↔ our generic bridge.
+        """
+        async def _can_use_tool(tool_name, tool_input, context):
+            result = await self._request_callback("can_use_tool", {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+            })
+            if result.get("behavior") == "allow":
+                return PermissionResultAllow(updated_input=result.get("updated_input"))
+            return PermissionResultDeny(
+                message=result.get("message", "Denied by user"),
+            )
+        return _can_use_tool
+
+    def _resolve_callback_response(self, cmd: dict, context: str = "") -> None:
+        """Resolve a pending callback Future from a backend response."""
+        request_id = cmd.get("request_id", "")
+        result = cmd.get("result", {})
+        future = self._pending_callbacks.get(request_id)
+        if future and not future.done():
+            future.set_result(result)
+        else:
+            suffix = f" ({context})" if context else ""
+            log.warning("Stale callback_response%s: request_id=%s", suffix, request_id)
+
     def _on_stderr(self, line: str):
         """Capture CLI stderr for diagnostics.
 
@@ -382,6 +473,16 @@ class SDKRelay:
         if stripped:
             log.info("[claude-stderr] %s", stripped)
             self._stderr_lines.append(stripped)
+
+    def _get_stderr(self, error: Exception | None = None) -> str:
+        """Reconstruct stderr from accumulated lines or error fallback."""
+        if self._stderr_lines:
+            return "\n".join(self._stderr_lines)
+        if error and hasattr(error, "stderr") and error.stderr:
+            return error.stderr
+        if error:
+            return str(error)
+        return ""
 
     # ── Message serialization ──
 
@@ -459,20 +560,23 @@ class SDKRelay:
         process_exit event with the exit code and stderr.
         """
         msg_count = 0
+        forwarded_count = 0
+        t0 = time.monotonic()
         try:
             async for msg in self.client.receive_messages():
                 msg_count += 1
                 event = self._message_to_event(msg)
                 if event:
+                    forwarded_count += 1
                     await self._send_event(event)
-            log.info("receive_messages iterator ended normally (forwarded %d messages)", msg_count)
+            elapsed = time.monotonic() - t0
+            log.info("Turn complete: %d messages received, %d forwarded, %.1fs elapsed", msg_count, forwarded_count, elapsed)
         except ProcessError as e:
             log.warning("Claude exited: code=%s (after %d messages)", e.exit_code, msg_count)
             # Use accumulated stderr (from _on_stderr callback) over the
             # SDK's generic ProcessError.stderr which just says
             # "Check stderr output for details".
-            real_stderr = "\n".join(self._stderr_lines) if self._stderr_lines else (e.stderr or "")
-            await self._post_exit_event(e.exit_code or 1, real_stderr)
+            await self._post_exit_event(e.exit_code or 1, self._get_stderr(e))
         except (asyncio.CancelledError, FatalWSClose):
             raise  # propagate — run loop handles these
         except Exception as e:
@@ -513,6 +617,7 @@ class SDKRelay:
         routing target changes (SDK methods instead of process signals/stdin).
         """
         cmd_type = cmd.get("type", "")
+        log.info("Handling command: type=%s (client_active=%s)", cmd_type, self.client is not None)
 
         if cmd_type == "input":
             payload = cmd.get("payload")
@@ -542,13 +647,25 @@ class SDKRelay:
                 log.info("SIGINT requested via WS")
                 await self.client.interrupt()
 
+        elif cmd_type == "callback_response":
+            self._resolve_callback_response(cmd)
+
         elif cmd_type == "mode":
-            mode = cmd.get("mode", "")
-            if mode and self.client:
-                log.info("Mode change via WS: %s", mode)
-                self.next_permission_mode = mode
-                self.restart_requested = True
-                await self.client.interrupt()
+            # Backend sends our vocabulary (auto/plan/supervised),
+            # relay translates to SDK format (bypassPermissions/plan/default)
+            our_mode = cmd.get("mode", "")
+            if our_mode:
+                sdk_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                if self.client:
+                    log.info("Mode change via WS: %s -> %s (applying immediately via SDK)", our_mode, sdk_mode)
+                    try:
+                        await self.client.set_permission_mode(sdk_mode)
+                    except Exception as e:
+                        log.error("set_permission_mode failed: %s", e)
+                        self.next_permission_mode = sdk_mode
+                else:
+                    log.info("Mode change via WS: %s -> %s (no client, deferred to next spawn)", our_mode, sdk_mode)
+                    self.next_permission_mode = sdk_mode
 
     # ── Synthetic events ──
 
@@ -602,7 +719,9 @@ class SDKRelay:
             loop.add_signal_handler(sig, self._on_signal, sig)
 
         resume_session_id = os.environ.get("RESUME_SESSION_ID", "")
-        permission_mode = os.environ.get("PERMISSION_MODE", "")
+        # Read our vocabulary, translate to SDK format
+        agent_mode = os.environ.get("AGENT_MODE", "auto")
+        permission_mode = _MODE_MAP.get(agent_mode, "bypassPermissions")
         sdk_connect_failures = 0
         SDK_MAX_CONNECT_RETRIES = 3
         SDK_CONNECT_RETRY_DELAY_S = 5.0
@@ -656,7 +775,7 @@ class SDKRelay:
                 await self._post_exit_event(127, "claude: command not found")
                 break
             except ProcessError as e:
-                real_stderr = "\n".join(self._stderr_lines) if self._stderr_lines else (e.stderr or str(e))
+                real_stderr = self._get_stderr(e)
                 log.error(
                     "SDK connect ProcessError: code=%s stderr=%s (captured %d stderr lines)",
                     e.exit_code, real_stderr, len(self._stderr_lines),
@@ -665,7 +784,7 @@ class SDKRelay:
                 break
             except Exception as e:
                 sdk_connect_failures += 1
-                real_stderr = "\n".join(self._stderr_lines) if self._stderr_lines else str(e)
+                real_stderr = self._get_stderr(e)
                 log.error(
                     "SDK client connect failed (%d/%d): %s type=%s (captured %d stderr lines: %s)",
                     sdk_connect_failures, SDK_MAX_CONNECT_RETRIES,
@@ -680,7 +799,7 @@ class SDKRelay:
                 await asyncio.sleep(delay)
                 continue
 
-            log.info("SDK client connected")
+            log.info("SDK client connected (perm=%s, resume=%s)", permission_mode, resume_session_id or "fresh")
 
             # Two tasks: forward messages upstream, receive commands downstream
             forward_task = asyncio.create_task(self._forward_messages(), name="forward")
@@ -690,6 +809,7 @@ class SDKRelay:
             # start so forward_task is already iterating receive_messages() and
             # will capture Claude's response.
             if self._pending_input:
+                log.info("Draining pending input from idle wait")
                 pending_payload = self._pending_input
                 self._pending_input = None
                 await self._handle_command({"type": "input", "payload": pending_payload})
@@ -728,6 +848,16 @@ class SDKRelay:
             except Exception:
                 pass
             self.client = None
+
+            # Cancel any pending callback Futures — the SDK process that
+            # would consume the response is gone.
+            for fut in self._pending_callbacks.values():
+                if not fut.done():
+                    fut.cancel()
+            self._pending_callbacks.clear()
+
+            log.info("SDK client disconnected, evaluating exit path (fatal=%s, restart=%s, clear=%s, exit_posted=%s)",
+                     fatal, self.restart_requested, self.clear_requested, self._exit_posted)
 
             if fatal:
                 break
@@ -775,7 +905,13 @@ class SDKRelay:
                 resume_session_id = self.session_id
             self.session_id = ""
 
-            log.info("Claude finished turn, waiting for next input (resume=%s)", resume_session_id)
+            # Apply deferred mode change (set during active session)
+            if self.next_permission_mode:
+                permission_mode = self.next_permission_mode
+                self.next_permission_mode = ""
+                log.info("Applying deferred mode change: %s", permission_mode)
+
+            log.info("Claude finished turn, entering idle wait (resume=%s, mode=%s)", resume_session_id, permission_mode)
 
             idle_fatal = False
             while True:
@@ -809,12 +945,18 @@ class SDKRelay:
                         break
                     elif sig == "restart":
                         break
+                elif cmd_type == "callback_response":
+                    # Resolve pending callback Future (agent might be idle
+                    # when user responds to a late permission prompt).
+                    self._resolve_callback_response(cmd, "idle")
+                    # Don't break — no need to respawn for a callback response.
                 elif cmd_type == "mode":
-                    mode = cmd.get("mode", "")
-                    if mode:
-                        permission_mode = mode
-                        log.info("Idle: permission mode changed to %s", mode)
-                        break
+                    our_mode = cmd.get("mode", "")
+                    if our_mode:
+                        permission_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                        log.info("Idle: mode %s -> %s (effective next spawn)", our_mode, permission_mode)
+                        # Don't break — no need to respawn just for a mode change.
+                        # The new mode takes effect when the next input arrives.
 
             if idle_fatal:
                 break
@@ -839,7 +981,7 @@ def main():
 
     # Log env diagnostics at startup — these go to tmux pane AND
     # are visible in container logs before the container is cleaned up.
-    diag_keys = ["AGENT_ID", "AGENT_NAME", "CLAUDECODE", "IS_SANDBOX",
+    diag_keys = ["AGENT_ID", "AGENT_NAME", "AGENT_MODE", "CLAUDECODE", "IS_SANDBOX",
                  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
                  "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ABOX_CALLBACK_URL"]
     diag = {k: ("set" if k == "ANTHROPIC_API_KEY" and os.environ.get(k) else os.environ.get(k, ""))

@@ -1,10 +1,3 @@
-/**
- * Client-side only — do not import from server components.
- *
- * This module creates a singleton ApolloClient with an InMemoryCache and a
- * WebSocket link for subscriptions. Importing it in a server component would
- * share cache state across requests. All consumers must be "use client".
- */
 import {
   ApolloClient,
   ApolloLink,
@@ -13,219 +6,95 @@ import {
   Observable,
   split,
 } from "@apollo/client"
-import { onError } from "@apollo/client/link/error"
 import { GraphQLWsLink } from "@apollo/client/link/subscriptions"
 import { getMainDefinition } from "@apollo/client/utilities"
-import { Client, createClient } from "graphql-ws"
-import { GRAPHQL_HTTP_URL, GRAPHQL_WS_URL } from "@/lib/constants"
+import { createClient } from "graphql-ws"
+import { createLogger } from "@/lib/logger"
 
-function getToken(): string | null {
+/* ================================================================== */
+/*  APOLLO CLIENT                                                      */
+/*                                                                     */
+/*  HTTP + WS links, cache-and-network, subscriptions.                 */
+/* ================================================================== */
+
+const log = createLogger("apollo")
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? API_URL.replace(/^http/, "ws")
+
+/* ── Auth header helper ───────────────────────────────────────────── */
+
+function getAuthToken(): string | null {
   if (typeof window === "undefined") return null
-  try {
-    const raw = localStorage.getItem("auth-storage")
-    if (!raw) return null
-    return JSON.parse(raw)?.state?.token ?? null
-  } catch {
-    return null
-  }
+  return localStorage.getItem("auth_token")
 }
 
-const AUTH_ERROR_PATTERNS = [
-  "not authenticated",
-  "permission denied",
-  "unauthorized",
-  "invalid token",
-  "token expired",
-]
+/* ── Logging link ────────────────────────────────────────────────── */
 
-function isAuthError(message: string): boolean {
-  const lower = message.toLowerCase()
-  return AUTH_ERROR_PATTERNS.some((p) => lower.includes(p))
-}
+const loggingLink = new ApolloLink((operation, forward) => {
+  const { operationName } = operation
+  log("operation.start", { name: operationName, variables: operation.variables })
 
-const authLink = new ApolloLink((operation, forward) => {
-  const token = getToken()
-  if (token) {
-    operation.setContext({
-      headers: { Authorization: `Bearer ${token}` },
-    })
-  }
-  return forward(operation)
+  if (!forward) return Observable.of()
+
+  return forward(operation).map((result) => {
+    if (result.errors?.length) {
+      log("operation.error", { name: operationName, errors: result.errors }, "error")
+    } else {
+      log("operation.complete", { name: operationName, data: result.data })
+    }
+    return result
+  })
 })
 
-const errorLink = onError(({ graphQLErrors, networkError }) => {
-  if (graphQLErrors) {
-    for (const err of graphQLErrors) {
-      console.error(
-        `[GraphQL error]: Message: ${err.message}, Location: ${JSON.stringify(err.locations)}, Path: ${err.path}`
-      )
-
-      // Check for auth errors and force logout
-      const code = (err.extensions?.code as string) ?? ""
-      if (
-        code === "UNAUTHENTICATED" ||
-        code === "FORBIDDEN" ||
-        isAuthError(err.message)
-      ) {
-        // Dynamic import to avoid circular dependency
-        import("@/stores/auth").then(({ useAuthStore }) => {
-          useAuthStore.getState().logout()
-        })
-        break
-      }
-    }
-  }
-  if (networkError) {
-    console.error(`[Network error]: ${networkError}`)
-    // Check for 401 on network level
-    if ("statusCode" in networkError && networkError.statusCode === 401) {
-      import("@/stores/auth").then(({ useAuthStore }) => {
-        useAuthStore.getState().logout()
-      })
-    }
-  }
-})
-
-
-// GQL logging — opt-in via NEXT_PUBLIC_GQL_DEBUG=1 to avoid overhead on every reload.
-const loggingLink =
-  process.env.NEXT_PUBLIC_GQL_DEBUG === "1"
-    ? new ApolloLink((operation, forward) => {
-        const definition = getMainDefinition(operation.query)
-        const opType =
-          definition.kind === "OperationDefinition"
-            ? definition.operation
-            : "unknown"
-        const opName = operation.operationName || "anonymous"
-
-        if (opType === "subscription") {
-          console.debug(`[GQL] ${opType} ${opName} started`)
-          return new Observable((observer) => {
-            const sub = forward(operation).subscribe({
-              next: (result) => {
-                // Log subscription payloads with entry type for visibility
-                const entry = result.data?.eventStream
-                const entryType = entry?.entryType ?? "?"
-                const agentName = entry?.agentName ?? "?"
-                console.debug(
-                  `[GQL] ${opType} ${opName} ← ${entryType} (agent=${agentName}, id=${entry?.id?.slice(0, 8) ?? "?"})`
-                )
-                observer.next(result)
-              },
-              error: (err) => {
-                console.debug(`[GQL] ${opType} ${opName} error`)
-                observer.error(err)
-              },
-              complete: () => {
-                console.debug(`[GQL] ${opType} ${opName} completed`)
-                observer.complete()
-              },
-            })
-            return () => {
-              console.debug(`[GQL] ${opType} ${opName} unsubscribed`)
-              sub.unsubscribe()
-            }
-          })
-        }
-
-        const start = performance.now()
-        console.debug(`[GQL] ${opType} ${opName} started`)
-        return forward(operation).map((result) => {
-          const duration = Math.round(performance.now() - start)
-          console.debug(`[GQL] ${opType} ${opName} completed in ${duration}ms`)
-          return result
-        })
-      })
-    : new ApolloLink((operation, forward) => forward(operation))
+/* ── Network links ───────────────────────────────────────────────── */
 
 const httpLink = new HttpLink({
-  uri: GRAPHQL_HTTP_URL,
+  uri: API_URL,
+  headers: {
+    get authorization() {
+      const token = getAuthToken()
+      return token ? `Bearer ${token}` : ""
+    },
+  },
 })
 
-// WS client factory — creates a fresh graphql-ws client.
-// Called on init and again after logout to replace the disposed client.
-function createWsClient(): Client {
-  return createClient({
-    url: GRAPHQL_WS_URL,
-    connectionParams: () => {
-      const token = getToken()
-      return token ? { Authorization: `Bearer ${token}` } : {}
-    },
-    retryAttempts: 20,
+const wsLink = new GraphQLWsLink(
+  createClient({
+    url: WS_URL,
+    retryAttempts: Infinity,
     shouldRetry: () => true,
-    keepAlive: 10_000,
-  })
-}
+    connectionParams: () => {
+      const token = getAuthToken()
+      return token ? { authorization: `Bearer ${token}` } : {}
+    },
+  }),
+)
 
-// Export wsClient so it can be disposed on logout / token change
-export let wsClient: Client | null = null
+// Route subscriptions → WS, everything else → HTTP
+const networkLink = split(
+  ({ query }) => {
+    const def = getMainDefinition(query)
+    return def.kind === "OperationDefinition" && def.operation === "subscription"
+  },
+  wsLink,
+  httpLink,
+)
 
-const wsLink =
-  typeof window !== "undefined"
-    ? (() => {
-        wsClient = createWsClient()
-        return new GraphQLWsLink(wsClient)
-      })()
-    : null
+/* ── Client ──────────────────────────────────────────────────────── */
 
-const splitLink = wsLink
-  ? split(
-      ({ query }) => {
-        const definition = getMainDefinition(query)
-        return (
-          definition.kind === "OperationDefinition" &&
-          definition.operation === "subscription"
-        )
-      },
-      wsLink,
-      httpLink
-    )
-  : httpLink
-
-// Link chain: errorLink → loggingLink → authLink → splitLink
-const apolloClient = new ApolloClient({
-  link: ApolloLink.from([errorLink, loggingLink, authLink, splitLink]),
+export const client = new ApolloClient({
+  link: ApolloLink.from([loggingLink, networkLink]),
   cache: new InMemoryCache({
     typePolicies: {
       AgentType: { keyFields: ["id"] },
+      TeamFeedItemType: { keyFields: ["id"] },
+      SkillType: { keyFields: ["id"] },
+      FeedQuestionType: { keyFields: false },
+      TodoProgressType: { keyFields: false },
+      McpPackageType: { keyFields: false },
+      McpRegistryServerType: { keyFields: ["name"] },
       TimelineEntryType: { keyFields: ["id"] },
-      Query: {
-        fields: {
-          agentFeed: {
-            keyArgs: ["agentId"],
-            merge(_existing: any, incoming: any) {
-              return incoming
-            },
-          },
-          projectFeed: {
-            keyArgs: ["projectId"],
-            merge(_existing: any, incoming: any) {
-              return incoming
-            },
-          },
-        },
-      },
     },
   }),
 })
-
-/**
- * Reset Apollo client state: clear cache and dispose WebSocket connection.
- * Called from auth store on logout to prevent stale data and force
- * reconnection with fresh credentials.
- */
-export async function resetApolloClient() {
-  if (wsClient) {
-    wsClient.dispose()
-  }
-  await apolloClient.clearStore()
-  // Hard reload to recreate all module-level singletons.
-  // GraphQLWsLink holds a reference to the original wsClient — once disposed,
-  // it rejects new subscriptions. A page reload is the only clean way to
-  // get a fresh client without a lazy-init refactor.
-  if (typeof window !== "undefined") {
-    window.location.reload()
-  }
-}
-
-export default apolloClient
