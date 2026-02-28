@@ -166,14 +166,46 @@ class AgentQuery:
         limit: int = 30,
         cursor: str | None = None,
     ) -> McpRegistrySearchResult:
-        """Search the official MCP registry. Public endpoint, no auth required."""
+        """Search official MCP registry + bundled servers.
+
+        Uses separator-normalized matching so "computer use" matches
+        "computer-use". Bundled matches appear first.
+        """
+        import re
+        from agents.adapters import get_adapter
         from agents.services.mcp_registry import search_registry
 
         limit = min(limit, 100)
+
+        # Normalize: collapse spaces/dashes/underscores for comparison
+        def _normalize(s: str) -> str:
+            return re.sub(r"[-_\s]+", "", s).lower()
+
+        # Search bundled servers with normalized matching
+        bundled: list[McpRegistryServerType] = []
+        if query:
+            q_norm = _normalize(query)
+            adapter = get_adapter("claude-code")
+            for entry in adapter.mcp_registry_entries():
+                if q_norm in _normalize(entry["name"]):
+                    bundled.append(McpRegistryServerType(
+                        name=entry["name"],
+                        description="Bundled — pre-installed in agent image",
+                        version="",
+                        website_url=None,
+                        has_remote=False,
+                        packages=[McpPackageType(registry_type="bundled", identifier=entry["name"], transport_type="stdio")],
+                    ))
+        bundled_names = {s.name for s in bundled}
+
+        # Search remote registry
         data = await search_registry(query, limit, cursor)
-        servers = []
+        remote: list[McpRegistryServerType] = []
         for entry in data.get("servers", []):
             srv = entry.get("server", {})
+            name = srv.get("name", "")
+            if name in bundled_names:
+                continue
             packages = [
                 McpPackageType(
                     registry_type=pkg.get("registryType", ""),
@@ -182,17 +214,18 @@ class AgentQuery:
                 )
                 for pkg in srv.get("packages", [])
             ]
-            servers.append(McpRegistryServerType(
-                name=srv.get("name", ""),
+            remote.append(McpRegistryServerType(
+                name=name,
                 description=srv.get("description", ""),
                 version=srv.get("version", ""),
                 website_url=srv.get("websiteUrl"),
                 has_remote=bool(srv.get("remotes")),
                 packages=packages,
             ))
+
         metadata = data.get("metadata", {})
         return McpRegistrySearchResult(
-            servers=servers,
+            servers=bundled + remote,
             next_cursor=metadata.get("nextCursor"),
         )
 
