@@ -17,10 +17,9 @@ import uuid
 
 import structlog
 
-from agents.models import Agent, AgentStatus, StreamEvent
-from agents.services.broadcast import broadcast_event
+from agents.models import Agent, AgentStatus
 from agents.services.comms import _push_to_relay
-from agents.services.feed import create_feed_item
+from agents.services.utils import create_and_broadcast_event
 
 log = structlog.get_logger("agents.interagent")
 
@@ -41,7 +40,7 @@ async def _handle_broadcast(
         return
 
     for agent in agents:
-        await _deliver_to_stdin(sender.name, agent, content, summary=summary)
+        await _deliver_to_stdin(sender.name, agent, content)
 
     log.info(
         "interagent_broadcast_routed",
@@ -50,7 +49,7 @@ async def _handle_broadcast(
     )
 
 
-async def _deliver_to_stdin(sender_name: str, target: Agent, content: str, summary: str = "") -> None:
+async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> None:
     """Deliver an inter-agent message via relay WebSocket push.
 
     Formats the message as a stream-json user input so the relay writes it
@@ -60,29 +59,15 @@ async def _deliver_to_stdin(sender_name: str, target: Agent, content: str, summa
     parts = [{"type": "text", "text": team_msg}]
 
     # Store as StreamEvent so the dashboard feed shows inbound team messages
-    stream_event = await StreamEvent.objects.acreate(
-        agent=target,
-        session_id=target.session_id or "",
+    stream_event = await create_and_broadcast_event(
+        target,
         event_type="user",
-        message_id=f"team_{uuid.uuid4().hex[:16]}",
         data={
             "type": "user",
             "message": {"role": "user", "content": parts},
             "session_id": target.session_id or "",
         },
-    )
-    await broadcast_event(target, stream_event)
-
-    # Create agent-message feed item (summary stored for dashboard preview)
-    await create_feed_item(
-        project_id=str(target.project_id),
-        source_event=stream_event,
-        agent_record=target,
-        type="agent-message",
-        from_value=sender_name,
-        to_value=target.name,
-        text=content,
-        summary=summary,
+        message_id=f"team_{uuid.uuid4().hex[:16]}",
     )
 
     # Push to relay via WebSocket

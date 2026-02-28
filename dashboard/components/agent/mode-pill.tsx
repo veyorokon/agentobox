@@ -1,8 +1,9 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useRef, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import { MODE_CONFIG } from "@/lib/config"
+import { useClickOutside } from "@/lib/hooks/use-click-outside"
 
 export interface ModePillProps {
   mode: "auto" | "plan" | "supervised"
@@ -13,15 +14,9 @@ export function ModePill({ mode, onChange }: ModePillProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const cfg = MODE_CONFIG[mode]
+  const closeDropdown = useCallback(() => setOpen(false), [])
 
-  useEffect(() => {
-    if (!open) return
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
-  }, [open])
+  useClickOutside(ref, closeDropdown, open)
 
   return (
     <div className="relative shrink-0" ref={ref}>

@@ -14,6 +14,7 @@ import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hoo
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
+import { ActionButtonPair } from "@/components/feed/action-button-pair"
 
 export function AttentionBar() {
   // ── Store subscriptions ───────────────────────────────────────────
@@ -137,21 +138,13 @@ export function AttentionBar() {
           </div>
 
           {/* Pinned footer — always visible */}
-          <div className="border-t border-border-subtle/50 px-3.5 py-2.5 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedItemId, "approved")}
-              className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              onClick={() => handleResolvePlanAndCollapse(expandedPlan.feedItemId, "rejected")}
-              className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
-            >
-              Reject
-            </button>
+          <div className="border-t border-border-subtle/50 px-3.5 py-2.5">
+            <ActionButtonPair
+              onPositive={() => handleResolvePlanAndCollapse(expandedPlan.feedItemId, "approved")}
+              onNegative={() => handleResolvePlanAndCollapse(expandedPlan.feedItemId, "rejected")}
+              positiveLabel="Approve"
+              negativeLabel="Reject"
+            />
           </div>
         </div>
       </div>

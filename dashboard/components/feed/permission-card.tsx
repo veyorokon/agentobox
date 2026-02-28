@@ -1,7 +1,9 @@
 "use client"
 
 import { Check, X, Shield, AlertTriangle } from "lucide-react"
-import { AgentAvatar, ChatAvatar } from "@/components/agent/avatar"
+import { ChatAvatar } from "@/components/agent/avatar"
+import { CompactStatusLine } from "@/components/feed/compact-status-line"
+import { ActionButtonPair } from "@/components/feed/action-button-pair"
 import { useResolvePermission } from "@/lib/graphql/hooks/use-feed"
 
 export interface PermissionCardProps {
@@ -24,23 +26,17 @@ export function PermissionCard({
 
   if (permStatus === "allowed") {
     return (
-      <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
-        <span className="text-[10px] font-mono text-success">
-          Allowed: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <Check className="inline h-3 w-3" strokeWidth={2.5} />
-        </span>
-      </div>
+      <CompactStatusLine agent={agent} color="text-success">
+        Allowed: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <Check className="inline h-3 w-3" strokeWidth={2.5} />
+      </CompactStatusLine>
     )
   }
 
   if (permStatus === "denied") {
     return (
-      <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
-        <span className="text-[10px] font-mono text-muted">
-          Denied: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <X className="inline h-3 w-3" strokeWidth={2.5} />
-        </span>
-      </div>
+      <CompactStatusLine agent={agent}>
+        Denied: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <X className="inline h-3 w-3" strokeWidth={2.5} />
+      </CompactStatusLine>
     )
   }
 
@@ -62,22 +58,10 @@ export function PermissionCard({
               <span className="text-[11px] text-warning">{risk}</span>
             </div>
           )}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => resolvePermission(feedItemId, "allowed")}
-              className="px-3 py-1.5 rounded-md border border-success/30 text-xs font-medium text-success hover:bg-success-subtle/40 transition-colors"
-            >
-              Allow
-            </button>
-            <button
-              type="button"
-              onClick={() => resolvePermission(feedItemId, "denied")}
-              className="px-3 py-1.5 rounded-md border border-danger/30 text-xs font-medium text-danger hover:bg-danger-subtle/40 transition-colors"
-            >
-              Deny
-            </button>
-          </div>
+          <ActionButtonPair
+            onPositive={() => resolvePermission(feedItemId, "allowed")}
+            onNegative={() => resolvePermission(feedItemId, "denied")}
+          />
         </div>
       </div>
     </div>

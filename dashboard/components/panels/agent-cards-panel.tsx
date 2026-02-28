@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect, useRef } from "react"
+import { useState, useMemo, useRef, useCallback } from "react"
 import {
   Search,
   Filter,
@@ -16,6 +16,7 @@ import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentCardRow } from "@/components/agent/card-row"
+import { useClickOutside } from "@/lib/hooks/use-click-outside"
 
 export function AgentCardsPanel() {
   // ── Sidebar store ──────────────────────────────────────────────────
@@ -36,16 +37,8 @@ export function AgentCardsPanel() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const tagDropdownRef = useRef<HTMLDivElement>(null)
-
-  // Click-outside to close tag dropdown
-  useEffect(() => {
-    if (!showTagDropdown) return
-    function handleClick(e: MouseEvent) {
-      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) setShowTagDropdown(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
-  }, [showTagDropdown])
+  const closeTagDropdown = useCallback(() => setShowTagDropdown(false), [])
+  useClickOutside(tagDropdownRef, closeTagDropdown, showTagDropdown)
 
   const filteredAgents = useMemo(() => {
     let result = agents

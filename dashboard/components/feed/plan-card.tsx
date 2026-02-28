@@ -1,7 +1,7 @@
 "use client"
 
 import { Check, X } from "lucide-react"
-import { AgentAvatar } from "@/components/agent/avatar"
+import { CompactStatusLine } from "@/components/feed/compact-status-line"
 
 export interface PlanCardProps {
   agent: string
@@ -17,44 +17,32 @@ export function PlanCard({
 }: PlanCardProps) {
   if (planStatus === "superseded") {
     return (
-      <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
-        <span className="text-[10px] font-mono text-muted">
-          Plan: {title} · superseded
-        </span>
-      </div>
+      <CompactStatusLine agent={agent}>
+        Plan: {title} · superseded
+      </CompactStatusLine>
     )
   }
 
   if (planStatus === "approved") {
     return (
-      <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
-        <span className="text-[10px] font-mono text-success">
-          Plan: {title} <Check className="inline h-3 w-3" strokeWidth={2.5} /> approved
-        </span>
-      </div>
+      <CompactStatusLine agent={agent} color="text-success">
+        Plan: {title} <Check className="inline h-3 w-3" strokeWidth={2.5} /> approved
+      </CompactStatusLine>
     )
   }
 
   if (planStatus === "rejected") {
     return (
-      <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
-        <span className="text-[10px] font-mono text-muted">
-          Plan: {title} <X className="inline h-3 w-3" strokeWidth={2.5} /> rejected
-        </span>
-      </div>
+      <CompactStatusLine agent={agent}>
+        Plan: {title} <X className="inline h-3 w-3" strokeWidth={2.5} /> rejected
+      </CompactStatusLine>
     )
   }
 
   // Pending -- just a notification line, no card
   return (
-    <div className="flex items-center gap-2 py-0.5 justify-center">
-      <AgentAvatar name={agent} size="sm" />
-      <span className="text-[10px] font-mono text-warning">
-        Plan: {title} · awaiting review
-      </span>
-    </div>
+    <CompactStatusLine agent={agent} color="text-warning">
+      Plan: {title} · awaiting review
+    </CompactStatusLine>
   )
 }

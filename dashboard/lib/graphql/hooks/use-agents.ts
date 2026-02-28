@@ -1,4 +1,4 @@
-import { useQuery, useSubscription, useMutation, useApolloClient } from "@apollo/client"
+import { useQuery, useSubscription, useMutation, useApolloClient, gql } from "@apollo/client"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
@@ -79,6 +79,12 @@ export function useSetAgentMode() {
     (agentId: string, mode: Agent["mode"]) => {
       log("cache.modify", { typename: "AgentType", id: agentId, field: "mode", value: mode })
 
+      // Read previous value for rollback
+      const prev = client.cache.readFragment<{ mode: string }>({
+        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+        fragment: gql`fragment ModeSnap on AgentType { mode }`,
+      })
+
       // Optimistic cache update
       client.cache.modify({
         id: client.cache.identify({ __typename: "AgentType", id: agentId }),
@@ -87,7 +93,15 @@ export function useSetAgentMode() {
         },
       })
 
-      mutate({ variables: { agentId, mode } })
+      mutate({ variables: { agentId, mode } }).catch(err => {
+        log("mutation.error", { mutation: "setAgentMode", agentId, error: err.message })
+        if (prev) {
+          client.cache.modify({
+            id: client.cache.identify({ __typename: "AgentType", id: agentId }),
+            fields: { mode: () => prev.mode },
+          })
+        }
+      })
     },
     [client, mutate],
   )
@@ -118,7 +132,9 @@ export function useAcknowledgeAgent() {
 export function useKillAgent() {
   const [mutate] = useMutation(KILL_AGENT)
   return useCallback((agentId: string) => {
-    mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "killAgent", agentId, error: err.message })
+    })
   }, [mutate])
 }
 
@@ -129,7 +145,9 @@ export function useRemoveAgent() {
     log("cache.evict", { typename: "AgentType", id: agentId })
     client.cache.evict({ id: client.cache.identify({ __typename: "AgentType", id: agentId }) })
     client.cache.gc()
-    mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "removeAgent", agentId, error: err.message })
+    })
   }, [client, mutate])
 }
 
@@ -142,7 +160,9 @@ export function useHardRestartAgent() {
       id: client.cache.identify({ __typename: "AgentType", id: agentId }),
       fields: { lifecycleStatus: () => "deploying" },
     })
-    mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "hardRestartAgent", agentId, error: err.message })
+    })
   }, [client, mutate])
 }
 
@@ -155,14 +175,18 @@ export function useRestartAgent() {
       id: client.cache.identify({ __typename: "AgentType", id: agentId }),
       fields: { lifecycleStatus: () => "deploying" },
     })
-    mutate({ variables: { agentId } })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "restartAgent", agentId, error: err.message })
+    })
   }, [client, mutate])
 }
 
 export function useUpdateAgentInstructions() {
   const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS)
   return useCallback((agentId: string, instructions: string) => {
-    mutate({ variables: { input: { agentId, instructions } } })
+    mutate({ variables: { input: { agentId, instructions } } }).catch(err => {
+      log("mutation.error", { mutation: "updateAgentInstructions", agentId, error: err.message })
+    })
   }, [mutate])
 }
 
@@ -175,6 +199,8 @@ export function useUpdateAgentConfig() {
     mcpRegistryNames?: string[]
     mcpCustomServers?: Record<string, { command: string; args: string[] }>
   }) => {
-    mutate({ variables: { input: { agentId, ...config } } })
+    mutate({ variables: { input: { agentId, ...config } } }).catch(err => {
+      log("mutation.error", { mutation: "updateAgentConfig", agentId, error: err.message })
+    })
   }, [mutate])
 }

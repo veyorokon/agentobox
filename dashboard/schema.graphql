@@ -59,6 +59,15 @@ input CreateProjectInput {
   description: String! = ""
 }
 
+input CreateSkillInput {
+  projectId: ID!
+  name: String!
+  content: String!
+  description: String! = ""
+  assignedTags: [String!] = null
+  assignedToAll: Boolean! = false
+}
+
 """Date with time (isoformat)"""
 scalar DateTime
 
@@ -77,9 +86,29 @@ input LoginInput {
   password: String!
 }
 
+type McpPackageType {
+  registryType: String!
+  identifier: String!
+  transportType: String!
+}
+
 type McpRegistryEntryType {
   name: String!
   compat: [String!]!
+}
+
+type McpRegistrySearchResult {
+  servers: [McpRegistryServerType!]!
+  nextCursor: String
+}
+
+type McpRegistryServerType {
+  name: String!
+  description: String!
+  version: String!
+  websiteUrl: String
+  hasRemote: Boolean!
+  packages: [McpPackageType!]!
 }
 
 type ModelEntryType {
@@ -114,6 +143,9 @@ type Mutation {
   updateAgentInstructions(input: UpdateAgentInstructionsInput!): AgentType!
   rateAgent(input: RateFeedbackInput!): AgentFeedbackType
   updateAgentConfig(input: UpdateAgentConfigInput!): AgentType!
+  createSkill(input: CreateSkillInput!): SkillType!
+  updateSkill(input: UpdateSkillInput!): SkillType!
+  deleteSkill(skillId: ID!): Boolean!
   setSecret(input: SetSecretInput!): ProjectSecretType!
   deleteSecret(projectId: ID!, key: String!): Boolean!
   scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
@@ -148,6 +180,8 @@ type Query {
   projectFeed(projectId: ID!, limit: Int! = 200): [TimelineEntryType!]!
   availableModels: [ModelEntryType!]!
   mcpRegistry: [McpRegistryEntryType!]!
+  searchMcpRegistry(query: String! = "", limit: Int! = 30, cursor: String = null): McpRegistrySearchResult!
+  skills(projectId: ID!): [SkillType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!
 }
 
@@ -186,6 +220,18 @@ input SetSecretInput {
   value: String!
 }
 
+type SkillType {
+  id: UUID!
+  name: String!
+  description: String!
+  content: String!
+  assignedTags: JSON!
+  assignedToAll: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  projectId: String!
+}
+
 type Subscription {
   agentChanged(projectId: ID!): AgentType!
   feedItemChanged(projectId: ID!): TeamFeedItemType!
@@ -196,6 +242,7 @@ type TeamFeedItemType {
   id: ID!
   type: String!
   agent: String
+  agentId: String
   text: String
   command: String
   risk: String
@@ -252,6 +299,15 @@ input UpdateProjectInput {
   name: String = null
   description: String = null
   settings: JSON = null
+}
+
+input UpdateSkillInput {
+  skillId: ID!
+  name: String = null
+  description: String = null
+  content: String = null
+  assignedTags: [String!] = null
+  assignedToAll: Boolean = null
 }
 
 type UserType {

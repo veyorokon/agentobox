@@ -152,7 +152,14 @@ function useResolveFeedItem(
       }
 
       // 3. Fire mutation to backend
-      mutate({ variables: { feedItemId, verdict } })
+      mutate({ variables: { feedItemId, verdict } }).catch(err => {
+        log("mutation.error", { mutation: itemType === "permission" ? "resolvePermission" : "resolvePlan", feedItemId, error: err.message })
+        // Revert optimistic update — set status back to pending
+        client.cache.modify({
+          id: client.cache.identify({ __typename: "TeamFeedItemType", id: feedItemId }),
+          fields: { [statusField]: () => "pending" },
+        })
+      })
     },
     [client, mutate, queryVars, statusField, itemType],
   )
@@ -181,7 +188,9 @@ export function useSendMessage() {
         return { type: r.type, value: r.value }
       })
 
-      mutate({ variables: { projectId, text, recipients: recipientInputs } })
+      mutate({ variables: { projectId, text, recipients: recipientInputs } }).catch(err => {
+        log("mutation.error", { mutation: "sendMessage", error: err.message })
+      })
     },
     [mutate, projectId],
   )

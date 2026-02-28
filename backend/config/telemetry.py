@@ -49,22 +49,29 @@ def extract_otel_exception_fields(logger, method_name, event_dict):
     """
     Extract exception into OpenTelemetry semantic convention fields.
 
-    Converts exc_info tuple into flat structured fields:
+    Converts exc_info into flat structured fields:
     - exception.type: Fully qualified exception class name
     - exception.message: Exception message string
     - exception.stacktrace: Full traceback as string (filled by format_exc_info)
 
-    Runs BEFORE format_exc_info to extract type/message from exc_info tuple.
-    The "exception" field is preserved for format_exc_info to populate with stacktrace.
+    Runs BEFORE format_exc_info to extract type/message from exc_info.
+    Handles both exc_info=True (from BoundLogger.exception()) and exc_info=(type, val, tb).
     """
     exc_info = event_dict.get("exc_info")
+
+    # BoundLogger.exception() sets exc_info=True. Resolve to actual tuple
+    # so we can extract type/message before format_exc_info consumes it.
+    if exc_info is True:
+        import sys
+        exc_info = sys.exc_info()
+        if exc_info[0] is not None:
+            event_dict["exc_info"] = exc_info  # Replace True with tuple for format_exc_info
+
     if exc_info and isinstance(exc_info, tuple) and len(exc_info) == 3:
         exc_type, exc_value, exc_tb = exc_info
         if exc_type is not None:
-            # Use flat OTel field names
             event_dict["exception.type"] = f"{exc_type.__module__}.{exc_type.__name__}"
             event_dict["exception.message"] = str(exc_value)
-            # exception.stacktrace will be added after format_exc_info runs
 
     return event_dict
 
@@ -285,6 +292,14 @@ def start_queue_listener():
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            # Extract exc_info from LogRecord into event_dict.
+            # BoundLogger.exception() sets exc_info on the LogRecord, not
+            # the structlog event_dict. The configure() chain's format_exc_info
+            # never sees it. This processor runs after wrap_for_formatter
+            # unwraps, so it can pull exc_info from the record.
+            extract_otel_exception_fields,
+            structlog.processors.format_exc_info,
+            move_exception_to_stacktrace,
             renderer,
         ],
         foreign_pre_chain=[

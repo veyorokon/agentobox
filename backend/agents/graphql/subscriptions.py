@@ -12,7 +12,6 @@ import strawberry
 import structlog
 from strawberry import ID
 
-from agents.graphql.auth import authorize_project
 from agents.graphql.types import AgentType, TeamFeedItemType, TimelineEntryType, model_to_feed_item_type
 
 log = structlog.get_logger("agents.subscriptions")
@@ -27,6 +26,8 @@ class AgentSubscription:
         """Subscribe to agent status changes for a project."""
         from agents.models import Agent
 
+        # TODO: WS auth — connectionParams Bearer token not read by AuthMiddlewareStack.
+        # Need custom Channels middleware to parse token from connectionParams.
         ws = info.context["ws"]
         channel_layer = ws.channel_layer
         group = f"project_{project_id}_agents"

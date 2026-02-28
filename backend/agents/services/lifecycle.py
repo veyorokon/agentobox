@@ -6,18 +6,22 @@ from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import transaction
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentStatus, StreamEvent
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
-from agents.models import StreamEvent
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
-from agents.services.feed import create_feed_item
-from agents.services.provision import provision_workspace, write_secrets_env, write_theme_files
+from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
+from agents.services.utils import create_and_broadcast_event, terminate_sandbox
 from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 
 log = structlog.get_logger("agents.lifecycle")
+
+
+def _shell_escape(val: str) -> str:
+    """Escape a value for safe use inside single quotes in shell."""
+    return val.replace("'", "'\\''")
 
 
 async def create_agent(
@@ -30,8 +34,6 @@ async def create_agent(
     instructions: str = "",
     role: str = "worker",
     volume_mounts: list[dict] | None = None,
-    mode: str = "auto",
-    tags: list[str] | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from config.telemetry import bind_agent_context
@@ -40,6 +42,15 @@ async def create_agent(
     name = _sanitize_name(name)
     if not name:
         raise ValueError("Agent name cannot be empty")
+
+    # Reject container-internal paths — Docker bind mounts need host paths
+    if workspace_path and not workspace_path.startswith("/"):
+        raise ValueError(f"workspace_path must be an absolute host path, got: {workspace_path}")
+    if workspace_path and workspace_path.startswith(("/workspace", "/home/agent")):
+        raise ValueError(
+            f"workspace_path looks like a container-internal path ({workspace_path}). "
+            "Use the host filesystem path instead."
+        )
 
     op_log = log.bind(project_id=str(project_id), agent=name)
     op_log.info("creating_agent", runtime=runtime_name, workspace_path=workspace_path)
@@ -80,28 +91,16 @@ async def create_agent(
         instructions=instructions,
         role=role,
         config_snapshot=config_snapshot,
-        mode=mode,
-        tags=tags or [],
     )
 
     # Resolve project secrets for this agent (default-all with optional scoping)
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id="", event_type="created",
+    await create_and_broadcast_event(
+        agent, event_type="created",
         data={"name": name, "runtime": runtime_name},
-    )
-    await broadcast_event(agent, evt)
-
-    # Create system feed item for agent creation
-    await create_feed_item(
-        project_id=str(project_id),
-        source_event=evt,
-        agent_record=agent,
-        type="system",
-        agent_name=name,
-        text=f"Agent {name} created ({runtime_name})",
+        session_id="",
     )
 
     op_log.info("agent_created", agent_id=str(agent.id))
@@ -305,7 +304,6 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         await provision_workspace(
             runtime, sandbox.id, project,
-            agent_type=getattr(agent, "agent_type", "claude-code"),
             api_key=api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
@@ -317,29 +315,33 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             team_name=team_name,
             relay_token=relay_token,
             callback_url=callback_url,
-            mode=getattr(agent, "mode", "auto"),
-            agent_tags=agent.tags or [],
         )
         # Write theme tokens if project has them
         if project.theme_tokens:
             await write_theme_files(runtime, sandbox.id, project.theme_tokens)
 
-        # Build relay environment variables via adapter
-        from agents.adapters import get_adapter
-        adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
-        relay_env_content = adapter.build_relay_env(
-            agent_id=agent_id,
-            agent_name=agent.name,
-            team_name=team_name,
-            parent_session_id=parent_session_id,
-            callback_url=callback_url,
-            relay_token=relay_token,
-            api_key=api_key,
-            model=agent.model,
-            mode=getattr(agent, "mode", "auto"),
-            resume_session_id=resume_session_id,
-            mcp_config_path="/home/agent/.mcp.json",
-        )
+        # Build relay environment variables
+        # The relay reads these into ClaudeAgentOptions (SDK) and WS config
+        relay_env_lines = [
+            f"export AGENT_ID='{_shell_escape(agent_id)}'",
+            f"export AGENT_NAME='{_shell_escape(agent.name)}'",
+            f"export TEAM_NAME='{_shell_escape(team_name)}'",
+            f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
+            f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
+            f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
+            f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
+            f"export CLAUDE_MODEL='{_shell_escape(agent.model)}'",
+        ]
+
+        # Pass resume session so relay can --resume the prior conversation
+        if resume_session_id:
+            relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
+
+        # Always set MCP config path (abox-coord is always present)
+        # provision.py writes .mcp.json to /home/agent/ (not work_dir)
+        relay_env_lines.append("export MCP_CONFIG='/home/agent/.mcp.json'")
+
+        relay_env_content = "\n".join(relay_env_lines) + "\n"
         await runtime.write_file(
             sandbox.id,
             relay_env_content.encode("utf-8"),
@@ -429,21 +431,13 @@ async def kill_agent(agent_id: str) -> bool:
         project_id=str(agent.project_id),
     )
 
-    if agent.sandbox_id:
-        try:
-            runtime = get_runtime(agent.runtime)
-            await runtime.terminate(agent.sandbox_id)
-        except Exception:
-            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+    await terminate_sandbox(agent, op_log)
 
     agent.status = AgentStatus.STOPPED
     await agent.asave(update_fields=["status"])
 
     await broadcast_agent_update(agent)
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id=agent.session_id or "", event_type="stopped", data={},
-    )
-    await broadcast_event(agent, evt)
+    await create_and_broadcast_event(agent, event_type="stopped", data={})
 
     op_log.info("agent_killed")
     clear_agent_context()
@@ -474,22 +468,15 @@ async def remove_agent(agent_id: str) -> bool:
     )
 
     # Safety: terminate sandbox if somehow still running
-    if agent.sandbox_id:
-        try:
-            runtime = get_runtime(agent.runtime)
-            await runtime.terminate(agent.sandbox_id)
-        except Exception:
-            op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+    await terminate_sandbox(agent, op_log)
 
     project_id = agent.project_id
     agent_name = agent.name
 
-    # Broadcast before delete — the event FK needs the agent row to exist
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id=agent.session_id or "", event_type="removed",
-        data={"agent_id": agent_id},
+    # Broadcast before delete -- the event FK needs the agent row to exist
+    await create_and_broadcast_event(
+        agent, event_type="removed", data={"agent_id": agent_id},
     )
-    await broadcast_event(agent, evt)
 
     await agent.adelete()
 
@@ -608,11 +595,9 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    evt = await StreamEvent.objects.acreate(
-        agent=agent, session_id=agent.session_id or "", event_type="restarted",
-        data={"agent_id": agent_id},
+    await create_and_broadcast_event(
+        agent, event_type="restarted", data={"agent_id": agent_id},
     )
-    await broadcast_event(agent, evt)
 
     op_log.info("agent_reset_complete", agent_id=agent_id)
 

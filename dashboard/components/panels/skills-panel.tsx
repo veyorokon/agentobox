@@ -65,10 +65,12 @@ export function SkillsPanel() {
   const filtered = useMemo(() => {
     let result = skills
     if (search.trim()) {
-      const q = search.toLowerCase()
-      result = result.filter(s =>
-        s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
-      )
+      const q = search.toLowerCase().replace(/[-_]/g, " ")
+      result = result.filter(s => {
+        const name = s.name.toLowerCase().replace(/[-_]/g, " ")
+        const desc = s.description.toLowerCase().replace(/[-_]/g, " ")
+        return name.includes(q) || desc.includes(q)
+      })
     }
     if (skillTagFilter) {
       result = result.filter(s => s.assignedTags.includes(skillTagFilter))

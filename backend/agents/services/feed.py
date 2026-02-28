@@ -108,6 +108,8 @@ async def resolve_permission(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
     """
     if verdict not in ("allowed", "denied"):
         raise ValueError(f"Invalid verdict: {verdict}")
+    if item.perm_status != "pending":
+        return item  # Already resolved — idempotent no-op
 
     item = await update_feed_item(item, perm_status=verdict)
 
@@ -140,6 +142,8 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
     """
     if verdict not in ("approved", "rejected"):
         raise ValueError(f"Invalid verdict: {verdict}")
+    if item.plan_status != "pending":
+        return item  # Already resolved — idempotent no-op
 
     item = await update_feed_item(item, plan_status=verdict)
 

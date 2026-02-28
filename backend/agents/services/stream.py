@@ -223,6 +223,8 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
     if not session_id:
         return
 
+    await agent.arefresh_from_db(fields=["latest_snapshot", "status", "phase"])
+
     await SessionResult.objects.acreate(
         agent=agent,
         session_id=session_id,

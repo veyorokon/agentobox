@@ -407,7 +407,11 @@ class SDKRelay:
             "payload": payload,
         })
         try:
-            return await future
+            return await asyncio.wait_for(future, timeout=300)
+        except asyncio.TimeoutError:
+            log.warning("Callback timeout after 300s: request_id=%s type=%s",
+                        request_id, callback_type)
+            return {"behavior": "deny", "message": "Timed out waiting for user response"}
         finally:
             self._pending_callbacks.pop(request_id, None)
 
@@ -428,6 +432,17 @@ class SDKRelay:
             )
         return _can_use_tool
 
+    def _resolve_callback_response(self, cmd: dict, context: str = "") -> None:
+        """Resolve a pending callback Future from a backend response."""
+        request_id = cmd.get("request_id", "")
+        result = cmd.get("result", {})
+        future = self._pending_callbacks.get(request_id)
+        if future and not future.done():
+            future.set_result(result)
+        else:
+            suffix = f" ({context})" if context else ""
+            log.warning("Stale callback_response%s: request_id=%s", suffix, request_id)
+
     def _on_stderr(self, line: str):
         """Capture CLI stderr for diagnostics.
 
@@ -439,6 +454,16 @@ class SDKRelay:
         if stripped:
             log.info("[claude-stderr] %s", stripped)
             self._stderr_lines.append(stripped)
+
+    def _get_stderr(self, error: Exception | None = None) -> str:
+        """Reconstruct stderr from accumulated lines or error fallback."""
+        if self._stderr_lines:
+            return "\n".join(self._stderr_lines)
+        if error and hasattr(error, "stderr") and error.stderr:
+            return error.stderr
+        if error:
+            return str(error)
+        return ""
 
     # ── Message serialization ──
 
@@ -532,8 +557,7 @@ class SDKRelay:
             # Use accumulated stderr (from _on_stderr callback) over the
             # SDK's generic ProcessError.stderr which just says
             # "Check stderr output for details".
-            real_stderr = "\n".join(self._stderr_lines) if self._stderr_lines else (e.stderr or "")
-            await self._post_exit_event(e.exit_code or 1, real_stderr)
+            await self._post_exit_event(e.exit_code or 1, self._get_stderr(e))
         except (asyncio.CancelledError, FatalWSClose):
             raise  # propagate — run loop handles these
         except Exception as e:
@@ -605,13 +629,7 @@ class SDKRelay:
                 await self.client.interrupt()
 
         elif cmd_type == "callback_response":
-            request_id = cmd.get("request_id", "")
-            result = cmd.get("result", {})
-            future = self._pending_callbacks.get(request_id)
-            if future and not future.done():
-                future.set_result(result)
-            else:
-                log.warning("Stale callback_response: request_id=%s", request_id)
+            self._resolve_callback_response(cmd)
 
         elif cmd_type == "mode":
             # Backend sends our vocabulary (auto/plan/supervised),
@@ -738,7 +756,7 @@ class SDKRelay:
                 await self._post_exit_event(127, "claude: command not found")
                 break
             except ProcessError as e:
-                real_stderr = "\n".join(self._stderr_lines) if self._stderr_lines else (e.stderr or str(e))
+                real_stderr = self._get_stderr(e)
                 log.error(
                     "SDK connect ProcessError: code=%s stderr=%s (captured %d stderr lines)",
                     e.exit_code, real_stderr, len(self._stderr_lines),
@@ -747,7 +765,7 @@ class SDKRelay:
                 break
             except Exception as e:
                 sdk_connect_failures += 1
-                real_stderr = "\n".join(self._stderr_lines) if self._stderr_lines else str(e)
+                real_stderr = self._get_stderr(e)
                 log.error(
                     "SDK client connect failed (%d/%d): %s type=%s (captured %d stderr lines: %s)",
                     sdk_connect_failures, SDK_MAX_CONNECT_RETRIES,
@@ -911,13 +929,7 @@ class SDKRelay:
                 elif cmd_type == "callback_response":
                     # Resolve pending callback Future (agent might be idle
                     # when user responds to a late permission prompt).
-                    request_id = cmd.get("request_id", "")
-                    result = cmd.get("result", {})
-                    future = self._pending_callbacks.get(request_id)
-                    if future and not future.done():
-                        future.set_result(result)
-                    else:
-                        log.warning("Stale callback_response (idle): request_id=%s", request_id)
+                    self._resolve_callback_response(cmd, "idle")
                     # Don't break — no need to respawn for a callback response.
                 elif cmd_type == "mode":
                     our_mode = cmd.get("mode", "")

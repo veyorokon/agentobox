@@ -21,8 +21,9 @@ import structlog
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 
-from agents.models import Agent, AgentStatus, StreamEvent
+from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
+from agents.services.utils import terminate_sandbox
 
 log = structlog.get_logger("agents.reconcile")
 
@@ -82,16 +83,6 @@ def _mark_error(agent_id):
 
 
 @_db
-def _persist_crash_info(agent_id, session_id, crash_info):
-    StreamEvent.objects.create(
-        agent_id=agent_id,
-        session_id=session_id,
-        event_type="container_crash",
-        data=crash_info,
-    )
-
-
-@_db
 def _mark_stopped(agent_id):
     agent = Agent.objects.get(id=agent_id)
     agent.status = AgentStatus.STOPPED
@@ -142,11 +133,7 @@ async def _reap_orphans():
 # ---------------------------------------------------------------------------
 
 async def _detect_dead_containers():
-    """Mark agents ERROR when their Docker container is exited/dead/missing.
-
-    Captures container crash info (exit code, OOM, last logs) as a StreamEvent
-    before marking error — otherwise the info is lost when the container is reaped.
-    """
+    """Mark agents ERROR when their Docker container is exited/dead/missing."""
     from agents.runtimes import get_runtime
     runtime = get_runtime("docker")
     agents = await _get_agents(
@@ -158,11 +145,6 @@ async def _detect_dead_containers():
     for agent in agents:
         container_status = await runtime.get_status(agent.sandbox_id)
         if container_status in ("exited", "dead"):
-            # Capture crash info before it's lost to container reaping
-            crash_info = await runtime.get_crash_info(agent.sandbox_id)
-            if crash_info:
-                await _persist_crash_info(agent.id, agent.session_id or "", crash_info)
-
             agent = await _mark_error(agent.id)
             await broadcast_agent_update(agent)
             log.info(
@@ -170,8 +152,6 @@ async def _detect_dead_containers():
                 agent_id=str(agent.id),
                 agent_name=agent.name,
                 container_status=container_status,
-                exit_code=crash_info.get("exit_code") if crash_info else None,
-                oom_killed=crash_info.get("oom_killed") if crash_info else None,
             )
 
 
@@ -185,7 +165,6 @@ async def _detect_stuck_deploys(now):
     Uses each agent's own runtime for sandbox termination.
     """
     deploy_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
-    from agents.runtimes import get_runtime
 
     stuck_agents = await _get_agents(
         status=AgentStatus.DEPLOYING,
@@ -193,12 +172,7 @@ async def _detect_stuck_deploys(now):
     )
 
     for agent in stuck_agents:
-        if agent.sandbox_id:
-            try:
-                runtime = get_runtime(agent.runtime)
-                await runtime.terminate(agent.sandbox_id)
-            except Exception:
-                log.exception("stuck_deploy_cleanup_failed", agent_id=str(agent.id))
+        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
         agent = await _mark_error(agent.id)
         await broadcast_agent_update(agent)
         log.info(
@@ -219,7 +193,6 @@ async def _reap_errored_agents(now):
     keeping dead containers alive wastes resources. The grace period ensures
     final relay events have time to flush before cleanup.
     """
-    from agents.runtimes import get_runtime
 
     reap_cutoff = now - timedelta(seconds=ERROR_REAP_GRACE_S)
     errored_agents = await _get_agents(
@@ -228,15 +201,7 @@ async def _reap_errored_agents(now):
     )
 
     for agent in errored_agents:
-        if agent.sandbox_id:
-            try:
-                runtime = get_runtime(agent.runtime)
-                await runtime.terminate(agent.sandbox_id)
-            except Exception:
-                log.exception(
-                    "error_reap_terminate_failed",
-                    agent_id=str(agent.id),
-                )
+        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
         agent = await _mark_stopped(agent.id)
         await broadcast_agent_update(agent)
         log.info(
