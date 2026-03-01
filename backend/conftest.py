@@ -1,5 +1,6 @@
 """Shared fixtures for the agentobox test suite."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,9 +52,13 @@ def agent(project):
 
 
 def _make_info(user_obj):
-    """Build a mock strawberry Info with the given user on request."""
-    request = MagicMock()
-    request.user = user_obj
+    """Build a mock strawberry Info with the given user on request.
+
+    Uses SimpleNamespace for request so hasattr checks in _get_user work
+    correctly — MagicMock auto-creates any attribute, which makes the
+    WebSocket scope path falsely match for HTTP-only mocks.
+    """
+    request = SimpleNamespace(user=user_obj)
     info = MagicMock()
     info.context = {"request": request}
     return info
