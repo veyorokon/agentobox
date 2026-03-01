@@ -29,6 +29,7 @@ import os
 import signal
 import sys
 import time
+from collections import deque
 from urllib.parse import urlparse, urlunparse
 
 import websockets
@@ -156,6 +157,12 @@ WS_MAX_RECONNECT_DELAY_S = 30.0
 #   4003 = forbidden
 #   4004 = agent_not_found
 WS_FATAL_CLOSE_CODES = {4001, 4003, 4004}
+
+
+# Critical event types that must not be silently dropped.
+# "system" includes process_exit subtype (agent lifecycle).
+# "result" includes cost/usage data (session_cost_usd).
+CRITICAL_EVENT_TYPES = {"result", "system"}
 
 
 class FatalWSClose(Exception):
@@ -332,6 +339,7 @@ class SDKRelay:
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
+        self._event_buffer: deque[dict] = deque(maxlen=20)  # bounded ring buffer for critical events
         self.ws = WSTransport()
 
     def _build_options(self, resume_session_id: str = "", permission_mode: str = "") -> ClaudeAgentOptions:
@@ -536,9 +544,12 @@ class SDKRelay:
         """Send an event to the backend via WS.
 
         If the send fails, attempt reconnect and retry once.
-        If that also fails, log the error — no silent swallowing.
+        If that also fails, buffer critical events for later delivery.
         Raises FatalWSClose if reconnect hits a non-retryable code.
         """
+        # Flush any previously buffered events first
+        await self._flush_event_buffer()
+
         sent = await self.ws.send(event)
         if sent:
             return
@@ -546,11 +557,42 @@ class SDKRelay:
         log.warning("WS send failed, attempting reconnect")
         reconnected = await self.ws.reconnect()  # may raise FatalWSClose
         if reconnected:
+            await self._flush_event_buffer()
             sent = await self.ws.send(event)
             if sent:
                 return
 
-        log.error("Event lost — WS send failed after reconnect: type=%s", event.get("type", "?"))
+        # Buffer critical events instead of dropping
+        event_type = event.get("type", "")
+        if event_type in CRITICAL_EVENT_TYPES:
+            self._event_buffer.append(event)
+            log.warning(
+                "Critical event buffered (WS unavailable): type=%s buffer_size=%d",
+                event_type, len(self._event_buffer),
+            )
+        else:
+            log.warning("Event dropped (WS unavailable, non-critical): type=%s", event_type)
+
+    async def _flush_event_buffer(self):
+        """Flush buffered critical events to the backend.
+
+        Called on successful WS send opportunities. Events are sent FIFO.
+        Failed flushes leave events in the buffer for the next attempt.
+        """
+        if not self._event_buffer or not self.ws.connected:
+            return
+
+        flushed = 0
+        while self._event_buffer:
+            event = self._event_buffer[0]  # peek
+            sent = await self.ws.send(event)
+            if not sent:
+                break  # WS went down again — stop flushing
+            self._event_buffer.popleft()
+            flushed += 1
+
+        if flushed:
+            log.info("Flushed %d buffered events, %d remaining", flushed, len(self._event_buffer))
 
     async def _forward_messages(self):
         """Iterate SDK messages and forward each to the backend via WS.
@@ -604,6 +646,7 @@ class SDKRelay:
                     try:
                         if await self.ws.reconnect():
                             log.info("WS reconnected")
+                            await self._flush_event_buffer()
                     except FatalWSClose:
                         raise  # propagate to run loop
                 continue
@@ -735,6 +778,9 @@ class SDKRelay:
         except FatalWSClose as exc:
             log.error("Backend rejected connection (code=%d): %s — not retrying", exc.code, exc.reason)
             return
+
+        # Flush any events buffered from a previous connection attempt
+        await self._flush_event_buffer()
 
         # Send relay_init diagnostic event through WS so backend has it
         # even if the container dies before we can inspect logs.
@@ -925,7 +971,8 @@ class SDKRelay:
                     if not self.ws.connected:
                         log.warning("WS disconnected while idle, reconnecting")
                         try:
-                            await self.ws.reconnect()
+                            if await self.ws.reconnect():
+                                await self._flush_event_buffer()
                         except FatalWSClose:
                             idle_fatal = True
                             break
