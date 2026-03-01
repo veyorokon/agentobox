@@ -521,7 +521,7 @@ class ClaudeCodeAdapter:
         servers = {}
         if mcp_servers:
             for name, config in mcp_servers.items():
-                entry = {"command": config["command"], "args": config["args"]}
+                entry = {"command": config["command"], "args": config.get("args", [])}
                 if secret_envs:
                     entry["env"] = dict(secret_envs)
                 servers[name] = entry

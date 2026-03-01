@@ -13,6 +13,7 @@ import {
   Monitor,
   List,
   Settings,
+  RotateCcw,
 } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
 import type { AttentionLevel, ViewMode } from "@/lib/types"
@@ -20,7 +21,7 @@ import { LIFECYCLE_CONFIG, ATTENTION_CONFIG } from "@/lib/config"
 import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
 import { useWindowWidth } from "@/lib/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useAgents, useAcknowledgeAgent } from "@/lib/graphql/hooks/use-agents"
+import { useAgents, useAcknowledgeAgent, useHardRestartAgent } from "@/lib/graphql/hooks/use-agents"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { AgentCardRow } from "@/components/agent/card-row"
@@ -100,6 +101,14 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
 
   // Ephemeral state — resets on unmount, single-component concern
   const { selectMode, selectedIds, setSelectMode, toggleSelect: handleSelectAgent, toggleAll, clearSelection, exitSelectMode } = useSelectMode<typeof agents[number]>()
+  const hardRestartAgent = useHardRestartAgent()
+
+  const handleBulkRedeploy = useCallback(() => {
+    for (const id of selectedIds) {
+      hardRestartAgent(id)
+    }
+    exitSelectMode()
+  }, [selectedIds, hardRestartAgent, exitSelectMode])
 
   const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
 
@@ -361,6 +370,37 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             onCreateClick={onCreateAgent}
           />
 
+          {/* Bulk action bar — replaces bottom bar, sits above cards */}
+          {selectMode && (
+            <div className="px-3 py-1.5 border-b border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => toggleAll(filteredAgents)}
+                className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
+              >
+                {selectedIds.size === filteredAgents.length ? "Deselect all" : "Select all"}
+              </button>
+              <span className="text-[11px] font-medium text-default shrink-0">
+                {selectedIds.size} selected
+              </span>
+              <span className="flex-1" />
+              <button
+                type="button"
+                disabled={selectedIds.size === 0}
+                onClick={handleBulkRedeploy}
+                className={cn(
+                  "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                  selectedIds.size > 0
+                    ? "text-accent hover:bg-accent/10"
+                    : "text-muted/40 cursor-not-allowed",
+                )}
+              >
+                <RotateCcw className="h-3 w-3" />
+                Redeploy
+              </button>
+            </div>
+          )}
+
           {/* Agent cards */}
           <ScrollArea className="flex-1 overflow-y-auto">
             <div className="p-3 space-y-2">
@@ -397,29 +437,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             </div>
           </ScrollArea>
 
-          {/* Bulk action bar — when in select mode */}
-          {selectMode && (
-            <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => toggleAll(filteredAgents)}
-                className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
-              >
-                {selectedIds.size === filteredAgents.length ? "Deselect all" : "Select all"}
-              </button>
-              <span className="text-[11px] font-medium text-default shrink-0">
-                {selectedIds.size} selected
-              </span>
-              <span className="flex-1" />
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="text-[11px] text-muted hover:text-secondary transition-colors"
-              >
-                Clear
-              </button>
-            </div>
-          )}
 
         </>
       ) : (
