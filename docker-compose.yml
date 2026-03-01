@@ -73,6 +73,8 @@ services:
       - ./backend:/app
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./agent:/agent:ro
+      - ./dashboard/schema.graphql:/dashboard/schema.graphql:ro
 
   dashboard:
     build: ./dashboard

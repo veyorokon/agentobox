@@ -17,7 +17,10 @@ ADAPTERS_DIR = AGENTS_DIR / "adapters"
 SERVICES_DIR = AGENTS_DIR / "services"
 GRAPHQL_DIR = AGENTS_DIR / "graphql"
 PROJECT_ROOT = AGENTS_DIR.parent.parent  # backend/
-AGENT_ROOT = PROJECT_ROOT.parent / "agent"  # agent/
+# agent/ and dashboard/ dirs: check repo layout first, fall back to container mounts
+_REPO_ROOT = PROJECT_ROOT.parent
+AGENT_ROOT = _REPO_ROOT / "agent" if (_REPO_ROOT / "agent").is_dir() else Path("/agent")
+DASHBOARD_ROOT = _REPO_ROOT / "dashboard" if (_REPO_ROOT / "dashboard").is_dir() else Path("/dashboard")
 
 
 def _read_source(path: Path) -> str:
@@ -455,7 +458,7 @@ class TestSchemaContract:
 
     def test_schema_matches_checked_in_file(self):
         """Generated schema must match dashboard/schema.graphql."""
-        schema_path = PROJECT_ROOT.parent / "dashboard" / "schema.graphql"
+        schema_path = DASHBOARD_ROOT / "schema.graphql"
         if not schema_path.exists():
             pytest.skip("dashboard/schema.graphql not found")
 
