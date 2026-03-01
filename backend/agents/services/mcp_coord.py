@@ -65,15 +65,15 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
         except Agent.DoesNotExist:
             raise ToolError(f"Teammate '{recipient}' not found")
 
-        from agents.services.interagent import _deliver_to_stdin
-        await _deliver_to_stdin(agent.name, target, content)
+        from agents.services.interagent import deliver_to_stdin
+        await deliver_to_stdin(agent.name, target, content)
 
         log.info("mcp_send_message", sender=agent.name, recipient=recipient)
         return {"ok": True, "recipient": recipient}
 
     elif type == "broadcast":
-        from agents.services.interagent import _handle_broadcast
-        await _handle_broadcast(agent, content, summary="")
+        from agents.services.interagent import handle_broadcast
+        await handle_broadcast(agent, content, summary="")
 
         log.info("mcp_send_broadcast", sender=agent.name)
         return {"ok": True}
@@ -91,9 +91,9 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
         target.status = AgentStatus.STOPPED
         await target.asave(update_fields=["status"])
 
-        from agents.services.interagent import _deliver_to_stdin
+        from agents.services.interagent import deliver_to_stdin
         shutdown_msg = f"Shutdown requested by {agent.name}: {content}"
-        await _deliver_to_stdin(agent.name, target, shutdown_msg)
+        await deliver_to_stdin(agent.name, target, shutdown_msg)
 
         # Broadcast status change so dashboard sees the agent stop
         try:

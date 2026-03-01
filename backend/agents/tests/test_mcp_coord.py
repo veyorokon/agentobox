@@ -102,8 +102,8 @@ def _patch_auth(agent):
 _P_AGENT = "agents.models.Agent"
 _P_AGENT_STATUS = "agents.models.AgentStatus"
 _P_AGENT_TASK = "agents.models.AgentTask"
-_P_DELIVER = "agents.services.interagent._deliver_to_stdin"
-_P_BROADCAST = "agents.services.interagent._handle_broadcast"
+_P_DELIVER = "agents.services.interagent.deliver_to_stdin"
+_P_BROADCAST = "agents.services.interagent.handle_broadcast"
 _P_FEED_CREATE = "agents.services.feed.create_feed_item"
 _P_AGENT_BROADCAST = "agents.services.broadcast.broadcast_agent_update"
 
@@ -152,7 +152,7 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_broadcast(self):
-        """type='broadcast' calls _handle_broadcast."""
+        """type='broadcast' calls handle_broadcast."""
         sender = _mock_agent()
 
         with (

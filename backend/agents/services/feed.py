@@ -122,13 +122,13 @@ async def resolve_permission(
 
     # Send callback_response to relay (resolves the pending Future)
     if item.tool_use_id and item.agent_record_id:
-        from agents.services.comms import _push_to_relay
+        from agents.services.comms import push_to_relay
         result = (
             {"behavior": "allow"}
             if verdict == "allowed"
             else {"behavior": "deny", "message": "Denied by user"}
         )
-        await _push_to_relay(str(item.agent_record_id), {
+        await push_to_relay(str(item.agent_record_id), {
             "type": "callback_response",
             "request_id": item.tool_use_id,
             "result": result,

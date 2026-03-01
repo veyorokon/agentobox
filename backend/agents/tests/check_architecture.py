@@ -107,7 +107,7 @@ def check_service_naming():
         "resolve", "provision", "ensure", "answer", "hard_restart",
         "write", "externalize", "upload", "encrypt", "decrypt",
         "reconcile", "teammate", "task", "team", "search", "terminate",
-        "deliver", "get", "list",
+        "deliver", "get", "list", "handle",
     )
     for f in _python_files(SERVICES_DIR):
         tree = ast.parse(_read_source(f))
@@ -139,6 +139,65 @@ def check_subscription_naming():
                 if dec_name == "subscription":
                     if not (name.endswith("_changed") or name.endswith("_stream")):
                         fail(f"Subscription {name!r} should end with _changed or _stream")
+
+
+# ── Private import boundaries ──
+
+
+def check_no_relay_imports_in_graphql():
+    """push_to_relay is internal to services — mutations/views must not import it."""
+    for f in _python_files(GRAPHQL_DIR):
+        src = _read_source(f)
+        if "push_to_relay" in src:
+            fail(f"{f.name} imports push_to_relay — use service functions instead")
+
+
+def check_no_cross_module_private_imports():
+    """Service files should not import private functions from other services."""
+    for f in _python_files(SERVICES_DIR):
+        tree = ast.parse(_read_source(f))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if not node.module.startswith("agents.services"):
+                    continue
+                # Same module is fine
+                module_file = node.module.split(".")[-1]
+                if f.stem == module_file:
+                    continue
+                for alias in node.names:
+                    if alias.name.startswith("_"):
+                        fail(
+                            f"{f.name} imports private {alias.name} from {node.module} "
+                            f"— make it public or add a wrapper"
+                        )
+
+
+# ── Model consistency ──
+
+
+def check_mutable_models_have_updated_at():
+    """Mutable models with created_at should also have updated_at."""
+    models_path = AGENTS_DIR / "models.py"
+    if not models_path.exists():
+        return
+    src = _read_source(models_path)
+    tree = ast.parse(src)
+
+    # Exempt: StreamEvent (append-only, never updated)
+    EXEMPT = {"StreamEvent"}
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if node.name in EXEMPT:
+            continue
+
+        class_src = ast.get_source_segment(src, node) or ""
+        has_created = "auto_now_add=True" in class_src or "auto_now_add = True" in class_src
+        has_updated = "auto_now=True" in class_src or "auto_now = True" in class_src
+
+        if has_created and not has_updated:
+            fail(f"Model {node.name} has created_at but no updated_at — add auto_now=True field")
 
 
 # ── No display fields on Agent model (text-based, no Django) ──
@@ -197,6 +256,9 @@ def main() -> int:
         check_subscription_naming,
         check_no_display_fields_in_agent,
         check_no_agent_vocabulary_in_agent,
+        check_no_relay_imports_in_graphql,
+        check_no_cross_module_private_imports,
+        check_mutable_models_have_updated_at,
     ]
 
     for check in checks:
@@ -213,6 +275,13 @@ def main() -> int:
 
     print(f"Architecture check passed ({len(checks)} checks)")
     return 0
+
+
+# TODO: Once FeedItemType enum is adopted in all services,
+# add check_no_raw_feed_type_strings() to enforce enum usage.
+
+# TODO: Once A2 (task path unification) is done,
+# add check_mutations_delegate_to_services() to enforce service layer delegation.
 
 
 if __name__ == "__main__":

@@ -73,7 +73,7 @@ def _normalize_content(content: list) -> list:
     return content
 
 
-async def _push_to_relay(agent_id: str, command: dict) -> None:
+async def push_to_relay(agent_id: str, command: dict) -> None:
     """Push a command to the relay via Channels group_send.
 
     The RelayConsumer receives this on the relay_{agent_id} group
@@ -130,7 +130,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         "type": "user",
         "message": {"role": "user", "content": api_parts},
     }
-    await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
+    await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
     op_log.info("message_sent")
     return True
@@ -162,7 +162,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
 
     # Push to relay via WebSocket
     input_msg = {"type": "user", "message": {"role": "user", "content": parts}}
-    await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
+    await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
     op_log.info("question_answered")
     return True
@@ -228,7 +228,7 @@ async def broadcast_message(
 
         # Push to relay via WebSocket
         input_msg = {"type": "user", "message": {"role": "user", "content": api_parts}}
-        await _push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
+        await push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
 
     op_log.info("broadcast_sent", targets=target_names)
     return True
@@ -262,7 +262,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     )
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "mode", "mode": mode})
+    await push_to_relay(agent_id, {"type": "mode", "mode": mode})
 
     op_log.info("mode_change_sent")
     return agent
@@ -282,7 +282,7 @@ async def interrupt_agent(agent_id: str) -> bool:
     await create_and_broadcast_event(agent, event_type="interrupted", data={})
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
+    await push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
 
     op_log.info("interrupt_sent")
     return True
@@ -306,7 +306,7 @@ async def restart_agent(agent_id: str) -> bool:
     await create_and_broadcast_event(agent, event_type="restarting", data={})
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
+    await push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
 
     op_log.info("restart_sent")
     return True
@@ -347,7 +347,7 @@ async def clear_agent_session(agent_id: str) -> bool:
     )
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
+    await push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
 
     op_log.info("session_cleared")
     return True
