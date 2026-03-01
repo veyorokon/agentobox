@@ -115,6 +115,7 @@ class JSONFormatter(logging.Formatter):
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname.lower(),
             "logger": record.name,
+            "agent_id": os.environ.get("AGENT_ID", ""),
             "event": record.getMessage(),
         }
         if record.exc_info and record.exc_info[0]:
