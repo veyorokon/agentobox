@@ -802,8 +802,6 @@ display — it must never contradict the event log.
 | consumers.py | 286 | upstream send failure — close proxy cleanly |
 | consumers.py | 296 | upstream WS may already be closed during teardown |
 | mutations.py | 392 | CLAUDE.md write is best-effort — instructions saved to DB regardless |
-| generate_reference.py | 4 | annotations. Renders |
-| generate_reference.py | 144 | comments, yield DocChunk.""" |
 | __init__.py | 33 | log with context before re-raising — caller gets the original exception |
 | broadcast.py | 66 | channel layer failure must not break agent state mutations |
 | broadcast.py | 116 | channel layer failure must not break event creation |

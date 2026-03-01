@@ -141,7 +141,7 @@ class Command(BaseCommand):
         return chunks
 
     def _extract_annotations(self) -> list[DocChunk]:
-        """Walk all .py files, find # intentional: comments, yield DocChunk."""
+        """Walk all .py files, find # intentional: comments on code lines."""
         pattern = re.compile(r"#\s*intentional:\s*(.+)")
         chunks = []
 
@@ -152,10 +152,25 @@ class Command(BaseCommand):
             if "tests" in py_file.parts:
                 continue
 
-            lines = py_file.read_text(encoding="utf-8").splitlines()
+            src = py_file.read_text(encoding="utf-8")
+            lines = src.splitlines()
             rel = _rel(py_file)
 
+            # Find lines inside string literals (docstrings, etc.) so we skip them
+            string_lines: set[int] = set()
+            try:
+                tree = ast.parse(src)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                        if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
+                            for ln in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                                string_lines.add(ln)
+            except SyntaxError:
+                continue
+
             for i, line in enumerate(lines, 1):
+                if i in string_lines:
+                    continue
                 match = pattern.search(line)
                 if match:
                     chunks.append(DocChunk(
