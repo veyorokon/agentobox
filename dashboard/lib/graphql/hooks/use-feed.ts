@@ -91,8 +91,10 @@ export function useAgentFeed(agentId: string) {
         if (!entry || entry.agentId !== agentId) return prev
         // Skip stream_event (phase transitions) — same as backend query filter
         if (entry.entryType === "stream_event") return prev
+        // Guard: subscription can fire before initial query returns (prev = {})
+        if (!prev.agentFeed) return prev
 
-        const existing = prev.agentFeed ?? []
+        const existing = prev.agentFeed
         if (existing.some(e => e.id === entry.id)) return prev
 
         log("agent_feed.subscription_append", { id: entry.id, type: entry.entryType, agent: agentId })
