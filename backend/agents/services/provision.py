@@ -145,7 +145,7 @@ async def _provision_api_key_files(
 
     for spec in file_specs:
         parent = spec["path"].rsplit("/", 1)[0]
-        await runtime.exec(sandbox_id, ["bash", "-c", f"mkdir -p {parent}"], user="root")
+        await runtime.exec(sandbox_id, ["mkdir", "-p", parent], user="root")
         await runtime.write_file(
             sandbox_id,
             spec["content"].encode("utf-8"),
@@ -155,7 +155,12 @@ async def _provision_api_key_files(
         mode = spec.get("mode", "0644")
         await runtime.exec(
             sandbox_id,
-            ["bash", "-c", f"chown {owner} {spec['path']} && chmod {mode} {spec['path']}"],
+            ["chown", owner, spec["path"]],
+            user="root",
+        )
+        await runtime.exec(
+            sandbox_id,
+            ["chmod", mode, spec["path"]],
             user="root",
         )
 
