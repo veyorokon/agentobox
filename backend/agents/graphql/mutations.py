@@ -467,16 +467,35 @@ class AgentMutation:
         info: strawberry.types.Info,
     ) -> AgentTaskType:
         from agents.models import AgentTask
-        from agents.services.broadcast import broadcast_agent_update
+        from agents.services.mcp_coord import update_task as _update_task
+        from fastmcp.exceptions import ToolError
 
         agent = await authorize_agent(info, agent_id)
 
-        task = await AgentTask.objects.aget(agent__id=agent_id, task_id=task_id)
-        task.status = status
-        await task.asave(update_fields=["status"])
+        try:
+            result = await _update_task(agent, task_id=task_id, status=status)
+        except ToolError as e:
+            raise ValueError(str(e))
 
-        await broadcast_agent_update(agent)
+        # Deletion: task no longer exists, return a tombstone
+        if result.get("deleted"):
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            return AgentTaskType(
+                task_id=task_id,
+                subject="",
+                description="",
+                status="deleted",
+                owner="",
+                active_form="",
+                blocked_by=[],
+                created_at=now,
+                updated_at=now,
+            )
 
+        task = await AgentTask.objects.aget(
+            project_id=agent.project_id, task_id=task_id,
+        )
         return AgentTaskType(
             task_id=task.task_id,
             subject=task.subject,
@@ -496,22 +515,15 @@ class AgentMutation:
         subject: str,
         info: strawberry.types.Info,
     ) -> AgentTaskType:
-        from uuid import uuid4
         from agents.models import AgentTask
-        from agents.services.broadcast import broadcast_agent_update
+        from agents.services.mcp_coord import create_task as _create_task
 
         agent = await authorize_agent(info, agent_id)
+        result = await _create_task(agent, subject=subject)
 
-        task = await AgentTask.objects.acreate(
-            agent=agent,
-            project_id=agent.project_id,
-            task_id=f"dash_{uuid4().hex[:12]}",
-            subject=subject,
-            status="pending",
+        task = await AgentTask.objects.aget(
+            project_id=agent.project_id, task_id=result["task_id"],
         )
-
-        await broadcast_agent_update(agent)
-
         return AgentTaskType(
             task_id=task.task_id,
             subject=task.subject,
