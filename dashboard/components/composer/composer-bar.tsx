@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from "react"
 import { ArrowUp, Paperclip, X } from "lucide-react"
+import { cn } from "@/lib/utils"
 import type { RecipientEntry } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
 import { useSendMessage } from "@/lib/graphql/hooks/use-feed"
@@ -102,16 +103,16 @@ export function ComposerBar() {
 
           {/* Right side */}
           <div className="flex items-center gap-3 shrink-0">
-            <span className="text-xs text-muted font-mono tabular-nums">$0.30</span>
             <button
               type="button"
               onClick={handleSend}
               disabled={!canSend}
-              className={`flex items-center justify-center h-8 w-8 rounded-full transition-colors ${
+              className={cn(
+                "flex items-center justify-center h-8 w-8 rounded-full transition-colors",
                 canSend
                   ? "bg-accent text-white cursor-pointer hover:bg-accent/90"
-                  : "bg-surface-sunken text-muted cursor-not-allowed"
-              }`}
+                  : "bg-surface-sunken text-muted cursor-not-allowed",
+              )}
             >
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
             </button>

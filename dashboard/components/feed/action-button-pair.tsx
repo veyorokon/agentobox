@@ -3,6 +3,8 @@ interface ActionButtonPairProps {
   onNegative: () => void
   positiveLabel?: string
   negativeLabel?: string
+  onTertiary?: () => void
+  tertiaryLabel?: string
 }
 
 export function ActionButtonPair({
@@ -10,6 +12,8 @@ export function ActionButtonPair({
   onNegative,
   positiveLabel = "Allow",
   negativeLabel = "Deny",
+  onTertiary,
+  tertiaryLabel,
 }: ActionButtonPairProps) {
   return (
     <div className="flex items-center gap-2">
@@ -27,6 +31,15 @@ export function ActionButtonPair({
       >
         {negativeLabel}
       </button>
+      {onTertiary && tertiaryLabel && (
+        <button
+          type="button"
+          onClick={onTertiary}
+          className="px-3 py-1.5 rounded-md border border-accent/30 text-xs font-medium text-accent hover:bg-accent/10 transition-colors"
+        >
+          {tertiaryLabel}
+        </button>
+      )}
     </div>
   )
 }

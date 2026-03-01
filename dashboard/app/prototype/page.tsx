@@ -3494,12 +3494,26 @@ function AgentCardRow({
 
       {/* Open content — animated reveal */}
       <Collapsible open={isOpen}>
-        {/* Content area — fixed height set by VNC aspect ratio, other views scroll */}
-        <div className="px-3 pb-2 aspect-[16/11] overflow-y-auto">
-          {viewMode === "terminal" && <VncThumbnail agent={agent} />}
-          {viewMode === "feed" && <AgentDetailFeed agent={agent} />}
-          {viewMode === "skills" && <AgentSkillsView agent={agent} />}
-          {viewMode === "settings" && <AgentSettingsPanel agent={agent} />}
+        {/* Content area — grid overlay: VNC always sets height, other views scroll within */}
+        <div className="grid grid-cols-1 grid-rows-1 px-3 pb-2">
+          <div className={cn("col-start-1 row-start-1", viewMode !== "terminal" && "invisible")}>
+            <VncThumbnail agent={agent} />
+          </div>
+          {viewMode === "feed" && (
+            <div className="col-start-1 row-start-1 min-h-0 overflow-y-auto">
+              <AgentDetailFeed agent={agent} />
+            </div>
+          )}
+          {viewMode === "skills" && (
+            <div className="col-start-1 row-start-1 min-h-0 overflow-y-auto">
+              <AgentSkillsView agent={agent} />
+            </div>
+          )}
+          {viewMode === "settings" && (
+            <div className="col-start-1 row-start-1 min-h-0 overflow-y-auto">
+              <AgentSettingsPanel agent={agent} />
+            </div>
+          )}
         </div>
 
         {/* Action strip — slides in above composer when agent has pending items */}

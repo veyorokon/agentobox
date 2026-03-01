@@ -11,6 +11,7 @@ import {
   RESTART_AGENT,
   UPDATE_AGENT_INSTRUCTIONS,
   UPDATE_AGENT_CONFIG,
+  CREATE_AGENT,
 } from "@/lib/graphql/mutations/agents"
 import { createLogger } from "@/lib/logger"
 import type { Agent, AttentionLevel } from "@/lib/types"
@@ -203,4 +204,42 @@ export function useUpdateAgentConfig() {
       log("mutation.error", { mutation: "updateAgentConfig", agentId, error: err.message })
     })
   }, [mutate])
+}
+
+/* ================================================================== */
+/*  CREATE AGENT                                                         */
+/* ================================================================== */
+
+type CreateAgentInput = {
+  projectId: string
+  name: string
+  model: string
+  role: string
+  mode: string
+  runtime: string
+  instructions?: string
+  tags?: string[]
+}
+
+export function useCreateAgent() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const [mutate, { loading, error }] = useMutation(CREATE_AGENT, {
+    refetchQueries: [{ query: GET_AGENTS, variables: { projectId } }],
+  })
+
+  const create = useCallback(
+    (input: Omit<CreateAgentInput, "projectId">) => {
+      if (!projectId) return Promise.reject(new Error("No projectId"))
+      log("mutation.createAgent", { name: input.name, projectId })
+      return mutate({
+        variables: { input: { projectId, ...input } },
+      }).catch(err => {
+        log("mutation.error", { mutation: "createAgent", error: err.message })
+        throw err
+      })
+    },
+    [mutate, projectId],
+  )
+
+  return { create, loading, error }
 }

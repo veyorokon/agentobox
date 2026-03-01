@@ -52,14 +52,8 @@ export function SingleToolRow({
         <Collapsible open={expanded}>
           <div className="px-3 py-2 ml-4">
             <div className="rounded bg-surface-sunken/60 p-2">
-              <p className="font-mono text-xs text-secondary whitespace-pre-wrap">
-                {toolName === "Read"
-                  ? "Reading file contents... (47 lines)"
-                  : toolName === "Edit"
-                    ? 'old_string: "Date.now()"\nnew_string: "Math.floor(Date.now() / 1000)"'
-                    : toolName === "Bash"
-                      ? "$ npm run lint\n\u2713 No errors found"
-                      : "Operation completed successfully"}
+              <p className="font-mono text-xs text-muted whitespace-pre-wrap">
+                {summary}
               </p>
             </div>
           </div>
@@ -98,8 +92,8 @@ export function ToolRow({ toolName, summary }: ToolRowProps) {
       <Collapsible open={expanded}>
         <div className="px-3 py-1.5 ml-4">
           <div className="rounded bg-surface-sunken/60 p-2">
-            <p className="font-mono text-[11px] text-secondary">
-              Tool output for {toolName}
+            <p className="font-mono text-[11px] text-muted whitespace-pre-wrap">
+              {summary}
             </p>
           </div>
         </div>

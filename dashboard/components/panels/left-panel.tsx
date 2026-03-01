@@ -1,24 +1,20 @@
 "use client"
 
-import { useState, useMemo, useCallback, useEffect, useRef } from "react"
+import { useMemo, useCallback, useEffect } from "react"
 import {
   Users,
   ChevronRight,
   ChevronLeft,
-  Plus,
   KeyRound,
   ChevronsUpDown,
   ChevronsDownUp,
   BookOpen,
-  Search,
-  Filter,
-  CheckSquare,
 } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
 import type { AttentionLevel } from "@/lib/types"
 import { LIFECYCLE_CONFIG, ATTENTION_CONFIG } from "@/lib/config"
-import { useBreakpoint } from "@/hooks/use-breakpoint"
-import { useWindowWidth } from "@/hooks/use-window-width"
+import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
+import { useWindowWidth } from "@/lib/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents, useAcknowledgeAgent } from "@/lib/graphql/hooks/use-agents"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -26,6 +22,8 @@ import { AgentAvatar } from "@/components/agent/avatar"
 import { AgentCardRow } from "@/components/agent/card-row"
 import { ResizeHandle } from "@/components/layout/resize-handle"
 import { SkillsPanel } from "@/components/panels/skills-panel"
+import { AgentFilterToolbar } from "@/components/shared/agent-filter-toolbar"
+import { useSelectMode } from "@/lib/hooks/use-select-mode"
 
 export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets: () => void; onCreateAgent?: () => void }) {
   const bp = useBreakpoint()
@@ -95,20 +93,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   }, [defaultWidth, collapseThreshold, setSidebarOpen, setSidebarWidth])
 
   // Ephemeral state — resets on unmount, single-component concern
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [selectMode, setSelectMode] = useState(false)
-  const [showTagDropdown, setShowTagDropdown] = useState(false)
-  const tagDropdownRef = useRef<HTMLDivElement>(null)
-
-  // Click-outside to close tag dropdown
-  useEffect(() => {
-    if (!showTagDropdown) return
-    function handleClick(e: MouseEvent) {
-      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) setShowTagDropdown(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
-  }, [showTagDropdown])
+  const { selectMode, selectedIds, setSelectMode, toggleSelect: handleSelectAgent, toggleAll, clearSelection, exitSelectMode } = useSelectMode<typeof agents[number]>()
 
   const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
 
@@ -123,20 +108,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
     }
     return result
   }, [agents, searchQuery, tagFilter])
-
-  const handleSelectAgent = useCallback((id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  const exitSelectMode = useCallback(() => {
-    setSelectMode(false)
-    setSelectedIds(new Set())
-  }, [])
 
   /* ---- Collapsed state: 48px icon rail ---- */
   if (!isOpen) {
@@ -343,82 +314,16 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
       {panelTab === "agents" ? (
         <>
           {/* Agent filter bar */}
-          <div className="px-3 py-2 flex items-center gap-2 border-b border-border-subtle shrink-0">
-            <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded-md border border-border-default bg-surface-sunken/40 px-2 py-1">
-              <Search className="h-3 w-3 text-muted/50 shrink-0" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search agents..."
-                className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
-              />
-            </div>
-            <div className="relative shrink-0" ref={tagDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setShowTagDropdown(!showTagDropdown)}
-                className={cn(
-                  "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
-                  tagFilter
-                    ? "border-accent/30 bg-accent/10 text-accent"
-                    : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
-                )}
-              >
-                <Filter className="h-3 w-3" />
-                {tagFilter || "Tags"}
-                <ChevronRight size={10} className="rotate-90 text-muted/40" />
-              </button>
-              {showTagDropdown && (
-                <div className="absolute top-full right-0 mt-1 w-32 rounded-md border border-border-default bg-surface-raised shadow-lg z-(--z-dropdown) overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => { setTagFilter(null); setShowTagDropdown(false) }}
-                    className={cn(
-                      "w-full text-left px-3 py-1.5 text-[11px] transition-colors",
-                      !tagFilter ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
-                    )}
-                  >
-                    All tags
-                  </button>
-                  {allTags.map(tag => (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => { setTagFilter(tag); setShowTagDropdown(false) }}
-                      className={cn(
-                        "w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors",
-                        tagFilter === tag ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
-                      )}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
-              className={cn(
-                "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors shrink-0",
-                selectMode
-                  ? "border-accent/30 bg-accent/10 text-accent"
-                  : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
-              )}
-            >
-              <CheckSquare className="h-3 w-3" />
-              {selectMode ? "Done" : "Select"}
-            </button>
-            <button
-              type="button"
-              onClick={onCreateAgent}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 text-muted hover:text-secondary hover:bg-surface-raised/50"
-            >
-              <Plus className="h-3 w-3" />
-              Create
-            </button>
-          </div>
+          <AgentFilterToolbar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            tags={allTags}
+            selectedTag={tagFilter}
+            onTagChange={setTagFilter}
+            selectMode={selectMode}
+            onSelectToggle={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+            onCreateClick={onCreateAgent}
+          />
 
           {/* Agent cards */}
           <ScrollArea className="flex-1 overflow-y-auto">
@@ -446,13 +351,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => {
-                  if (selectedIds.size === filteredAgents.length) {
-                    setSelectedIds(new Set())
-                  } else {
-                    setSelectedIds(new Set(filteredAgents.map(a => a.id)))
-                  }
-                }}
+                onClick={() => toggleAll(filteredAgents)}
                 className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
               >
                 {selectedIds.size === filteredAgents.length ? "Deselect all" : "Select all"}
@@ -463,7 +362,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
               <span className="flex-1" />
               <button
                 type="button"
-                onClick={() => setSelectedIds(new Set())}
+                onClick={clearSelection}
                 className="text-[11px] text-muted hover:text-secondary transition-colors"
               >
                 Clear

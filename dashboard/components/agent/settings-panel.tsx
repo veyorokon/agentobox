@@ -1,7 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
-import { useLazyQuery } from "@apollo/client"
+import { useState, useCallback } from "react"
 import {
   AlertTriangle,
   RotateCcw,
@@ -13,10 +12,10 @@ import {
   ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Agent, McpRegistryServer } from "@/lib/types"
-import { TagInput } from "@/components/agent/tag-input"
+import type { Agent } from "@/lib/types"
+import { TagInput } from "@/components/shared/tag-input"
+import { MODEL_OPTIONS } from "@/lib/config"
 import { Collapsible } from "@/components/ui/collapsible"
-import { SEARCH_MCP_REGISTRY } from "@/lib/graphql/queries/agents"
 import {
   useRestartAgent,
   useHardRestartAgent,
@@ -24,6 +23,7 @@ import {
   useUpdateAgentInstructions,
   useUpdateAgentConfig,
 } from "@/lib/graphql/hooks/use-agents"
+import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
 
 export interface AgentSettingsPanelProps {
   agent: Agent
@@ -39,10 +39,7 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
 
   // MCP search state
   const [showMcpSearch, setShowMcpSearch] = useState(false)
-  const [mcpQuery, setMcpQuery] = useState("")
-  const [searchMcpRegistry, { data: mcpSearchData, loading: mcpSearchLoading }] = useLazyQuery(SEARCH_MCP_REGISTRY)
-  const mcpResults: McpRegistryServer[] = mcpSearchData?.searchMcpRegistry?.servers ?? []
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { query: mcpQuery, setQuery: setMcpQuery, results: mcpResults, loading: mcpSearchLoading } = useMcpSearch()
 
   // Custom MCP state
   const [showCustomMcp, setShowCustomMcp] = useState(false)
@@ -63,23 +60,13 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
 
   const isDeploying = agent.lifecycleStatus === "deploying"
 
-  // Debounced MCP search
-  useEffect(() => {
-    if (!mcpQuery.trim()) return
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      searchMcpRegistry({ variables: { query: mcpQuery, limit: 10 } })
-    }, 300)
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [mcpQuery, searchMcpRegistry])
-
   const addMcp = useCallback((name: string) => {
     if (!mcpRegistryNames.includes(name)) {
       setMcpRegistryNames(prev => [...prev, name])
     }
     setShowMcpSearch(false)
     setMcpQuery("")
-  }, [mcpRegistryNames])
+  }, [mcpRegistryNames, setMcpQuery])
 
   const removeMcp = useCallback((name: string) => {
     // Remove from whichever list it belongs to
@@ -154,9 +141,9 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
           onChange={(e) => setModel(e.target.value)}
           className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs text-default outline-none focus:border-accent/50 transition-colors"
         >
-          <option value="claude-opus-4-6">Opus 4.6</option>
-          <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-          <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+          {MODEL_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
         </select>
       </div>
 

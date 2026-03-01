@@ -44,6 +44,8 @@ export function useCreateSkill() {
         variables: {
           input: { projectId, name, content, description, assignedTags, assignedToAll },
         },
+      }).catch(err => {
+        log("mutation.error", { mutation: "createSkill", error: err.message })
       })
     },
     [mutate, projectId],
@@ -64,9 +66,11 @@ export function useUpdateSkill() {
         variables: {
           input: { skillId, ...updates },
         },
+      }).catch(err => {
+        log("mutation.error", { mutation: "updateSkill", error: err.message })
       })
     },
-    [mutate, projectId],
+    [mutate],
   )
 }
 
@@ -80,8 +84,10 @@ export function useDeleteSkill() {
   return useCallback(
     (skillId: string) => {
       log("mutation.deleteSkill", { skillId })
-      mutate({ variables: { skillId } })
+      mutate({ variables: { skillId } }).catch(err => {
+        log("mutation.error", { mutation: "deleteSkill", error: err.message })
+      })
     },
-    [mutate, projectId],
+    [mutate],
   )
 }

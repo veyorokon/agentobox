@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react"
 import { useParams } from "next/navigation"
-import { useQuery, useMutation } from "@apollo/client"
 import {
   KeyRound,
   Trash2,
@@ -13,8 +12,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
-import { GET_PROJECT_SECRETS } from "@/lib/graphql/queries/secrets"
-import { SET_SECRET, DELETE_SECRET } from "@/lib/graphql/mutations/secrets"
+import { useSecrets, useSetSecret, useDeleteSecret } from "@/lib/graphql/hooks/use-secrets"
 
 type SecretEntry = {
   id: string
@@ -45,19 +43,11 @@ export function SecretsModal({
   const { data: agentsData } = useAgents()
   const agents = agentsData?.agents ?? []
 
-  const { data } = useQuery<{ projectSecrets: SecretEntry[] }>(GET_PROJECT_SECRETS, {
-    variables: { projectId },
-    skip: !open || !projectId,
-    fetchPolicy: "cache-and-network",
-  })
+  const { data } = useSecrets(projectId ?? "", !open || !projectId)
   const secrets = data?.projectSecrets ?? []
 
-  const [setSecret] = useMutation(SET_SECRET, {
-    refetchQueries: [{ query: GET_PROJECT_SECRETS, variables: { projectId } }],
-  })
-  const [deleteSecret] = useMutation(DELETE_SECRET, {
-    refetchQueries: [{ query: GET_PROJECT_SECRETS, variables: { projectId } }],
-  })
+  const setSecret = useSetSecret(projectId ?? "")
+  const deleteSecret = useDeleteSecret(projectId ?? "")
 
   const [newKey, setNewKey] = useState("")
   const [newValue, setNewValue] = useState("")
@@ -91,9 +81,7 @@ export function SecretsModal({
 
   const handleAdd = async () => {
     if (!newKey.trim() || !newValue.trim() || !projectId) return
-    await setSecret({
-      variables: { input: { projectId, key: newKey.trim().toUpperCase(), value: newValue.trim() } },
-    })
+    await setSecret(newKey.trim().toUpperCase(), newValue.trim())
     setNewKey("")
     setNewValue("")
     setDirty(true)
@@ -102,7 +90,7 @@ export function SecretsModal({
 
   const handleDelete = async (key: string) => {
     if (!projectId) return
-    await deleteSecret({ variables: { projectId, key } })
+    await deleteSecret(key)
     setDirty(true)
     setRestarted(false)
   }

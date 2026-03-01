@@ -1,18 +1,10 @@
 "use client"
 
 import { useState, useEffect, type FormEvent } from "react"
-import { useParams } from "next/navigation"
-import { useMutation } from "@apollo/client"
 import { X } from "lucide-react"
-import { CREATE_AGENT } from "@/lib/graphql/mutations/agents"
-import { GET_AGENTS } from "@/lib/graphql/queries/agents"
-import { TagInput } from "@/components/agent/tag-input"
-
-const MODEL_OPTIONS = [
-  { value: "claude-opus-4-6", label: "Opus 4.6" },
-  { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-] as const
+import { useCreateAgent } from "@/lib/graphql/hooks/use-agents"
+import { TagInput } from "@/components/shared/tag-input"
+import { MODEL_OPTIONS } from "@/lib/config"
 
 const ROLE_OPTIONS = [
   { value: "worker", label: "Worker" },
@@ -32,7 +24,6 @@ export function CreateAgentModal({
   open: boolean
   onClose: () => void
 }) {
-  const { projectId } = useParams<{ projectId: string }>()
   const [name, setName] = useState("")
   const [model, setModel] = useState<string>(MODEL_OPTIONS[0].value)
   const [role, setRole] = useState<string>(ROLE_OPTIONS[0].value)
@@ -40,9 +31,7 @@ export function CreateAgentModal({
   const [instructions, setInstructions] = useState("")
   const [tags, setTags] = useState<string[]>([])
 
-  const [createAgent, { loading, error }] = useMutation(CREATE_AGENT, {
-    refetchQueries: [{ query: GET_AGENTS, variables: { projectId } }],
-  })
+  const { create: createAgent, loading, error } = useCreateAgent()
 
   // Escape to close
   useEffect(() => {
@@ -70,21 +59,16 @@ export function CreateAgentModal({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!name.trim() || !projectId) return
+    if (!name.trim()) return
     try {
       await createAgent({
-        variables: {
-          input: {
-            projectId,
-            name: name.trim(),
-            model,
-            role,
-            mode,
-            runtime: "docker",
-            instructions: instructions.trim() || undefined,
-            tags: tags.length > 0 ? tags : undefined,
-          },
-        },
+        name: name.trim(),
+        model,
+        role,
+        mode,
+        runtime: "docker",
+        instructions: instructions.trim() || undefined,
+        tags: tags.length > 0 ? tags : undefined,
       })
       onClose()
     } catch {

@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertCircle, RotateCcw } from "lucide-react"
+import { AlertCircle } from "lucide-react"
 
 export interface TeamErrorAlertProps {
   agent: string
@@ -26,21 +26,6 @@ export function TeamErrorAlert({ agent, text, onClickAgent }: TeamErrorAlertProp
           <p className="text-xs text-danger leading-relaxed font-mono whitespace-pre-wrap">
             {text}
           </p>
-          <div className="flex items-center gap-2 mt-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-danger/30 text-[11px] text-danger font-medium hover:bg-danger-subtle/60 transition-colors"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Retry
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] text-muted font-medium hover:text-secondary transition-colors"
-            >
-              View details →
-            </button>
-          </div>
         </div>
       </div>
     </div>

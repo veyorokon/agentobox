@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils"
 import { AgentAvatar } from "@/components/agent/avatar"
 import type { ReactNode } from "react"
 
@@ -11,7 +12,7 @@ export function CompactStatusLine({ agent, color = "text-muted", children }: Com
   return (
     <div className="flex items-center gap-2 py-0.5 justify-center">
       <AgentAvatar name={agent} size="sm" />
-      <span className={`text-[10px] font-mono ${color}`}>
+      <span className={cn("text-[10px] font-mono", color)}>
         {children}
       </span>
     </div>

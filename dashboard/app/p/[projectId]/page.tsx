@@ -10,7 +10,7 @@ import {
 } from "lucide-react"
 import { formatCost } from "@/lib/utils"
 import { getAllPendingItems } from "@/lib/attention"
-import { useBreakpoint } from "@/hooks/use-breakpoint"
+import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents, useAgentsSubscription } from "@/lib/graphql/hooks/use-agents"
 import { useFeed, useFeedSubscription } from "@/lib/graphql/hooks/use-feed"

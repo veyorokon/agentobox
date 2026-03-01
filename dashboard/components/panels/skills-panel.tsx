@@ -3,7 +3,6 @@
 import { useState, useMemo } from "react"
 import {
   Search,
-  Filter,
   ChevronRight,
   Check,
   CheckSquare,
@@ -17,7 +16,9 @@ import { useSkills, useCreateSkill, useDeleteSkill } from "@/lib/graphql/hooks/u
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Collapsible } from "@/components/ui/collapsible"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
-import { TagInput } from "@/components/agent/tag-input"
+import { TagInput } from "@/components/shared/tag-input"
+import { TagFilterDropdown } from "@/components/shared/tag-filter-dropdown"
+import { useSelectMode } from "@/lib/hooks/use-select-mode"
 
 export function SkillsPanel() {
   // Store state — shared across desktop and mobile skill views
@@ -40,9 +41,7 @@ export function SkillsPanel() {
   const [newContent, setNewContent] = useState("")
   const [newTags, setNewTags] = useState<string[]>([])
   const [newAssignAll, setNewAssignAll] = useState(false)
-  const [selectMode, setSelectMode] = useState(false)
-  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
-  const [showSkillTagDropdown, setShowSkillTagDropdown] = useState(false)
+  const { selectMode, selectedIds: selectedSkills, setSelectMode, toggleSelect: toggleSkillSelect, toggleAll: toggleAllSkills, exitSelectMode: exitSkillSelectMode } = useSelectMode<typeof skills[number]>()
 
   const allSkillTags = useMemo(() => Array.from(new Set(skills.flatMap(s => s.assignedTags))).sort(), [skills])
 
@@ -58,8 +57,7 @@ export function SkillsPanel() {
 
   const handleBulkDelete = () => {
     selectedSkills.forEach(id => deleteSkill(id))
-    setSelectedSkills(new Set())
-    setSelectMode(false)
+    exitSkillSelectMode()
   }
 
   const filtered = useMemo(() => {
@@ -92,59 +90,10 @@ export function SkillsPanel() {
             className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
           />
         </div>
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setShowSkillTagDropdown(!showSkillTagDropdown)}
-            className={cn(
-              "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors",
-              skillTagFilter
-                ? "border-accent/30 bg-accent/10 text-accent"
-                : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
-            )}
-          >
-            <Filter className="h-3 w-3" />
-            {skillTagFilter || "Tags"}
-            <ChevronRight size={10} className="rotate-90 text-muted/40" />
-          </button>
-          {showSkillTagDropdown && (
-            <div className="absolute top-full right-0 mt-1 w-32 rounded-md border border-border-default bg-surface-raised shadow-lg z-(--z-dropdown) overflow-hidden">
-              <button
-                type="button"
-                onClick={() => { setSkillTagFilter(null); setShowSkillTagDropdown(false) }}
-                className={cn(
-                  "w-full text-left px-3 py-1.5 text-[11px] transition-colors",
-                  !skillTagFilter ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
-                )}
-              >
-                All tags
-              </button>
-              {allSkillTags.map(tag => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => { setSkillTagFilter(tag); setShowSkillTagDropdown(false) }}
-                  className={cn(
-                    "w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors",
-                    skillTagFilter === tag ? "text-accent bg-accent/10" : "text-secondary hover:bg-surface-sunken/40",
-                  )}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <TagFilterDropdown tags={allSkillTags} selected={skillTagFilter} onChange={setSkillTagFilter} />
         <button
           type="button"
-          onClick={() => {
-            if (selectMode) {
-              setSelectMode(false)
-              setSelectedSkills(new Set())
-            } else {
-              setSelectMode(true)
-            }
-          }}
+          onClick={() => selectMode ? exitSkillSelectMode() : setSelectMode(true)}
           className={cn(
             "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors shrink-0",
             selectMode
@@ -243,12 +192,7 @@ export function SkillsPanel() {
                     type="button"
                     onClick={() => {
                       if (selectMode) {
-                        setSelectedSkills(prev => {
-                          const next = new Set(prev)
-                          if (next.has(skill.id)) next.delete(skill.id)
-                          else next.add(skill.id)
-                          return next
-                        })
+                        toggleSkillSelect(skill.id)
                       } else {
                         setExpandedSkills(prev => {
                           const next = new Set(prev)
@@ -321,13 +265,7 @@ export function SkillsPanel() {
         <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              if (selectedSkills.size === filtered.length) {
-                setSelectedSkills(new Set())
-              } else {
-                setSelectedSkills(new Set(filtered.map(s => s.id)))
-              }
-            }}
+            onClick={() => toggleAllSkills(filtered)}
             className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
           >
             {selectedSkills.size === filtered.length ? "Deselect all" : "Select all"}
