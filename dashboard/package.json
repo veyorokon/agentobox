@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@apollo/client": "^3.12",
-    "@tanstack/react-virtual": "^3",
     "clsx": "^2",
     "graphql": "^16",
     "graphql-ws": "^6",
@@ -19,9 +18,7 @@
     "react": "^19",
     "react-dom": "^19",
     "react-markdown": "^9",
-    "react-virtuoso": "^4.18.1",
     "remark-gfm": "^4",
-    "shiki": "^3",
     "tailwind-merge": "^3",
     "zustand": "^5"
   },

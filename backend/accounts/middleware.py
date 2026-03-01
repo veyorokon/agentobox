@@ -1,5 +1,3 @@
-from django.contrib.auth.models import AnonymousUser
-
 from accounts.auth import adecode_token, decode_token
 from accounts.models import User
 
