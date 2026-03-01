@@ -142,7 +142,7 @@ export function AgentCardRow({
   return (
     <div
       className={cn(
-        "rounded-lg border transition-all duration-(--duration-normal)",
+        "rounded-lg border transition-all duration-(--duration-normal) select-none",
         isOpen
           ? cn("border-accent/40 bg-surface-raised/80 shadow-sm", isError && "border-danger/40")
           : cn(
