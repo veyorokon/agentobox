@@ -524,6 +524,7 @@ def _atomic_reset_for_restart(agent_id):
         agent.vnc_url = ""
         agent.session_id = ""
         agent.relay_token = ""
+        agent.relay_connected = False
         agent.latest_snapshot = {}
         agent.task = ""
         agent.runtime = runtime_name
@@ -536,7 +537,7 @@ def _atomic_reset_for_restart(agent_id):
         agent.mode = mode
         agent.save(update_fields=[
             "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-            "latest_snapshot", "task",
+            "relay_connected", "latest_snapshot", "task",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "mode", "updated_at",
         ])

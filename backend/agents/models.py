@@ -162,6 +162,8 @@ class Agent(models.Model):
 
     # Auth token for WebSocket relay connection (generated during provisioning)
     relay_token = models.CharField(max_length=64, blank=True)
+    # Whether the relay WebSocket is currently connected to this agent
+    relay_connected = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
