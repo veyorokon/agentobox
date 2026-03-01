@@ -3494,8 +3494,8 @@ function AgentCardRow({
 
       {/* Open content — animated reveal */}
       <Collapsible open={isOpen}>
-        {/* Content area — swaps based on view mode */}
-        <div className="px-3 pb-2">
+        {/* Content area — fixed height set by VNC aspect ratio, other views scroll */}
+        <div className="px-3 pb-2 aspect-[16/11] overflow-y-auto">
           {viewMode === "terminal" && <VncThumbnail agent={agent} />}
           {viewMode === "feed" && <AgentDetailFeed agent={agent} />}
           {viewMode === "skills" && <AgentSkillsView agent={agent} />}
