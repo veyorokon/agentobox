@@ -1,0 +1,29 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/sync/settings",
+  "_status": 200,
+  "data": [
+    {
+      "type": "gcal",
+      "enabled": true,
+      "config": null
+    },
+    {
+      "type": "gdrive",
+      "enabled": true,
+      "config": {
+        "allow_indexing": false,
+        "allow_search": false
+      }
+    },
+    {
+      "type": "github",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "type": "gmail",
+      "enabled": true,
+      "config": null
+    }
+  ]
+}

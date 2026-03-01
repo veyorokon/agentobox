@@ -1,0 +1,11 @@
+{
+  "_endpoint": "/api/account_profile",
+  "_status": 200,
+  "data": {
+    "work_function": null,
+    "conversation_preferences": null,
+    "locale": null,
+    "onboarding_topics": null,
+    "pixel_avatar": null
+  }
+}

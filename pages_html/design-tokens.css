@@ -1,0 +1,111 @@
+/* Claude Code Web UI — Design Tokens
+   Extracted from claude.ai/code production CSS
+   Theme: claude, Mode: dark */
+
+/* ─── Dark Mode (claude theme) ─────────────────────────────────────────────── */
+[data-theme="claude"][data-mode="dark"] {
+  /* Accent — brand orange */
+  --accent-brand: 15 63.1% 59.6%;
+  --accent-main-000: 15 54.2% 51.2%;
+  --accent-main-100: 15 63.1% 59.6%;
+  --accent-main-200: 15 63.1% 59.6%;
+  --accent-main-900: 0 0% 0%;
+
+  /* Accent — pro purple */
+  --accent-pro-000: 251 84.6% 74.5%;
+  --accent-pro-100: 251 40.2% 54.1%;
+  --accent-pro-200: 251 40% 45.1%;
+  --accent-pro-900: 250 25.3% 19.4%;
+
+  /* Accent — secondary blue */
+  --accent-secondary-000: 210 65.5% 67.1%;
+  --accent-secondary-100: 210 70.9% 51.6%;
+  --accent-secondary-200: 210 70.9% 51.6%;
+  --accent-secondary-900: 210 55.9% 24.6%;
+
+  /* Backgrounds */
+  --bg-000: 60 2.1% 18.4%;    /* lightest — card/input bg */
+  --bg-100: 60 2.7% 14.5%;    /* default page bg */
+  --bg-200: 30 3.3% 11.8%;    /* sidebar bg */
+  --bg-300: 60 2.6% 7.6%;     /* deepest panel */
+  --bg-400: 0 0% 0%;
+  --bg-500: 0 0% 0%;
+
+  /* Borders */
+  --border-100: 51 16.5% 84.5%;
+  --border-200: 51 16.5% 84.5%;
+  --border-300: 51 16.5% 84.5%;
+  --border-400: 51 16.5% 84.5%;
+
+  /* Danger / error */
+  --danger-000: 0 98.4% 75.1%;
+  --danger-100: 0 67% 59.6%;
+  --danger-200: 0 67% 59.6%;
+  --danger-900: 0 46.5% 27.8%;
+
+  /* Success */
+  --success-000: 97 59.1% 46.1%;
+  --success-100: 97 75% 32.9%;
+  --success-200: 97 75% 32.9%;
+  --success-900: 127 100% 13.9%;
+
+  /* Warning */
+  --warning-000: 40 71% 50%;
+  --warning-100: 39 93.4% 35.9%;
+  --warning-200: 39 93.4% 35.9%;
+  --warning-900: 45 94.8% 15.1%;
+
+  /* Text */
+  --text-000: 48 33.3% 97.1%;  /* brightest — headings, primary */
+  --text-100: 48 33.3% 97.1%;  /* body text */
+  --text-200: 50 9% 73.7%;     /* secondary */
+  --text-300: 50 9% 73.7%;     /* tertiary */
+  --text-400: 48 4.8% 59.2%;   /* muted */
+  --text-500: 48 4.8% 59.2%;   /* placeholder */
+
+  /* On-color (text on colored bg) */
+  --oncolor-100: 0 0% 100%;
+  --oncolor-200: 60 6.7% 97.1%;
+  --oncolor-300: 60 6.7% 97.1%;
+
+  /* Pictogram */
+  --pictogram-100: 48 3.4% 29.2%;
+  --pictogram-200: 60 2.5% 23.3%;
+  --pictogram-300: 60 2.1% 18.4%;
+  --pictogram-400: 60 2.7% 14.5%;
+
+  /* Always */
+  --always-white: 0 0% 100%;
+  --always-black: 0 0% 0%;
+}
+
+/* ─── Font Stacks ──────────────────────────────────────────────────────────── */
+/*
+  --font-ui:            anthropicSans, fallback, system-ui, sans-serif
+  --font-mono:          anthropicMono, ui-monospace, SFMono-Regular, Menlo, Monaco, monospace
+  --font-ui-serif:      anthropicSerif, Georgia, serif
+  --font-claude-response: (varies by user setting)
+  --font-user-message:  (varies by user setting)
+  --font-jetbrains:     jetbrains, monospace (code blocks)
+
+  Font weights defined as variables:
+  --font-weight-thin, --font-weight-light, --font-weight-regular,
+  --font-weight-medium, --font-weight-semibold, --font-weight-bold,
+  --font-weight-black
+*/
+
+/* ─── Button Variants ──────────────────────────────────────────────────────── */
+/*
+  Primary:   bg=text-000, text=bg-000, border=transparent
+  Secondary: bg=transparent, text=text-000, border=border-200/30%, hover-bg=bg-400
+  Ghost:     bg=transparent, text=text-300, hover-bg=bg-300, hover-text=text-100
+  Danger:    bg=danger-200, text=oncolor-100
+  Claude:    bg=accent-main-000, hover-bg=accent-main-200
+*/
+
+/* ─── Usage in Tailwind ────────────────────────────────────────────────────── */
+/*
+  Colors are HSL triplets (no hsl() wrapper).
+  Usage: hsl(var(--bg-100))    or    bg-bg-100 (via Tailwind config)
+  Opacity: hsl(var(--text-300) / 50%)  or  text-text-300/50
+*/

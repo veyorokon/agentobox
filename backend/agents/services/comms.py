@@ -74,7 +74,7 @@ def _normalize_content(content: list) -> list:
     return content
 
 
-async def _push_to_relay(agent_id: str, command: dict) -> bool:
+async def push_to_relay(agent_id: str, command: dict) -> bool:
     """Push a command to the relay via Channels group_send.
 
     Returns False if the relay is known to be disconnected.
@@ -143,7 +143,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
         "type": "user",
         "message": {"role": "user", "content": api_parts},
     }
-    await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
+    await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
     op_log.info("message_sent")
     return True
@@ -183,7 +183,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
 
     # Push to relay via WebSocket
     input_msg = {"type": "user", "message": {"role": "user", "content": parts}}
-    await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
+    await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
     op_log.info("question_answered")
     return True
@@ -249,7 +249,7 @@ async def broadcast_message(
 
         # Push to relay via WebSocket
         input_msg = {"type": "user", "message": {"role": "user", "content": api_parts}}
-        await _push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
+        await push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
 
     op_log.info("broadcast_sent", targets=target_names)
     return True
@@ -263,23 +263,22 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     Stores frontend vocabulary in agent.mode and CC wire format in
     agent.permission_mode.
     """
-    from agents.adapters.claude_code import _MODE_TO_PERMISSION, _PERM_TO_MODE
-
-    # Accept both frontend and CC vocabularies
-    if mode in _MODE_TO_PERMISSION:
-        # Frontend vocabulary -- translate for relay
-        frontend_mode = mode
-        wire_mode = _MODE_TO_PERMISSION[mode]
-    elif mode in _PERM_TO_MODE:
-        # CC wire vocabulary (backwards compat)
-        frontend_mode = _PERM_TO_MODE[mode]
-        wire_mode = mode
-    else:
-        raise ValueError(f"Invalid mode: {mode}. Use: auto, plan, supervised")
-
-    op_log = log.bind(agent_id=agent_id, mode=frontend_mode)
+    from agents.adapters import get_adapter
 
     agent = await Agent.objects.aget(id=agent_id)
+    adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
+
+    # Accept both frontend and CC vocabularies
+    wire_mode = adapter.mode_to_wire(mode)
+    if wire_mode:
+        frontend_mode = mode
+    else:
+        frontend_mode = adapter.wire_to_mode(mode)
+        wire_mode = mode
+        if not frontend_mode:
+            raise ValueError(f"Invalid mode: {mode}. Use: auto, plan, supervised")
+
+    op_log = log.bind(agent_id=agent_id, mode=frontend_mode)
 
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
         raise ValueError(f"Agent must be running or idle (current: {agent.status})")
@@ -300,7 +299,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     )
 
     # Push CC wire format to relay
-    sent = await _push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
+    sent = await push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
     if not sent:
         op_log.warning("mode_change_lost_relay_disconnected")
 
@@ -322,7 +321,7 @@ async def interrupt_agent(agent_id: str) -> bool:
     await create_and_broadcast_event(agent, event_type="interrupted", data={})
 
     # Push to relay via WebSocket
-    sent = await _push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
+    sent = await push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
     if not sent:
         op_log.warning("interrupt_lost_relay_disconnected")
         return False
@@ -349,7 +348,7 @@ async def restart_agent(agent_id: str) -> bool:
     await create_and_broadcast_event(agent, event_type="restarting", data={})
 
     # Push to relay via WebSocket
-    sent = await _push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
+    sent = await push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
     if not sent:
         op_log.warning("restart_lost_relay_disconnected")
         return False
@@ -393,7 +392,7 @@ async def clear_agent_session(agent_id: str) -> bool:
     )
 
     # Push to relay via WebSocket
-    sent = await _push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
+    sent = await push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
     if not sent:
         op_log.warning("clear_session_lost_relay_disconnected")
 

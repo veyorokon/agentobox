@@ -1,0 +1,9 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/sync/github/auth",
+  "_status": 200,
+  "data": {
+    "is_authenticated": true,
+    "user_login": "veyorokon",
+    "ghe_connections": null
+  }
+}

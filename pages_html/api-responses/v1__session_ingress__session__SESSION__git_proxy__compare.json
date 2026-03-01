@@ -1,0 +1,12 @@
+{
+  "_endpoint": "/v1/session_ingress/session/session_01SucPBhxoTZ3VcAmExeX1YG/git_proxy/compare",
+  "_status": 404,
+  "data": {
+    "type": "error",
+    "error": {
+      "type": "not_found_error",
+      "message": "Repository or branches not found"
+    },
+    "request_id": "req_011CYLNbmsny8BZnHbHgAdpY"
+  }
+}

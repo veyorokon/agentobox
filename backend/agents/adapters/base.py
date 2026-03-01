@@ -85,6 +85,13 @@ class AgentAdapter(Protocol):
         """
         ...
 
+    def mode_to_wire(self, mode: str) -> str:
+        """Our mode -> agent wire format. e.g. "auto" -> "bypassPermissions".
+
+        Returns "" if mode is unrecognized.
+        """
+        ...
+
     # ── Provisioning config builders (pure data, no I/O) ──
 
     def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:

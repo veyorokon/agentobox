@@ -1,0 +1,19 @@
+{
+  "_endpoint": "/v1/environment_providers/private/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/environments",
+  "_status": 200,
+  "data": {
+    "environments": [
+      {
+        "kind": "anthropic_cloud",
+        "environment_id": "env_01QZeJnLLyDhT38xuEuWF9wH",
+        "name": "Default",
+        "created_at": "2026-02-21T01:24:17.732396Z",
+        "state": "active",
+        "config": null
+      }
+    ],
+    "has_more": false,
+    "first_id": "env_01QZeJnLLyDhT38xuEuWF9wH",
+    "last_id": "env_01QZeJnLLyDhT38xuEuWF9wH"
+  }
+}

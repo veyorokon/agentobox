@@ -1,0 +1,8 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/sync/mcp/drive/auth",
+  "_status": 200,
+  "data": {
+    "is_authenticated": false,
+    "user_login": null
+  }
+}

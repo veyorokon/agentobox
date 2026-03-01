@@ -1,0 +1,23 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/usage",
+  "_status": 200,
+  "data": {
+    "five_hour": {
+      "utilization": 8.0,
+      "resets_at": "2026-02-21T06:00:01.141050+00:00"
+    },
+    "seven_day": {
+      "utilization": 6.0,
+      "resets_at": "2026-02-27T21:00:01.141067+00:00"
+    },
+    "seven_day_oauth_apps": null,
+    "seven_day_opus": null,
+    "seven_day_sonnet": {
+      "utilization": 1.0,
+      "resets_at": "2026-02-27T22:00:01.141074+00:00"
+    },
+    "seven_day_cowork": null,
+    "iguana_necktie": null,
+    "extra_usage": null
+  }
+}

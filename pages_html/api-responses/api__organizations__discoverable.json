@@ -1,0 +1,8 @@
+{
+  "_endpoint": "/api/organizations/discoverable",
+  "_status": 200,
+  "data": {
+    "organizations": [],
+    "can_create_personal": true
+  }
+}

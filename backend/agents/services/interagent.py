@@ -18,7 +18,7 @@ import uuid
 import structlog
 
 from agents.models import Agent, AgentStatus
-from agents.services.comms import _push_to_relay
+from agents.services.comms import push_to_relay
 from agents.services.utils import create_and_broadcast_event
 
 log = structlog.get_logger("agents.interagent")
@@ -75,4 +75,4 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> Non
         "type": "user",
         "message": {"role": "user", "content": parts},
     }
-    await _push_to_relay(str(target.id), {"type": "input", "payload": input_msg})
+    await push_to_relay(str(target.id), {"type": "input", "payload": input_msg})

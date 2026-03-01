@@ -1,0 +1,19 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/subscription_details",
+  "_status": 200,
+  "data": {
+    "plan_ending_before": null,
+    "next_charge_date": null,
+    "payment_method": null,
+    "status": "active",
+    "billing_interval": "monthly",
+    "has_schedule": false,
+    "has_discounts": false,
+    "payment_paused_until": null,
+    "scheduled_downgrade": null,
+    "trial_end_ts": null,
+    "seat_tier_quantities": null,
+    "manual_pause_scheduled_at": null,
+    "subscription_details_url": "https://apps.apple.com/account/subscriptions"
+  }
+}

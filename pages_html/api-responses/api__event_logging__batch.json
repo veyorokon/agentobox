@@ -1,0 +1,8 @@
+{
+  "_endpoint": "/api/event_logging/batch",
+  "_status": 200,
+  "data": {
+    "accepted_count": 1,
+    "rejected_count": 0
+  }
+}

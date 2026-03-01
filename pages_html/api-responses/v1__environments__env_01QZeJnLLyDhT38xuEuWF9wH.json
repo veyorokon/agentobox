@@ -1,0 +1,34 @@
+{
+  "_endpoint": "/v1/environment_providers/private/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/environments/env_01QZeJnLLyDhT38xuEuWF9wH",
+  "_status": 200,
+  "data": {
+    "kind": "anthropic_cloud",
+    "environment_id": "env_01QZeJnLLyDhT38xuEuWF9wH",
+    "name": "Default",
+    "created_at": "2026-02-21T01:24:17.732396Z",
+    "state": "active",
+    "config": {
+      "environment_type": "anthropic",
+      "sub_type": "ccr",
+      "cwd": "/home/user",
+      "init_script": null,
+      "environment": {},
+      "languages": [
+        {
+          "name": "python",
+          "version": "3.11"
+        },
+        {
+          "name": "node",
+          "version": "20"
+        }
+      ],
+      "network_config": {
+        "allowed_hosts": [
+          "*"
+        ],
+        "allow_default_hosts": true
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86",
+  "_status": 200,
+  "data": {
+    "id": 8528633,
+    "uuid": "2bedc594-0280-45d8-a186-9ba03c680a86",
+    "name": "veyorokon@gmail.com's Organization",
+    "settings": {
+      "claude_console_privacy": "default_private",
+      "allowed_invite_domains": null,
+      "workbench_completion_feedback_enabled": null,
+      "claude_ai_completion_feedback_enabled": true,
+      "claude_code_metrics_logging_enabled": true,
+      "claude_code_github_analytics_enabled": null,
+      "claude_code_penguin_mode_enabled": true,
+      "claude_ai_integration_sharing_enabled": true,
+      "claude_ai_chat_sharing_enabled": true,
+      "claude_ai_ccr_sharing_enabled": true,
+      "batches_download_ui_visibility": "all",
+      "batches_download_ui_enabled_workspace_ids": [],
+      "default_workspace_settings": {
+        "enable_api_keys": true
+      },
+      "sampling_restriction": null,
+      "is_desktop_extension_allowlist_enabled": false,
+      "account_session_duration_seconds": null,
+      "vcs_connections": null,
+      "disabled_admin_request_types": null,
+      "system_preferences_prompt": null
+    },
+    "capabilities": [
+      "chat",
+      "claude_max"
+    ],
+    "parent_organization_uuid": null,
+    "rate_limit_tier": "default_claude_max_20x",
+    "billing_type": "apple_subscription",
+    "free_credits_status": "available",
+    "data_retention": "default",
+    "api_disabled_reason": null,
+    "api_disabled_until": null,
+    "billable_usage_paused_until": null,
+    "raven_type": null,
+    "merchant_of_record": "anthropic",
+    "claude_ai_bootstrap_models_config": null,
+    "has_icon": false,
+    "created_at": "2024-03-28T04:25:18.452617Z",
+    "updated_at": "2026-02-08T20:37:16.321659Z",
+    "active_flags": [],
+    "data_retention_periods": null
+  }
+}

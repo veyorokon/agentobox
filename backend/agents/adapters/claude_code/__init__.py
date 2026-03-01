@@ -280,6 +280,10 @@ class ClaudeCodeAdapter:
         """
         return _PERM_TO_MODE.get(wire_mode, "")
 
+    def mode_to_wire(self, mode: str) -> str:
+        """Our mode -> agent wire format. e.g. "auto" -> "bypassPermissions"."""
+        return _MODE_TO_PERMISSION.get(mode, "")
+
     # ── Provisioning config builders (pure data, no I/O) ──
 
     def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:

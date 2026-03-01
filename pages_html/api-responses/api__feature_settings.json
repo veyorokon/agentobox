@@ -1,0 +1,22 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/feature_settings",
+  "_status": 200,
+  "data": {
+    "disabled_features": [
+      "haystack",
+      "claude_code_desktop_bypass_permissions",
+      "dxt_allowlist",
+      "claude_code_review"
+    ],
+    "forced_settings": [
+      {
+        "feature": "haystack",
+        "forced_state": false
+      },
+      {
+        "feature": "thumbs",
+        "forced_state": true
+      }
+    ]
+  }
+}

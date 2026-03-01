@@ -1,0 +1,37 @@
+{
+  "_endpoint": "/api/github/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/github/veyorokon/agentobox/branches",
+  "_status": 200,
+  "data": {
+    "data": [
+      {
+        "name": "refactor/v2-django",
+        "commit_sha": "b2b006283ec6bb9537064ddecb225b96bb4caaf2",
+        "is_default": false
+      },
+      {
+        "name": "neo-brutalism-theme",
+        "commit_sha": "8603aa6c236a60ba55fb6405a2afe9539bd6721b",
+        "is_default": false
+      },
+      {
+        "name": "main",
+        "commit_sha": "a165659add1435f8788a6ec64f5cae9d9bac6dc3",
+        "is_default": true
+      },
+      {
+        "name": "dashboard-v2-preview",
+        "commit_sha": "f6f81e18dab4036a6601858e6933743351fdad62",
+        "is_default": false
+      },
+      {
+        "name": "backend/54-system-messages",
+        "commit_sha": "8d0da11c357f33f9e917762c01fb9f22c5cee7ba",
+        "is_default": false
+      }
+    ],
+    "has_more": false,
+    "first_id": null,
+    "last_id": "NQ",
+    "default_branch": "main"
+  }
+}

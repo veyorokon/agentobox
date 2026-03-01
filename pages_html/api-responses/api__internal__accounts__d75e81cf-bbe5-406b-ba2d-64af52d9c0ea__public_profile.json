@@ -1,0 +1,9 @@
+{
+  "_endpoint": "/api/internal/accounts/d75e81cf-bbe5-406b-ba2d-64af52d9c0ea/public_profile",
+  "_status": 200,
+  "data": {
+    "uuid": "d75e81cf-bbe5-406b-ba2d-64af52d9c0ea",
+    "display_name": "Vahid",
+    "ccr_sharing_settings": null
+  }
+}

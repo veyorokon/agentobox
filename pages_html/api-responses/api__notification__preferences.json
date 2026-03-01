@@ -1,0 +1,33 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/notification/preferences",
+  "_status": 200,
+  "data": {
+    "account_id": 10127908,
+    "organization_id": 8528633,
+    "preferences": {
+      "feature_preference": {
+        "compass": {
+          "enable_email": false,
+          "enable_push": true
+        },
+        "tiny_pancakes": {
+          "enable_email": null,
+          "enable_push": null
+        },
+        "bogosort": {
+          "enable_email": false,
+          "enable_push": true
+        },
+        "completion": {
+          "enable_email": false,
+          "enable_push": true
+        },
+        "tool_notification": null,
+        "project_sharing": {
+          "enable_email": null,
+          "enable_push": null
+        }
+      }
+    }
+  }
+}

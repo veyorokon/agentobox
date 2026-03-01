@@ -1,0 +1,28 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/overage_spend_limit",
+  "_status": 200,
+  "data": {
+    "organization_uuid": "2bedc594-0280-45d8-a186-9ba03c680a86",
+    "limit_type": "organization",
+    "seat_tier": null,
+    "account_uuid": null,
+    "account_email": null,
+    "account_name": null,
+    "group_uuid": null,
+    "group_name": null,
+    "group_deleted": null,
+    "org_service_name": null,
+    "is_enabled": true,
+    "monthly_credit_limit": 5000,
+    "currency": "USD",
+    "used_credits": 0,
+    "disabled_reason": null,
+    "disabled_until": null,
+    "out_of_credits": false,
+    "discount_percent": null,
+    "discount_ends_at": null,
+    "settings": null,
+    "created_at": "2026-02-08T19:02:29.613857Z",
+    "updated_at": "2026-02-08T19:02:32.968868Z"
+  }
+}

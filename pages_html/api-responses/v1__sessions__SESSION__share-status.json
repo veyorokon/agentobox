@@ -1,0 +1,9 @@
+{
+  "_endpoint": "/v1/sessions/session_01SucPBhxoTZ3VcAmExeX1YG/share-status",
+  "_status": 200,
+  "data": {
+    "current_last_event_id": "4c158237-8512-4a89-9c34-8e573bffaef4",
+    "shares": [],
+    "sharing_settings": null
+  }
+}

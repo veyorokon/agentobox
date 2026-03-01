@@ -1,0 +1,10 @@
+{
+  "_endpoint": "/api/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/model_configs/claude-opus-4-6",
+  "_status": 200,
+  "data": {
+    "api_model": "claude-opus-4-6",
+    "image_in": true,
+    "pdf_in": true,
+    "max_tokens_cap": 128000
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "_endpoint": "/api/github/organizations/2bedc594-0280-45d8-a186-9ba03c680a86/github_batch_branch_status",
+  "_status": 200,
+  "data": {
+    "branch_statuses": [
+      {
+        "repo": "veyorokon/agentobox",
+        "branch": "claude/review-project-setup-yt1za",
+        "pull_request": null,
+        "has_changes": false,
+        "commits": 0,
+        "branch_exists": false,
+        "upstream_repo": null
+      }
+    ]
+  }
+}
