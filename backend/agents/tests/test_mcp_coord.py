@@ -138,7 +138,7 @@ class TestSendMessage:
         assert result["ok"] is True
         assert result["recipient"] == "backend"
         mock_deliver.assert_called_once_with(
-            "team-lead", target, "fix the auth bug", summary="auth bug fix request"
+            "team-lead", target, "fix the auth bug"
         )
 
     @pytest.mark.asyncio
@@ -166,7 +166,7 @@ class TestSendMessage:
             )
 
         assert result["ok"] is True
-        mock_broadcast.assert_called_once_with(sender, "standup time", "daily standup")
+        mock_broadcast.assert_called_once_with(sender, "standup time", summary="daily standup")
 
     @pytest.mark.asyncio
     async def test_shutdown_request(self):

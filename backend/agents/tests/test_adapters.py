@@ -44,6 +44,7 @@ class TestRegistry:
             def is_permission_request(self, event): return None
             def is_plan_proposal(self, event): return None
             def wire_to_mode(self, wire_mode): return ""
+            def mode_to_wire(self, mode): return ""
             def build_settings(self, *, api_key="", mode="auto"): return "{}"
             def build_instructions(self, *, project_name="", agent_name="",
                                    agent_role="worker", **kw): return ""
@@ -463,8 +464,10 @@ class TestBuildSettings:
         assert result["defaultMode"] == "bypassPermissions"
         assert result["enableAllProjectMcpServers"] is True
         assert "disallowedTools" in result
-        assert "TaskCreate" in result["disallowedTools"]
-        assert "SendMessage" in result["disallowedTools"]
+        # Team lifecycle tools blocked; team comms tools are hooked, not blocked
+        assert "TeamCreate" in result["disallowedTools"]
+        assert "TeamDelete" in result["disallowedTools"]
+        assert "hooks" in result
 
     def test_api_key_adds_helper(self, adapter):
         import json
@@ -489,14 +492,20 @@ class TestBuildSettings:
         assert supervised["defaultMode"] == "default"
 
     def test_disallowed_tools_complete(self, adapter):
-        """All CC built-in team tools must be disabled."""
+        """Team lifecycle tools must be disabled; team comms tools are hooked."""
         import json
         result = json.loads(adapter.build_settings())
-        expected = {
-            "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-            "SendMessage", "TeamCreate", "TeamDelete",
-        }
+        # Only lifecycle tools are blocked — comms tools are intercepted via hooks
+        expected = {"TeamCreate", "TeamDelete"}
         assert expected == set(result["disallowedTools"])
+        # Hooks intercept the team comms tools (Pre for reads, Post for writes)
+        assert "hooks" in result
+        all_matchers = ""
+        for phase in ("PreToolUse", "PostToolUse"):
+            for entry in result["hooks"].get(phase, []):
+                all_matchers += entry["matcher"] + "|"
+        for tool in ("SendMessage", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList"):
+            assert tool in all_matchers, f"{tool} not in hook matchers"
 
 
 class TestBuildInstructions:
@@ -594,10 +603,12 @@ class TestBuildInstructions:
         assert "## Security" in md
         assert "NEVER output API keys" in md
 
-    def test_platform_section_mentions_team_mcp(self, adapter):
+    def test_platform_section_mentions_team_tools(self, adapter):
         md = adapter.build_instructions(
             project_name="P",
             agent_name="a",
         )
         assert "**team** MCP server" in md
-        assert "TaskCreate, TaskUpdate, SendMessage" in md
+        # Native team tools are intercepted by hooks
+        assert "SendMessage" in md
+        assert "TaskCreate" in md

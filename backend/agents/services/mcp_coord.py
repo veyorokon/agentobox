@@ -73,7 +73,7 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
 
     elif type == "broadcast":
         from agents.services.interagent import deliver_broadcast
-        await deliver_broadcast(agent, content, summary="")
+        await deliver_broadcast(agent, content, summary=summary)
 
         log.info("mcp_send_broadcast", sender=agent.name)
         return {"ok": True}
