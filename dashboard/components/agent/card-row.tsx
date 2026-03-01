@@ -10,12 +10,16 @@ import {
   List,
   BookOpen,
   Settings,
+  MoreVertical,
+  Square,
+  RotateCcw,
+  Trash2,
 } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
 import { LIFECYCLE_CONFIG, ATTENTION_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useAcknowledgeAgent, useSetAgentMode } from "@/lib/graphql/hooks/use-agents"
+import { useAcknowledgeAgent, useSetAgentMode, useInterruptAgent, useRestartAgent, useHardRestartAgent, useRemoveAgent } from "@/lib/graphql/hooks/use-agents"
 import { useFeed, useResolvePermission, useResolvePlan, useSendMessage } from "@/lib/graphql/hooks/use-feed"
 import { Collapsible } from "@/components/ui/collapsible"
 import { AgentAvatar } from "@/components/agent/avatar"
@@ -65,7 +69,15 @@ export function AgentCardRow({
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
   const sendMessage = useSendMessage()
+  const interruptAgent = useInterruptAgent()
+  const restartAgent = useRestartAgent()
+  const hardRestartAgent = useHardRestartAgent()
+  const removeAgent = useRemoveAgent()
   const handleModeChange = (mode: Agent["mode"]) => setAgentMode(agent.id, mode)
+
+  // Kebab menu state
+  const [kebabOpen, setKebabOpen] = useState(false)
+  const kebabRef = useRef<HTMLDivElement>(null)
 
   // Derived from store
   const isOpen = !selectable && isExpanded
@@ -84,6 +96,18 @@ export function AgentCardRow({
   useEffect(() => {
     if (globalViewMode) setViewMode(globalViewMode)
   }, [globalViewMode])
+
+  // Close kebab on outside click
+  useEffect(() => {
+    if (!kebabOpen) return
+    const handler = (e: MouseEvent) => {
+      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) {
+        setKebabOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [kebabOpen])
 
   const handleSendMessage = () => {
     const text = composerText.trim()
@@ -195,13 +219,25 @@ export function AgentCardRow({
               )}
             </span>
           )}
-          <span
-            className={cn(
-              "h-1.5 w-1.5 rounded-full shrink-0",
-              config.dot,
-              isRunning && "animate-breathe text-success",
-            )}
-          />
+          {/* Status dot — morphs to stop button on hover when running */}
+          {isRunning ? (
+            <button
+              type="button"
+              title="Interrupt agent"
+              onClick={(e) => { e.stopPropagation(); interruptAgent(agent.id) }}
+              className="group/dot relative h-4 w-4 flex items-center justify-center shrink-0"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-success animate-breathe group-hover/dot:hidden" />
+              <Square className="h-2.5 w-2.5 text-warning hidden group-hover/dot:block" strokeWidth={3} />
+            </button>
+          ) : (
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full shrink-0",
+                config.dot,
+              )}
+            />
+          )}
 
           {/* Live action one-liner */}
           {agent.liveAction ? (
@@ -214,10 +250,67 @@ export function AgentCardRow({
             </span>
           )}
 
-          {/* Right: cost . time + chevron */}
+          {/* Right: cost · time + kebab + chevron */}
           <span className="text-[9px] text-muted/60 font-mono tabular-nums shrink-0">
             {formatCost(agent.cost)} · {agent.duration}
           </span>
+
+          {/* Kebab menu — interrupt / restart / remove */}
+          <div ref={kebabRef} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setKebabOpen(v => !v) }}
+              className={cn(
+                "p-0.5 rounded transition-colors",
+                kebabOpen
+                  ? "bg-surface-raised text-default"
+                  : "text-muted/40 hover:text-secondary hover:bg-surface-raised/40",
+              )}
+              title="Agent actions"
+            >
+              <MoreVertical className="h-3.5 w-3.5" />
+            </button>
+            {kebabOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 min-w-[140px] rounded-md border border-border-default bg-surface-raised shadow-lg py-0.5">
+                {isRunning && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); interruptAgent(agent.id); setKebabOpen(false) }}
+                    className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
+                  >
+                    <Square className="h-3 w-3 text-warning" strokeWidth={2.5} />
+                    Interrupt
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); restartAgent(agent.id); setKebabOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
+                >
+                  <RotateCcw className="h-3 w-3 text-muted" />
+                  Restart
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); hardRestartAgent(agent.id); setKebabOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
+                >
+                  <RotateCcw className="h-3 w-3 text-accent" strokeWidth={2.5} />
+                  Redeploy
+                </button>
+                <div className="border-t border-border-subtle my-0.5" />
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); removeAgent(agent.id); setKebabOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-[11px] text-danger hover:bg-danger-subtle/40 flex items-center gap-2"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+
           <ChevronRight
             size={14}
             className={cn(

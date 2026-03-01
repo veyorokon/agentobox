@@ -9,6 +9,7 @@ import {
   REMOVE_AGENT,
   HARD_RESTART_AGENT,
   RESTART_AGENT,
+  INTERRUPT_AGENT,
   UPDATE_AGENT_INSTRUCTIONS,
   UPDATE_AGENT_CONFIG,
   CREATE_AGENT,
@@ -180,6 +181,16 @@ export function useRestartAgent() {
       log("mutation.error", { mutation: "restartAgent", agentId, error: err.message })
     })
   }, [client, mutate])
+}
+
+export function useInterruptAgent() {
+  const [mutate] = useMutation(INTERRUPT_AGENT)
+  return useCallback((agentId: string) => {
+    log("mutation.interruptAgent", { agentId })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "interruptAgent", agentId, error: err.message })
+    })
+  }, [mutate])
 }
 
 export function useUpdateAgentInstructions() {

@@ -83,7 +83,7 @@ def _mock_agent(**overrides):
     agent.name = overrides.get("name", "backend")
     agent.project_id = overrides.get("project_id", "project-uuid-1")
     agent.runtime = overrides.get("runtime", "docker")
-    agent.model = overrides.get("model", "Opus 4.6")
+    agent.model = overrides.get("model", "claude-opus-4-6")
     agent.workspace_path = overrides.get("workspace_path", "/workspace")
     agent.volume_mounts = overrides.get("volume_mounts", [])
     agent.session_id = overrides.get("session_id", "session-1")

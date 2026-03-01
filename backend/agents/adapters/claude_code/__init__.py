@@ -99,6 +99,26 @@ def _shell_escape(val: str) -> str:
     return val.replace("'", "'\\''")
 
 
+# Display name → CC model ID. Catches bad data from seed scripts or manual DB edits.
+_MODEL_DISPLAY_TO_ID = {
+    "opus 4.6": "claude-opus-4-6",
+    "sonnet 4.6": "claude-sonnet-4-6",
+    "sonnet 4.5": "claude-sonnet-4-5-20250929",
+    "haiku 4.5": "claude-haiku-4-5-20251001",
+}
+
+
+def _normalize_model_id(model: str) -> str:
+    """Normalize a model string to a CC-compatible model ID.
+
+    Accepts both proper IDs (``claude-opus-4-6``) and display names
+    (``Opus 4.6``). Returns the proper ID in either case.
+    """
+    if model.startswith("claude-"):
+        return model
+    return _MODEL_DISPLAY_TO_ID.get(model.lower(), model)
+
+
 class ClaudeCodeAdapter:
     """Adapter for Claude Code stream-json events and provisioning config."""
 
@@ -567,7 +587,7 @@ class ClaudeCodeAdapter:
             f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
             f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
             f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
-            f"export CLAUDE_MODEL='{_shell_escape(model)}'",
+            f"export CLAUDE_MODEL='{_shell_escape(_normalize_model_id(model))}'",
         ]
 
         if resume_session_id:

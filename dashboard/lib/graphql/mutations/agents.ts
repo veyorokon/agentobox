@@ -63,6 +63,12 @@ export const RESTART_AGENT = gql`
   }
 `
 
+export const INTERRUPT_AGENT = gql`
+  mutation InterruptAgent($agentId: ID!) {
+    interruptAgent(agentId: $agentId)
+  }
+`
+
 export const UPDATE_AGENT_INSTRUCTIONS = gql`
   mutation UpdateAgentInstructions($input: UpdateAgentInstructionsInput!) {
     updateAgentInstructions(input: $input) {
