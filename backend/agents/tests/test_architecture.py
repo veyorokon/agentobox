@@ -123,6 +123,7 @@ class TestNamingConventions:
             "resolve", "provision", "ensure", "answer", "hard_restart",
             "write", "externalize", "upload", "encrypt", "decrypt",
             "reconcile", "teammate", "task", "team", "search",
+            "get", "deliver", "list", "terminate",
         )
         violations = []
 
@@ -240,3 +241,90 @@ class TestModelDiscipline:
             assert term not in agent_src, (
                 f"Agent model contains agent-specific vocabulary: {term!r}"
             )
+
+
+# ── Vocabulary enforcement ──
+
+
+class TestVocabularyEnforcement:
+    """Catch deprecated terminology before it takes root."""
+
+    BANNED_TERMS = [
+        "TodoProgress",
+        "todo_progress",
+        "todoProgress",
+    ]
+
+    # Files exempt from vocabulary checks (static reference, test fixtures)
+    EXEMPT_PATHS = {"prototype", "test_", "__pycache__", ".venv", "node_modules"}
+
+    def _should_check(self, path: Path) -> bool:
+        return not any(exempt in str(path) for exempt in self.EXEMPT_PATHS)
+
+    def test_no_todo_vocabulary_in_backend(self):
+        """Backend Python files must use 'task' not 'todo' for progress tracking."""
+        violations = []
+        for f in AGENTS_DIR.rglob("*.py"):
+            if not self._should_check(f):
+                continue
+            src = _read_source(f)
+            for term in self.BANNED_TERMS:
+                if term in src:
+                    violations.append(f"{f.relative_to(AGENTS_DIR)}::{term}")
+
+        assert not violations, (
+            f"Banned vocabulary found (use TaskProgress, not TodoProgress): {violations}"
+        )
+
+    def test_no_todo_vocabulary_in_graphql_types(self):
+        """GraphQL type classes must not use 'Todo' prefix."""
+        types_path = GRAPHQL_DIR / "types.py"
+        tree = ast.parse(_read_source(types_path))
+
+        violations = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and "Todo" in node.name:
+                violations.append(node.name)
+
+        assert not violations, (
+            f"GraphQL types using banned 'Todo' prefix: {violations}. "
+            "Use 'Task' instead."
+        )
+
+
+# ── Adapter purity ──
+
+
+class TestAdapterPurity:
+    """Adapter read methods must not silently truncate or modify content."""
+
+    def test_read_methods_do_not_slice_strings(self):
+        """Adapter methods returning str must not use [:N] slices.
+
+        Silent truncation hides data from downstream consumers. If a limit
+        is needed, it belongs at the storage or display layer, not in the
+        adapter's read path.
+        """
+        violations = []
+        for f in _python_files(ADAPTERS_DIR):
+            tree = ast.parse(_read_source(f))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                # Only check methods with return annotation of str
+                if not (node.returns and isinstance(node.returns, ast.Constant)
+                        and node.returns.value == "str"):
+                    # Also catch ast.Name "str"
+                    if not (node.returns and isinstance(node.returns, ast.Name)
+                            and node.returns.id == "str"):
+                        continue
+                # Walk function body for Subscript with slice
+                for child in ast.walk(node):
+                    if isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Slice):
+                        if child.slice.upper is not None:
+                            violations.append(f"{f.name}::{node.name}")
+
+        assert not violations, (
+            f"Adapter read methods contain string slicing ([:N]): {violations}. "
+            "Adapters must return full content — truncation belongs at storage/display layer."
+        )
