@@ -111,7 +111,7 @@ export const CREATE_AGENT = gql`
       mcpServers
       runtime
       workspacePath
-      todoProgress {
+      taskProgress {
         done
         total
       }

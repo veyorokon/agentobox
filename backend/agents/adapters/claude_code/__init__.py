@@ -141,7 +141,7 @@ class ClaudeCodeAdapter:
         ]
         if not text_blocks:
             return ""
-        return (text_blocks[-1].get("text", "") or "")[:500]
+        return text_blocks[-1].get("text", "") or ""
 
     def live_action(self, snapshot: dict) -> str:
         """Last tool_use name, empty if turn is complete.

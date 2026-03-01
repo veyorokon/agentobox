@@ -38,7 +38,7 @@ export const ON_AGENT_CHANGED = gql`
       phase
       task
       liveAction
-      todoProgress {
+      taskProgress {
         done
         total
       }

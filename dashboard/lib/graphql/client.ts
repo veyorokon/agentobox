@@ -91,7 +91,7 @@ export const client = new ApolloClient({
       TeamFeedItemType: { keyFields: ["id"] },
       SkillType: { keyFields: ["id"] },
       FeedQuestionType: { keyFields: false },
-      TodoProgressType: { keyFields: false },
+      TaskProgressType: { keyFields: false },
       McpPackageType: { keyFields: false },
       McpRegistryServerType: { keyFields: ["name"] },
       TimelineEntryType: { keyFields: ["id"] },

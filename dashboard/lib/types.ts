@@ -21,8 +21,8 @@ export type Agent = {
   /** Live one-liner: last tool call or action, continuously updated.
    *  SOURCE: latest tool_use content block name + summary from StreamEvent */
   liveAction?: string
-  /** Compact todo progress for live status bar */
-  todoProgress?: { done: number; total: number }
+  /** Compact task progress for live status bar */
+  taskProgress?: { done: number; total: number }
   instructions: string
   mcpServers: string[]
   runtime: "docker" | "modal"

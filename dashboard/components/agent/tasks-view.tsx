@@ -13,7 +13,7 @@ export interface AgentTasksViewProps {
 }
 
 export function AgentTasksView({ agent }: AgentTasksViewProps) {
-  const { tasks, loading } = useAgentTasks(agent.id, agent.todoProgress)
+  const { tasks, loading } = useAgentTasks(agent.id, agent.taskProgress)
   const updateTask = useUpdateTask()
   const createTask = useCreateTask()
   const [filter, setFilter] = useState<Filter>("all")

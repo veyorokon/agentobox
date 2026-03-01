@@ -39,7 +39,7 @@ type AgentType {
   allowedTools: [String!]!
   workspacePath: String!
   mcpServers: [String!]!
-  todoProgress: TodoProgressType
+  taskProgress: TaskProgressType
   tasks: [AgentTaskType!]!
 }
 
@@ -254,6 +254,11 @@ type Subscription {
   eventStream(projectId: ID!): TimelineEntryType!
 }
 
+type TaskProgressType {
+  done: Int!
+  total: Int!
+}
+
 type TeamFeedItemType {
   id: ID!
   type: String!
@@ -287,11 +292,6 @@ type TimelineEntryType {
   summary: String
   data: JSON!
   createdAt: DateTime!
-}
-
-type TodoProgressType {
-  done: Int!
-  total: Int!
 }
 
 scalar UUID

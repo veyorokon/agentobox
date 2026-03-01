@@ -46,7 +46,7 @@ export interface AgentCardRowProps {
  *   avatar | name | status dot | live action | cost . time | chevron
  *
  * OPEN -- content area + bottom toolbar:
- *   header row -> content (VNC / feed / settings) -> toolbar (view icons + composer + todo)
+ *   header row -> content (VNC / feed / settings) -> toolbar (view icons + composer + tasks)
  */
 export function AgentCardRow({
   agent,
@@ -361,7 +361,7 @@ export function AgentCardRow({
           onRedeploy={() => settingsRef.current?.redeploy()}
         />
 
-        {/* Bottom toolbar -- always present: view icons + composer + todo */}
+        {/* Bottom toolbar -- always present: view icons + composer + tasks */}
         <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-border-subtle bg-surface-sunken/20">
           {/* View mode icons */}
           <div className="flex items-center gap-0.5 shrink-0">
@@ -422,7 +422,7 @@ export function AgentCardRow({
           >
             <CheckSquare className="h-3 w-3" />
             <span className="text-[9px] font-mono tabular-nums">
-              {agent.todoProgress ? `${agent.todoProgress.done}/${agent.todoProgress.total}` : "0/0"}
+              {agent.taskProgress ? `${agent.taskProgress.done}/${agent.taskProgress.total}` : "0/0"}
             </span>
           </button>
         </div>

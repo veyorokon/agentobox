@@ -16,23 +16,23 @@ const log = createLogger("apollo")
 
 type AgentTasksData = { agent: { id: string; tasks: AgentTask[] } | null }
 
-/** Fetch tasks for a single agent. Refetches when todoProgress changes. */
-export function useAgentTasks(agentId: string, todoProgress?: { done: number; total: number } | null) {
+/** Fetch tasks for a single agent. Refetches when taskProgress changes. */
+export function useAgentTasks(agentId: string, taskProgress?: { done: number; total: number } | null) {
   const { data, loading, refetch } = useQuery<AgentTasksData>(GET_AGENT_TASKS, {
     variables: { agentId },
     fetchPolicy: "cache-and-network",
   })
 
-  // Refetch when todoProgress changes (driven by subscription)
-  const prevProgress = useRef(todoProgress)
+  // Refetch when taskProgress changes (driven by subscription)
+  const prevProgress = useRef(taskProgress)
   useEffect(() => {
     const prev = prevProgress.current
-    prevProgress.current = todoProgress
-    if (!prev || !todoProgress) return
-    if (prev.done !== todoProgress.done || prev.total !== todoProgress.total) {
+    prevProgress.current = taskProgress
+    if (!prev || !taskProgress) return
+    if (prev.done !== taskProgress.done || prev.total !== taskProgress.total) {
       refetch()
     }
-  }, [todoProgress, refetch])
+  }, [taskProgress, refetch])
 
   return { tasks: data?.agent?.tasks ?? [], loading }
 }

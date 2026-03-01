@@ -13,7 +13,7 @@ from agents import models
 
 
 @strawberry.type
-class TodoProgressType:
+class TaskProgressType:
     done: int
     total: int
 
@@ -247,7 +247,7 @@ class AgentType:
         return self.mcp_servers if isinstance(self.mcp_servers, list) else []
 
     @strawberry_django.field
-    async def todo_progress(self) -> TodoProgressType | None:
+    async def task_progress(self) -> TaskProgressType | None:
         def _count():
             qs = models.AgentTask.objects.filter(agent_id=self.id)
             total = qs.count()
@@ -259,7 +259,7 @@ class AgentType:
         result = await sync_to_async(_count, thread_sensitive=False)()
         if result is None:
             return None
-        return TodoProgressType(done=result[0], total=result[1])
+        return TaskProgressType(done=result[0], total=result[1])
 
     @strawberry_django.field
     async def tasks(self) -> list[AgentTaskType]:

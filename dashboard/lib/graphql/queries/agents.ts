@@ -56,7 +56,7 @@ export const GET_AGENTS = gql`
       mcpServers
       runtime
       workspacePath
-      todoProgress {
+      taskProgress {
         done
         total
       }

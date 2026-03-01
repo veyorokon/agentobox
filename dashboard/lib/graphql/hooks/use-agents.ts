@@ -66,7 +66,7 @@ export function useAgentsSubscription() {
           phase: () => agent.phase,
           task: () => agent.task,
           liveAction: () => agent.liveAction,
-          todoProgress: () => agent.todoProgress,
+          taskProgress: () => agent.taskProgress,
         },
       })
     },
