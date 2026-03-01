@@ -101,7 +101,7 @@ class TestClaudeCodeExtraction:
     def test_last_output_none_assistant(self, adapter):
         assert adapter.last_output({"assistant": None}) == ""
 
-    def test_last_output_truncates_to_500(self, adapter):
+    def test_last_output_returns_full_text(self, adapter):
         snap = {
             "assistant": {
                 "message": {
@@ -109,7 +109,7 @@ class TestClaudeCodeExtraction:
                 }
             }
         }
-        assert len(adapter.last_output(snap)) == 500
+        assert len(adapter.last_output(snap)) == 1000
 
     # -- live_action --
 
