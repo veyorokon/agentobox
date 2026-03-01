@@ -35,6 +35,13 @@ def _python_files(directory: Path) -> list[Path]:
 
 
 class TestImportBoundaries:
+    """Principle: layer boundaries are enforced by import direction.
+
+    Adapters must not import models or services — they're pure functions of
+    dict input. The stream write path must not import adapters at module level
+    to stay agent-type-agnostic. Resolvers must use adapters, not raw JSON.
+    """
+
     def test_adapters_do_not_import_models(self):
         """Adapter implementations must not import agents.models."""
         for f in _python_files(ADAPTERS_DIR):
@@ -120,6 +127,14 @@ class TestImportBoundaries:
 
 
 class TestNamingConventions:
+    """Principle: public API names are self-documenting via verb_entity pattern.
+
+    Service functions, mutations, and subscriptions follow naming conventions
+    that make the codebase navigable without reading implementations. Service
+    functions start with a verb, mutations are verb_entity, subscriptions end
+    with _changed or _stream.
+    """
+
     def test_service_functions_are_verb_entity(self):
         """All public async functions in services/ should follow verb_entity naming."""
         allowed_prefixes = (
@@ -207,6 +222,13 @@ class TestNamingConventions:
 
 
 class TestModelDiscipline:
+    """Principle: Agent model holds state, not presentation.
+
+    Display-only fields (last_output, live_action, etc.) belong in adapters,
+    not on the model. Agent-type-specific vocabulary (Claude Code field names)
+    must not leak into the Agent model — we use our own vocabulary.
+    """
+
     def test_agent_has_no_display_fields(self):
         """Agent model must not have display-only columns (moved to adapters)."""
         from agents.models import Agent
@@ -556,4 +578,81 @@ class TestCrossBoundaryContracts:
         assert not only_in_backend, (
             f"Backend handles tools the hook bridge doesn't intercept: {only_in_backend}. "
             "Add to BRIDGED set in team-bridge.py or remove from views.py."
+        )
+
+
+# ── Annotation enforcement ──
+
+# Extension point — registry of annotation types. Adding a new annotation
+# (e.g. "boundary:", "couples:") is one dict entry + one test method.
+ANNOTATION_TYPES = {
+    "intentional": {
+        "pattern": r"#\s*intentional:",
+        "applies_to": "except_handler",
+        "description": "Broad exception catch with documented rationale",
+    },
+}
+
+
+def _source_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+class TestExplicitErrorHandling:
+    """Principle: Fail loud, never fail silent.
+
+    Every broad except (Exception/BaseException/bare) must be annotated with
+    ``# intentional:`` explaining why the broad catch is necessary. Unannotated
+    blocks are likely silent-failure bugs. This test catches them mechanically.
+    """
+
+    # Directories to skip (tests write intentionally bad code, migrations are generated)
+    _SKIP = {"tests", "migrations", "__pycache__"}
+
+    def _should_check(self, path: Path) -> bool:
+        return not any(part in self._SKIP for part in path.parts)
+
+    def _is_broad_except(self, handler: ast.ExceptHandler) -> bool:
+        """True if handler catches Exception, BaseException, or is a bare except."""
+        if handler.type is None:
+            return True  # bare except:
+        if isinstance(handler.type, ast.Name) and handler.type.id in ("Exception", "BaseException"):
+            return True
+        return False
+
+    def test_broad_except_blocks_are_annotated(self):
+        """Every except Exception/BaseException/bare must have # intentional: nearby."""
+        pattern = re.compile(ANNOTATION_TYPES["intentional"]["pattern"])
+        violations = []
+
+        for py_file in sorted(AGENTS_DIR.rglob("*.py")):
+            if not self._should_check(py_file):
+                continue
+
+            src = _read_source(py_file)
+            lines = src.splitlines()
+            try:
+                tree = ast.parse(src)
+            except SyntaxError:
+                continue
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ExceptHandler):
+                    continue
+                if not self._is_broad_except(node):
+                    continue
+
+                lineno = node.lineno  # 1-indexed
+                # Check the except line itself and the line above
+                except_line = lines[lineno - 1] if lineno <= len(lines) else ""
+                prev_line = lines[lineno - 2] if lineno >= 2 else ""
+
+                if not (pattern.search(except_line) or pattern.search(prev_line)):
+                    rel = py_file.relative_to(AGENTS_DIR)
+                    violations.append(f"{rel}:{lineno}")
+
+        assert not violations, (
+            f"Broad except blocks without # intentional: annotation:\n"
+            + "\n".join(f"  {v}" for v in violations)
+            + "\n\nAdd '# intentional: <reason>' on the except line or the line above."
         )

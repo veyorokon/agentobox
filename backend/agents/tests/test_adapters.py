@@ -24,6 +24,12 @@ from agents.tests.conftest import (
 
 
 class TestRegistry:
+    """Principle: the adapter registry is the single lookup point for agent types.
+
+    get_adapter(type) returns a cached adapter instance. Unknown types raise
+    ValueError immediately — no silent fallback to a default adapter.
+    """
+
     def test_get_claude_code_adapter(self):
         adapter = get_adapter("claude-code")
         assert adapter is not None
@@ -71,6 +77,13 @@ class TestRegistry:
 
 
 class TestProtocolCompliance:
+    """Principle: every registered adapter must satisfy the AgentAdapter protocol.
+
+    Runtime isinstance() check ensures all protocol methods exist with correct
+    signatures. If a new method is added to AgentAdapter, every adapter must
+    implement it or this test fails.
+    """
+
     @pytest.mark.parametrize("agent_type", list(_REGISTRY.keys()))
     def test_adapter_satisfies_protocol(self, agent_type):
         adapter = get_adapter(agent_type)
@@ -81,6 +94,13 @@ class TestProtocolCompliance:
 
 
 class TestClaudeCodeExtraction:
+    """Principle: adapter extraction is a pure function of the snapshot.
+
+    Given a latest_snapshot dict, the adapter returns display fields (last_output,
+    live_action, cost, duration, turns) deterministically. No DB access, no side
+    effects, no mutation of the input.
+    """
+
     @pytest.fixture
     def adapter(self):
         return ClaudeCodeAdapter()

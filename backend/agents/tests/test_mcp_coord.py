@@ -114,6 +114,12 @@ _P_AGENT_BROADCAST = "agents.services.broadcast.broadcast_agent_update"
 
 
 class TestSendMessage:
+    """Principle: message delivery must reach the target relay or fail visibly.
+
+    send_message resolves the recipient by name within the sender's project,
+    formats the payload for the agent's protocol, and pushes it to the relay
+    channel group. Delivery failures surface as exceptions, never silent drops.
+    """
 
     @pytest.mark.asyncio
     async def test_dm_delivery(self):
@@ -208,6 +214,11 @@ class TestSendMessage:
 
 
 class TestTaskCreate:
+    """Principle: task creation is atomic — DB row + feed item + broadcast.
+
+    A created task must be immediately visible in the dashboard. The MCP tool
+    returns the task dict on success and surfaces errors on failure.
+    """
 
     @pytest.mark.asyncio
     async def test_basic_create(self):
@@ -263,6 +274,12 @@ class TestTaskCreate:
 
 
 class TestTaskUpdate:
+    """Principle: task updates are idempotent and broadcast-complete.
+
+    Every field update (status, owner, dependencies) persists to DB and
+    triggers a broadcast so the dashboard reflects the change. Deleting
+    a task sets status=deleted and removes it from active views.
+    """
 
     def _make_task(self, **overrides):
         """Create a mock task with sensible defaults."""
@@ -403,6 +420,11 @@ class TestTaskUpdate:
 
 
 class TestTaskGet:
+    """Principle: task reads return the full task state including dependencies.
+
+    task_get returns the complete task dict (subject, description, status,
+    owner, blocks, blockedBy) so the agent has full context to act on it.
+    """
 
     @pytest.mark.asyncio
     async def test_returns_full_task(self):
@@ -462,6 +484,11 @@ class TestTaskGet:
 
 
 class TestTaskList:
+    """Principle: task list returns a summary view scoped to the project.
+
+    Returns all non-deleted tasks with enough fields for triage (id, subject,
+    status, owner, blockedBy) but not full descriptions — use task_get for that.
+    """
 
     @pytest.mark.asyncio
     async def test_includes_new_fields(self):

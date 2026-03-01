@@ -20,6 +20,13 @@ def mock_broadcast():
 
 @pytest.mark.django_db(transaction=True)
 class TestSnapshotWrites:
+    """Principle: latest_snapshot is a faithful mirror of the last event pair.
+
+    assistant events replace the assistant key and clear result;
+    result events add the result key alongside the existing assistant.
+    No other fields are modified. The snapshot is the sole input to adapters.
+    """
+
     @pytest.fixture
     def agent(self, db):
         from projects.models import Project
@@ -99,6 +106,14 @@ class TestSnapshotWrites:
 
 @pytest.mark.django_db(transaction=True)
 class TestPhaseLogic:
+    """Principle: phase transitions derive from stream events, not guesswork.
+
+    The phase field (thinking, responding, tool_input, tool_use, idle) is set
+    by stream_event subtypes, not by the LLM output content. result events
+    reset phase to idle. Phase is a materialized field on Agent for dashboard
+    display — it must never contradict the event log.
+    """
+
     @pytest.fixture
     def agent(self, db):
         from projects.models import Project

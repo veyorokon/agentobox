@@ -11,6 +11,14 @@ from agents.models import Agent, AgentStatus
 
 @pytest.mark.django_db
 class TestResolverAdapterDelegation:
+    """Principle: GraphQL resolvers must delegate to adapters, never access raw JSON.
+
+    Display fields (lastOutput, liveAction, cost, duration, turns) are derived
+    from latest_snapshot by the agent's adapter. Resolvers call get_adapter()
+    and pass the snapshot — they never parse stream-json directly. This keeps
+    the GraphQL layer agent-type-agnostic.
+    """
+
     @pytest.fixture
     def agent(self, db):
         from projects.models import Project
