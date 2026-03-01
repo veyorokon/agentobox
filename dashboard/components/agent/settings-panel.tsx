@@ -1,10 +1,7 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react"
 import {
-  AlertTriangle,
-  RotateCcw,
-  RefreshCw,
   Trash2,
   X,
   Plus,
@@ -25,11 +22,17 @@ import {
 } from "@/lib/graphql/hooks/use-agents"
 import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
 
-export interface AgentSettingsPanelProps {
-  agent: Agent
+export interface SettingsPanelHandle {
+  restart: () => void
+  redeploy: () => void
 }
 
-export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
+export interface AgentSettingsPanelProps {
+  agent: Agent
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsPanelProps>(function AgentSettingsPanel({ agent, onDirtyChange }, ref) {
   const [model, setModel] = useState(agent.model)
   const [instructions, setInstructions] = useState(agent.instructions)
   const [agentTags, setAgentTags] = useState(agent.tags)
@@ -59,6 +62,43 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
   const updateConfig = useUpdateAgentConfig()
 
   const isDeploying = agent.lifecycleStatus === "deploying"
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+
+  const handleRestart = useCallback(async () => {
+    if (!dirty) {
+      restart(agent.id)
+      return
+    }
+    if (instructions !== agent.instructions) {
+      updateInstructions(agent.id, instructions)
+    }
+    const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, { command: string; args: string[] }> } = {}
+    if (model !== agent.model) configDelta.model = model
+    if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
+    if (mcpDirty) {
+      configDelta.mcpRegistryNames = mcpRegistryNames
+      if (Object.keys(mcpCustomServers).length > 0) {
+        configDelta.mcpCustomServers = mcpCustomServers
+      }
+    }
+    if (Object.keys(configDelta).length > 0) {
+      updateConfig(agent.id, configDelta)
+    } else {
+      hardRestart(agent.id)
+    }
+  }, [dirty, restart, agent.id, agent.instructions, agent.model, agent.tags, instructions, model, agentTags, mcpDirty, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig, hardRestart])
+
+  const handleRedeploy = useCallback(() => {
+    hardRestart(agent.id)
+  }, [hardRestart, agent.id])
+
+  useImperativeHandle(ref, () => ({
+    restart: handleRestart,
+    redeploy: handleRedeploy,
+  }), [handleRestart, handleRedeploy])
 
   const addMcp = useCallback((name: string) => {
     if (!mcpRegistryNames.includes(name)) {
@@ -91,39 +131,6 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
     setCustomArgs("")
     setShowCustomMcp(false)
   }, [customName, customCommand, customArgs])
-
-  const handleRestart = async () => {
-    if (!dirty) {
-      restart(agent.id)
-      return
-    }
-
-    // Save instructions first (doesn't restart)
-    if (instructions !== agent.instructions) {
-      updateInstructions(agent.id, instructions)
-    }
-
-    // Collect config changes — updateConfig internally hard-restarts
-    const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, { command: string; args: string[] }> } = {}
-    if (model !== agent.model) configDelta.model = model
-    if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
-    if (mcpDirty) {
-      configDelta.mcpRegistryNames = mcpRegistryNames
-      if (Object.keys(mcpCustomServers).length > 0) {
-        configDelta.mcpCustomServers = mcpCustomServers
-      }
-    }
-
-    if (Object.keys(configDelta).length > 0) {
-      updateConfig(agent.id, configDelta)
-    } else {
-      hardRestart(agent.id)
-    }
-  }
-
-  const handleRedeploy = () => {
-    hardRestart(agent.id)
-  }
 
   const handleRemove = () => {
     remove(agent.id)
@@ -339,44 +346,8 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
         Runtime: {agent.runtime} · Workspace: {agent.workspacePath}
       </div>
 
-      {/* Restart banner */}
-      {dirty && (
-        <div className="flex items-center gap-2 px-2.5 py-2 rounded-md bg-warning-subtle/30 border border-warning/20">
-          <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
-          <span className="text-[11px] text-warning">Changes require restart</span>
-        </div>
-      )}
-
-      {/* Action buttons */}
+      {/* Remove button -- destructive, stays in settings body */}
       <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
-          disabled={isDeploying}
-          onClick={handleRestart}
-          className={cn(
-            "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px] font-medium transition-colors",
-            isDeploying
-              ? "border-border-subtle text-muted cursor-not-allowed"
-              : "border-accent/30 text-accent hover:bg-accent/10",
-          )}
-        >
-          <RotateCcw className={cn("h-3 w-3", isDeploying && "animate-spin")} />
-          {isDeploying ? "Deploying..." : "Restart"}
-        </button>
-        <button
-          type="button"
-          disabled={isDeploying}
-          onClick={handleRedeploy}
-          className={cn(
-            "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px] font-medium transition-colors",
-            isDeploying
-              ? "border-border-subtle text-muted cursor-not-allowed"
-              : "border-border-default text-secondary hover:bg-surface-sunken/40",
-          )}
-        >
-          <RefreshCw className={cn("h-3 w-3", isDeploying && "animate-spin")} />
-          Redeploy
-        </button>
         <span className="flex-1" />
         <button
           type="button"
@@ -395,4 +366,4 @@ export function AgentSettingsPanel({ agent }: AgentSettingsPanelProps) {
       </div>
     </div>
   )
-}
+})

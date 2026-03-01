@@ -11,7 +11,7 @@ from agents.models import Agent, AgentStatus, StreamEvent
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
-from agents.services.provision import provision_workspace, resolve_mcp_servers, write_secrets_env, write_theme_files
+from agents.services.provision import provision_workspace, write_secrets_env, write_theme_files
 from agents.services.utils import create_and_broadcast_event, terminate_sandbox
 from agents.utils import sanitize_name as _sanitize_name
 

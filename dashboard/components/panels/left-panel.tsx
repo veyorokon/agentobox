@@ -116,10 +116,16 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         {/* Hover edge hint — subtle accent line on right edge */}
         <div className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover/rail:bg-accent/25 transition-colors" />
 
-        {/* Project icon + secrets + cost */}
+        {/* Project icon + user + secrets + cost */}
         <div className="pt-3 pb-1 flex flex-col items-center gap-1.5">
           <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent">
             A
+          </div>
+          <div
+            className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
+            title="vahid-eyorokon"
+          >
+            V
           </div>
           <button
             type="button"
@@ -197,15 +203,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           })}
         </div>
 
-        {/* Bottom: user avatar */}
-        <div className="py-3 flex flex-col items-center border-t border-border-default">
-          <div
-            className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
-            title="vahid"
-          >
-            V
-          </div>
-        </div>
       </aside>
     )
   }
@@ -230,6 +227,9 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           <span className="text-sm font-medium text-default truncate">agentobox</span>
           <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
         </button>
+        <span className="text-[10px] text-muted/60 font-mono tabular-nums ml-1 shrink-0">
+          {formatCost(totalCost)}
+        </span>
         <span className="flex-1" />
         <button
           type="button"
@@ -239,9 +239,12 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         >
           <KeyRound className="h-3.5 w-3.5" />
         </button>
-        <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1 shrink-0">
-          {formatCost(totalCost)}
-        </span>
+        <div
+          className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow shrink-0"
+          title="vahid-eyorokon"
+        >
+          V
+        </div>
         <button
           type="button"
           onClick={handleToggleOpen}
@@ -328,6 +331,21 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           {/* Agent cards */}
           <ScrollArea className="flex-1 overflow-y-auto">
             <div className="p-3 space-y-2">
+              {loading && agents.length === 0 && (
+                <div className="space-y-2">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="rounded-lg border border-border-subtle bg-surface p-2.5 animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <div className="h-6 w-6 rounded-full bg-surface-sunken/60" />
+                        <div className="h-3 w-16 rounded bg-surface-sunken/60" />
+                        <div className="h-2.5 w-10 rounded-full bg-surface-sunken/40" />
+                        <div className="flex-1" />
+                        <div className="h-2 w-20 rounded bg-surface-sunken/40" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {filteredAgents.map((agent) => (
                 <AgentCardRow
                   key={agent.id}
@@ -375,15 +393,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         <SkillsPanel />
       )}
 
-      {/* Bottom: user avatar */}
-      <div className="px-3 py-2 border-t border-border-default flex items-center shrink-0">
-        <div
-          className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
-          title="vahid"
-        >
-          V
-        </div>
-      </div>
     </aside>
   )
 }

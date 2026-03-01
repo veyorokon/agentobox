@@ -23,7 +23,7 @@ export function AgentCardsPanel() {
   const setTagFilter = useSidebarStore(s => s.setAgentTagFilter)
 
   // ── Apollo (agents) ────────────────────────────────────────────────
-  const { data } = useAgents()
+  const { data, loading } = useAgents()
   const agents = data?.agents ?? []
   const allTags = useMemo(() => Array.from(new Set(agents.flatMap(a => a.tags ?? []))).sort(), [agents])
 
@@ -73,6 +73,21 @@ export function AgentCardsPanel() {
       {/* Agent cards */}
       <ScrollArea className="flex-1 overflow-y-auto">
         <div className="p-3 space-y-2">
+          {loading && agents.length === 0 && (
+            <div className="space-y-2">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="rounded-lg border border-border-subtle bg-surface p-2.5 animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <div className="h-6 w-6 rounded-full bg-surface-sunken/60" />
+                    <div className="h-3 w-16 rounded bg-surface-sunken/60" />
+                    <div className="h-2.5 w-10 rounded-full bg-surface-sunken/40" />
+                    <div className="flex-1" />
+                    <div className="h-2 w-20 rounded bg-surface-sunken/40" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {filteredAgents.map((agent) => (
             <AgentCardRow
               key={agent.id}
@@ -82,7 +97,7 @@ export function AgentCardsPanel() {
               onSelect={() => handleSelectAgent(agent.id)}
             />
           ))}
-          {filteredAgents.length === 0 && (
+          {filteredAgents.length === 0 && !loading && (
             <div className="py-6 text-center">
               <Users className="h-5 w-5 text-muted/20 mx-auto mb-1" />
               <p className="text-[11px] text-muted/50">No agents match filters</p>

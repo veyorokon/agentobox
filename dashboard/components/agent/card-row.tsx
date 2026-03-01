@@ -1,12 +1,11 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useRef } from "react"
 import {
   ArrowUp,
   ChevronRight,
   Check,
   CheckSquare,
-  Shield,
   Monitor,
   List,
   BookOpen,
@@ -23,9 +22,10 @@ import { AgentAvatar } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
 import { VncThumbnail } from "@/components/agent/vnc-thumbnail"
 import { AgentDetailFeed } from "@/components/agent/detail-feed"
-import { AgentSettingsPanel } from "@/components/agent/settings-panel"
+import { AgentSettingsPanel, type SettingsPanelHandle } from "@/components/agent/settings-panel"
 import { AgentSkillsView } from "@/components/agent/skills-view"
-import type { Agent, AttentionLevel, PendingItem, ViewMode } from "@/lib/types"
+import { CardActionStrip } from "@/components/agent/card-action-strip"
+import type { Agent, AttentionLevel, CardActionItem, ViewMode } from "@/lib/types"
 
 export interface AgentCardRowProps {
   agent: Agent
@@ -70,6 +70,10 @@ export function AgentCardRow({
   const isOpen = !selectable && isExpanded
   const pendingItems = useMemo(() => getPendingItemsForAgent(feedItems, agent.name), [feedItems, agent.name])
 
+  // Settings panel ref + dirty state
+  const settingsRef = useRef<SettingsPanelHandle>(null)
+  const [settingsDirty, setSettingsDirty] = useState(false)
+
   // Ephemeral state — view tab resets when card collapses
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
   const [composerText, setComposerText] = useState("")
@@ -83,7 +87,19 @@ export function AgentCardRow({
 
   const hasAttention = agent.attentionLevel !== "none"
   const attCfg = hasAttention ? ATTENTION_CONFIG[agent.attentionLevel as Exclude<AttentionLevel, "none">] : null
-  const hasPendingItem = pendingItems.length > 0
+
+  // Build unified action items: permissions → plans → config-dirty
+  const actionItems = useMemo(() => {
+    const items: CardActionItem[] = []
+    for (const p of pendingItems) {
+      if (p.type === "permission") items.push({ kind: "permission", feedItem: p })
+      else if (p.type === "plan") items.push({ kind: "plan", feedItem: p })
+    }
+    if (viewMode === "settings" && settingsDirty) {
+      items.push({ kind: "config-dirty" })
+    }
+    return items
+  }, [pendingItems, viewMode, settingsDirty])
 
   const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
     { id: "terminal", icon: Monitor, label: "Screen" },
@@ -207,86 +223,38 @@ export function AgentCardRow({
 
       {/* Open content -- animated reveal */}
       <Collapsible open={isOpen}>
-        {/* Content area -- grid overlay: VNC always sets height, other views scroll within */}
-        <div className="grid grid-cols-1 grid-rows-1 px-3 pb-2">
-          <div className={cn("col-start-1 row-start-1", viewMode !== "terminal" && "invisible")}>
-            <VncThumbnail agent={agent} />
+        {/* Content area -- VNC sets height, other views absolute-overlay and scroll within */}
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <div className={cn(viewMode !== "terminal" && "invisible")}>
+              <VncThumbnail agent={agent} />
+            </div>
+            {viewMode === "feed" && (
+              <div className="absolute inset-0 overflow-y-auto">
+                <AgentDetailFeed agent={agent} />
+              </div>
+            )}
+            {viewMode === "skills" && (
+              <div className="absolute inset-0 overflow-y-auto">
+                <AgentSkillsView agent={agent} />
+              </div>
+            )}
+            {viewMode === "settings" && (
+              <div className="absolute inset-0 overflow-y-auto">
+                <AgentSettingsPanel ref={settingsRef} agent={agent} onDirtyChange={setSettingsDirty} />
+              </div>
+            )}
           </div>
-          {viewMode === "feed" && (
-            <div className="col-start-1 row-start-1 min-h-0 overflow-y-auto">
-              <AgentDetailFeed agent={agent} />
-            </div>
-          )}
-          {viewMode === "skills" && (
-            <div className="col-start-1 row-start-1 min-h-0 overflow-y-auto">
-              <AgentSkillsView agent={agent} />
-            </div>
-          )}
-          {viewMode === "settings" && (
-            <div className="col-start-1 row-start-1 min-h-0 overflow-y-auto">
-              <AgentSettingsPanel agent={agent} />
-            </div>
-          )}
         </div>
 
-        {/* Action strip -- slides in above composer when agent has pending items */}
-        {hasPendingItem && (
-          <div className="border-t border-warning/20 bg-warning-subtle/10 px-3 py-1.5">
-            {pendingItems.map((item) => (
-              <div key={item.id} className="flex items-center gap-2 min-w-0">
-                <Shield className="h-3 w-3 text-warning shrink-0" />
-                <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
-                  {item.type === "permission"
-                    ? item.command
-                    : `Plan: ${item.title}`}
-                </span>
-                {item.type === "permission" ? (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => resolvePermission(item.id, "allowed")}
-                      className="px-2 py-0.5 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                    >
-                      Allow
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => resolvePermission(item.id, "denied")}
-                      className="px-2 py-0.5 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                    >
-                      Deny
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => resolvePermission(item.id, "allowed", true)}
-                      className="px-2 py-0.5 rounded text-[10px] font-medium text-muted border border-border-subtle hover:bg-surface-raised/40 transition-colors"
-                      title="Allow and don't ask again for this tool"
-                    >
-                      Always
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => resolvePlan(item.id, "approved")}
-                      className="px-2 py-0.5 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => resolvePlan(item.id, "rejected")}
-                      className="px-2 py-0.5 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Unified action strip -- permissions, plans, config-dirty in one stepper */}
+        <CardActionStrip
+          items={actionItems}
+          onResolvePermission={resolvePermission}
+          onResolvePlan={resolvePlan}
+          onRestart={() => settingsRef.current?.restart()}
+          onRedeploy={() => settingsRef.current?.redeploy()}
+        />
 
         {/* Bottom toolbar -- always present: view icons + composer + todo */}
         <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-border-subtle bg-surface-sunken/20">
