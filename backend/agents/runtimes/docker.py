@@ -69,6 +69,10 @@ class DockerRuntime:
                 },
                 network=network,
                 volumes=docker_volumes or None,
+                # Resource limits — prevent fork bombs and runaway processes
+                mem_limit="4g",
+                cpu_quota=200000,  # 2 CPU cores (100000 per core)
+                pids_limit=500,
             )
             # VNC URL uses container name DNS — the backend proxies VNC
             # to the browser (via VncProxyConsumer), so this URL only needs
