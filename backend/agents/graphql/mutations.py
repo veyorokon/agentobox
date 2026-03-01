@@ -374,6 +374,9 @@ class AgentMutation:
             except Exception:
                 log.exception("claude_md_write_failed", agent_name=agent.name)
 
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(agent)
+
         return agent
 
     @strawberry.mutation
@@ -442,6 +445,9 @@ class AgentMutation:
         if input.tags is not None:
             update_fields.append("tags")
         await agent.asave(update_fields=update_fields)
+
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(agent)
 
         return await hard_restart_agent(str(agent.id))
 

@@ -2,7 +2,7 @@
 
 These tests catch drift mechanically — import boundaries, naming conventions,
 and model field discipline. They read source files as text and check patterns.
-No Django ORM needed.
+No Django ORM needed (except schema contract test which needs Strawberry).
 """
 
 import ast
@@ -16,6 +16,8 @@ AGENTS_DIR = Path(__file__).resolve().parent.parent
 ADAPTERS_DIR = AGENTS_DIR / "adapters"
 SERVICES_DIR = AGENTS_DIR / "services"
 GRAPHQL_DIR = AGENTS_DIR / "graphql"
+PROJECT_ROOT = AGENTS_DIR.parent.parent  # backend/
+AGENT_ROOT = PROJECT_ROOT.parent / "agent"  # agent/
 
 
 def _read_source(path: Path) -> str:
@@ -327,4 +329,228 @@ class TestAdapterPurity:
         assert not violations, (
             f"Adapter read methods contain string slicing ([:N]): {violations}. "
             "Adapters must return full content — truncation belongs at storage/display layer."
+        )
+
+
+# ── Observation loop completeness ──
+
+
+class TestObservationLoop:
+    """Every state mutation must complete the observation loop.
+
+    If the backend changes agent/task/feed state but doesn't broadcast,
+    the dashboard lies. These tests scan mutation handlers for .asave()
+    and .acreate() calls and verify a corresponding broadcast call exists
+    in the same function body.
+    """
+
+    def _functions_in_file(self, path: Path) -> list[tuple[str, str]]:
+        """Return (function_name, function_source) for all async functions."""
+        src = _read_source(path)
+        tree = ast.parse(src)
+        results = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AsyncFunctionDef):
+                fn_src = ast.get_source_segment(src, node) or ""
+                results.append((node.name, fn_src))
+        return results
+
+    def test_agent_mutations_must_broadcast(self):
+        """GraphQL mutations that save Agent state must call broadcast_agent_update.
+
+        Mutations on non-agent models (feedback, skills) are exempt — they don't
+        change dashboard-visible agent state. Mutations that delegate to mcp_coord
+        are also exempt since mcp_coord handles its own broadcasts.
+        """
+        mutations_path = GRAPHQL_DIR / "mutations.py"
+        violations = []
+
+        # Mutations that return AgentType are agent mutations
+        src = _read_source(mutations_path)
+        tree = ast.parse(src)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            if node.name.startswith("_"):
+                continue
+
+            fn_src = ast.get_source_segment(src, node) or ""
+
+            # Only check functions that save AND return AgentType
+            has_save = ".asave(" in fn_src
+            returns_agent = "AgentType" in (ast.dump(node.returns) if node.returns else "")
+            if not (has_save and returns_agent):
+                continue
+
+            # Exempt: delegates to mcp_coord (which handles its own broadcasts)
+            delegates_to_mcp = "mcp_coord." in fn_src
+            if delegates_to_mcp:
+                continue
+
+            has_broadcast = "broadcast_agent_update" in fn_src
+            if not has_broadcast:
+                violations.append(node.name)
+
+        assert not violations, (
+            f"Agent mutations with .asave() but no broadcast_agent_update: {violations}. "
+            "Every agent state change must complete the observation loop."
+        )
+
+    def test_mcp_coord_task_mutations_broadcast(self):
+        """MCP coord task create/update must broadcast after state changes."""
+        mcp_path = SERVICES_DIR / "mcp_coord.py"
+        src = _read_source(mcp_path)
+        tree = ast.parse(src)
+
+        # Check the core logic functions (not the @mcp.tool wrappers)
+        target_fns = {"create_task", "update_task"}
+        violations = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AsyncFunctionDef) and node.name in target_fns:
+                fn_src = ast.get_source_segment(src, node) or ""
+                if "broadcast_agent_update" not in fn_src:
+                    violations.append(node.name)
+
+        assert not violations, (
+            f"MCP coord functions missing broadcast_agent_update: {violations}. "
+            "Task mutations must notify the dashboard."
+        )
+
+    def test_lifecycle_state_changes_broadcast(self):
+        """Lifecycle functions that change agent.status must broadcast."""
+        lifecycle_path = SERVICES_DIR / "lifecycle.py"
+        violations = []
+
+        for name, fn_src in self._functions_in_file(lifecycle_path):
+            if name.startswith("_"):
+                continue
+            # Check for status assignment pattern
+            changes_status = (
+                '.status = ' in fn_src
+                or 'update_fields=["status"' in fn_src
+                or "update_fields=['status'" in fn_src
+            )
+            if not changes_status:
+                continue
+            if "broadcast_agent_update" not in fn_src:
+                violations.append(name)
+
+        assert not violations, (
+            f"Lifecycle functions changing status without broadcast: {violations}. "
+            "Every status change must complete the observation loop."
+        )
+
+
+# ── Schema contract ──
+
+
+class TestSchemaContract:
+    """The checked-in schema.graphql must match what the backend actually serves.
+
+    If someone changes a Python type but forgets `make schema`, the frontend
+    builds against a stale contract. This test catches that drift.
+    """
+
+    def test_schema_matches_checked_in_file(self):
+        """Generated schema must match dashboard/schema.graphql."""
+        schema_path = PROJECT_ROOT.parent / "dashboard" / "schema.graphql"
+        if not schema_path.exists():
+            pytest.skip("dashboard/schema.graphql not found")
+
+        from schema import schema
+        generated = schema.as_str()
+        checked_in = schema_path.read_text(encoding="utf-8")
+
+        assert generated.strip() == checked_in.strip(), (
+            "GraphQL schema drift detected — the checked-in dashboard/schema.graphql "
+            "does not match what the backend generates. Run `make schema` to sync."
+        )
+
+
+# ── Cross-boundary contract pinning ──
+
+
+class TestCrossBoundaryContracts:
+    """The hook bridge and backend must agree on tool names.
+
+    The hook bridge (team-bridge.py) intercepts CC native tool calls by name.
+    The backend (views.py) maps those names to handler functions. If either
+    side drifts, tools silently stop working — no error, no log, just broken.
+    """
+
+    def _extract_bridge_set(self) -> set[str]:
+        """Extract BRIDGED tool names from team-bridge.py."""
+        bridge_path = AGENT_ROOT / "rootfs" / "opt" / "abox" / "hooks" / "team-bridge.py"
+        if not bridge_path.exists():
+            pytest.skip("team-bridge.py not found")
+        src = _read_source(bridge_path)
+        tree = ast.parse(src)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in ("BRIDGED", "PRE", "POST"):
+                        # PRE and POST are sets; BRIDGED = PRE | POST
+                        pass
+        # Simpler: just extract the string literals from PRE and POST sets
+        pre = set()
+        post = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "PRE":
+                        if isinstance(node.value, ast.Set):
+                            for elt in node.value.elts:
+                                if isinstance(elt, ast.Constant):
+                                    pre.add(elt.value)
+                    if isinstance(target, ast.Name) and target.id == "POST":
+                        if isinstance(node.value, ast.Set):
+                            for elt in node.value.elts:
+                                if isinstance(elt, ast.Constant):
+                                    post.add(elt.value)
+        return pre | post
+
+    def _extract_backend_handler_names(self) -> set[str]:
+        """Extract handler tool names from views.py _PRE_HANDLERS + _POST_HANDLERS."""
+        views_path = GRAPHQL_DIR.parent / "views.py"
+        src = _read_source(views_path)
+        # Extract string keys from _PRE_HANDLERS.update({...}) and _POST_HANDLERS.update({...})
+        names = set()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if (isinstance(func, ast.Attribute)
+                        and func.attr == "update"
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id in ("_PRE_HANDLERS", "_POST_HANDLERS")):
+                    for arg in node.args:
+                        if isinstance(arg, ast.Dict):
+                            for key in arg.keys:
+                                if isinstance(key, ast.Constant):
+                                    names.add(key.value)
+        return names
+
+    def test_bridge_and_backend_agree_on_tool_names(self):
+        """Hook bridge BRIDGED set must match backend handler keys exactly."""
+        bridge_names = self._extract_bridge_set()
+        backend_names = self._extract_backend_handler_names()
+
+        if not bridge_names:
+            pytest.skip("Could not extract bridge tool names")
+        if not backend_names:
+            pytest.skip("Could not extract backend handler names")
+
+        only_in_bridge = bridge_names - backend_names
+        only_in_backend = backend_names - bridge_names
+
+        assert not only_in_bridge, (
+            f"Hook bridge intercepts tools the backend doesn't handle: {only_in_bridge}. "
+            "Add handlers in views.py or remove from team-bridge.py."
+        )
+        assert not only_in_backend, (
+            f"Backend handles tools the hook bridge doesn't intercept: {only_in_backend}. "
+            "Add to BRIDGED set in team-bridge.py or remove from views.py."
         )
