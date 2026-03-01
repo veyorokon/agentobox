@@ -35,6 +35,8 @@ async def create_agent(
     instructions: str = "",
     role: str = "worker",
     volume_mounts: list[dict] | None = None,
+    mode: str = "auto",
+    tags: list[str] | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from config.telemetry import bind_agent_context
@@ -91,6 +93,8 @@ async def create_agent(
         volume_mounts=volume_mounts or [],
         instructions=instructions,
         role=role,
+        mode=mode,
+        tags=tags or [],
         config_snapshot=config_snapshot,
     )
 
