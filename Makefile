@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -30,3 +30,6 @@ up:
 
 down:
 	docker compose down
+
+docs:
+	docker compose exec -T backend uv run python manage.py generate_reference --to-stdout > docs/REFERENCE.md

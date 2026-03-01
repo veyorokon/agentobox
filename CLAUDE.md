@@ -25,6 +25,7 @@ docker compose up -d          # postgres, redis, backend, dashboard
 
 - `docs/FOUNDATIONS.md` — Product axioms, principles, design decisions, open questions
 - `docs/ARCHITECTURE.md` — Technical reference: system architecture, patterns, services, models
+- `docs/REFERENCE.md` — Auto-generated from codebase docstrings and annotations. Regenerate with `make docs`.
 - `docs/DASHBOARD-UX-SPEC.md` — UX framework, feature inventory, component hierarchy
 - `docs/archive/` — Historical research (experiments, binary analysis, Crush comparison)
 
