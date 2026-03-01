@@ -79,6 +79,10 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
 
+        # Track relay connection state
+        self.agent.relay_connected = True
+        await self.agent.asave(update_fields=["relay_connected"])
+
         # Start the background reconciliation loop on first relay connect
         from agents.services.reconcile import ensure_running
         ensure_running()
@@ -126,6 +130,15 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
 
     async def disconnect(self, code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+        # Track relay connection state — use filter().aupdate() because
+        # self.agent may be stale or the agent row may have been deleted.
+        try:
+            from agents.models import Agent
+            await Agent.objects.filter(id=self.agent_id).aupdate(relay_connected=False)
+        except Exception:
+            log.exception("relay_connected_update_failed", agent_id=self.agent_id)
+
         log.info("relay_ws_disconnected", agent_id=self.agent_id, code=code)
 
     async def receive_json(self, content):

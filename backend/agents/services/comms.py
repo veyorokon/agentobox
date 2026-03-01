@@ -74,17 +74,29 @@ def _normalize_content(content: list) -> list:
     return content
 
 
-async def _push_to_relay(agent_id: str, command: dict) -> None:
+async def _push_to_relay(agent_id: str, command: dict) -> bool:
     """Push a command to the relay via Channels group_send.
 
-    The RelayConsumer receives this on the relay_{agent_id} group
-    and forwards it to the relay process over WebSocket.
+    Returns False if the relay is known to be disconnected.
+    Callers can decide whether to raise, retry, or log.
     """
+    try:
+        connected = await Agent.objects.filter(
+            id=agent_id,
+        ).values_list("relay_connected", flat=True).afirst()
+    except Exception:
+        connected = None  # DB error — try sending anyway
+
+    if connected is False:
+        log.warning("push_to_disconnected_relay", agent_id=agent_id, command_type=command.get("type", ""))
+        return False
+
     channel_layer = get_channel_layer()
     await channel_layer.group_send(
         f"relay_{agent_id}",
         {"type": "relay.command", "command": command},
     )
+    return True
 
 
 async def send_message(agent_id: str, message: str, content: list | None = None) -> bool:
@@ -288,7 +300,9 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     )
 
     # Push CC wire format to relay
-    await _push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
+    sent = await _push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
+    if not sent:
+        op_log.warning("mode_change_lost_relay_disconnected")
 
     op_log.info("mode_change_sent")
     return agent
@@ -308,7 +322,10 @@ async def interrupt_agent(agent_id: str) -> bool:
     await create_and_broadcast_event(agent, event_type="interrupted", data={})
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
+    sent = await _push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
+    if not sent:
+        op_log.warning("interrupt_lost_relay_disconnected")
+        return False
 
     op_log.info("interrupt_sent")
     return True
@@ -332,7 +349,10 @@ async def restart_agent(agent_id: str) -> bool:
     await create_and_broadcast_event(agent, event_type="restarting", data={})
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
+    sent = await _push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
+    if not sent:
+        op_log.warning("restart_lost_relay_disconnected")
+        return False
 
     op_log.info("restart_sent")
     return True
@@ -373,7 +393,9 @@ async def clear_agent_session(agent_id: str) -> bool:
     )
 
     # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
+    sent = await _push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
+    if not sent:
+        op_log.warning("clear_session_lost_relay_disconnected")
 
     op_log.info("session_cleared")
     return True
