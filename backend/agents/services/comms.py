@@ -16,6 +16,7 @@ import copy
 import uuid
 
 import structlog
+from asgiref.sync import sync_to_async as _s2a
 from channels.layers import get_channel_layer
 
 from agents.models import Agent, AgentStatus
@@ -99,7 +100,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
     # Build parts from content blocks or plain text
     if content:
         parts = content
-        api_parts = _normalize_content(copy.deepcopy(parts))
+        api_parts = await _s2a(_normalize_content)(copy.deepcopy(parts))
     else:
         parts = [{"type": "text", "text": message}]
         api_parts = parts
@@ -160,6 +161,14 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
         message_id=f"answer_{uuid.uuid4().hex[:16]}",
     )
 
+    # Auto-restart dead agents — relay will backfill the answer on connect
+    if _needs_restart(agent):
+        from agents.services.lifecycle import hard_restart_agent
+        op_log.info("auto_restarting_agent", current_status=agent.status)
+        await hard_restart_agent(str(agent_id))
+        op_log.info("question_answered", delivery="backfill")
+        return True
+
     # Push to relay via WebSocket
     input_msg = {"type": "user", "message": {"role": "user", "content": parts}}
     await _push_to_relay(agent_id, {"type": "input", "payload": input_msg})
@@ -182,7 +191,7 @@ async def broadcast_message(
 
     if content:
         parts = content
-        api_parts = _normalize_content(copy.deepcopy(parts))
+        api_parts = await _s2a(_normalize_content)(copy.deepcopy(parts))
     else:
         parts = [{"type": "text", "text": message}]
         api_parts = parts
@@ -235,34 +244,51 @@ async def broadcast_message(
 
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
-    """Change an agent's permission mode via relay restart."""
-    VALID_MODES = {"default", "plan", "acceptEdits", "bypassPermissions", "dontAsk"}
-    op_log = log.bind(agent_id=agent_id, mode=mode)
+    """Change an agent's permission mode via relay restart.
 
-    if mode not in VALID_MODES:
-        raise ValueError(f"Invalid permission mode: {mode}")
+    Accepts both frontend vocabulary (auto, plan, supervised) and CC wire
+    vocabulary (bypassPermissions, plan, default, etc.) for backwards compat.
+    Stores frontend vocabulary in agent.mode and CC wire format in
+    agent.permission_mode.
+    """
+    from agents.adapters.claude_code import _MODE_TO_PERMISSION, _PERM_TO_MODE
+
+    # Accept both frontend and CC vocabularies
+    if mode in _MODE_TO_PERMISSION:
+        # Frontend vocabulary -- translate for relay
+        frontend_mode = mode
+        wire_mode = _MODE_TO_PERMISSION[mode]
+    elif mode in _PERM_TO_MODE:
+        # CC wire vocabulary (backwards compat)
+        frontend_mode = _PERM_TO_MODE[mode]
+        wire_mode = mode
+    else:
+        raise ValueError(f"Invalid mode: {mode}. Use: auto, plan, supervised")
+
+    op_log = log.bind(agent_id=agent_id, mode=frontend_mode)
 
     agent = await Agent.objects.aget(id=agent_id)
 
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
         raise ValueError(f"Agent must be running or idle (current: {agent.status})")
 
-    if agent.permission_mode == mode:
+    if agent.mode == frontend_mode:
         op_log.info("mode_change_noop")
         return agent
 
-    agent.permission_mode = mode
-    await agent.asave(update_fields=["permission_mode"])
+    agent.mode = frontend_mode
+    agent.permission_mode = wire_mode
+    await agent.asave(update_fields=["mode", "permission_mode"])
 
     await broadcast_agent_update(agent)
 
     # Store mode change as StreamEvent
     stream_event = await create_and_broadcast_event(
-        agent, event_type="mode_change", data={"mode": mode},
+        agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
-    # Push to relay via WebSocket
-    await _push_to_relay(agent_id, {"type": "mode", "mode": mode})
+    # Push CC wire format to relay
+    await _push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
 
     op_log.info("mode_change_sent")
     return agent

@@ -1,7 +1,6 @@
 import structlog
 
 import strawberry
-from asgiref.sync import sync_to_async
 from strawberry import ID
 from strawberry.scalars import JSON
 
@@ -340,7 +339,6 @@ class AgentMutation:
 
     @strawberry.mutation
     async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:
-        from agents.models import Agent, AgentStatus
         from agents.runtimes import get_runtime
         from agents.adapters import get_adapter
 
@@ -352,17 +350,8 @@ class AgentMutation:
         if agent.sandbox_id:
             try:
                 # Build team roster (same as provisioning)
-                all_agents = await sync_to_async(
-                    lambda: list(
-                        Agent.objects.filter(project=agent.project)
-                        .exclude(status=AgentStatus.STOPPED)
-                    ),
-                    thread_sensitive=False,
-                )()
-                team_members = [
-                    {"name": a.name, "role": a.role, "instructions": a.instructions or ""}
-                    for a in all_agents
-                ]
+                from agents.services.utils import get_team_roster
+                team_members = await get_team_roster(agent.project)
 
                 team_name = agent.project.name.lower().replace(" ", "-")
                 runtime = get_runtime(agent.runtime)

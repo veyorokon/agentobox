@@ -1,8 +1,9 @@
 """Shared service utilities -- thin helpers for repeated patterns."""
 
 import structlog
+from asgiref.sync import sync_to_async
 
-from agents.models import Agent, StreamEvent
+from agents.models import Agent, AgentStatus, StreamEvent
 from agents.services.broadcast import broadcast_event
 
 log = structlog.get_logger("agents.utils")
@@ -28,6 +29,21 @@ async def create_and_broadcast_event(
     )
     await broadcast_event(agent, stream_event)
     return stream_event
+
+
+async def get_team_roster(project) -> list[dict]:
+    """Build team roster for CLAUDE.md -- list of {name, role, instructions}."""
+    all_agents = await sync_to_async(
+        lambda: list(
+            Agent.objects.filter(project=project)
+            .exclude(status=AgentStatus.STOPPED)
+        ),
+        thread_sensitive=False,
+    )()
+    return [
+        {"name": a.name, "role": a.role, "instructions": a.instructions or ""}
+        for a in all_agents
+    ]
 
 
 async def terminate_sandbox(agent: Agent, op_log) -> bool:

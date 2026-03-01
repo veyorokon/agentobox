@@ -168,7 +168,7 @@ async def _detect_stuck_deploys(now):
 
     stuck_agents = await _get_agents(
         status=AgentStatus.DEPLOYING,
-        created_at__lt=deploy_cutoff,
+        updated_at__lt=deploy_cutoff,
     )
 
     for agent in stuck_agents:

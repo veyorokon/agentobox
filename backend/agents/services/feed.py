@@ -181,13 +181,23 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
     item = await update_feed_item(item, plan_status=verdict)
 
     if item.agent_record_id:
-        from agents.services.comms import send_message
-        msg = (
-            "Plan approved. Proceed with the implementation."
-            if verdict == "approved"
-            else "Plan rejected. Stop and wait for new instructions."
-        )
-        await send_message(str(item.agent_record_id), msg)
+        from agents.models import Agent, AgentStatus
+
+        try:
+            agent = await Agent.objects.aget(id=item.agent_record_id)
+        except Agent.DoesNotExist:
+            agent = None
+
+        # Don't restart a dead agent just to tell it "rejected"
+        is_dead = agent and agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
+        if not (verdict == "rejected" and is_dead):
+            from agents.services.comms import send_message
+            msg = (
+                "Plan approved. Proceed with the implementation."
+                if verdict == "approved"
+                else "Plan rejected. Stop and wait for new instructions."
+            )
+            await send_message(str(item.agent_record_id), msg)
 
     if item.agent_record_id:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))

@@ -44,8 +44,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
     """
 
     async def connect(self):
-        import hmac
-        from agents.models import Agent
+        from agents.services.auth_relay import get_relay_agent
 
         self.agent_id = str(self.scope["url_route"]["kwargs"]["agent_id"])
         self.group_name = f"relay_{self.agent_id}"
@@ -62,15 +61,17 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 break
 
         try:
-            self.agent = await Agent.objects.aget(id=self.agent_id)
-        except Agent.DoesNotExist:
-            log.warning("relay_ws_reject", reason="agent_not_found", agent_id=self.agent_id)
+            self.agent = await get_relay_agent(token)
+        except ValueError:
+            reason = "bad_token" if token else "missing_token"
+            log.warning("relay_ws_reject", reason=reason, agent_id=self.agent_id)
             await self.accept()
-            await self.close(code=4004)
+            await self.close(code=4001)
             return
 
-        if not self.agent.relay_token or not token or not hmac.compare_digest(token, self.agent.relay_token):
-            log.warning("relay_ws_reject", reason="bad_token", agent_id=self.agent_id)
+        # Verify agent ID matches the URL
+        if str(self.agent.id) != self.agent_id:
+            log.warning("relay_ws_reject", reason="agent_id_mismatch", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4001)
             return
