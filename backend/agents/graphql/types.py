@@ -19,6 +19,19 @@ class TodoProgressType:
 
 
 @strawberry.type
+class AgentTaskType:
+    task_id: str
+    subject: str
+    description: str
+    status: str
+    owner: str
+    active_form: str
+    blocked_by: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+@strawberry.type
 class FeedQuestionType:
     text: str
     options: list[str]
@@ -247,6 +260,21 @@ class AgentType:
         if result is None:
             return None
         return TodoProgressType(done=result[0], total=result[1])
+
+    @strawberry_django.field
+    async def tasks(self) -> list[AgentTaskType]:
+        def _fetch():
+            return list(
+                models.AgentTask.objects.filter(agent_id=self.id)
+                .exclude(status="deleted")
+                .order_by("created_at")
+                .values(
+                    "task_id", "subject", "description", "status",
+                    "owner", "active_form", "blocked_by", "created_at", "updated_at",
+                )
+            )
+        rows = await sync_to_async(_fetch, thread_sensitive=False)()
+        return [AgentTaskType(**row) for row in rows]
 
 
 # ── TeamFeedItem type ──

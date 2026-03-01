@@ -6,7 +6,7 @@ from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
-from agents.graphql.types import AgentFeedbackType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
+from agents.graphql.types import AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("agents.mutations")
 
@@ -455,6 +455,74 @@ class AgentMutation:
         await agent.asave(update_fields=update_fields)
 
         return await hard_restart_agent(str(agent.id))
+
+    # --- Tasks ---
+
+    @strawberry.mutation
+    async def update_task(
+        self,
+        agent_id: ID,
+        task_id: str,
+        status: str,
+        info: strawberry.types.Info,
+    ) -> AgentTaskType:
+        from agents.models import AgentTask
+        from agents.services.broadcast import broadcast_agent_update
+
+        agent = await authorize_agent(info, agent_id)
+
+        task = await AgentTask.objects.aget(agent__id=agent_id, task_id=task_id)
+        task.status = status
+        await task.asave(update_fields=["status"])
+
+        await broadcast_agent_update(agent)
+
+        return AgentTaskType(
+            task_id=task.task_id,
+            subject=task.subject,
+            description=task.description,
+            status=task.status,
+            owner=task.owner,
+            active_form=task.active_form,
+            blocked_by=task.blocked_by,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+        )
+
+    @strawberry.mutation
+    async def create_task(
+        self,
+        agent_id: ID,
+        subject: str,
+        info: strawberry.types.Info,
+    ) -> AgentTaskType:
+        from uuid import uuid4
+        from agents.models import AgentTask
+        from agents.services.broadcast import broadcast_agent_update
+
+        agent = await authorize_agent(info, agent_id)
+
+        task = await AgentTask.objects.acreate(
+            agent=agent,
+            project_id=agent.project_id,
+            task_id=f"dash_{uuid4().hex[:12]}",
+            subject=subject,
+            status="pending",
+        )
+
+        await broadcast_agent_update(agent)
+
+        return AgentTaskType(
+            task_id=task.task_id,
+            subject=task.subject,
+            description=task.description,
+            status=task.status,
+            owner=task.owner,
+            active_form=task.active_form,
+            blocked_by=task.blocked_by,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+        )
 
     # --- Skills ---
 

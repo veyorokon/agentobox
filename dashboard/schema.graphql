@@ -7,6 +7,18 @@ type AgentFeedbackType {
   agentId: String!
 }
 
+type AgentTaskType {
+  taskId: String!
+  subject: String!
+  description: String!
+  status: String!
+  owner: String!
+  activeForm: String!
+  blockedBy: [String!]!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
 type AgentType {
   id: UUID!
   name: String!
@@ -28,6 +40,7 @@ type AgentType {
   workspacePath: String!
   mcpServers: [String!]!
   todoProgress: TodoProgressType
+  tasks: [AgentTaskType!]!
 }
 
 input AnswerQuestionInput {
@@ -144,6 +157,8 @@ type Mutation {
   updateAgentInstructions(input: UpdateAgentInstructionsInput!): AgentType!
   rateAgent(input: RateFeedbackInput!): AgentFeedbackType
   updateAgentConfig(input: UpdateAgentConfigInput!): AgentType!
+  updateTask(agentId: ID!, taskId: String!, status: String!): AgentTaskType!
+  createTask(agentId: ID!, subject: String!): AgentTaskType!
   createSkill(input: CreateSkillInput!): SkillType!
   updateSkill(input: UpdateSkillInput!): SkillType!
   deleteSkill(skillId: ID!): Boolean!

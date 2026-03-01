@@ -9,6 +9,7 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   BookOpen,
+  CheckSquare,
   Monitor,
   List,
   Settings,
@@ -296,6 +297,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
               {([
                 { id: "terminal" as ViewMode, icon: Monitor, label: "All screens" },
                 { id: "feed" as ViewMode, icon: List, label: "All feeds" },
+                { id: "tasks" as ViewMode, icon: CheckSquare, label: "All tasks" },
                 { id: "skills" as ViewMode, icon: BookOpen, label: "All skills" },
                 { id: "settings" as ViewMode, icon: Settings, label: "All settings" },
               ]).map(({ id, icon: Icon, label }) => (

@@ -24,6 +24,7 @@ import { VncThumbnail } from "@/components/agent/vnc-thumbnail"
 import { AgentDetailFeed } from "@/components/agent/detail-feed"
 import { AgentSettingsPanel, type SettingsPanelHandle } from "@/components/agent/settings-panel"
 import { AgentSkillsView } from "@/components/agent/skills-view"
+import { AgentTasksView } from "@/components/agent/tasks-view"
 import { CardActionStrip } from "@/components/agent/card-action-strip"
 import type { Agent, AttentionLevel, CardActionItem, ViewMode } from "@/lib/types"
 
@@ -245,6 +246,11 @@ export function AgentCardRow({
                 <AgentSkillsView agent={agent} />
               </div>
             )}
+            {viewMode === "tasks" && (
+              <div className="absolute inset-0 overflow-y-auto">
+                <AgentTasksView agent={agent} />
+              </div>
+            )}
             {viewMode === "settings" && (
               <div className="absolute inset-0 overflow-y-auto">
                 <AgentSettingsPanel ref={settingsRef} agent={agent} onDirtyChange={setSettingsDirty} />
@@ -309,15 +315,23 @@ export function AgentCardRow({
             </button>
           </div>
 
-          {/* Todo progress */}
-          {agent.todoProgress && (
-            <span className="flex items-center gap-1 shrink-0">
-              <CheckSquare className="h-3 w-3 text-muted/50" />
-              <span className="text-[9px] font-mono text-muted tabular-nums">
-                {agent.todoProgress.done}/{agent.todoProgress.total}
-              </span>
+          {/* Todo progress — click to switch to tasks view */}
+          <button
+            type="button"
+            onClick={() => setViewMode("tasks")}
+            className={cn(
+              "flex items-center gap-1 shrink-0 px-1 py-0.5 rounded transition-colors",
+              viewMode === "tasks"
+                ? "bg-accent/15 text-accent"
+                : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
+            )}
+            title="View tasks"
+          >
+            <CheckSquare className="h-3 w-3" />
+            <span className="text-[9px] font-mono tabular-nums">
+              {agent.todoProgress ? `${agent.todoProgress.done}/${agent.todoProgress.total}` : "0/0"}
             </span>
-          )}
+          </button>
         </div>
       </Collapsible>
     </div>

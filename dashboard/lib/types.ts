@@ -88,7 +88,19 @@ export type TimelineEntry = {
   createdAt: string
 }
 
-export type ViewMode = "terminal" | "feed" | "settings" | "skills"
+export type ViewMode = "terminal" | "feed" | "settings" | "skills" | "tasks"
+
+export type AgentTask = {
+  taskId: string
+  subject: string
+  description: string
+  status: "pending" | "in_progress" | "completed"
+  owner: string
+  activeForm: string
+  blockedBy: string[]
+  createdAt: string
+  updatedAt: string
+}
 
 export type CardActionItem =
   | { kind: "permission"; feedItem: Extract<TeamFeedItem, { type: "permission" }> }
