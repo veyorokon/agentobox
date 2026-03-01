@@ -99,8 +99,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- User ---
+# Scoped sudo: package management only. No blanket NOPASSWD:ALL.
+# _provision_scoped_sudo in provision.py writes the same rule at runtime
+# as a defensive measure, but baking it here eliminates the race window
+# between container start and provisioning.
 RUN useradd -m -s /bin/bash agent \
-    && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    && echo "# Agentobox: scoped sudo for agent container" > /etc/sudoers.d/agentobox \
+    && echo "# Allows package management only — blocks reading secrets via sudo" >> /etc/sudoers.d/agentobox \
+    && echo "agent ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg" >> /etc/sudoers.d/agentobox \
+    && chmod 0440 /etc/sudoers.d/agentobox
 
 # --- Filesystem overlay (configs + s6 services) ---
 COPY rootfs/ /
