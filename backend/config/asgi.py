@@ -20,12 +20,17 @@ log = structlog.get_logger("agents.websocket")
 # MCP coordination server — stateless HTTP so each tool call is independent.
 # Daphne doesn't send ASGI lifespan events, so we simulate them on first
 # request to initialize FastMCP's session manager task group.
-mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
+#
+# StreamableHTTPSessionManager.run() can only be called once per instance.
+# If the lifespan task dies (exception, cancellation), we must create a fresh
+# mcp_app to get a new session manager. _ensure_mcp_ready() handles recovery.
+_mcp_app = None
 _mcp_lifespan_task = None
 _mcp_ready = asyncio.Event()
+_mcp_lock = asyncio.Lock()
 
 
-async def _mcp_lifespan_runner():
+async def _mcp_lifespan_runner(app):
     """Simulate ASGI lifespan protocol for FastMCP's Starlette app.
 
     Sends lifespan.startup, waits for startup.complete, then blocks
@@ -47,9 +52,36 @@ async def _mcp_lifespan_runner():
 
     scope = {"type": "lifespan", "asgi": {"version": "3.0"}}
     try:
-        await mcp_app(scope, receive, send)
+        await app(scope, receive, send)
     except Exception:
         log.exception("mcp_lifespan_failed")
+
+
+async def _ensure_mcp_ready():
+    """Ensure MCP lifespan is running. Recovers from dead task groups.
+
+    StreamableHTTPSessionManager.run() can only be called once per instance,
+    so if the lifespan task dies we must create a fresh mcp_app.
+    """
+    global _mcp_app, _mcp_lifespan_task, _mcp_ready
+
+    # Fast path — already running
+    if _mcp_lifespan_task is not None and not _mcp_lifespan_task.done():
+        return
+
+    async with _mcp_lock:
+        # Re-check under lock
+        if _mcp_lifespan_task is not None and not _mcp_lifespan_task.done():
+            return
+
+        if _mcp_lifespan_task is not None:
+            log.warning("mcp_lifespan_recovery", reason="task_died")
+
+        _mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
+        _mcp_ready = asyncio.Event()
+        _mcp_lifespan_task = asyncio.create_task(_mcp_lifespan_runner(_mcp_app))
+
+    await _mcp_ready.wait()
 
 
 class LoggingGraphQLWSConsumer(GraphQLWSConsumer):
@@ -74,13 +106,9 @@ class LoggingGraphQLWSConsumer(GraphQLWSConsumer):
 
 async def http_dispatch(scope, receive, send):
     """Route /mcp to FastMCP, everything else to Django."""
-    global _mcp_lifespan_task
     if scope["path"].startswith("/mcp"):
-        # Lazy-start MCP lifespan on first request
-        if _mcp_lifespan_task is None:
-            _mcp_lifespan_task = asyncio.create_task(_mcp_lifespan_runner())
-            await _mcp_ready.wait()
-        await mcp_app(scope, receive, send)
+        await _ensure_mcp_ready()
+        await _mcp_app(scope, receive, send)
     else:
         await django_asgi_app(scope, receive, send)
 

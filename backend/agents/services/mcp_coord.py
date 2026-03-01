@@ -168,18 +168,24 @@ async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
 # Task tools — matches CC's TaskCreate/TaskUpdate/TaskGet/TaskList
 # ---------------------------------------------------------------------------
 
-async def create_task(agent, *, subject: str, description: str = "", active_form: str = "", metadata: dict | None = None) -> dict:
-    """Core task_create logic. Called by MCP tool and hook bridge."""
+async def create_task(agent, *, subject: str, description: str = "", active_form: str = "", metadata: dict | None = None, owner: str | None = None) -> dict:
+    """Core task_create logic. Called by MCP tool and hook bridge.
+
+    Args:
+        owner: Agent name to assign. None = auto-assign to creator.
+               Empty string = leave unassigned.
+    """
     from agents.models import AgentTask
 
     task = await AgentTask.objects.acreate(
         agent=agent,
         project_id=agent.project_id,
-        task_id=f"mcp_{uuid.uuid4().hex[:12]}",
+        task_id=uuid.uuid4().hex[:16],
         subject=subject[:500],
         description=description,
         active_form=active_form,
         metadata=metadata or {},
+        owner=agent.name if owner is None else owner,
         status="pending",
     )
 

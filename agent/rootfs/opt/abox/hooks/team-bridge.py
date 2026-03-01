@@ -30,6 +30,33 @@ POST = {"SendMessage", "TaskCreate", "TaskUpdate"}
 BRIDGED = PRE | POST
 
 
+def _format_result(tool_name, payload):
+    """Format backend result as clean text for systemMessage."""
+    if tool_name == "TaskList" and isinstance(payload, list):
+        if not payload:
+            return "[agentobox] TaskList: No tasks."
+        lines = []
+        for t in payload:
+            status = t.get("status", "")
+            tid = t.get("id", "")
+            subject = t.get("subject", "")
+            owner = t.get("owner", "")
+            blocked = t.get("blocked_by", [])
+            parts = [f"[{status}] {tid}: {subject}"]
+            if owner:
+                parts.append(f"owner={owner}")
+            if blocked:
+                parts.append(f"blockedBy={blocked}")
+            lines.append(" | ".join(parts))
+        return "[agentobox] TaskList:\n" + "\n".join(lines)
+
+    if tool_name == "TaskGet" and isinstance(payload, dict):
+        lines = [f"  {k}: {v}" for k, v in payload.items()]
+        return "[agentobox] TaskGet:\n" + "\n".join(lines)
+
+    return f"[agentobox] {tool_name} result: {json.dumps(payload)}"
+
+
 def main():
     data = json.load(sys.stdin)
     tool_name = data.get("tool_name", "")
@@ -84,7 +111,7 @@ def main():
         # Deny native tool, return backend data via systemMessage
         json.dump({
             "hookSpecificOutput": {"permissionDecision": "deny"},
-            "systemMessage": f"[agentobox] {tool_name} result: {json.dumps(payload)}",
+            "systemMessage": _format_result(tool_name, payload),
         }, sys.stdout)
     else:
         # PostToolUse: native tool already ran, just confirm backend got it
