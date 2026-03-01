@@ -216,5 +216,5 @@ async def broadcast_feed_item(feed_item: TeamFeedItem) -> None:
                 "item_id": str(feed_item.id),
             },
         )
-    except Exception:
+    except Exception:  # intentional: channel layer failure must not break feed item creation
         log.exception("broadcast_feed_item_failed", item_id=str(feed_item.id))

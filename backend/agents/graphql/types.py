@@ -1,3 +1,20 @@
+"""
+Strawberry GraphQL type definitions for the agents app.
+
+Maps Django models to GraphQL types consumed by the dashboard. AgentType is
+the main shape — Strawberry auto-converts snake_case fields to camelCase
+(lifecycle_status → lifecycleStatus). Derived fields (lastOutput, liveAction,
+cost, duration, turns) delegate to the agent's adapter so the GraphQL layer
+stays agent-type-agnostic.
+
+TeamFeedItemType is a flat union matching the frontend's discriminated union —
+every field present on every row, null where inapplicable. This avoids
+GraphQL union/interface complexity for a feed that the frontend already
+handles as a flat discriminated type.
+
+TimelineEntryType wraps raw StreamEvent rows for queries and subscriptions.
+The data field is the raw event dict — the frontend decides what to render.
+"""
 from datetime import datetime
 
 import strawberry

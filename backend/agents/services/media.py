@@ -100,6 +100,6 @@ def externalize_image_block(block: dict, prefix: str = "media") -> dict:
             **block,
             "source": {"type": "url", "url": url},
         }
-    except Exception:
+    except Exception:  # intentional: S3 upload fail-open — keep base64 so API call still works
         log.exception("externalize_image_failed")
-        return block  # fail open — keep base64 if upload fails
+        return block

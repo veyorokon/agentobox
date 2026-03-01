@@ -136,7 +136,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         try:
             from agents.models import Agent
             await Agent.objects.filter(id=self.agent_id).aupdate(relay_connected=False)
-        except Exception:
+        except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
             log.exception("relay_connected_update_failed", agent_id=self.agent_id)
 
         log.info("relay_ws_disconnected", agent_id=self.agent_id, code=code)
@@ -154,7 +154,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.services.callbacks import process_callback
             try:
                 await process_callback(self.agent, content)
-            except Exception:
+            except Exception:  # intentional: callback failure must not break relay WS — log and continue
                 log.exception("callback_request_failed", agent_id=self.agent_id)
             return
 
@@ -162,7 +162,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
 
         try:
             await process_stream_event(self.agent, content)
-        except Exception:
+        except Exception:  # intentional: one bad event must not kill the relay WS connection
             log.exception(
                 "relay_ws_event_failed",
                 agent_id=self.agent_id,
@@ -250,7 +250,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                 max_size=2**20,
                 open_timeout=10,
             )
-        except Exception:
+        except Exception:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
             log.exception("vnc_proxy_upstream_failed", agent_id=self.agent_id, url=vnc_ws_url)
             await self.accept()
             await self.close(code=4003)
@@ -270,7 +270,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                     await self.send(bytes_data=message)
                 else:
                     await self.send(text_data=message)
-        except Exception:
+        except Exception:  # intentional: upstream WS close/error ends relay loop — normal teardown path
             log.debug("vnc_proxy_upstream_closed", agent_id=self.agent_id)
         finally:
             await self.close()
@@ -283,7 +283,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                     await self.upstream_ws.send(bytes_data)
                 elif text_data:
                     await self.upstream_ws.send(text_data)
-            except Exception:
+            except Exception:  # intentional: upstream send failure — close proxy cleanly
                 log.debug("vnc_proxy_send_failed", agent_id=self.agent_id)
                 await self.close()
 
@@ -293,6 +293,6 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         if self.upstream_ws:
             try:
                 await self.upstream_ws.close()
-            except Exception:
-                pass
+            except Exception:  # intentional: upstream WS may already be closed during teardown
+                log.debug("vnc_proxy_upstream_close_error", agent_id=self.agent_id, exc_info=True)
         log.info("vnc_proxy_disconnected", agent_id=self.agent_id, code=code)

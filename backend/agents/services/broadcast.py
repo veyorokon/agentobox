@@ -63,7 +63,7 @@ async def broadcast_agent_update(agent: Agent) -> None:
                 "agent_id": str(agent.id),
             },
         )
-    except Exception:
+    except Exception:  # intentional: channel layer failure must not break agent state mutations
         log.exception("broadcast_agent_update_failed", group=group)
 
     # Detect status change and emit a status StreamEvent + feed item
@@ -113,5 +113,5 @@ async def broadcast_event(agent: Agent, stream_event: StreamEvent) -> None:
                 "created_at": created_at_str,
             },
         )
-    except Exception:
+    except Exception:  # intentional: channel layer failure must not break event creation
         log.exception("broadcast_event_failed", group=group)

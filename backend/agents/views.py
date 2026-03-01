@@ -1,3 +1,23 @@
+"""
+REST endpoints: file uploads and the hook bridge for CC native team tools.
+
+Two concerns live here:
+
+1. File uploads — upload_file (push a file into an agent container) and
+   upload_media (upload an image to S3, return public URL). Both require
+   Bearer auth and validate ownership.
+
+2. Hook bridge — POST endpoint that CC PreToolUse/PostToolUse hooks call
+   with {tool_name, tool_input}. Auth is Bearer relay_token → Agent lookup.
+   Read-only tools (TaskList, TaskGet) run as PreToolUse (before CC executes
+   the native tool). Mutating tools (SendMessage, TaskCreate, TaskUpdate) run
+   as PostToolUse (after CC's native tool, so the hook result arrives as a
+   systemMessage). Handlers are lazy-loaded to avoid circular imports.
+
+CC uses camelCase param names; _cc_to_snake() normalizes to Python convention.
+Handler dispatch filters params to only those the handler signature accepts,
+so adding new CC fields won't break existing handlers.
+"""
 import inspect
 import json
 import os
@@ -172,6 +192,6 @@ async def hook_bridge(request):
         return JsonResponse({"ok": True, "result": result})
     except ToolError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception:
+    except Exception:  # intentional: catch-all for hook bridge — log and return 500 so agent gets error response
         log.exception("hook_bridge_error", tool=tool_name, agent=agent.name)
         return JsonResponse({"error": "internal error"}, status=500)

@@ -1,3 +1,16 @@
+"""
+Runtime Protocol — the port in Ports and Adapters for container orchestration.
+
+Defines the async interface that all runtimes (Docker, Modal) must implement:
+create, exec, write_file, terminate, list_sandboxes, get_status, get_crash_info.
+SandboxInstance and VolumeMount are the runtime-agnostic data types that cross
+the boundary.
+
+Services never import DockerRuntime or ModalRuntime directly — they call
+get_runtime(name) from __init__.py and program against this Protocol. Adding
+a new runtime (e.g. Fly.io) means implementing this interface and registering
+it in __init__.py; no service code changes.
+"""
 from dataclasses import dataclass
 from typing import Protocol
 

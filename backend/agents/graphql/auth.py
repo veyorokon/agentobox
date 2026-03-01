@@ -1,3 +1,18 @@
+"""
+GraphQL authorization helpers for Strawberry resolvers.
+
+Extracts the authenticated user from Strawberry's info context and verifies
+project/agent ownership. Three auth paths in priority order:
+1. HTTP request.user (TokenAuthMiddleware — Bearer/ApiKey header)
+2. WS scope["user"] (AuthMiddlewareStack — session cookies)
+3. WS connectionParams Bearer token (graphql-ws connection_init — browsers
+   can't set custom headers on WebSocket upgrades, so the dashboard sends
+   the token in connectionParams instead)
+
+Every mutation/query that touches project-scoped data must call
+authorize_project or authorize_agent before proceeding. These raise
+PermissionError on failure — Strawberry converts that to a GraphQL error.
+"""
 import structlog
 from agents.models import Agent
 from projects.models import Project

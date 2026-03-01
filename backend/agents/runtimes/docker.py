@@ -1,3 +1,19 @@
+"""
+Docker runtime — local container orchestration via docker-py.
+
+Implements the Runtime protocol for local development. Containers run on
+the host Docker daemon, connected to the shared agentobox_default network
+so the backend can reach them by container name DNS (same pattern as
+Guacamole/Kasm).
+
+All docker-py calls are blocking, so every method wraps the sync call in
+run_in_executor(None, ...) to avoid blocking the async event loop. Resource
+limits (4GB RAM, 2 CPU cores, 500 PIDs) prevent fork bombs and runaway
+processes.
+
+VNC URLs use container name DNS (http://<container-name>:6080) — resolved
+by the backend's VncProxyConsumer, never by the browser directly.
+"""
 import asyncio
 import io
 import tarfile

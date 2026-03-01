@@ -1,3 +1,21 @@
+"""
+GraphQL mutations for agent lifecycle, communication, and configuration.
+
+All mutations require Bearer auth — authorize_project or authorize_agent
+checks ownership before any state change. Mutations delegate to service
+functions (lifecycle.py, comms.py, feed.py) for the actual work; this
+module is the thin GraphQL boundary that handles input parsing, auth,
+and response shaping.
+
+Key mutation groups:
+- Lifecycle: createAgent, killAgent, removeAgent, hardRestartAgent
+- Communication: sendMessage, answerQuestion, interruptAgent, clearAgentSession
+- Permissions/Plans: resolvePermission, resolvePlan
+- Config: setAgentMode, updateAgentInstructions, updateAgentConfig
+- Tasks: createTask, updateTask
+- Skills: createSkill, updateSkill, deleteSkill
+- Secrets: setSecret, deleteSecret, scopeSecret
+"""
 import structlog
 
 import strawberry
@@ -371,7 +389,7 @@ class AgentMutation:
                     claude_md.encode("utf-8"),
                     "/home/agent/CLAUDE.md",
                 )
-            except Exception:
+            except Exception:  # intentional: CLAUDE.md write is best-effort — instructions saved to DB regardless
                 log.exception("claude_md_write_failed", agent_name=agent.name)
 
         from agents.services.broadcast import broadcast_agent_update

@@ -59,6 +59,6 @@ async def terminate_sandbox(agent: Agent, op_log) -> bool:
         runtime = get_runtime(agent.runtime)
         await runtime.terminate(agent.sandbox_id)
         return True
-    except Exception:
+    except Exception:  # intentional: container may already be gone — log and report failure
         op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
         return False

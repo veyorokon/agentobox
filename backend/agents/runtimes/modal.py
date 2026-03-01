@@ -1,3 +1,14 @@
+"""
+Modal runtime — serverless container orchestration via Modal Python SDK.
+
+Implements the Runtime protocol for production deployments. Each agent gets
+a Modal Sandbox with the agent image pulled from GHCR (authenticated via
+ghcr-secret). Volumes use modal.Volume.from_name() with create_if_missing.
+VNC is exposed via Modal's encrypted tunnel on port 6080.
+
+Modal Sandbox.create is natively async (.aio suffix), so no executor
+wrapping needed unlike DockerRuntime.
+"""
 import time
 
 import modal

@@ -1,3 +1,24 @@
+"""
+Domain models for the agents app.
+
+Defines the core entities: Agent, StreamEvent, SessionResult, TeamFeedItem,
+AgentTask, ProjectSecret, Skill, AgentFeedback. Agent is the central record
+tracking a single Claude Code container — its runtime, config facets, session
+state, and materialized view fields. StreamEvent is the append-only event log
+(INSERT only, never UPDATE) that captures every relay event verbatim.
+TeamFeedItem is the curated dashboard feed — a flat union where every row has
+all fields, nulled where inapplicable, matching the frontend's discriminated
+union type.
+
+Key design decisions:
+- State facets (model, mode, mcp_servers, allowed_tools) live on the Agent
+  row. DB is source of truth; relay reads them via env vars at launch. See
+  the "State facets" comment block on Agent for the extension protocol.
+- SessionResult is INSERT-per-turn (not upserted) so we get a full cost
+  timeline, not just latest values.
+- config_snapshot captures creation-time config so hard_restart can
+  reprovision identically without re-resolving defaults.
+"""
 import uuid
 
 from django.db import models

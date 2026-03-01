@@ -68,7 +68,7 @@ def _normalize_content(content: list) -> list:
                 source["type"] = "base64"
                 source["media_type"] = ct
                 source["data"] = b64
-            except Exception:
+            except Exception:  # intentional: URL-to-base64 conversion is best-effort — keep original block
                 log.warning("url_to_base64_failed", url=url)
 
     return content
@@ -84,8 +84,9 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
         connected = await Agent.objects.filter(
             id=agent_id,
         ).values_list("relay_connected", flat=True).afirst()
-    except Exception:
-        connected = None  # DB error — try sending anyway
+    except Exception:  # intentional: DB error checking relay state — fall through and attempt send anyway
+        log.warning("relay_connection_check_failed", agent_id=str(agent_id), exc_info=True)
+        connected = None
 
     if connected is False:
         log.warning("push_to_disconnected_relay", agent_id=agent_id, command_type=command.get("type", ""))
@@ -380,7 +381,7 @@ async def clear_agent_session(agent_id: str) -> bool:
             "bash", "-c",
             f"rm -rf {agent_state_dir}/projects/*/",
         ])
-    except Exception:
+    except Exception:  # intentional: session file cleanup is best-effort — restart still proceeds
         op_log.exception("clear_session_files_failed")
 
     agent.session_id = ""

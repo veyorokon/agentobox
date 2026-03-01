@@ -51,7 +51,7 @@ async def _loop():
         await asyncio.sleep(INTERVAL_S)
         try:
             await reconcile_agents()
-        except Exception:
+        except Exception:  # intentional: reconciliation loop must never crash — log and retry next interval
             log.exception("reconciliation_failed")
 
 

@@ -1,3 +1,26 @@
+"""
+Workspace provisioning — write config files into agent containers.
+
+Called during _provision_agent (lifecycle.py) after the container is created.
+Writes into the container filesystem via runtime.write_file/exec:
+
+    1. CLAUDE.md — instructions built by the adapter (team roster, MCP docs,
+       role-specific context, user-provided instructions)
+    2. .claude/settings.json — agent settings (API key, permission mode)
+    3. .mcp.json — MCP server configs with env blocks for project secrets,
+       plus the team coordination HTTP server if relay_token is set
+    4. .claude.json — onboarding state (marks setup complete)
+    5. API key files — adapter-provided file specs (path, content, mode, owner)
+    6. Scoped sudoers — restricts sudo to package management only
+    7. Skills — project skills matching agent tags as .claude/skills/<name>/SKILL.md
+
+All agent-type-specific config (file formats, instruction content) is
+delegated to the adapter via get_adapter(agent_type). This module handles
+only the I/O orchestration.
+
+Also provides utilities for hot-reloading secrets (write_secrets_env,
+push_secrets_to_agent) and theme files (write_theme_files) on running agents.
+"""
 import json
 
 import structlog

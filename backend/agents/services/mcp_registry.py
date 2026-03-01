@@ -1,3 +1,12 @@
+"""
+Proxy client for the official MCP server registry at registry.modelcontextprotocol.io.
+
+Provides search_registry() which forwards search queries to the upstream
+registry API and returns the response. Used by the GraphQL searchMcpRegistry
+query so the dashboard can browse available MCP servers without a direct
+browser-to-registry connection (avoids CORS and keeps the registry URL
+server-side).
+"""
 import structlog
 import httpx
 

@@ -1,3 +1,28 @@
+"""
+Agent lifecycle management: create, kill, remove, hard-restart.
+
+Orchestrates the full agent lifecycle from DB record creation through
+container provisioning to teardown. create_agent creates the Agent row
+immediately (so the dashboard sees it) then spawns _provision_agent as
+a detached asyncio.create_task for the slow container work.
+
+Key invariants:
+- _provision_agent runs detached from the HTTP request — all DB writes
+  use sync_to_async(thread_sensitive=False) to avoid the dead
+  CurrentThreadExecutor problem.
+- hard_restart uses select_for_update()+transaction.atomic() to prevent
+  concurrent restarts from orphaning containers.
+- config_snapshot preserves creation-time config so restarts reprovision
+  identically. session_id is captured for --resume context preservation.
+- resolve_agent_secrets applies project-level secret scoping: a secret
+  goes to an agent if it has no scoped_agents (default-all) or the agent
+  is in its scoped set.
+
+Container provisioning sequence:
+    create container → symlink .claude to volume → write secrets →
+    provision_workspace → write .relay_env → save relay_token →
+    signal s6 to start relay → spawn tmux log tail
+"""
 import asyncio
 import secrets
 
@@ -365,13 +390,14 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         op_log.info("agent_provisioned", agent_id=agent_id)
 
-    except Exception:
+    except Exception:  # intentional: provisioning is background task — must not crash, cleanup below
         op_log.exception("agent_provision_failed", agent_id=agent_id)
 
         if runtime and sandbox_id:
             try:
                 await runtime.terminate(sandbox_id)
                 op_log.info("orphan_sandbox_terminated", sandbox_id=sandbox_id)
+            # intentional: orphan container kill is best-effort during provision failure cleanup
             except Exception:
                 op_log.exception("orphan_cleanup_failed", sandbox_id=sandbox_id)
 
@@ -383,7 +409,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 {"error": "Container provisioning failed"},
             )
             await broadcast_event(agent, evt)
-        except Exception:
+        except Exception:  # intentional: DB cleanup after failed provision — nothing more to do
             op_log.exception("provision_cleanup_db_failed", agent_id=agent_id)
     finally:
         clear_agent_context()
@@ -574,6 +600,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
             runtime = get_runtime(old_runtime)
             await runtime.terminate(old_sandbox_id)
             op_log.info("container_terminated", sandbox_id=old_sandbox_id)
+        # intentional: old container kill is best-effort during restart — new one will be provisioned regardless
         except Exception:
             op_log.exception("terminate_sandbox_failed", sandbox_id=old_sandbox_id)
 
@@ -609,7 +636,7 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
         )
         truncated = output[:200] if output else "(empty)"
         op_log.info("sandbox_processes", output=truncated)
-    except Exception:
+    except Exception:  # intentional: log capture is diagnostic only — never block provisioning
         op_log.warning("sandbox_log_capture_failed")
 
 
@@ -665,7 +692,7 @@ async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
         if not scoped_ids or agent.id in scoped_ids:
             try:
                 merged[secret.key] = decrypt_value(bytes(secret.encrypted_value))
-            except Exception:
+            except Exception:  # intentional: one corrupt secret must not block other secrets or provisioning
                 op_log.warning("secret_decrypt_failed", key=secret.key)
 
     if not merged:
