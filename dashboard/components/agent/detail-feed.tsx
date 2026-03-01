@@ -145,10 +145,10 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
   const isEmpty = !loading && entries.length === 0
 
   return (
-    <div className="border-t border-border-subtle flex flex-col">
+    <div className="h-full flex flex-col">
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 max-h-[320px] overflow-y-auto px-3 py-2 space-y-2"
+        className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2"
       >
         {loading && entries.length === 0 && (
           <div className="flex items-center justify-center py-4">
