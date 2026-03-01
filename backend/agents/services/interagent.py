@@ -7,7 +7,7 @@ tools call into this module directly.
 
 Flow:
     1. Agent calls teammate_message MCP tool
-    2. _deliver_to_stdin() formats message as stream-json input
+    2. deliver_to_stdin() formats message as stream-json input
     3. StreamEvent created for feed visibility
     4. Command pushed to relay via WebSocket
     5. Relay writes to Claude's stdin -> agent receives it immediately
@@ -24,7 +24,7 @@ from agents.services.utils import create_and_broadcast_event
 log = structlog.get_logger("agents.interagent")
 
 
-async def _handle_broadcast(
+async def deliver_broadcast(
     sender: Agent,
     content: str,
     summary: str,
@@ -40,7 +40,7 @@ async def _handle_broadcast(
         return
 
     for agent in agents:
-        await _deliver_to_stdin(sender.name, agent, content)
+        await deliver_to_stdin(sender.name, agent, content)
 
     log.info(
         "interagent_broadcast_routed",
@@ -49,7 +49,7 @@ async def _handle_broadcast(
     )
 
 
-async def _deliver_to_stdin(sender_name: str, target: Agent, content: str) -> None:
+async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> None:
     """Deliver an inter-agent message via relay WebSocket push.
 
     Formats the message as a stream-json user input so the relay writes it

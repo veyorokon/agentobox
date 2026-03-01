@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 
@@ -92,6 +93,18 @@ def _cc_to_snake(params: dict) -> dict:
     return {_PARAM_MAP.get(k, k): v for k, v in params.items()}
 
 
+def _allowed_params(fn):
+    """Extract keyword parameter names from a function signature."""
+    sig = inspect.signature(fn)
+    return {
+        name for name, p in sig.parameters.items()
+        if name != "self" and p.kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    } - {"agent"}  # agent is passed positionally
+
+
 # Read-only tools run before the native tool (no side effects to undo).
 # Mutating tools run after to let CC's native tool execute first — the hook
 # bridge result arrives via systemMessage either way.
@@ -132,17 +145,18 @@ async def hook_bridge(request):
     _load_handlers()
 
     token = request.headers.get("Authorization", "").removeprefix("Bearer ")
-    if not token:
-        return JsonResponse({"error": "missing auth"}, status=401)
-
-    from agents.models import Agent
+    from agents.services.auth_relay import get_relay_agent
 
     try:
-        agent = await Agent.objects.aget(relay_token=token)
-    except Agent.DoesNotExist:
-        return JsonResponse({"error": "invalid token"}, status=401)
+        agent = await get_relay_agent(token)
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=401)
 
-    body = json.loads(request.body)
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"error": "invalid JSON body"}, status=400)
+
     tool_name = body.get("tool_name", "")
     tool_input = body.get("tool_input", {})
     params = _cc_to_snake(tool_input)
@@ -152,7 +166,9 @@ async def hook_bridge(request):
         return JsonResponse({"error": f"unknown tool: {tool_name}"}, status=400)
 
     try:
-        result = await handler(agent, **params)
+        allowed = _allowed_params(handler)
+        filtered = {k: v for k, v in params.items() if k in allowed}
+        result = await handler(agent, **filtered)
         return JsonResponse({"ok": True, "result": result})
     except ToolError as e:
         return JsonResponse({"error": str(e)}, status=400)

@@ -282,26 +282,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         work_dir = CONTAINER_WORKSPACE if agent.workspace_path else "/home/agent"
         callback_url = env.get("ABOX_CALLBACK_URL", "")
 
-        # Fetch all team agents for CLAUDE.md roster and team config
-        # thread_sensitive=False because this runs inside asyncio.create_task
-        # where the request's CurrentThreadExecutor is gone
-        all_agents = await sync_to_async(
-            lambda: list(
-                Agent.objects.filter(project=project)
-                .exclude(status=AgentStatus.STOPPED)
-            ),
-            thread_sensitive=False,
-        )()
-
         # Build team roster for CLAUDE.md
-        team_members = [
-            {
-                "name": a.name,
-                "role": a.role,
-                "instructions": a.instructions or "",
-            }
-            for a in all_agents
-        ]
+        from agents.services.utils import get_team_roster
+        team_members = await get_team_roster(project)
 
         await provision_workspace(
             runtime, sandbox.id, project,
