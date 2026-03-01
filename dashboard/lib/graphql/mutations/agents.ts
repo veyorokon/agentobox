@@ -19,8 +19,8 @@ export const SET_AGENT_MODE = gql`
 `
 
 export const RESOLVE_PERMISSION = gql`
-  mutation ResolvePermission($feedItemId: ID!, $verdict: String!) {
-    resolvePermission(feedItemId: $feedItemId, verdict: $verdict) {
+  mutation ResolvePermission($feedItemId: ID!, $verdict: String!, $alwaysAllow: Boolean) {
+    resolvePermission(feedItemId: $feedItemId, verdict: $verdict, alwaysAllow: $alwaysAllow) {
       id
       permStatus
     }

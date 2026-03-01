@@ -166,7 +166,47 @@ function useResolveFeedItem(
 }
 
 export function useResolvePermission() {
-  return useResolveFeedItem(RESOLVE_PERMISSION, "permStatus", "permission")
+  const client = useApolloClient()
+  const [mutate] = useMutation(RESOLVE_PERMISSION)
+  const { projectId } = useParams<{ projectId: string }>()
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
+
+  return useCallback(
+    (feedItemId: string, verdict: string, alwaysAllow?: boolean) => {
+      log("cache.modify", { typename: "TeamFeedItemType", id: feedItemId, field: "permStatus", value: verdict })
+
+      // 1. Optimistic cache update on the FeedItem
+      client.cache.modify({
+        id: client.cache.identify({ __typename: "TeamFeedItemType", id: feedItemId }),
+        fields: { permStatus: () => verdict },
+      })
+
+      // 2. Derive and update agent attention
+      const feedData = client.readQuery<FeedData>({ query: GET_FEED, variables: queryVars })
+      const feed = feedData?.feed ?? []
+      const item = feed.find(fi => fi.id === feedItemId)
+      if (item && item.type === "permission") {
+        const newAttention = deriveAttentionFromFeed(feed, item.agent)
+        log("cache.modify", { typename: "AgentType", agent: item.agent, field: "attentionLevel", value: newAttention, reason: "permission resolved" })
+        if (item.agentId) {
+          client.cache.modify({
+            id: client.cache.identify({ __typename: "AgentType", id: item.agentId }),
+            fields: { attentionLevel: () => newAttention },
+          })
+        }
+      }
+
+      // 3. Fire mutation to backend (with alwaysAllow if set)
+      mutate({ variables: { feedItemId, verdict, alwaysAllow: alwaysAllow ?? false } }).catch(err => {
+        log("mutation.error", { mutation: "resolvePermission", feedItemId, error: err.message })
+        client.cache.modify({
+          id: client.cache.identify({ __typename: "TeamFeedItemType", id: feedItemId }),
+          fields: { permStatus: () => "pending" },
+        })
+      })
+    },
+    [client, mutate, queryVars],
+  )
 }
 
 export function useResolvePlan() {

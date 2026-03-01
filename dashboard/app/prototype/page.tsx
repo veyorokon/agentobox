@@ -3502,32 +3502,40 @@ function AgentCardRow({
           {viewMode === "settings" && <AgentSettingsPanel agent={agent} />}
         </div>
 
-        {/* Bottom toolbar — swaps entirely when agent needs attention */}
-        {hasPendingItem ? (
-          <div className="border-t border-warning/20 bg-warning-subtle/10 px-3 py-2">
+        {/* Action strip — slides in above composer when agent has pending items */}
+        {hasPendingItem && (
+          <div className="border-t border-warning/20 bg-warning-subtle/10 px-3 py-1.5">
             {pendingItems.map((item, i) => (
               <div key={i} className="flex items-center gap-2 min-w-0">
-                <Shield className="h-3.5 w-3.5 text-warning shrink-0" />
+                <Shield className="h-3 w-3 text-warning shrink-0" />
                 <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
                   {item.type === "permission"
                     ? item.command
-                    : item.title}
+                    : `Plan: ${item.title}`}
                 </span>
                 {item.type === "permission" ? (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => onResolvePermission?.(i, "allowed")}
-                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                      className="px-2 py-0.5 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
                     >
                       Allow
                     </button>
                     <button
                       type="button"
                       onClick={() => onResolvePermission?.(i, "denied")}
-                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                      className="px-2 py-0.5 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
                     >
                       Deny
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onResolvePermission?.(i, "allowed")}
+                      className="px-2 py-0.5 rounded text-[10px] font-medium text-muted border border-border-subtle hover:bg-surface-raised/40 transition-colors"
+                      title="Allow and don't ask again for this tool"
+                    >
+                      Always
                     </button>
                   </div>
                 ) : (
@@ -3535,14 +3543,14 @@ function AgentCardRow({
                     <button
                       type="button"
                       onClick={() => onResolvePlan?.(i, "approved")}
-                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
+                      className="px-2 py-0.5 rounded text-[10px] font-medium text-success border border-success/30 hover:bg-success-subtle/40 transition-colors"
                     >
                       Approve
                     </button>
                     <button
                       type="button"
                       onClick={() => onResolvePlan?.(i, "rejected")}
-                      className="px-2.5 py-1 rounded-md text-[11px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
+                      className="px-2 py-0.5 rounded text-[10px] font-medium text-danger border border-danger/30 hover:bg-danger-subtle/40 transition-colors"
                     >
                       Reject
                     </button>
@@ -3551,55 +3559,56 @@ function AgentCardRow({
               </div>
             ))}
           </div>
-        ) : (
-          <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-border-subtle bg-surface-sunken/20">
-            {/* View mode icons */}
-            <div className="flex items-center gap-0.5 shrink-0">
-              {VIEW_MODES.map(({ id, icon: Icon, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setViewMode(id)}
-                  className={cn(
-                    "p-1 rounded transition-colors",
-                    viewMode === id
-                      ? "bg-surface-raised text-default"
-                      : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
-                  )}
-                  title={label}
-                >
-                  <Icon className="h-3 w-3" />
-                </button>
-              ))}
-            </div>
-
-            {/* Mini composer */}
-            <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded border border-border-default bg-surface-sunken/40 px-2 py-1">
-              <span className="text-[9px] text-accent font-mono shrink-0">@{agent.name}</span>
-              <input
-                type="text"
-                placeholder="Message..."
-                className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
-              />
-              <button
-                type="button"
-                className="flex items-center justify-center h-4 w-4 rounded-full bg-surface text-muted shrink-0"
-              >
-                <ArrowUp className="h-2.5 w-2.5" strokeWidth={2.5} />
-              </button>
-            </div>
-
-            {/* Todo progress */}
-            {agent.todoProgress && (
-              <span className="flex items-center gap-1 shrink-0">
-                <CheckSquare className="h-3 w-3 text-muted/50" />
-                <span className="text-[9px] font-mono text-muted tabular-nums">
-                  {agent.todoProgress.done}/{agent.todoProgress.total}
-                </span>
-              </span>
-            )}
-          </div>
         )}
+
+        {/* Bottom toolbar — always present: view icons + composer + todo */}
+        <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-border-subtle bg-surface-sunken/20">
+          {/* View mode icons */}
+          <div className="flex items-center gap-0.5 shrink-0">
+            {VIEW_MODES.map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setViewMode(id)}
+                className={cn(
+                  "p-1 rounded transition-colors",
+                  viewMode === id
+                    ? "bg-surface-raised text-default"
+                    : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
+                )}
+                title={label}
+              >
+                <Icon className="h-3 w-3" />
+              </button>
+            ))}
+          </div>
+
+          {/* Mini composer */}
+          <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded border border-border-default bg-surface-sunken/40 px-2 py-1">
+            <span className="text-[9px] text-accent font-mono shrink-0">@{agent.name}</span>
+            <input
+              type="text"
+              placeholder="Message..."
+              className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
+            />
+            <button
+              type="button"
+              className="flex items-center justify-center h-4 w-4 rounded-full bg-surface text-muted shrink-0"
+            >
+              <ArrowUp className="h-2.5 w-2.5" strokeWidth={2.5} />
+            </button>
+          </div>
+
+          {/* Todo progress */}
+          {agent.todoProgress && (
+            <span className="flex items-center gap-1 shrink-0">
+              <CheckSquare className="h-3 w-3 text-muted/50" />
+              <span className="text-[9px] font-mono text-muted tabular-nums">
+                {agent.todoProgress.done}/{agent.todoProgress.total}
+              </span>
+            </span>
+          )}
+        </div>
       </Collapsible>
     </div>
   )
