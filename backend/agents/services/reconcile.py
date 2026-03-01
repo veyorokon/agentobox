@@ -145,6 +145,9 @@ async def _detect_dead_containers():
     for agent in agents:
         container_status = await runtime.get_status(agent.sandbox_id)
         if container_status in ("exited", "dead"):
+            # Capture crash diagnostics before marking ERROR
+            crash_info = await runtime.get_crash_info(agent.sandbox_id)
+
             agent = await _mark_error(agent.id)
             await broadcast_agent_update(agent)
             log.info(
@@ -152,6 +155,8 @@ async def _detect_dead_containers():
                 agent_id=str(agent.id),
                 agent_name=agent.name,
                 container_status=container_status,
+                exit_code=crash_info.get("exit_code") if crash_info else None,
+                oom_killed=crash_info.get("oom_killed") if crash_info else None,
             )
 
 

@@ -12,6 +12,20 @@ class AgentStatus(models.TextChoices):
     ERROR = "error"
 
 
+class FeedItemType(models.TextChoices):
+    SYSTEM = "system"
+    USER = "user"
+    SUMMARY = "summary"
+    STATUS = "status"
+    ERROR = "error"
+    QUESTION = "question"
+    PLAN = "plan"
+    PERMISSION = "permission"
+    MULTI_QUESTION = "multi-question"
+    AGENT_MESSAGE = "agent-message"
+    TASK = "task"
+
+
 
 class ProjectSecret(models.Model):
     """
@@ -161,7 +175,7 @@ class Agent(models.Model):
     tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
 
     # Auth token for WebSocket relay connection (generated during provisioning)
-    relay_token = models.CharField(max_length=64, blank=True)
+    relay_token = models.CharField(max_length=64, blank=True, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -308,8 +322,7 @@ class TeamFeedItem(models.Model):
     project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="feed_items")
 
     # Discriminator
-    type = models.CharField(max_length=30)
-    # system | user | summary | status | error | question | plan | permission | multi-question | agent-message | task
+    type = models.CharField(max_length=30, choices=FeedItemType.choices)
 
     # Shared
     agent_name = models.CharField(max_length=100, blank=True, default="")
@@ -369,6 +382,7 @@ class AgentFeedback(models.Model):
     rating = models.IntegerField()
     comment = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]

@@ -1,5 +1,5 @@
 import strawberry
-from strawberry.extensions import SchemaExtension
+from strawberry.extensions import QueryDepthLimiter, SchemaExtension
 
 from accounts.graphql.mutations import AccountMutation
 from accounts.graphql.queries import AccountQuery
@@ -36,5 +36,5 @@ schema = strawberry.Schema(
     query=Query,
     mutation=Mutation,
     subscription=Subscription,
-    extensions=[_LoggingExt],
+    extensions=[_LoggingExt, QueryDepthLimiter(max_depth=10)],
 )
