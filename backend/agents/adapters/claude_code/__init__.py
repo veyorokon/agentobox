@@ -285,21 +285,39 @@ class ClaudeCodeAdapter:
     def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:
         """Build .claude/settings.json content.
 
-        CC-specific: permission modes, disallowed built-in tools, API key helper.
+        CC-specific: permission modes, hooks for team tool interception,
+        API key helper. Team lifecycle tools (TeamCreate/TeamDelete) stay
+        disabled — the platform manages team creation. All other team tools
+        are intercepted by hooks and routed through the agentobox backend.
         """
         perm_mode = _MODE_TO_PERMISSION.get(mode, "bypassPermissions")
+        hook_cmd = "python3 /opt/abox/hooks/team-bridge.py"
         settings = {
             "theme": "dark",
             "defaultMode": perm_mode,
             "enableAllProjectMcpServers": True,
-            # Disable CC's built-in team tools — our MCP `team` server provides
-            # the same interface (same params, same semantics) routed through the
-            # agentobox backend. This makes our DB the single source of truth for
-            # tasks and messages, with no filesystem sync needed.
-            "disallowedTools": [
-                "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-                "SendMessage", "TeamCreate", "TeamDelete",
-            ],
+            # Only disable team lifecycle — hooks bridge the rest
+            "disallowedTools": ["TeamCreate", "TeamDelete"],
+            "hooks": {
+                # Read-only tools: intercept before CC writes local files.
+                # Hook denies the native tool and returns backend result via
+                # systemMessage — no local file infrastructure needed.
+                "PreToolUse": [
+                    {
+                        "matcher": "TaskList|TaskGet",
+                        "hooks": [{"type": "command", "command": hook_cmd, "timeout": 15}],
+                    },
+                ],
+                # Mutating tools: intercept after CC executes. The native tool
+                # writes local files (harmless), then our hook forwards to
+                # backend so the DB is the source of truth.
+                "PostToolUse": [
+                    {
+                        "matcher": "SendMessage|TaskCreate|TaskUpdate",
+                        "hooks": [{"type": "command", "command": hook_cmd, "timeout": 15}],
+                    },
+                ],
+            },
         }
         if api_key:
             settings["apiKeyHelper"] = _API_KEY_HELPER_PATH
@@ -345,9 +363,11 @@ class ClaudeCodeAdapter:
             - Your container has a full Linux desktop (X11), browser, and terminal
             - A relay process streams your activity to the backend — your tool calls,
               messages, and outputs are visible in the dashboard
-            - The **team** MCP server provides coordination tools: messaging, tasks,
-              spawning teammates. Use these instead of Claude Code's built-in team tools
-              (TaskCreate, TaskUpdate, SendMessage, etc. are disabled).
+            - Your native team tools (SendMessage, TaskCreate, TaskUpdate, TaskGet,
+              TaskList) work normally — hooks route them through the agentobox backend
+              so messages and tasks are visible in the dashboard
+            - The **team** MCP server provides additional tools: `teammate_spawn`,
+              `team_status`, and the same messaging/task tools as an alternative path
             - Your workspace is a shared volume — file changes are visible to the host
               and other agents immediately
         """))
@@ -403,9 +423,10 @@ class ClaudeCodeAdapter:
                 sender's name, e.g. `[Team message from team-lead]: ...`. Messages are
                 delivered to you automatically via stdin.
 
-                To send messages, use the **team** MCP tools:
-                - `send_message(type="message", recipient="name", content="...", summary="...")` — Direct message
-                - `send_message(type="broadcast", content="...", summary="...")` — Message all (use sparingly)
+                To send messages, use your native SendMessage tool or the **team** MCP
+                `send_message` — both work identically:
+                - `type="message", recipient="name", content="...", summary="..."` — Direct message
+                - `type="broadcast", content="...", summary="..."` — Message all (use sparingly)
 
                 Always refer to teammates by their **name** (e.g. "backend", "frontend").
             """))
@@ -417,14 +438,14 @@ class ClaudeCodeAdapter:
 
                 ### Task Management
 
-                Use the **team** MCP tools to coordinate work. These match Claude Code's
-                native TaskCreate/TaskUpdate interface:
+                Your native task tools work — hooks route them through the backend:
 
-                - `task_create(subject, description, active_form, metadata)` — Create a task
-                - `task_update(task_id, status, owner, ...)` — Update status, claim, set dependencies
-                - `task_get(task_id)` — Get full task details
-                - `task_list()` — See all tasks and their status
-                - `team_status()` — See all active agents and their state
+                - `TaskCreate(subject, description, activeForm, metadata)` — Create a task
+                - `TaskUpdate(taskId, status, owner, ...)` — Update status, claim, set dependencies
+                - `TaskGet(taskId)` — Get full task details
+                - `TaskList()` — See all tasks and their status
+
+                The **team** MCP also has `team_status()` — see all active agents.
 
                 ### Spawning Teammates
 
@@ -449,17 +470,16 @@ class ClaudeCodeAdapter:
             sections.append(textwrap.dedent("""\
                 ## Tasks
 
-                Use the **team** MCP tools to manage your work. These match Claude Code's
-                native TaskCreate/TaskUpdate interface:
+                Your native task tools work — hooks route them through the backend:
 
-                - `task_list()` — See tasks assigned to you
-                - `task_update(task_id, status="in_progress")` — Claim a task
-                - `task_update(task_id, status="completed")` — Mark done
-                - `task_get(task_id)` — Get full task details
-                - `task_create(subject, description)` — Create new tasks you discover
+                - `TaskList()` — See tasks assigned to you
+                - `TaskUpdate(taskId, status="in_progress")` — Claim a task
+                - `TaskUpdate(taskId, status="completed")` — Mark done
+                - `TaskGet(taskId)` — Get full task details
+                - `TaskCreate(subject, description)` — Create new tasks you discover
 
-                When you finish a task, mark it completed and check `task_list` for the
-                next one. If you're blocked, message the team lead via `send_message`.
+                When you finish a task, mark it completed and check `TaskList` for the
+                next one. If you're blocked, message the team lead via `SendMessage`.
             """))
 
         # --- 10. How the System Works ---
@@ -470,9 +490,10 @@ class ClaudeCodeAdapter:
             messages, outputs) to the agentobox backend. This is transparent — you don't
             need to do anything special. The dashboard shows your activity in real-time.
 
-            The **team** MCP server provides coordination tools (messaging, tasks,
-            spawning). These replace Claude Code's built-in team tools — same interface,
-            but routed through the agentobox backend for dashboard visibility.
+            Your native team tools (SendMessage, TaskCreate, etc.) are intercepted by
+            hooks and routed through the backend — the dashboard sees everything. The
+            **team** MCP server provides the same tools plus extras (teammate_spawn,
+            team_status). Both paths converge on the backend DB.
         """))
 
         # --- 11. MCP Tool Instructions ---

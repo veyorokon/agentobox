@@ -1,11 +1,16 @@
+import json
 import os
 
+import structlog
 from asgiref.sync import sync_to_async
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from fastmcp.exceptions import ToolError
 
 from accounts.auth import authenticate_request
+
+log = structlog.get_logger("agents.views")
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
@@ -68,3 +73,89 @@ async def upload_media(request):
     data = uploaded.read()
     url = await sync_to_async(upload_raw)(data, uploaded.content_type, "uploads")
     return JsonResponse({"url": url})
+
+
+# ---------------------------------------------------------------------------
+# Hook bridge — CC native team tools routed through backend
+# ---------------------------------------------------------------------------
+
+# CC camelCase param names → Python snake_case
+_PARAM_MAP = {
+    "taskId": "task_id",
+    "activeForm": "active_form",
+    "addBlocks": "add_blocks",
+    "addBlockedBy": "add_blocked_by",
+}
+
+
+def _cc_to_snake(params: dict) -> dict:
+    return {_PARAM_MAP.get(k, k): v for k, v in params.items()}
+
+
+# Read-only tools run before the native tool (no side effects to undo).
+# Mutating tools run after to let CC's native tool execute first — the hook
+# bridge result arrives via systemMessage either way.
+_PRE_HANDLERS = {}   # tool_name → do_* function (PreToolUse)
+_POST_HANDLERS = {}  # tool_name → do_* function (PostToolUse)
+
+
+def _load_handlers():
+    """Lazy-load to avoid circular imports at module scope."""
+    if _PRE_HANDLERS or _POST_HANDLERS:
+        return
+    from agents.services.mcp_coord import (
+        create_task,
+        deliver_message,
+        get_task,
+        list_tasks,
+        update_task,
+    )
+    _PRE_HANDLERS.update({
+        "TaskList": list_tasks,
+        "TaskGet": get_task,
+    })
+    _POST_HANDLERS.update({
+        "SendMessage": deliver_message,
+        "TaskCreate": create_task,
+        "TaskUpdate": update_task,
+    })
+
+
+@csrf_exempt
+@require_POST
+async def hook_bridge(request):
+    """REST endpoint for agent hook bridge calls.
+
+    CC PreToolUse/PostToolUse hooks POST here with {tool_name, tool_input}.
+    Auth is Bearer relay_token → Agent lookup.
+    """
+    _load_handlers()
+
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+    if not token:
+        return JsonResponse({"error": "missing auth"}, status=401)
+
+    from agents.models import Agent
+
+    try:
+        agent = await Agent.objects.aget(relay_token=token)
+    except Agent.DoesNotExist:
+        return JsonResponse({"error": "invalid token"}, status=401)
+
+    body = json.loads(request.body)
+    tool_name = body.get("tool_name", "")
+    tool_input = body.get("tool_input", {})
+    params = _cc_to_snake(tool_input)
+
+    handler = _PRE_HANDLERS.get(tool_name) or _POST_HANDLERS.get(tool_name)
+    if not handler:
+        return JsonResponse({"error": f"unknown tool: {tool_name}"}, status=400)
+
+    try:
+        result = await handler(agent, **params)
+        return JsonResponse({"ok": True, "result": result})
+    except ToolError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception:
+        log.exception("hook_bridge_error", tool=tool_name, agent=agent.name)
+        return JsonResponse({"error": "internal error"}, status=500)

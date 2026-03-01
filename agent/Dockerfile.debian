@@ -108,6 +108,7 @@ RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run /etc/s6-overlay/s6-rc.d/*/finish 2>/dev/null || true \
     && chmod +x /opt/abox/relay.py \
     && chmod +x /opt/abox/theme-bridge.py \
+    && chmod +x /opt/abox/hooks/*.py \
     && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
     && python3 -c "import zipfile; z = zipfile.ZipFile('/opt/abox/firefox-theme.xpi', 'w'); z.write('/opt/abox/firefox-theme/manifest.json', 'manifest.json'); z.write('/opt/abox/firefox-theme/background.js', 'background.js'); z.close()" \
     && chown -R agent:agent /home/agent

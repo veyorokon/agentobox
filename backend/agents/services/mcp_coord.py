@@ -51,24 +51,8 @@ async def _authenticate():
 # Messaging — matches CC's SendMessage tool
 # ---------------------------------------------------------------------------
 
-@mcp.tool
-async def send_message(
-    type: str,
-    content: str = "",
-    recipient: str = "",
-    summary: str = "",
-) -> dict:
-    """Send messages to agent teammates.
-
-    Args:
-        type: Message type — "message" for DMs, "broadcast" to all teammates,
-              "shutdown_request" to request a teammate shut down.
-        content: The message text.
-        recipient: Agent name of the recipient (required for "message" and
-                   "shutdown_request").
-        summary: A 5-10 word summary shown as preview in the UI.
-    """
-    agent = await _authenticate()
+async def deliver_message(agent, *, type: str, content: str = "", recipient: str = "", summary: str = "") -> dict:
+    """Core send_message logic. Called by MCP tool and hook bridge."""
     from agents.models import Agent, AgentStatus
 
     if type == "message":
@@ -82,14 +66,14 @@ async def send_message(
             raise ToolError(f"Teammate '{recipient}' not found")
 
         from agents.services.interagent import _deliver_to_stdin
-        await _deliver_to_stdin(agent.name, target, content, summary=summary)
+        await _deliver_to_stdin(agent.name, target, content)
 
         log.info("mcp_send_message", sender=agent.name, recipient=recipient)
         return {"ok": True, "recipient": recipient}
 
     elif type == "broadcast":
         from agents.services.interagent import _handle_broadcast
-        await _handle_broadcast(agent, content, summary)
+        await _handle_broadcast(agent, content, summary="")
 
         log.info("mcp_send_broadcast", sender=agent.name)
         return {"ok": True}
@@ -109,7 +93,7 @@ async def send_message(
 
         from agents.services.interagent import _deliver_to_stdin
         shutdown_msg = f"Shutdown requested by {agent.name}: {content}"
-        await _deliver_to_stdin(agent.name, target, shutdown_msg, summary=summary)
+        await _deliver_to_stdin(agent.name, target, shutdown_msg)
 
         # Broadcast status change so dashboard sees the agent stop
         try:
@@ -123,6 +107,27 @@ async def send_message(
 
     else:
         raise ToolError(f"Invalid message type: {type}. Must be 'message', 'broadcast', or 'shutdown_request'.")
+
+
+@mcp.tool
+async def send_message(
+    type: str,
+    content: str = "",
+    recipient: str = "",
+    summary: str = "",
+) -> dict:
+    """Send messages to agent teammates.
+
+    Args:
+        type: Message type — "message" for DMs, "broadcast" to all teammates,
+              "shutdown_request" to request a teammate shut down.
+        content: The message text.
+        recipient: Agent name of the recipient (required for "message" and
+                   "shutdown_request").
+        summary: A 5-10 word summary shown as preview in the UI.
+    """
+    agent = await _authenticate()
+    return await deliver_message(agent, type=type, content=content, recipient=recipient, summary=summary)
 
 
 # ---------------------------------------------------------------------------
@@ -163,23 +168,8 @@ async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
 # Task tools — matches CC's TaskCreate/TaskUpdate/TaskGet/TaskList
 # ---------------------------------------------------------------------------
 
-@mcp.tool
-async def task_create(
-    subject: str,
-    description: str = "",
-    active_form: str = "",
-    metadata: dict | None = None,
-) -> dict:
-    """Create a new task for the team.
-
-    Args:
-        subject: Brief task title in imperative form (e.g. "Fix auth bug").
-        description: Detailed description of what needs to be done.
-        active_form: Present continuous form shown in spinner when in_progress
-                     (e.g. "Fixing auth bug").
-        metadata: Arbitrary metadata to attach to the task.
-    """
-    agent = await _authenticate()
+async def create_task(agent, *, subject: str, description: str = "", active_form: str = "", metadata: dict | None = None) -> dict:
+    """Core task_create logic. Called by MCP tool and hook bridge."""
     from agents.models import AgentTask
 
     task = await AgentTask.objects.acreate(
@@ -215,7 +205,28 @@ async def task_create(
 
 
 @mcp.tool
-async def task_update(
+async def task_create(
+    subject: str,
+    description: str = "",
+    active_form: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Create a new task for the team.
+
+    Args:
+        subject: Brief task title in imperative form (e.g. "Fix auth bug").
+        description: Detailed description of what needs to be done.
+        active_form: Present continuous form shown in spinner when in_progress
+                     (e.g. "Fixing auth bug").
+        metadata: Arbitrary metadata to attach to the task.
+    """
+    agent = await _authenticate()
+    return await create_task(agent, subject=subject, description=description, active_form=active_form, metadata=metadata)
+
+
+async def update_task(
+    agent,
+    *,
     task_id: str,
     status: str = "",
     subject: str = "",
@@ -226,20 +237,7 @@ async def task_update(
     add_blocked_by: list[str] | None = None,
     metadata: dict | None = None,
 ) -> dict:
-    """Update a task. Only provided (non-empty) fields are changed.
-
-    Args:
-        task_id: The ID of the task to update.
-        status: New status — "pending", "in_progress", "completed", or "deleted".
-        subject: New task title.
-        description: New description.
-        owner: New owner (agent name).
-        active_form: Present continuous form for spinner.
-        add_blocks: Task IDs that this task blocks (appended).
-        add_blocked_by: Task IDs that block this task (appended).
-        metadata: Metadata keys to merge. Set a key to null to delete it.
-    """
-    agent = await _authenticate()
+    """Core task_update logic. Called by MCP tool and hook bridge."""
     from agents.models import AgentTask
 
     try:
@@ -330,13 +328,40 @@ async def task_update(
 
 
 @mcp.tool
-async def task_get(task_id: str) -> dict:
-    """Get full details of a task by ID.
+async def task_update(
+    task_id: str,
+    status: str = "",
+    subject: str = "",
+    description: str = "",
+    owner: str = "",
+    active_form: str = "",
+    add_blocks: list[str] | None = None,
+    add_blocked_by: list[str] | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Update a task. Only provided (non-empty) fields are changed.
 
     Args:
-        task_id: The ID of the task to retrieve.
+        task_id: The ID of the task to update.
+        status: New status — "pending", "in_progress", "completed", or "deleted".
+        subject: New task title.
+        description: New description.
+        owner: New owner (agent name).
+        active_form: Present continuous form for spinner.
+        add_blocks: Task IDs that this task blocks (appended).
+        add_blocked_by: Task IDs that block this task (appended).
+        metadata: Metadata keys to merge. Set a key to null to delete it.
     """
     agent = await _authenticate()
+    return await update_task(
+        agent, task_id=task_id, status=status, subject=subject,
+        description=description, owner=owner, active_form=active_form,
+        add_blocks=add_blocks, add_blocked_by=add_blocked_by, metadata=metadata,
+    )
+
+
+async def get_task(agent, *, task_id: str) -> dict:
+    """Core task_get logic. Called by MCP tool and hook bridge."""
     from agents.models import AgentTask
 
     try:
@@ -360,9 +385,18 @@ async def task_get(task_id: str) -> dict:
 
 
 @mcp.tool
-async def task_list() -> list[dict]:
-    """List all tasks for your project."""
+async def task_get(task_id: str) -> dict:
+    """Get full details of a task by ID.
+
+    Args:
+        task_id: The ID of the task to retrieve.
+    """
     agent = await _authenticate()
+    return await get_task(agent, task_id=task_id)
+
+
+async def list_tasks(agent) -> list[dict]:
+    """Core task_list logic. Called by MCP tool and hook bridge."""
     from agents.models import AgentTask
 
     tasks = [
@@ -380,6 +414,13 @@ async def task_list() -> list[dict]:
     ]
 
     return tasks
+
+
+@mcp.tool
+async def task_list() -> list[dict]:
+    """List all tasks for your project."""
+    agent = await _authenticate()
+    return await list_tasks(agent)
 
 
 # ---------------------------------------------------------------------------
