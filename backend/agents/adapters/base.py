@@ -150,6 +150,7 @@ class AgentAdapter(Protocol):
         mode: str,
         resume_session_id: str = "",
         mcp_config_path: str = "",
+        allowed_tools: list | None = None,
     ) -> str:
         """Build relay process env file content.
 

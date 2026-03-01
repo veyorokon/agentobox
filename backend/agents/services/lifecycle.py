@@ -1,5 +1,4 @@
 import asyncio
-import json
 import secrets
 
 import structlog
@@ -13,16 +12,13 @@ from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_update, broadcast_event
 from agents.services.provision import provision_workspace, write_secrets_env, write_theme_files
 from agents.services.utils import create_and_broadcast_event, terminate_sandbox
+from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 
 log = structlog.get_logger("agents.lifecycle")
 
-
-def _shell_escape(val: str) -> str:
-    """Escape a value for safe use inside single quotes in shell."""
-    return val.replace("'", "'\\''")
 
 
 async def create_agent(
@@ -325,32 +321,23 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if project.theme_tokens:
             await write_theme_files(runtime, sandbox.id, project.theme_tokens)
 
-        # Build relay environment variables
-        # The relay reads these into ClaudeAgentOptions (SDK) and WS config
-        relay_env_lines = [
-            f"export AGENT_ID='{_shell_escape(agent_id)}'",
-            f"export AGENT_NAME='{_shell_escape(agent.name)}'",
-            f"export TEAM_NAME='{_shell_escape(team_name)}'",
-            f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
-            f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
-            f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
-            f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
-            f"export CLAUDE_MODEL='{_shell_escape(agent.model)}'",
-        ]
-
-        # State facet: allowed_tools (provision-only, applied at SDK session start)
-        if agent.allowed_tools:
-            relay_env_lines.append(f"export ALLOWED_TOOLS='{_shell_escape(json.dumps(agent.allowed_tools))}'")
-
-        # Pass resume session so relay can --resume the prior conversation
-        if resume_session_id:
-            relay_env_lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
-
-        # Always set MCP config path (abox-coord is always present)
-        # provision.py writes .mcp.json to /home/agent/ (not work_dir)
-        relay_env_lines.append("export MCP_CONFIG='/home/agent/.mcp.json'")
-
-        relay_env_content = "\n".join(relay_env_lines) + "\n"
+        # Build relay environment via adapter (single source of truth for
+        # env var names, model normalization, mode vocabulary, etc.)
+        adapter = get_adapter(agent.agent_type)
+        relay_env_content = adapter.build_relay_env(
+            agent_id=agent_id,
+            agent_name=agent.name,
+            team_name=team_name,
+            parent_session_id=parent_session_id,
+            callback_url=callback_url,
+            relay_token=relay_token,
+            api_key=api_key,
+            model=agent.model,
+            mode=agent.mode or "auto",
+            resume_session_id=resume_session_id,
+            mcp_config_path="/home/agent/.mcp.json",
+            allowed_tools=agent.allowed_tools or None,
+        )
         await runtime.write_file(
             sandbox.id,
             relay_env_content.encode("utf-8"),
@@ -526,13 +513,18 @@ def _atomic_reset_for_restart(agent_id):
         volume_mounts = config.get("volume_mounts", agent.volume_mounts)
         instructions = config.get("instructions", agent.instructions)
         role = config.get("role", agent.role)
+        mode = config.get("mode", agent.mode)
 
         # Reset agent state to DEPLOYING — clear stale session data.
+        # latest_snapshot must be cleared so derived fields (liveAction,
+        # lastOutput, cost, duration) don't show stale values from the
+        # previous session while the agent is redeploying.
         agent.status = AgentStatus.DEPLOYING
         agent.sandbox_id = ""
         agent.vnc_url = ""
         agent.session_id = ""
         agent.relay_token = ""
+        agent.latest_snapshot = {}
         agent.runtime = runtime_name
         agent.model = model
         agent.mcp_servers = mcp_servers
@@ -540,10 +532,12 @@ def _atomic_reset_for_restart(agent_id):
         agent.volume_mounts = volume_mounts
         agent.instructions = instructions
         agent.role = role
+        agent.mode = mode
         agent.save(update_fields=[
             "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
+            "latest_snapshot",
             "runtime", "model", "mcp_servers", "workspace_path",
-            "volume_mounts", "instructions", "role", "updated_at",
+            "volume_mounts", "instructions", "role", "mode", "updated_at",
         ])
 
     return agent, old_sandbox_id, old_runtime, resume_session_id, config

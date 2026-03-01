@@ -572,9 +572,11 @@ class ClaudeCodeAdapter:
         mode: str,
         resume_session_id: str = "",
         mcp_config_path: str = "",
+        allowed_tools: list | None = None,
     ) -> str:
         """Build relay process env file content.
 
+        Single source of truth for relay environment variables.
         Uses OUR vocabulary for mode (e.g. "auto" not "bypassPermissions").
         The relay translates to SDK format at runtime. This keeps the
         backend-relay protocol stable across agent types.
@@ -588,13 +590,15 @@ class ClaudeCodeAdapter:
             f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
             f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
             f"export CLAUDE_MODEL='{_shell_escape(_normalize_model_id(model))}'",
+            f"export AGENT_MODE='{_shell_escape(mode)}'",
         ]
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
 
-        # Our vocabulary — the relay maps to SDK format at runtime
-        lines.append(f"export AGENT_MODE='{_shell_escape(mode)}'")
+        if allowed_tools:
+            import json
+            lines.append(f"export ALLOWED_TOOLS='{_shell_escape(json.dumps(allowed_tools))}'")
 
         if mcp_config_path:
             lines.append(f"export MCP_CONFIG='{_shell_escape(mcp_config_path)}'")
