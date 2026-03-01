@@ -9,9 +9,12 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   BookOpen,
+  Monitor,
+  List,
+  Settings,
 } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
-import type { AttentionLevel } from "@/lib/types"
+import type { AttentionLevel, ViewMode } from "@/lib/types"
 import { LIFECYCLE_CONFIG, ATTENTION_CONFIG } from "@/lib/config"
 import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
 import { useWindowWidth } from "@/lib/hooks/use-window-width"
@@ -44,6 +47,8 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const setTagFilter = useSidebarStore(s => s.setAgentTagFilter)
   const skillsAllExpanded = useSidebarStore(s => s.skillsAllExpanded)
   const toggleSkillsExpandAll = useSidebarStore(s => s.toggleSkillsExpandAll)
+  const globalViewMode = useSidebarStore(s => s.globalViewMode)
+  const setGlobalViewMode = useSidebarStore(s => s.setGlobalViewMode)
 
   // ── Apollo (agents) ────────────────────────────────────────────────
   const { data, loading } = useAgents()
@@ -285,18 +290,44 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         </button>
         <span className="flex-1" />
         {panelTab === "agents" ? (
-          <button
-            type="button"
-            onClick={handleToggleExpandAll}
-            className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-            title="Cycle card states"
-          >
-            {expandedIds.size > 0 ? (
-              <ChevronsDownUp className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronsUpDown className="h-3.5 w-3.5" />
-            )}
-          </button>
+          <>
+            {/* Global view mode — switches all expanded cards at once */}
+            <div className="flex items-center gap-0.5 mr-1">
+              {([
+                { id: "terminal" as ViewMode, icon: Monitor, label: "All screens" },
+                { id: "feed" as ViewMode, icon: List, label: "All feeds" },
+                { id: "skills" as ViewMode, icon: BookOpen, label: "All skills" },
+                { id: "settings" as ViewMode, icon: Settings, label: "All settings" },
+              ]).map(({ id, icon: Icon, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setGlobalViewMode(globalViewMode === id ? null : id)}
+                  className={cn(
+                    "p-0.5 rounded transition-colors",
+                    globalViewMode === id
+                      ? "bg-accent/15 text-accent"
+                      : "text-muted/40 hover:text-secondary hover:bg-surface-raised/40",
+                  )}
+                  title={label}
+                >
+                  <Icon className="h-3 w-3" />
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={handleToggleExpandAll}
+              className="p-1 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+              title="Cycle card states"
+            >
+              {expandedIds.size > 0 ? (
+                <ChevronsDownUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronsUpDown className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </>
         ) : (
           <button
             type="button"

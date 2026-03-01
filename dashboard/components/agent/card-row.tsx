@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import {
   ArrowUp,
   ChevronRight,
@@ -77,6 +77,12 @@ export function AgentCardRow({
   // Ephemeral state — view tab resets when card collapses
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
   const [composerText, setComposerText] = useState("")
+
+  // Sync with global view mode broadcast
+  const globalViewMode = useSidebarStore(s => s.globalViewMode)
+  useEffect(() => {
+    if (globalViewMode) setViewMode(globalViewMode)
+  }, [globalViewMode])
 
   const handleSendMessage = () => {
     const text = composerText.trim()

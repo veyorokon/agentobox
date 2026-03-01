@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { zustandLog } from "@/lib/stores/log-middleware"
+import type { ViewMode } from "@/lib/types"
 
 /* ================================================================== */
 /*  SIDEBAR STORE                                                      */
@@ -48,6 +49,9 @@ interface SidebarState {
   skillTagFilter: string | null
   skillsAllExpanded: boolean
 
+  /* Global view mode — broadcast to all expanded cards */
+  globalViewMode: ViewMode | null
+
   /* Attention bar — shared across 3 mobile tab instances */
   attentionStepIdx: number
   attentionExpandedFeedItemId: string | null
@@ -71,6 +75,8 @@ interface SidebarActions {
   setSkillTagFilter: (tag: string | null) => void
   toggleSkillsExpandAll: () => void
 
+  setGlobalViewMode: (mode: ViewMode | null) => void
+
   setAttentionStepIdx: (idx: number) => void
   setAttentionExpandedFeedItemId: (id: string | null) => void
 }
@@ -87,6 +93,7 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
   skillSearch: "",
   skillTagFilter: null,
   skillsAllExpanded: false,
+  globalViewMode: "terminal" as ViewMode,
   attentionStepIdx: 0,
   attentionExpandedFeedItemId: null,
 
@@ -118,6 +125,8 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
   setSkillSearch: (query) => set({ skillSearch: query }),
   setSkillTagFilter: (tag) => set({ skillTagFilter: tag }),
   toggleSkillsExpandAll: () => set((s) => ({ skillsAllExpanded: !s.skillsAllExpanded })),
+
+  setGlobalViewMode: (mode) => set({ globalViewMode: mode }),
 
   setAttentionStepIdx: (idx) => set({ attentionStepIdx: idx }),
   setAttentionExpandedFeedItemId: (id) => set({ attentionExpandedFeedItemId: id }),

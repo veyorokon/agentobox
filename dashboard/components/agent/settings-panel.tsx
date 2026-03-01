@@ -232,7 +232,6 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
                   onChange={(e) => setMcpQuery(e.target.value)}
                   placeholder="Search MCP servers..."
                   className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
-                  autoFocus
                 />
               </div>
               <div className="max-h-40 overflow-y-auto">
