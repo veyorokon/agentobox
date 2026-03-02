@@ -212,6 +212,7 @@ class AgentType:
     tags: auto
     mode: auto
     attention_level: auto
+    relay_connected: auto
     task: auto
 
     @strawberry.field

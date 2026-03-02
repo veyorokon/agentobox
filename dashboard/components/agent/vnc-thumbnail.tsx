@@ -41,7 +41,7 @@ type ConnectionState = "idle" | "fetching-token" | "connecting" | "connected" | 
 
 /** VNC live desktop viewer — connects to agent's desktop via noVNC proxy. */
 export function VncThumbnail({ agent }: VncThumbnailProps) {
-  const hasContainer = CONTAINER_ALIVE.has(agent.lifecycleStatus)
+  const hasContainer = CONTAINER_ALIVE.has(agent.lifecycleStatus) && agent.relayConnected
   const isStopped = agent.lifecycleStatus === "stopped"
 
   const [connState, setConnState] = useState<ConnectionState>("idle")

@@ -31,6 +31,7 @@ export const ON_AGENT_CHANGED = gql`
       id
       lifecycleStatus
       attentionLevel
+      relayConnected
       mode
       cost
       duration

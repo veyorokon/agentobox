@@ -42,6 +42,7 @@ export const GET_AGENTS = gql`
       name
       lifecycleStatus
       attentionLevel
+      relayConnected
       mode
       task
       cost

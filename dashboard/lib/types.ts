@@ -11,6 +11,7 @@ export type Agent = {
   name: string
   lifecycleStatus: LifecycleStatus
   attentionLevel: AttentionLevel
+  relayConnected: boolean
   task: string
   cost: number
   duration: string
