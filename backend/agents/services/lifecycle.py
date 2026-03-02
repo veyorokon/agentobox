@@ -21,7 +21,7 @@ Key invariants:
 Container provisioning sequence:
     create container → symlink .claude to volume → write secrets →
     provision_workspace → write .relay_env → save relay_token →
-    signal s6 to start relay → spawn tmux log tail
+    relay self-starts (polls for .relay_env) → spawn tmux log tail
 """
 import asyncio
 import secrets
@@ -367,17 +367,11 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         )
         await broadcast_agent_update(agent)
 
-        # Bring up the s6-supervised relay service.
-        # The service runs under s6-supervise from boot, but idles in
-        # `sleep infinity` until .relay_env exists. Now that we've written
-        # the env file, SIGTERM the sleeping placeholder so s6-supervise
-        # restarts the run script — which will find .relay_env and exec
-        # relay.py. On crash, s6-supervise auto-restarts; on clean exit
-        # (code 0), the finish script touches a down file to stop restarts.
-        await runtime.exec(
-            sandbox.id, ["/command/s6-svc", "-t", "/run/service/svc-relay"],
-            user="root",
-        )
+        # The s6-supervised relay service polls for .relay_env every 2s.
+        # Now that we've written the env file, the relay will self-start
+        # within 2 seconds — no external signal needed. On crash,
+        # s6-supervise auto-restarts; on clean exit (code 0), the finish
+        # script touches a down file to stop restarts.
 
         # Spawn a tmux session tailing relay logs for VNC debug visibility.
         # S6_LOGGING=1 routes service stdout/stderr through s6-log to the

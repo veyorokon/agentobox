@@ -30,6 +30,7 @@ log = structlog.get_logger("abox.reconciler")
 
 INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
+DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container state
 ERROR_REAP_GRACE_S = 60
 
 _task: asyncio.Task | None = None
@@ -203,9 +204,17 @@ async def _detect_dead_containers():
 async def _detect_stuck_deploys(now):
     """Mark DEPLOYING agents ERROR when they exceed DEPLOY_GRACE_S.
 
-    Uses each agent's own runtime for sandbox termination.
+    Two-tier timeout:
+    - Soft (DEPLOY_GRACE_S=120s): kill if container is dead/missing, skip if running
+    - Hard (DEPLOY_HARD_LIMIT_S=300s): kill regardless — something is fundamentally broken
+
+    A running container past the soft deadline may just be slow (large workspace,
+    network latency). A dead container past the soft deadline is genuinely stuck.
     """
+    from agents.runtimes import get_runtime
+
     deploy_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
+    hard_cutoff = now - timedelta(seconds=DEPLOY_HARD_LIMIT_S)
 
     stuck_agents = await _get_agents(
         status=AgentStatus.DEPLOYING,
@@ -213,13 +222,27 @@ async def _detect_stuck_deploys(now):
     )
 
     for agent in stuck_agents:
-        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
+        agent_log = log.bind(agent_id=str(agent.id), agent_name=agent.name)
+        is_hard_stuck = agent.updated_at < hard_cutoff
+
+        # Readiness probe: check if container is still alive before killing.
+        # Only applies to soft-deadline agents with a known sandbox.
+        if not is_hard_stuck and agent.sandbox_id and agent.runtime == "docker":
+            try:
+                runtime = get_runtime(agent.runtime)
+                container_status = await runtime.get_status(agent.sandbox_id)
+                if container_status == "running":
+                    agent_log.info("reconciler.deploy_still_alive")
+                    continue  # Container alive — give it more time
+            except Exception:  # intentional: can't check status — fall through to kill
+                pass
+
+        await terminate_sandbox(agent, agent_log)
         agent = await _mark_error(agent.id)
         await broadcast_agent_update(agent)
-        log.info(
+        agent_log.info(
             "reconciler.stuck_deploy",
-            agent_id=str(agent.id),
-            agent_name=agent.name,
+            hard_timeout=is_hard_stuck,
         )
 
 
