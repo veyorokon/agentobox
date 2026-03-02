@@ -632,3 +632,103 @@ class TestBuildInstructions:
         # Native team tools are intercepted by hooks
         assert "SendMessage" in md
         assert "TaskCreate" in md
+
+
+# ── API proxy provisioning ──
+
+
+class TestBuildApiKeyFiles:
+    """Verify build_api_key_files produces proxy-mode file specs."""
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def test_no_key_returns_empty(self, adapter):
+        assert adapter.build_api_key_files("") == []
+
+    def test_key_returns_proxy_key_and_helper(self, adapter):
+        files = adapter.build_api_key_files("sk-ant-real-secret-key-12345")
+        assert len(files) == 2
+
+        # First file: proxy key (real key for the root-owned proxy)
+        proxy_key = files[0]
+        assert proxy_key["path"] == "/run/secrets/proxy_key"
+        assert proxy_key["content"] == "sk-ant-real-secret-key-12345"
+        assert proxy_key["mode"] == "0600"
+        assert proxy_key["owner"] == "root:root"
+
+        # Second file: helper script (echoes placeholder, NOT real key)
+        helper = files[1]
+        assert helper["path"] == "/opt/abox/api-key-helper.sh"
+        assert "echo" in helper["content"]
+        assert "sk-ant-proxy00-placeholder" in helper["content"]
+        # Must NOT contain the real key
+        assert "sk-ant-real-secret-key-12345" not in helper["content"]
+        assert helper["mode"] == "0555"
+        assert helper["owner"] == "root:root"
+
+
+class TestBuildOnboardingState:
+    """Verify build_onboarding_state pre-approves the placeholder key."""
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def test_no_key_no_approval(self, adapter):
+        import json
+        state = json.loads(adapter.build_onboarding_state())
+        assert state["hasCompletedOnboarding"] is True
+        assert "customApiKeyResponses" not in state
+
+    def test_with_key_approves_placeholder_suffix(self, adapter):
+        import json
+        from agents.adapters.claude_code import _PROXY_PLACEHOLDER_KEY
+        state = json.loads(adapter.build_onboarding_state(api_key="sk-ant-real-key"))
+        assert "customApiKeyResponses" in state
+        approved = state["customApiKeyResponses"]["approved"]
+        assert len(approved) == 1
+        # Must be last 20 chars of the PLACEHOLDER key, not the real key
+        assert approved[0] == _PROXY_PLACEHOLDER_KEY[-20:]
+        assert "real-key" not in approved[0]
+
+
+class TestBuildRelayEnv:
+    """Verify build_relay_env uses proxy placeholder and sets ANTHROPIC_BASE_URL."""
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def _base_kwargs(self, api_key="sk-ant-real-key"):
+        return dict(
+            agent_id="agent-123",
+            agent_name="backend",
+            team_name="test-team",
+            parent_session_id="session-456",
+            callback_url="http://localhost:8000",
+            relay_token="token-abc",
+            api_key=api_key,
+            model="claude-opus-4-6",
+            mode="auto",
+        )
+
+    def test_with_key_uses_placeholder(self, adapter):
+        from agents.adapters.claude_code import _PROXY_PLACEHOLDER_KEY
+        env = adapter.build_relay_env(**self._base_kwargs())
+        assert _PROXY_PLACEHOLDER_KEY in env
+        # Real key must NOT appear
+        assert "sk-ant-real-key" not in env
+
+    def test_with_key_sets_base_url(self, adapter):
+        env = adapter.build_relay_env(**self._base_kwargs())
+        assert "ANTHROPIC_BASE_URL='http://localhost:9999'" in env
+
+    def test_without_key_no_base_url(self, adapter):
+        env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
+        assert "ANTHROPIC_BASE_URL" not in env
+
+    def test_without_key_empty_api_key(self, adapter):
+        env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
+        assert "ANTHROPIC_API_KEY=''" in env

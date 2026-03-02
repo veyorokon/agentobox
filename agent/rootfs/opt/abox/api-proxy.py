@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""
+Localhost reverse proxy that injects the Anthropic API key header.
+
+Runs as root, reads the real key from /run/secrets/proxy_key (mode 0600
+root:root) at startup, and serves on 0.0.0.0:9999. The agent process
+gets ANTHROPIC_BASE_URL=http://localhost:9999 with a placeholder key.
+The proxy strips the placeholder and injects the real key before
+forwarding to api.anthropic.com.
+
+This ensures the agent process never has access to the real API key.
+"""
+
+import http.client
+import http.server
+import ssl
+import sys
+
+UPSTREAM_HOST = "api.anthropic.com"
+UPSTREAM_PORT = 443
+LISTEN_PORT = 9999
+KEY_PATH = "/run/secrets/proxy_key"
+CHUNK_SIZE = 8192
+
+# Headers to strip from incoming requests (case-insensitive lookup)
+_STRIP_HEADERS = frozenset({"x-api-key", "authorization"})
+
+
+def _load_key() -> str:
+    """Read the real API key from the secrets file. Crash if missing."""
+    try:
+        with open(KEY_PATH) as f:
+            key = f.read().strip()
+    except FileNotFoundError:
+        print(f"FATAL: {KEY_PATH} not found — cannot start without API key", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError:
+        print(f"FATAL: cannot read {KEY_PATH} — check file permissions", file=sys.stderr)
+        sys.exit(1)
+    if not key:
+        print(f"FATAL: {KEY_PATH} is empty", file=sys.stderr)
+        sys.exit(1)
+    return key
+
+
+# Read key once at module load (before any requests)
+_REAL_KEY = _load_key()
+
+# Reusable SSL context for upstream connections
+_SSL_CTX = ssl.create_default_context()
+
+
+class ProxyHandler(http.server.BaseHTTPRequestHandler):
+    """Reverse proxy handler that injects the real API key."""
+
+    # Silence per-request log lines
+    def log_request(self, code="-", size="-"):
+        pass
+
+    def do_GET(self):
+        self._proxy()
+
+    def do_POST(self):
+        self._proxy()
+
+    def do_PUT(self):
+        self._proxy()
+
+    def do_PATCH(self):
+        self._proxy()
+
+    def do_DELETE(self):
+        self._proxy()
+
+    def do_OPTIONS(self):
+        self._proxy()
+
+    def do_HEAD(self):
+        self._proxy()
+
+    def _proxy(self):
+        # Health check endpoint for s6 readiness
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+
+        # Read request body if present
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else None
+
+        # Build upstream headers: strip auth headers, inject real key
+        upstream_headers = {}
+        for key, value in self.headers.items():
+            if key.lower() not in _STRIP_HEADERS:
+                upstream_headers[key] = value
+        upstream_headers["x-api-key"] = _REAL_KEY
+        # Override host header for upstream
+        upstream_headers["Host"] = UPSTREAM_HOST
+
+        try:
+            conn = http.client.HTTPSConnection(
+                UPSTREAM_HOST, UPSTREAM_PORT, context=_SSL_CTX, timeout=300
+            )
+            conn.request(self.command, self.path, body=body, headers=upstream_headers)
+            resp = conn.getresponse()
+        except Exception as exc:
+            print(f"ERROR: upstream connection failed: {exc}", file=sys.stderr)
+            self.send_response(502)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Bad Gateway: upstream connection failed")
+            return
+
+        # Send response status
+        self.send_response(resp.status)
+
+        # Copy response headers, skip hop-by-hop headers
+        _hop_by_hop = frozenset({
+            "connection", "keep-alive", "proxy-authenticate",
+            "proxy-authorization", "te", "trailers",
+            "transfer-encoding",
+        })
+        for header, value in resp.getheaders():
+            if header.lower() not in _hop_by_hop:
+                self.send_header(header, value)
+        self.end_headers()
+
+        # Stream response body chunk-by-chunk (critical for SSE)
+        while True:
+            chunk = resp.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+            self.wfile.flush()
+
+        conn.close()
+
+
+def main():
+    print(f"api-proxy: listening on 0.0.0.0:{LISTEN_PORT}, forwarding to {UPSTREAM_HOST}:{UPSTREAM_PORT}")
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), ProxyHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("api-proxy: shutting down")
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()

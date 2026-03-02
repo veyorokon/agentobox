@@ -50,8 +50,10 @@ from agents.adapters.claude_code.registries import (
 # Path where the API key helper script lives in the container
 _API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
 
-# tmpfs path for the API key (root:agent 0440)
-_API_KEY_TMPFS_PATH = "/run/secrets/anthropic_key"
+# Placeholder key for API proxy mode — must match sk-ant-* pattern for CC CLI validation
+_PROXY_PLACEHOLDER_KEY = "sk-ant-proxy00-placeholder-key-for-agentobox-validation"
+_PROXY_KEY_PATH = "/run/secrets/proxy_key"
+_PROXY_PORT = 9999
 
 # Frontend mode -> Claude Code permission mode mapping
 # Internal to adapter — used by build_settings() and build_relay_env().
@@ -515,14 +517,18 @@ class ClaudeCodeAdapter:
 
         CC-specific: Claude Code reads .claude.json on startup. Without this,
         it prompts interactively for onboarding and API key approval.
+
+        Pre-approves the PLACEHOLDER key (not the real one) so CC validates
+        the placeholder at startup. The API proxy handles injecting the real
+        key into upstream requests.
         """
         state = {
             "hasCompletedOnboarding": True,
             "bypassPermissionsModeAccepted": True,
         }
-        if api_key and len(api_key) >= 20:
+        if api_key:
             state["customApiKeyResponses"] = {
-                "approved": [api_key[-20:]],
+                "approved": [_PROXY_PLACEHOLDER_KEY[-20:]],
                 "rejected": [],
             }
         return json.dumps(state)
@@ -557,27 +563,29 @@ class ClaudeCodeAdapter:
         return json.dumps({"mcpServers": servers}, indent=2)
 
     def build_api_key_files(self, api_key: str) -> list[dict]:
-        """File specs for API key delivery.
+        """File specs for API key delivery via the localhost proxy.
 
         Returns [{path, content, mode, owner}]. Services iterate and write.
         Empty list if no key needed.
 
-        CC-specific: Claude Code reads the API key via apiKeyHelper setting
-        which runs a script that cats a tmpfs file. This keeps the key out
-        of env vars where Claude Code could read it.
+        The real key is written to /run/secrets/proxy_key (0600 root:root)
+        where only the root-owned api-proxy.py can read it. The apiKeyHelper
+        script echoes a placeholder key that CC CLI validates at startup.
+        The proxy strips the placeholder and injects the real key before
+        forwarding to api.anthropic.com.
         """
         if not api_key:
             return []
         return [
             {
-                "path": _API_KEY_TMPFS_PATH,
+                "path": _PROXY_KEY_PATH,
                 "content": api_key,
-                "mode": "0440",
-                "owner": "root:agent",
+                "mode": "0600",
+                "owner": "root:root",
             },
             {
                 "path": _API_KEY_HELPER_PATH,
-                "content": f"#!/bin/bash\ncat {_API_KEY_TMPFS_PATH}\n",
+                "content": f"#!/bin/bash\necho '{_PROXY_PLACEHOLDER_KEY}'\n",
                 "mode": "0555",
                 "owner": "root:root",
             },
@@ -605,7 +613,15 @@ class ClaudeCodeAdapter:
         Uses OUR vocabulary for mode (e.g. "auto" not "bypassPermissions").
         The relay translates to SDK format at runtime. This keeps the
         backend-relay protocol stable across agent types.
+
+        When api_key is provided, the relay gets the placeholder key and
+        ANTHROPIC_BASE_URL pointing to the localhost proxy. The real key
+        never appears in the relay's environment.
         """
+        # When proxy is active, relay gets placeholder key + base URL override.
+        # The real key lives only in /run/secrets/proxy_key (root:root 0600).
+        relay_api_key = _PROXY_PLACEHOLDER_KEY if api_key else ""
+
         lines = [
             f"export AGENT_ID='{_shell_escape(agent_id)}'",
             f"export AGENT_NAME='{_shell_escape(agent_name)}'",
@@ -613,10 +629,15 @@ class ClaudeCodeAdapter:
             f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
             f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
             f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
-            f"export ANTHROPIC_API_KEY='{_shell_escape(api_key)}'",
+            f"export ANTHROPIC_API_KEY='{_shell_escape(relay_api_key)}'",
             f"export CLAUDE_MODEL='{_shell_escape(_normalize_model_id(model))}'",
             f"export AGENT_MODE='{_shell_escape(mode)}'",
         ]
+
+        if api_key:
+            lines.append(
+                f"export ANTHROPIC_BASE_URL='http://localhost:{_PROXY_PORT}'"
+            )
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")

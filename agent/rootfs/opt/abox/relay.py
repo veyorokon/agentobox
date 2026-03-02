@@ -88,6 +88,7 @@ from claude_agent_sdk._internal import message_parser as _mp
 _orig_parse = _mp.parse_message
 
 
+# tech-debt: SDK monkey-patch — attaches _raw dict to parsed messages. Remove when SDK adds .to_dict() on message types.
 def _parse_with_raw(data: dict):
     """Wrap SDK parse_message to attach the raw stdout dict to every message."""
     msg = _orig_parse(data)
@@ -348,6 +349,20 @@ class SDKRelay:
         self._event_buffer: deque[dict] = deque(maxlen=20)  # bounded ring buffer for critical events
         self.ws = WSTransport()
 
+    @staticmethod
+    def _build_sdk_env() -> dict[str, str]:
+        """Build env dict for the SDK subprocess.
+
+        Always sets IS_SANDBOX=1. When ANTHROPIC_BASE_URL is set (proxy mode),
+        forwards it so the CC CLI sends API requests through the localhost
+        proxy instead of directly to api.anthropic.com.
+        """
+        env: dict[str, str] = {"IS_SANDBOX": "1"}
+        base_url = os.environ.get("ANTHROPIC_BASE_URL")
+        if base_url:
+            env["ANTHROPIC_BASE_URL"] = base_url
+        return env
+
     def _build_options(self, resume_session_id: str = "", permission_mode: str = "") -> ClaudeAgentOptions:
         """Build SDK client options from relay environment variables.
 
@@ -415,7 +430,7 @@ class SDKRelay:
             # session marker and refuses to start ("cannot be launched inside
             # another Claude Code session"). The SDK sets its own entrypoint
             # env var (CLAUDE_CODE_ENTRYPOINT=sdk-py) internally.
-            env={"IS_SANDBOX": "1"},
+            env=self._build_sdk_env(),
             extra_args=extra_args,
             mcp_servers=mcp_config if mcp_config else {},
             stderr=self._on_stderr,
@@ -1036,10 +1051,14 @@ def main():
     # are visible in container logs before the container is cleaned up.
     diag_keys = ["AGENT_ID", "AGENT_NAME", "AGENT_MODE", "CLAUDECODE", "IS_SANDBOX",
                  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
-                 "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ABOX_CALLBACK_URL"]
+                 "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ABOX_CALLBACK_URL",
+                 "ANTHROPIC_BASE_URL"]
     diag = {k: ("set" if k == "ANTHROPIC_API_KEY" and os.environ.get(k) else os.environ.get(k, ""))
             for k in diag_keys}
     log.info("abox-relay starting (agent=%s) env=%s", AGENT_ID, diag)
+
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
+    log.info("api_proxy active=%s base_url=%s", bool(base_url), base_url or "direct")
 
     relay = SDKRelay()
     try:
