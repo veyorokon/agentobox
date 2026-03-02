@@ -41,6 +41,7 @@ pgdata/
 
 # Test output
 test-results/
+.pytest_cache/
 
 # Reference captures (local research artifacts)
 pages_html/

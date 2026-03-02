@@ -8,9 +8,9 @@
 # restart the relay. A clean exit means the relay decided to stop
 # (e.g., fatal WS close, clean shutdown). Restarting would be wrong.
 #
-# On non-zero exit: s6-supervise auto-restarts (default behavior).
-# The run script will re-check for .relay_env and either start relay
-# or go back to sleep infinity.
+# On non-zero exit: terminate the entire container. Relay holds the
+# websocket, SDK session, and auth token — all lost on crash. A
+# restarted relay is a zombie with no resumption path. Crash visibly.
 
 EXIT_CODE=${1:-0}
 
@@ -21,6 +21,10 @@ if [ "$EXIT_CODE" = "0" ]; then
     if [ -d /run/service/svc-relay ]; then
         touch /run/service/svc-relay/down
     fi
+else
+    # Non-zero exit means relay crashed. Terminate the entire supervision
+    # tree so the container exits instead of restarting into a zombie loop.
+    s6-svscanctl -t /run/service
 fi
 
 # Clean up any orphaned Claude CLI processes the SDK may have left behind.

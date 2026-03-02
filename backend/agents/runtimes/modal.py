@@ -62,8 +62,9 @@ class ModalRuntime:
             create_kwargs["volumes"] = modal_volumes
 
         sb = await modal.Sandbox.create.aio("/init", **create_kwargs)
+        agent_id = env.get("AGENT_ID", "")
         await sb.set_tags.aio(
-            {"agentobox.managed": "true", "agentobox.agent": name}
+            {"agentobox.managed": "true", "agentobox.agent": name, "agentobox.agent.id": agent_id}
         )
         tunnels = await sb.tunnels.aio()
         vnc_url = tunnels[6080].url if 6080 in tunnels else ""

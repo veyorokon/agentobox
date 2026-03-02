@@ -358,27 +358,26 @@ class GraphQLLoggingExtension:
 
     Emits structured logs with operation name, type, variables, timing,
     and errors — replacing the opaque `POST /graphql → 200` lines.
+
+    Logger name: ``graphql.query`` or ``graphql.mutation`` (never
+    ``graphql.operation``).
+
+    Event name: ``graphql.{type}.{OperationName}`` when the client sends
+    an explicit operation name.  For anonymous operations the first root
+    field is used instead (e.g. ``graphql.query.agents``).  The word
+    "anonymous" never appears.
     """
 
     def on_operation(self):
         import time
 
-        ctx = self.execution_context
-        op_name = ctx.operation_name or "anonymous"
-        op_type = "unknown"
-        if ctx.query:
-            stripped = ctx.query.strip()
-            if stripped.startswith("mutation"):
-                op_type = "mutation"
-            elif stripped.startswith("subscription"):
-                op_type = "subscription"
-            else:
-                op_type = "query"
-
-        log = structlog.get_logger("graphql.operation")
         start = time.monotonic()
         yield
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+
+        ctx = self.execution_context
+        op_type, op_name = _extract_operation_info(ctx)
+        log = structlog.get_logger(f"graphql.{op_type}")
 
         result = ctx.result
         errors = None
@@ -413,11 +412,61 @@ class GraphQLLoggingExtension:
         return _next(root, info, *args, **kwargs)
 
 
+def _extract_operation_info(ctx) -> tuple[str, str]:
+    """Derive (operation_type, operation_name) from an ExecutionContext.
+
+    Returns the explicit operation name when provided by the client.
+    For anonymous operations, falls back to the first root-level field
+    name from the parsed document (e.g. ``agents``, ``createAgent``).
+    Only if neither is available does it fall back to parsing the raw
+    query string.
+    """
+    # --- operation type ---
+    # Prefer the parsed document (accurate), fall back to raw string prefix.
+    op_type = "query"
+    try:
+        op_type = ctx.operation_type.value  # "query" | "mutation" | "subscription"
+    except (RuntimeError, AttributeError):
+        # graphql_document not yet populated (e.g. parse error) — sniff raw query.
+        if ctx.query:
+            stripped = ctx.query.strip()
+            if stripped.startswith("mutation"):
+                op_type = "mutation"
+            elif stripped.startswith("subscription"):
+                op_type = "subscription"
+
+    # --- operation name ---
+    # 1. Explicit name from the client ("query GetAgents { ... }")
+    op_name = ctx.operation_name
+    if op_name:
+        return op_type, op_name
+
+    # 2. First root-level field from the parsed AST
+    doc = ctx.graphql_document
+    if doc and doc.definitions:
+        defn = doc.definitions[0]
+        selections = getattr(defn, "selection_set", None)
+        if selections and selections.selections:
+            first_field = selections.selections[0]
+            field_name = getattr(first_field, "name", None)
+            if field_name:
+                return op_type, field_name.value
+
+    # 3. Last resort — regex the first field name out of the raw query.
+    #    Handles "{ agents ... }" and "mutation { createAgent ... }".
+    if ctx.query:
+        m = re.search(r"{\s*(\w+)", ctx.query)
+        if m:
+            return op_type, m.group(1)
+
+    return op_type, "unknown"
+
+
 def _redact_variables(variables: dict) -> dict:
     """Shallow-redact sensitive variable values."""
     redacted = {}
     for key, val in variables.items():
-        if any(s in key.lower() for s in ("password", "secret", "token", "api_key", "apikey", "_key", "authorization", "encrypted")):
+        if any(s in key.lower() for s in ("password", "secret", "token", "api_key", "apikey", "authorization", "encrypted")):
             redacted[key] = "***"
         elif isinstance(val, dict):
             redacted[key] = _redact_variables(val)

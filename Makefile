@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs test test-local lint
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs test test-local lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -43,3 +43,15 @@ test-local:
 lint:
 	cd backend && uv run ruff check agents/
 	cd dashboard && npx next lint
+
+test-e2e:
+	uv run --group e2e pytest tests/e2e/ -v || test $$? -eq 5
+
+test-e2e-full:
+	uv run --group e2e pytest tests/e2e/ -v -m "e2e"
+
+test-e2e-agents:
+	uv run --group e2e pytest tests/e2e/ -v -m "e2e and agent"
+
+test-e2e-dashboard:
+	uv run --group e2e pytest tests/e2e/ -v -m "e2e and dashboard"

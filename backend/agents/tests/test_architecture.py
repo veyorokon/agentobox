@@ -581,6 +581,226 @@ class TestCrossBoundaryContracts:
         )
 
 
+# ── Log event naming enforcement ──
+
+
+# Structlog log methods whose first positional arg is the event name.
+_LOG_METHODS = {"info", "warning", "error", "debug", "exception"}
+
+# Terms too vague for a structured log event name. When you're grep-ing
+# through production logs at 3am, "error" or "message" tells you nothing.
+_VAGUE_EVENT_TERMS = {
+    "operation", "anonymous", "error", "request", "event",
+    "message", "data", "result", "process", "handle",
+}
+
+# Directories to search for structlog usage.
+# AGENTS_DIR.parent is the backend root (/app in Docker, backend/ on host).
+_BACKEND_ROOT = AGENTS_DIR.parent
+_LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"]
+
+# Existing event names that predate the domain.action convention.
+# New code MUST use dotted names. This set only shrinks — migrate names
+# to domain.action format and remove entries as you touch files.
+_GRANDFATHERED_EVENT_NAMES = {
+    "agent_created", "agent_killed", "agent_not_found",
+    "agent_provision_failed", "agent_provisioned", "agent_removed",
+    "agent_reset_complete", "api_key_helper_provisioned",
+    "api_key_helper_skipped", "auto_restarting_agent",
+    "broadcast_agent_update_failed", "broadcast_event_failed",
+    "broadcast_feed_item_failed", "broadcast_sent",
+    "callback_request_failed", "claude_md_write_failed",
+    "clear_session_files_failed", "clear_session_lost_relay_disconnected",
+    "clear_session_skipped", "container_created", "container_terminated",
+    "creating_agent", "creating_container", "creating_sandbox",
+    "dead_container_detected", "docker_list_failed", "error_agent_reaped",
+    "exec_done", "exec_failed", "exec_start",
+    "externalize_image_failed", "get_runtime_failed", "hook_bridge_error",
+    "interagent_broadcast_routed", "interrupt_lost_relay_disconnected",
+    "interrupt_sent", "killing_agent", "list_done", "list_start",
+    "malformed_callback", "mcp_lifespan_failed", "mcp_lifespan_recovery",
+    "mcp_registry_search_failed", "mcp_send_broadcast", "mcp_send_message",
+    "mcp_shutdown_request", "mcp_task_create", "mcp_task_delete",
+    "mcp_task_update", "mcp_teammate_spawn", "message_sent",
+    "modal_volumes_attached", "mode_change_lost_relay_disconnected",
+    "mode_change_noop", "mode_change_sent", "orphan_cleanup_failed",
+    "orphan_reap_failed", "orphan_reaped", "orphan_sandbox_terminated",
+    "permission_request", "plan_auto_approved", "plan_pending_approval",
+    "plans_superseded", "provision_cleanup_db_failed",
+    "provisioning_workspace", "push_to_disconnected_relay",
+    "question_answered", "recipient_not_found", "reconciler_started",
+    "reconciliation_failed", "relay_connected_update_failed",
+    "relay_connection_check_failed", "relay_launched",
+    "relay_ws_connected", "relay_ws_disconnected",
+    "relay_ws_event_failed", "relay_ws_reject",
+    "removed_stale_container", "removing_agent",
+    "restart_lost_relay_disconnected", "restart_sent", "restart_skipped",
+    "restart_skipped_already_deploying", "restarting_agent",
+    "sandbox_created", "sandbox_log_capture_failed", "sandbox_processes",
+    "scoped_sudo_provisioned", "secret_decrypt_failed",
+    "secret_push_failed", "secrets_pushed", "secrets_resolved",
+    "session_cleared", "shutdown_broadcast_failed", "skills_provisioned",
+    "stream_process_exit", "stuck_deploy_detected",
+    "subscription_connected", "task_create_feed_broadcast_failed",
+    "task_delete_broadcast_failed", "task_update_feed_broadcast_failed",
+    "team_feed_item_not_found", "terminate_done", "terminate_not_found",
+    "terminate_sandbox_failed", "terminate_start", "theme_files_written",
+    "unknown_callback_type", "url_fetch_blocked", "url_to_base64_failed",
+    "vnc_proxy_connected", "vnc_proxy_connecting",
+    "vnc_proxy_disconnected", "vnc_proxy_reject",
+    "vnc_proxy_send_failed", "vnc_proxy_upstream_close_error",
+    "vnc_proxy_upstream_closed", "vnc_proxy_upstream_failed",
+    "vnc_proxy_upstream_ok", "vnc_token_created",
+    "workspace_provisioned", "write_file_done", "write_file_start",
+    "ws_connect", "ws_disconnect", "ws_receive",
+}
+
+
+class TestLogEventNames:
+    """Principle: log event names are grep handles, not prose.
+
+    Every structlog event name must follow ``domain.action`` (at least one dot
+    separator) so logs are filterable by domain. Vague single-word names like
+    "error" or "request" are banned — they're useless when debugging production.
+
+    Uses AST parsing to extract literal string event names from log calls.
+    f-strings and variable references are skipped (they have dynamic parts).
+
+    Existing underscore-only names are grandfathered in ``_GRANDFATHERED_EVENT_NAMES``.
+    New code must use dotted names. The grandfather set only shrinks over time.
+    """
+
+    _SKIP = {"tests", "migrations", "__pycache__"}
+
+    def _should_check(self, path: Path) -> bool:
+        return not any(part in self._SKIP for part in path.parts)
+
+    def _extract_event_names(self, path: Path) -> list[tuple[str, int]]:
+        """Return (event_name, lineno) for all structlog calls with literal event names."""
+        src = _read_source(path)
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            return []
+
+        results = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+
+            # Match: <expr>.info(...), <expr>.warning(...), etc.
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr in _LOG_METHODS):
+                continue
+
+            # Extract the first positional argument (the event name)
+            if not node.args:
+                # Also check for event= keyword
+                event_arg = None
+                for kw in node.keywords:
+                    if kw.arg == "event":
+                        event_arg = kw.value
+                        break
+                if event_arg is None:
+                    continue
+            else:
+                event_arg = node.args[0]
+
+            # Only check literal strings — skip f-strings, variables, expressions
+            if not (isinstance(event_arg, ast.Constant) and isinstance(event_arg.value, str)):
+                continue
+
+            results.append((event_arg.value, event_arg.lineno))
+
+        return results
+
+    def test_event_names_have_dot_separator(self):
+        """Every structlog event name must contain at least one dot (domain.action).
+
+        Grandfathered names from before this convention are exempt. New event
+        names must use dotted format — e.g. 'relay.ws_connected' not 'relay_ws_connected'.
+        """
+        violations = []
+
+        for search_dir in _LOG_SEARCH_DIRS:
+            if not search_dir.is_dir():
+                continue
+
+            for py_file in sorted(search_dir.rglob("*.py")):
+                if not self._should_check(py_file):
+                    continue
+
+                for event_name, lineno in self._extract_event_names(py_file):
+                    if "." in event_name:
+                        continue
+                    if event_name in _GRANDFATHERED_EVENT_NAMES:
+                        continue
+                    try:
+                        rel = py_file.relative_to(_REPO_ROOT)
+                    except ValueError:
+                        rel = py_file
+                    violations.append(f"{rel}:{lineno} → {event_name!r}")
+
+        assert not violations, (
+            "Structlog event names missing dot separator (need domain.action):\n"
+            + "\n".join(f"  {v}" for v in violations)
+            + "\n\nUse 'domain.action' format — e.g. 'stream.process_exit' not 'process_exit'."
+            "\nIf migrating an old name, remove it from _GRANDFATHERED_EVENT_NAMES."
+        )
+
+    def test_event_names_not_vague(self):
+        """Event names must not be single vague terms from the denylist."""
+        violations = []
+
+        for search_dir in _LOG_SEARCH_DIRS:
+            if not search_dir.is_dir():
+                continue
+
+            for py_file in sorted(search_dir.rglob("*.py")):
+                if not self._should_check(py_file):
+                    continue
+
+                for event_name, lineno in self._extract_event_names(py_file):
+                    # Check if the entire event name (case-insensitive) is a vague term
+                    if event_name.lower() in _VAGUE_EVENT_TERMS:
+                        try:
+                            rel = py_file.relative_to(_REPO_ROOT)
+                        except ValueError:
+                            rel = py_file
+                        violations.append(f"{rel}:{lineno} → {event_name!r}")
+
+        assert not violations, (
+            "Structlog event names are too vague (denylist match):\n"
+            + "\n".join(f"  {v}" for v in violations)
+            + "\n\nUse specific domain.action names — e.g. 'relay.connection_error' not 'error'."
+        )
+
+    def test_grandfathered_names_still_exist(self):
+        """Grandfather set entries must still exist in the codebase.
+
+        When a grandfathered name is migrated to domain.action format, remove
+        it from _GRANDFATHERED_EVENT_NAMES. This test catches stale entries
+        so the set only shrinks.
+        """
+        # Collect all event names in the codebase
+        all_names: set[str] = set()
+        for search_dir in _LOG_SEARCH_DIRS:
+            if not search_dir.is_dir():
+                continue
+            for py_file in sorted(search_dir.rglob("*.py")):
+                if not self._should_check(py_file):
+                    continue
+                for event_name, _ in self._extract_event_names(py_file):
+                    all_names.add(event_name)
+
+        stale = _GRANDFATHERED_EVENT_NAMES - all_names
+        assert not stale, (
+            "Stale entries in _GRANDFATHERED_EVENT_NAMES (no longer in codebase):\n"
+            + "\n".join(f"  {n!r}" for n in sorted(stale))
+            + "\n\nRemove these — they've been migrated or deleted."
+        )
+
+
 # ── Annotation enforcement ──
 
 # Extension point — registry of annotation types. Adding a new annotation

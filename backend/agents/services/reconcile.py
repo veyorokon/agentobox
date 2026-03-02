@@ -23,6 +23,7 @@ from django.utils import timezone
 
 from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
+from agents.services.feed import create_feed_item
 from agents.services.utils import terminate_sandbox
 
 log = structlog.get_logger("agents.reconcile")
@@ -172,6 +173,19 @@ async def _detect_dead_containers():
 
             agent = await _mark_error(agent.id, error_message=error_msg)
             await broadcast_agent_update(agent)
+
+            # Create error feed item so dashboard shows WHY the agent crashed
+            # (backup path — stream.py creates one from relay's process_exit
+            # event, but if relay never sent it, this is the only record)
+            summary = error_msg.splitlines()[-1][:200] if error_msg else "Container exited unexpectedly"
+            await create_feed_item(
+                project_id=str(agent.project_id),
+                type="error",
+                agent_name=agent.name,
+                agent_record=agent,
+                text=summary,
+            )
+
             log.info(
                 "dead_container_detected",
                 agent_id=str(agent.id),

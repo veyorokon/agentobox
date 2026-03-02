@@ -1,9 +1,0 @@
-{
-  "name": "my-project",
-  "mode": "vendored",
-  "dependencies": {
-    "tessl/npm-zustand": {
-      "version": "5.0.0"
-    }
-  }
-}
