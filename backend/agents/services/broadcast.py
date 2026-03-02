@@ -64,7 +64,7 @@ async def broadcast_agent_update(agent: Agent) -> None:
             },
         )
     except Exception:  # intentional: channel layer failure must not break agent state mutations
-        log.warning("broadcast.agent_failed", group=group, exc_info=True)
+        log.warning("broadcast.agent_send_failed", group=group, exc_info=True)
 
     # Detect status change and emit a status StreamEvent + feed item
     old_status = getattr(agent, "_original_status", None)

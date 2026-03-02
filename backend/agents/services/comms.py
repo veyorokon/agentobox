@@ -89,7 +89,7 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
         connected = None
 
     if connected is False:
-        log.warning("comms.push_failed", agent_id=agent_id, command_type=command.get("type", ""))
+        log.warning("comms.relay_push_failed", agent_id=agent_id, command_type=command.get("type", ""))
         return False
 
     channel_layer = get_channel_layer()

@@ -642,7 +642,7 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
             ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' | grep -v grep"],
         )
         truncated = output[:200] if output else "(empty)"
-        op_log.info("lifecycle.sandbox_processes", output=truncated)
+        op_log.info("lifecycle.processes_captured", output=truncated)
     except Exception:  # intentional: log capture is diagnostic only — never block provisioning
         op_log.warning("lifecycle.log_capture_failed")
 
