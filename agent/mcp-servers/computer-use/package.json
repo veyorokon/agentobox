@@ -49,7 +49,7 @@
     "eslint": {
       "ajv": "6.14.0"
     },
-    "minimatch": "10.2.1",
+    "minimatch": "10.2.3",
     "hono": "4.12.2"
   }
 }

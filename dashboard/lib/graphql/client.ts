@@ -42,6 +42,9 @@ function getAuthToken(): string | null {
 
 /* ── Logging link ────────────────────────────────────────────────── */
 
+/** Operations whose response data should never be logged (contains credentials). */
+const REDACTED_OPS = new Set(["CreateVncToken", "Login"])
+
 const loggingLink = new ApolloLink((operation, forward) => {
   const { operationName } = operation
   log("operation.start", { name: operationName, variables: operation.variables })
@@ -52,7 +55,8 @@ const loggingLink = new ApolloLink((operation, forward) => {
     if (result.errors?.length) {
       log("operation.error", { name: operationName, errors: result.errors }, "error")
     } else {
-      log("operation.complete", { name: operationName, data: result.data })
+      const data = REDACTED_OPS.has(operationName) ? "[redacted]" : result.data
+      log("operation.complete", { name: operationName, data })
     }
     return result
   })
