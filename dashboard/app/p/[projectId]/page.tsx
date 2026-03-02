@@ -25,6 +25,7 @@ import { BreakpointIndicator } from "@/components/layout/breakpoint-indicator"
 import { AttentionBar } from "@/components/attention/attention-bar"
 import { TeamFeed } from "@/components/feed/team-feed"
 import { ComposerBar } from "@/components/composer/composer-bar"
+import { UserMenu } from "@/components/layout/user-menu"
 
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
@@ -117,12 +118,14 @@ export default function ProjectPage() {
             <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1.5">
               {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
             </span>
-            <div
-              className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent"
-              title="vahid"
-            >
-              V
-            </div>
+            <UserMenu>
+              <div
+                className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
+                title="vahid"
+              >
+                V
+              </div>
+            </UserMenu>
           </div>
         )}
 

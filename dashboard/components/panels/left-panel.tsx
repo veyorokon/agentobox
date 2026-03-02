@@ -26,6 +26,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { AgentCardRow } from "@/components/agent/card-row"
 import { ResizeHandle } from "@/components/layout/resize-handle"
+import { UserMenu } from "@/components/layout/user-menu"
 import { SkillsPanel } from "@/components/panels/skills-panel"
 import { AgentFilterToolbar } from "@/components/shared/agent-filter-toolbar"
 import { useSelectMode } from "@/lib/hooks/use-select-mode"
@@ -254,12 +255,14 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         >
           <KeyRound className="h-3.5 w-3.5" />
         </button>
-        <div
-          className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow shrink-0"
-          title="vahid-eyorokon"
-        >
-          V
-        </div>
+        <UserMenu className="shrink-0">
+          <div
+            className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
+            title="vahid-eyorokon"
+          >
+            V
+          </div>
+        </UserMenu>
         <button
           type="button"
           onClick={handleToggleOpen}
