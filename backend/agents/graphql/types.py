@@ -205,6 +205,7 @@ class AgentType:
     id: auto
     name: auto
     model: auto
+    role: auto
     instructions: auto
     runtime: auto
     phase: auto

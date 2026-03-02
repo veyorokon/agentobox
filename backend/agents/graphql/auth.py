@@ -45,7 +45,14 @@ async def _get_user(info):
             return scope_user
 
     # WS: check connectionParams Bearer token (graphql-ws protocol)
-    params = getattr(info.context, "connection_params", None) or {}
+    # Strawberry sets connection_params as a dict key for WS contexts,
+    # but HTTP contexts use StrawberryDjangoContext (dataclass, no .get()).
+    ctx = info.context
+    params = (
+        ctx.get("connection_params")
+        if isinstance(ctx, dict)
+        else getattr(ctx, "connection_params", None)
+    ) or {}
     auth_header = params.get("authorization", "")
     if auth_header.startswith("Bearer "):
         from accounts.auth import adecode_token

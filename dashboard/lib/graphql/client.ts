@@ -102,6 +102,13 @@ export const client = new ApolloClient({
   link: ApolloLink.from([loggingLink, networkLink]),
   cache: new InMemoryCache({
     typePolicies: {
+      Query: {
+        fields: {
+          // agentFeed is fetched per-agent; cache separately by agentId
+          // and allow full array replacement (suppresses merge warning)
+          agentFeed: { keyArgs: ["agentId"], merge: (_existing: unknown, incoming: unknown) => incoming },
+        },
+      },
       AgentType: { keyFields: ["id"] },
       TeamFeedItemType: { keyFields: ["id"] },
       SkillType: { keyFields: ["id"] },

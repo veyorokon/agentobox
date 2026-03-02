@@ -68,8 +68,13 @@ import websockets.exceptions
 #
 # WHEN TO REMOVE:
 #   If the SDK adds a built-in way to access the raw dict (e.g. a .raw or
-#   .to_dict() method), or if it starts preserving all fields we need,
-#   this patch can be replaced with that API. Check SDK changelog on upgrade.
+#   .to_dict() method on message types), this patch can be replaced.
+#   Check SDK changelog on upgrade.
+#
+#   Last checked: v0.1.44 (2026-03-01) — to_dict() exists only on
+#   PermissionUpdate, NOT on message types (UserMessage, AssistantMessage,
+#   ResultMessage, SystemMessage). Monkey-patch still required.
+#   Pinned version: v0.1.39 in Dockerfile.debian.
 #
 # RISK:
 #   Depends on claude_agent_sdk._internal.message_parser and
