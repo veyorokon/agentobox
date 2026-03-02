@@ -74,17 +74,28 @@ const httpLink = new HttpLink({
   },
 })
 
-const wsLink = new GraphQLWsLink(
-  createClient({
-    url: getWsUrl(),
-    retryAttempts: Infinity,
-    shouldRetry: () => true,
-    connectionParams: () => {
-      const token = getAuthToken()
-      return token ? { authorization: `Bearer ${token}` } : {}
+const wsClient = createClient({
+  url: getWsUrl(),
+  retryAttempts: Infinity,
+  shouldRetry: () => true,
+  connectionParams: () => {
+    const token = getAuthToken()
+    return token ? { authorization: `Bearer ${token}` } : {}
+  },
+  on: {
+    // Suppress noisy console errors on page navigation / tab suspension.
+    // graphql-ws auto-reconnects via retryAttempts — these are transient.
+    closed: (event) => {
+      const e = event as CloseEvent
+      if (e?.code !== 1000) log("ws.closed", { code: e?.code, reason: e?.reason })
     },
-  }),
-)
+    error: (error) => {
+      log("ws.error", { error: String(error) })
+    },
+  },
+})
+
+const wsLink = new GraphQLWsLink(wsClient)
 
 // Route subscriptions → WS, everything else → HTTP
 const networkLink = split(

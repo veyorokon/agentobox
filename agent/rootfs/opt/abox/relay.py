@@ -227,6 +227,7 @@ class WSTransport:
                 additional_headers={
                     "Authorization": f"Bearer {RELAY_AUTH_TOKEN}",
                 },
+                max_size=16 * 2**20,  # 16MB — computer-use screenshots are 2-5MB base64
                 ping_interval=20,
                 ping_timeout=10,
             )

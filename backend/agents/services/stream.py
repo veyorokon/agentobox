@@ -255,33 +255,41 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
     adapter = get_adapter(agent.agent_type)
     last_text = adapter.last_output(agent.latest_snapshot)
 
-    # Create TeamFeedItem for the result
+    # Create TeamFeedItem for the result.
+    # Errors always get a feed item. Summaries only when there's real content —
+    # empty turns just update the agent status dot, no feed noise.
     is_error = event.get("is_error", False)
-    item_type = "error" if is_error else "summary"
     duration_ms = event.get("duration_ms", 0)
     secs = duration_ms // 1000 if duration_ms else 0
     mins = secs // 60
     duration_str = f"{mins}m {secs % 60:02d}s" if mins else f"{secs}s"
 
-    feed_kwargs = dict(
-        type=item_type,
-        agent_name=agent.name,
-        agent_record=agent,
-        cost=event.get("total_cost_usd", 0),
-        turns=event.get("num_turns", 0),
-        duration=duration_str,
-        is_error=is_error,
-    )
     if is_error:
-        feed_kwargs["text"] = last_text or "Agent encountered an error"
-    else:
-        feed_kwargs["summary"] = last_text or "Turn completed"
-
-    await create_feed_item(
-        project_id=str(agent.project_id),
-        source_event=stream_event,
-        **feed_kwargs,
-    )
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            source_event=stream_event,
+            type="error",
+            agent_name=agent.name,
+            agent_record=agent,
+            cost=event.get("total_cost_usd", 0),
+            turns=event.get("num_turns", 0),
+            duration=duration_str,
+            is_error=True,
+            text=last_text or "Agent encountered an error",
+        )
+    elif last_text:
+        await create_feed_item(
+            project_id=str(agent.project_id),
+            source_event=stream_event,
+            type="summary",
+            agent_name=agent.name,
+            agent_record=agent,
+            cost=event.get("total_cost_usd", 0),
+            turns=event.get("num_turns", 0),
+            duration=duration_str,
+            is_error=False,
+            summary=last_text,
+        )
     # Set review attention after turn completion (if no pending perm/plan)
     await recompute_attention(str(agent.project_id), str(agent.id), after_result=True)
 
