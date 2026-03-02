@@ -10,12 +10,14 @@ export interface VncThumbnailProps {
   agent: Agent
 }
 
-/** Map VNC proxy close codes to user-facing messages. */
+/** Map VNC proxy close codes to user-facing messages (permanent errors only). */
 const CLOSE_MESSAGES: Record<number, string> = {
   4002: "Desktop not available",
-  4003: "Cannot reach agent desktop",
   4004: "Agent not found",
 }
+
+/** Codes that are transient during container startup — retry instead of giving up. */
+const TRANSIENT_CODES: Set<number> = new Set([4003])
 
 /** Derive the VNC WebSocket URL from current browser hostname. */
 function buildVncWsUrl(agentId: string, token: string): string {
@@ -115,6 +117,8 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
   const handleDisconnect = useCallback((e: any) => {
     connectingRef.current = false
+    // Null out ref immediately — RFB is already disconnected, prevent stale ops
+    vncRef.current = null
     if (!mountedRef.current || !hasContainer) return
 
     const detail = e?.detail ?? e
@@ -123,15 +127,14 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
     const permanentMsg = code ? CLOSE_MESSAGES[code] : null
     if (permanentMsg) {
-      // Unmount VncScreen first to prevent RFB state errors during cleanup
       setWsUrl(null)
       setConnState("error")
       setErrorMsg(permanentMsg)
       return
     }
 
-    // Retry on unclean disconnect or expired token (4001)
-    if (!clean || code === 4001) {
+    // Retry on unclean disconnect, expired token (4001), or transient codes (4003 = container starting)
+    if (!clean || code === 4001 || (code && TRANSIENT_CODES.has(code))) {
       retryCountRef.current += 1
       if (retryCountRef.current <= 5) {
         setWsUrl(null)

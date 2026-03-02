@@ -35,7 +35,7 @@ Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before
 
 - **backend/**: Django 6.0 + Strawberry GraphQL + Daphne (all environments)
 - **dashboard/**: Next.js + Apollo Client + Zustand + Tailwind CSS v4
-- **agent/**: Alpine + s6-overlay image with AwesomeWM, Firefox, noVNC, Claude Code hooks. Uses `rootfs/` convention — all container files under `agent/rootfs/` at their actual filesystem paths.
+- **agent/**: Debian bookworm + s6-overlay image with AwesomeWM, Firefox, noVNC, Claude Code hooks. Uses `rootfs/` convention — all container files under `agent/rootfs/` at their actual filesystem paths.
 - **Runtimes**: Modal (serverless) or Docker (local)
 
 ## Makefile
@@ -48,10 +48,14 @@ Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before
 - `make schema` — Export GraphQL schema to `dashboard/schema.graphql`.
 - `make agent-image` — Build agent Docker image locally.
 - `make dev` — Run backend locally with Daphne (outside Docker).
+- `make test` — Run backend tests in Docker.
+- `make test-local` — Run backend tests locally via uv.
+- `make lint` — Run ruff (backend) + next lint (dashboard).
+- `make docs` — Regenerate `docs/REFERENCE.md` from codebase.
 
 ## Dogfooding vs Production
 
-**Dogfooding** = using agentobox to build agentobox. The team lead is Claude Code on the host, agents work on this repo, and the dashboard being tested IS agentobox's own dashboard. This is Vahid's specific dev workflow — not the general product.
+**Dogfooding** = using agentobox to build agentobox. The team lead is Claude Code on the host, agents work on this repo, and the dashboard being tested IS agentobox's own dashboard. This is the dev workflow — not the general product.
 
 **Production** = customers use agentobox to build their own projects. Agents work on the customer's codebase. The agentobox dashboard is just the control plane — agents never interact with it. Agents only need to reach: (1) each other (team comms), (2) the agentobox backend (hook callbacks).
 
