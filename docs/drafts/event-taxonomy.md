@@ -107,6 +107,14 @@ subsystems — each has a clear owner and boundary.
 | `stream.plan_pending` | info | agent_id, tool_use_id | `plan_pending_approval` |
 | `stream.plans_superseded` | info | agent_id, count | `plans_superseded` |
 
+**NEW (gap fills):**
+
+| Event | Level | Context Fields | Why |
+|-------|-------|---------------|-----|
+| `stream.event_received` | debug | agent_id, event_type | Detect agent silence — gap between last event and now = unresponsive (story 6) |
+| `stream.session_started` | info | agent_id, session_id, resumed | Know if session resume succeeded or fell back to fresh (story 9) |
+| `stream.session_result` | info | agent_id, session_id, cost_usd, turns, input_tokens, output_tokens | Per-session cost visibility, anomaly detection (story 10) |
+
 ### mcp — MCP coordination (team messaging, tasks, spawning)
 
 | Event | Level | Context Fields | Current Name |
@@ -319,6 +327,91 @@ broadcast.agent_failed           group=project_abc_agents
 
 **Diagnosis:** Redis/Channels layer is down. Broadcasts failing but mutations
 succeeding. Dashboard is blind until Channels recovers.
+
+### Story 6: "Why is this agent unresponsive?"
+
+```
+relay.connected                  agent_id=X backfill_ran=false
+comms.message_sent               agent_id=X delivery=push
+...60s passes, no stream events...
+stream.event_received            agent_id=X event_type=assistant (last seen 90s ago)
+```
+
+**Diagnosis:** Relay is connected but no stream events flowing. SDK may be
+stuck in thinking, rate limited, or hung. The gap between last
+`stream.event_received` and now tells you how long silence has lasted.
+Without this event, "unresponsive" and "working normally" are indistinguishable.
+
+### Story 7: "Why didn't agent B get agent A's message?"
+
+```
+mcp.message_sent                 sender=agent-A recipient=agent-B
+comms.push_failed                agent_id=agent-B command_type=input
+relay.disconnected               agent_id=agent-B code=1006
+```
+
+**Diagnosis:** Agent B's relay was down when the message arrived. Currently
+the message silently drops. With `comms.push_failed`, the failure is visible.
+Future: queue and backfill inter-agent messages like user messages.
+
+### Story 8: "Why did this agent auto-restart?"
+
+```
+comms.message_sent               agent_id=X delivery=backfill
+comms.auto_restarting            agent_id=X current_status=stopped
+lifecycle.agent_restarted        agent_id=X
+lifecycle.provision_started      agent_id=X runtime=docker
+lifecycle.container_created      agent_id=X sandbox_id=new-abc
+relay.connected                  agent_id=X backfill_ran=true backfill_count=1
+relay.backfill_sent              agent_id=X count=1 source=deploy
+```
+
+**Diagnosis:** User sent a message to a stopped agent. Auto-restart kicked in,
+new container created, message backfilled on relay connect. The chain from
+message → restart → provision → backfill is fully traceable.
+
+### Story 9: "Why did session resume fail?"
+
+```
+lifecycle.agent_restarted        agent_id=X
+lifecycle.provision_started      agent_id=X runtime=docker resume_session_id=sess-123
+relay.connected                  agent_id=X backfill_ran=true
+stream.session_started           agent_id=X resumed=false session_id=sess-456
+```
+
+**Diagnosis:** `resumed=false` despite `resume_session_id` being set means
+Claude couldn't find the session checkpoint. New session created instead.
+Without `stream.session_started`, resume failures are invisible.
+
+### Story 10: "Why is this agent costing so much?"
+
+```
+stream.session_result            agent_id=X cost_usd=2.45 turns=3 input_tokens=180000
+stream.session_result            agent_id=X cost_usd=8.12 turns=1 input_tokens=950000
+```
+
+**Diagnosis:** Second session used 950k input tokens in a single turn —
+likely a huge file read or context explosion. Per-session cost events make
+anomalies visible and attributable. Future: include runtime costs from
+Modal/Docker billing APIs.
+
+---
+
+## Cost Attribution (Future)
+
+Runtime and MCP costs are planned. The taxonomy doesn't change but these
+context fields should be added when cost tracking lands:
+
+| Event | Future Cost Fields |
+|-------|--------------------|
+| `runtime.docker.container_created` | image_size, instance_type |
+| `runtime.modal.sandbox_created` | gpu_type, memory_mb, region |
+| `stream.session_result` | cost_usd, input_tokens, output_tokens, cache_read_tokens |
+| `mcp.message_sent` | token_count (if MCP server reports usage) |
+| `reconciler.error_reaped` | runtime_cost_usd (total container uptime cost) |
+
+These fields are optional today — the events exist, fields get added when
+the billing pipeline is ready.
 
 ---
 
