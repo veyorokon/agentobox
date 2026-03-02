@@ -45,7 +45,7 @@ async def _get_user(info):
             return scope_user
 
     # WS: check connectionParams Bearer token (graphql-ws protocol)
-    params = info.context.get("connection_params") or {}
+    params = getattr(info.context, "connection_params", None) or {}
     auth_header = params.get("authorization", "")
     if auth_header.startswith("Bearer "):
         from accounts.auth import adecode_token
