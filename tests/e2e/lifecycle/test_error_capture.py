@@ -15,8 +15,9 @@ We stop the entire container (not just kill processes inside it) because
 s6-overlay keeps the container alive when individual processes die, and
 the reconciliation loop only checks container-level state.
 
-See task #5 for the detection gap when processes die inside a running
-container (relay dies but s6 keeps container alive → agent stuck idle).
+Note: when processes die inside a running container (relay dies but s6
+keeps container alive), the agent gets stuck idle — a separate issue from
+container-level death detection tested here.
 
 Run:
   make test-e2e-agents
@@ -132,9 +133,8 @@ class TestErrorCapture:
     def test_error_status_feed_item_created(self, gql, test_project, docker_ops):
         """A status transition feed item (to=error) should appear after crash.
 
-        Note: reconciliation creates status-type feed items (idle→error)
-        but NOT error-type feed items. That's a known gap (task #8).
-        When #8 is fixed, add a test for type=error feed items too.
+        Reconciliation creates both status-type feed items (idle→error) and
+        error-type feed items with crash diagnostics.
         """
         agent = self._create_and_wait(gql, test_project)
         agent_id = agent["id"]

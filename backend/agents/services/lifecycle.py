@@ -139,16 +139,21 @@ async def create_agent(
 
 
 def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id="", relay_token=""):
-    """Sync helper: mark agent as provisioned with sandbox details."""
+    """Sync helper: save sandbox details. Agent stays DEPLOYING until relay connects.
+
+    Status transitions to IDLE in RelayConsumer.connect() — the agent isn't
+    truly ready until the relay WebSocket is up and pending messages have been
+    backfilled. Setting IDLE here created a race: the agent looked idle but
+    had no relay connection, so messages sent during that window were lost.
+    """
     agent = Agent.objects.get(id=agent_id)
     agent.sandbox_id = sandbox_id
     agent.vnc_url = vnc_url
-    agent.status = AgentStatus.IDLE
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
     agent.relay_token = relay_token
     agent.save(update_fields=[
-        "sandbox_id", "vnc_url", "status", "team_name",
+        "sandbox_id", "vnc_url", "team_name",
         "parent_session_id", "relay_token", "updated_at",
     ])
     return agent

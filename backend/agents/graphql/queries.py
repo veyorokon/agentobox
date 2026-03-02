@@ -115,6 +115,10 @@ class AgentQuery:
                 pass
 
         events = await _collect_qs(qs[:first])
+        # Reverse: query fetches most recent N in descending order,
+        # but feed displays chronologically (oldest first, newest at bottom)
+        # so the subscription can append live events at the end.
+        events.reverse()
         return _events_to_entries(events)
 
     @strawberry.field
@@ -136,7 +140,7 @@ class AgentQuery:
                 event_type="stream_event",
             ).select_related("agent").order_by("-created_at", "-id")[:limit]
         )
-
+        events.reverse()
         return _events_to_entries(events)
 
     @strawberry.field

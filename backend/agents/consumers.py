@@ -88,10 +88,12 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         ensure_running()
 
         # Backfill pending user messages that arrived while the relay was
-        # genuinely down (container freshly created). On transient WS reconnects
-        # (backend restart, network blip) the relay stayed alive — Claude already
-        # has these messages in context. Replaying them causes duplicate turns.
-        from agents.models import AgentStatus
+        # genuinely down (container freshly created). The agent stays in
+        # DEPLOYING until the relay connects (status=IDLE is set below),
+        # so this check cleanly distinguishes fresh deploys from transient
+        # WS reconnects (where status is already IDLE/RUNNING and Claude
+        # already has these messages in context).
+        from agents.models import Agent, AgentStatus
         if self.agent.status == AgentStatus.DEPLOYING:
             backfill_cutoff = self.agent.updated_at - timedelta(seconds=30)
             pending = StreamEvent.objects.filter(
@@ -125,6 +127,17 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                             "type": "input",
                             "payload": {"type": "user", "message": {"role": "user", "content": clean}},
                         })
+
+            # Transition DEPLOYING → IDLE now that relay is connected and
+            # pending messages have been delivered. This is the only place
+            # status becomes IDLE — lifecycle.py saves sandbox details but
+            # deliberately leaves status as DEPLOYING until this point.
+            await Agent.objects.filter(id=self.agent_id).aupdate(
+                status=AgentStatus.IDLE,
+            )
+            self.agent.status = AgentStatus.IDLE
+            from agents.services.broadcast import broadcast_agent_update
+            await broadcast_agent_update(self.agent)
 
         log.info("relay_ws_connected", agent_id=self.agent_id)
 
