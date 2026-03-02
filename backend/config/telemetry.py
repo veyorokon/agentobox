@@ -304,6 +304,7 @@ def start_queue_listener():
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            drop_noisy_fields,  # Final pass: strip ip/user_agent from django_structlog context
             # Extract exc_info from LogRecord into event_dict.
             # BoundLogger.exception() sets exc_info on the LogRecord, not
             # the structlog event_dict. The configure() chain's format_exc_info
