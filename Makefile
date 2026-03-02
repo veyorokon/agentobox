@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs test test-local lint
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -33,3 +33,13 @@ down:
 
 docs:
 	docker compose exec -T backend uv run python manage.py generate_reference --to-stdout > docs/REFERENCE.md
+
+test:
+	docker compose exec backend uv run python -m pytest agents/tests/ -v
+
+test-local:
+	cd backend && uv run python -m pytest agents/tests/ -v
+
+lint:
+	cd backend && uv run ruff check agents/
+	cd dashboard && npx next lint
