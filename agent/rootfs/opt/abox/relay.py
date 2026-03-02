@@ -195,7 +195,7 @@ class _Redactor:
                         if len(val) >= 8:
                             self._secrets.append(val)
                     except PermissionError:
-                        pass  # intentional: root-only files when running as agent
+                        log.warning("redactor.skip_secret path=%s reason=permission_denied", path)
         # Also redact secrets from mounted env file if readable
         env_file = "/mnt/abox-state/secrets/env"
         if os.path.isfile(env_file):
@@ -207,7 +207,7 @@ class _Redactor:
                         if len(val) >= 8:
                             self._secrets.append(val)
             except PermissionError:
-                pass  # intentional: restricted file
+                log.warning("redactor.skip_env_file path=%s reason=permission_denied", env_file)
         # Sort longest first so longer secrets are replaced before substrings
         self._secrets.sort(key=len, reverse=True)
         if self._secrets:

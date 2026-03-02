@@ -163,18 +163,53 @@ Agent containers need secrets (API keys, CLI tokens, MCP credentials) but the ag
 
 **Blocks:** `docker inspect`, `/proc/1/environ`, cross-container access, agent user reading files directly.
 
-### Layer 2: HTTP Proxy for Anthropic Key (protect in transit)
+### Layer 2: HTTP Proxy for Anthropic Key (process isolation)
 
-`svc-apiproxy` (`api-proxy.py`) runs on `localhost:9999`, reads the real key from `/run/secrets/proxy_key`, injects it into outbound requests to `api.anthropic.com`. The relay gets a placeholder key (`_PROXY_PLACEHOLDER_KEY`) that passes CLI validation but is worthless if leaked.
+The proxy prevents the agent process from ever possessing the real Anthropic API key. This is process-level isolation — the key exists only in the proxy's memory (running as root), never in the agent's environment or memory space.
+
+`svc-apiproxy` (`api-proxy.py`) runs as root on `localhost:9999`, reads the real key from `/run/secrets/proxy_key` once at startup, and injects it into every outbound request to `api.anthropic.com`. The relay process gets a placeholder key (`sk-ant-proxy00-placeholder-key-for-agentobox-validation`) that passes CLI format validation but is rejected by the real API.
 
 ```
-Claude CLI  →  ANTHROPIC_BASE_URL=http://localhost:9999
-            →  api-proxy.py reads /run/secrets/proxy_key
-            →  injects real Authorization header
-            →  forwards to api.anthropic.com
+Provisioning (backend)
+  ├── writes real key → /run/secrets/proxy_key (0600 root:root)
+  ├── sets ANTHROPIC_API_KEY = placeholder in relay env
+  └── sets ANTHROPIC_BASE_URL = http://localhost:9999 in relay env
+
+Runtime (inside container)
+  Claude CLI (agent user)
+    → POST http://localhost:9999/v1/messages
+      → api-proxy.py (root) strips placeholder, injects real key
+        → HTTPS POST api.anthropic.com/v1/messages
+          → response streamed back through proxy → CLI
 ```
 
-**Blocks:** Everything in Layer 1, plus `echo $ANTHROPIC_API_KEY` prints the placeholder, `env | grep` shows nothing useful, process memory inspection of the relay.
+**Blocks:** Everything in Layer 1, plus: `echo $ANTHROPIC_API_KEY` prints the placeholder (worthless), `env | grep` shows nothing useful, process memory inspection of the relay finds only the placeholder.
+
+**Scope:** Only the Anthropic API key uses the proxy. Other secrets (GitHub tokens, MCP credentials) get Layers 1 + 3 only, until s6 MCP isolation is built.
+
+**Important:** The proxy injects the key on ALL requests it receives (it has no path allowlist). This is correct because only Claude CLI traffic hits `localhost:9999` via `ANTHROPIC_BASE_URL`. Do not reuse this proxy for non-Anthropic APIs without adding path-based filtering.
+
+### Layer 3: Output Stream Redaction (UX safety net)
+
+> **This is a UX safety net, not a security boundary.** A compromised agent can trivially bypass redaction via base64 encoding, character splitting, or network exfiltration. Redaction prevents accidental exposure in the dashboard — it does not prevent intentional exfiltration.
+
+The relay (`relay.py`) is the single chokepoint — every event flows through `_send_event()` before reaching the backend WebSocket. A `_Redactor` class loads secret values from `/run/secrets/` and `/mnt/abox-state/secrets/env` at boot, then scrubs matching substrings from every outbound event dict (JSON serialize → substring replace → deserialize). Redaction happens before WS send and before event buffering — no unredacted event ever leaves the container.
+
+**Blocks:** `echo $GITHUB_TOKEN` → `[REDACTED]` in dashboard, `env | grep TOKEN` → values redacted, `cat .env` → values redacted.
+
+**Does not block (by design):** network exfiltration, base64-encoded secrets, secrets the relay can't read (root-only files when relay runs as `agent` user).
+
+**Redaction strategy:** Substring matching (longest first). Trade-off: simple and fast, but short secrets (<8 chars) are excluded to avoid false positives. A secret that's a common English word could cause over-redaction — the 8-char minimum mitigates this.
+
+### Which layers protect which secrets
+
+| Secret type | Layer 1 (mounts) | Layer 2 (proxy) | Layer 3 (redaction) |
+|-------------|:-:|:-:|:-:|
+| Anthropic API key | yes | **yes** | yes |
+| Project secrets (GitHub, etc.) | yes | no | **yes** |
+| MCP credentials (future) | yes | no (s6 isolation instead) | yes |
+
+### Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|---------------|------|
@@ -185,15 +220,7 @@ Claude CLI  →  ANTHROPIC_BASE_URL=http://localhost:9999
 | Relay (`relay.py`) | Redacts secrets from output stream before forwarding | Agent image |
 | s6 services (`svc-*/run`) | Process isolation — each service has own user/env | Agent image |
 
-### Layer 3: Output Stream Redaction (protect in output)
-
-The relay (`relay.py`) is the single chokepoint — every event flows through `_send_event()` before reaching the backend WebSocket. A `_Redactor` class loads secret values from `/run/secrets/` and `/mnt/abox-state/secrets/env` at boot, then scrubs matching substrings from every outbound event dict (via JSON serialize → replace → deserialize).
-
-**Blocks:** `echo $GITHUB_TOKEN` → `[REDACTED]` in dashboard, `env | grep TOKEN` → values redacted, `cat .env` → values redacted.
-
-**Does not block (by design):** network exfiltration (process sends secret to external URL), base64-encoded secrets, secrets the relay can't read (root-only files).
-
-This is a **UX safety net**, not a security boundary. See `docs/drafts/agent-secrets.md` for the full threat model.
+See `docs/drafts/agent-secrets.md` for the full threat model matrix and design rationale.
 
 ### Future: s6 MCP Secret Isolation
 
@@ -214,4 +241,28 @@ Each MCP:
 - Agent connects via MCP SSE/HTTP transport (not stdio)
 - Agent never possesses the secret — only the socket path
 
-**Not built yet.** When the first secret-bearing MCP is added, create: the s6 service directory (`svc-mcp-<name>/`), the linux user in the Dockerfile, secret provisioning in lifecycle.py, and the `.mcp.json` entry with `type: "sse"` transport pointing to the local socket.
+**Concrete example — adding mcp-github:**
+
+```
+# 1. Dockerfile: create dedicated user
+RUN useradd -r -s /usr/sbin/nologin mcp-github
+
+# 2. s6 service directory: agent/rootfs/etc/s6-overlay/s6-rc.d/svc-mcp-github/
+#    run script:
+#!/command/execlineb -P
+s6-setuidgid mcp-github
+s6-envdir /run/secrets/mcp-github/
+npx @anthropic/mcp-github --transport sse --port 7001
+
+# 3. Backend provisioning (lifecycle.py):
+#    Write GITHUB_TOKEN to /run/secrets/mcp-github/GITHUB_TOKEN
+
+# 4. Agent .mcp.json entry:
+#    {"github": {"type": "sse", "url": "http://localhost:7001/sse"}}
+
+# 5. Result: agent calls MCP tools over HTTP, never sees the token
+```
+
+**Not built yet.** The team MCP (`/mcp` on the backend) does not need s6 isolation — it runs on the backend, not inside the container, and auth is via relay_token over HTTP. The first real candidate for s6 isolation is whichever secret-bearing MCP gets added first (likely github or playwright).
+
+When building, create: the s6 service directory (`svc-mcp-<name>/`), the linux user in the Dockerfile, secret provisioning in lifecycle.py, and the `.mcp.json` entry with `type: "sse"` transport.

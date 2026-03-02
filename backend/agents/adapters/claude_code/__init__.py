@@ -614,9 +614,14 @@ class ClaudeCodeAdapter:
         The relay translates to SDK format at runtime. This keeps the
         backend-relay protocol stable across agent types.
 
-        When api_key is provided, the relay gets the placeholder key and
-        ANTHROPIC_BASE_URL pointing to the localhost proxy. The real key
-        never appears in the relay's environment.
+        Proxy partnership (Layer 2 secret protection):
+          When api_key is provided, TWO env vars work together:
+          - ANTHROPIC_API_KEY = placeholder (passes CLI format validation)
+          - ANTHROPIC_BASE_URL = http://localhost:9999 (routes to proxy)
+          The Claude CLI sends the placeholder to localhost:9999. The proxy
+          (svc-apiproxy, running as root) strips it and injects the real key
+          from /run/secrets/proxy_key before forwarding to api.anthropic.com.
+          Result: the real key never appears in the relay's env, memory, or logs.
         """
         # Proxy active: relay gets a placeholder key that passes CLI validation.
         # The real key lives in /run/secrets/proxy_key, read by svc-apiproxy.

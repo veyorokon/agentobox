@@ -2,13 +2,24 @@
 """
 Localhost reverse proxy that injects the Anthropic API key header.
 
-Runs as root, reads the real key from /run/secrets/proxy_key (mode 0600
-root:root) at startup, and serves on 0.0.0.0:9999. The agent process
-gets ANTHROPIC_BASE_URL=http://localhost:9999 with a placeholder key.
-The proxy strips the placeholder and injects the real key before
-forwarding to api.anthropic.com.
+Part of the Layer 2 secret protection (see docs/ARCHITECTURE.md "Security & Secrets").
+Runs as root, reads the real key from /run/secrets/proxy_key (mode 0600 root:root)
+at startup, and serves on 0.0.0.0:9999. The agent process gets
+ANTHROPIC_BASE_URL=http://localhost:9999 with a placeholder key that passes CLI
+format validation but is worthless if leaked. The proxy strips the placeholder and
+injects the real key before forwarding to api.anthropic.com.
 
-This ensures the agent process never has access to the real API key.
+This ensures the agent process never has access to the real API key — process-level
+isolation, not just environment variable hiding.
+
+SCOPE: All requests to this proxy get the real key injected. This is correct because
+only Claude CLI traffic hits localhost:9999 (via ANTHROPIC_BASE_URL). Do not reuse
+this proxy for non-Anthropic APIs without adding path-based filtering.
+
+OPS: If the proxy enters a restart loop (visible in s6 logs), check:
+  1. /run/secrets/proxy_key exists and is non-empty (provisioning issue)
+  2. Port 9999 is not already in use (another process grabbed it)
+  3. DNS resolution for api.anthropic.com works (network issue)
 """
 
 import http.client
