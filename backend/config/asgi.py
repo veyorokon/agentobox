@@ -15,7 +15,7 @@ from agents.consumers import RelayConsumer, VncProxyConsumer  # noqa: E402
 from schema import schema  # noqa: E402
 from strawberry.channels.handlers.ws_handler import GraphQLWSConsumer  # noqa: E402
 
-log = structlog.get_logger("agents.websocket")
+log = structlog.get_logger("abox.graphql")
 
 # MCP coordination server — stateless HTTP so each tool call is independent.
 # Daphne doesn't send ASGI lifespan events, so we simulate them on first
@@ -54,7 +54,7 @@ async def _mcp_lifespan_runner(app):
     try:
         await app(scope, receive, send)
     except Exception:
-        log.exception("mcp_lifespan_failed")
+        log.exception("graphql.mcp_lifespan_failed")
 
 
 async def _ensure_mcp_ready():
@@ -75,7 +75,7 @@ async def _ensure_mcp_ready():
             return
 
         if _mcp_lifespan_task is not None:
-            log.warning("mcp_lifespan_recovery", reason="task_died")
+            log.warning("graphql.mcp_lifespan_recovery", reason="task_died")
 
         _mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
         _mcp_ready = asyncio.Event()
@@ -89,18 +89,18 @@ class LoggingGraphQLWSConsumer(GraphQLWSConsumer):
 
     async def websocket_connect(self, message):
         log.info(
-            "ws_connect",
+            "graphql.ws_connected",
             path=self.scope.get("path"),
             subprotocols=self.scope.get("subprotocols", []),
         )
         await super().websocket_connect(message)
 
     async def websocket_disconnect(self, message):
-        log.info("ws_disconnect", path=self.scope.get("path"))
+        log.info("graphql.ws_disconnected", path=self.scope.get("path"))
         await super().websocket_disconnect(message)
 
     async def websocket_receive(self, message):
-        log.debug("ws_receive", path=self.scope.get("path"))
+        log.debug("graphql.ws_received", path=self.scope.get("path"))
         await super().websocket_receive(message)
 
 

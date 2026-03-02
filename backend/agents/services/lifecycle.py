@@ -42,7 +42,7 @@ from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 
-log = structlog.get_logger("agents.lifecycle")
+log = structlog.get_logger("abox.lifecycle")
 
 
 
@@ -77,7 +77,7 @@ async def create_agent(
         )
 
     op_log = log.bind(project_id=str(project_id), agent=name)
-    op_log.info("creating_agent", runtime=runtime_name, workspace_path=workspace_path)
+    op_log.info("lifecycle.agent_creating", runtime=runtime_name, workspace_path=workspace_path)
 
     project = await Project.objects.aget(id=project_id)
 
@@ -129,7 +129,7 @@ async def create_agent(
         session_id="",
     )
 
-    op_log.info("agent_created", agent_id=str(agent.id))
+    op_log.info("lifecycle.agent_created", agent_id=str(agent.id))
 
     asyncio.create_task(
         _provision_agent(agent, project, runtime_name, op_log, secret_envs)
@@ -283,7 +283,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             project_id=str(project.id),
         )
 
-        op_log.info("container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
+        op_log.info("lifecycle.container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
         # Set up session persistence: symlink ~/.claude to volume-backed dir
         # Run as root because fresh Docker volumes are root-owned
@@ -389,22 +389,22 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
              "exec tail -F /run/uncaught-logs/current 2>/dev/null || exec sleep infinity"],
             user="agent",
         )
-        op_log.info("relay_launched", team_name=team_name, parent_session_id=parent_session_id)
+        op_log.info("lifecycle.relay_launched", team_name=team_name, parent_session_id=parent_session_id)
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
 
-        op_log.info("agent_provisioned", agent_id=agent_id)
+        op_log.info("lifecycle.agent_provisioned", agent_id=agent_id)
 
     except Exception:  # intentional: provisioning is background task — must not crash, cleanup below
-        op_log.exception("agent_provision_failed", agent_id=agent_id)
+        op_log.exception("lifecycle.provision_failed", agent_id=agent_id)
 
         if runtime and sandbox_id:
             try:
                 await runtime.terminate(sandbox_id)
-                op_log.info("orphan_sandbox_terminated", sandbox_id=sandbox_id)
+                op_log.info("lifecycle.orphan_cleaned", sandbox_id=sandbox_id)
             # intentional: orphan container kill is best-effort during provision failure cleanup
             except Exception:
-                op_log.warning("orphan_cleanup_failed", sandbox_id=sandbox_id, exc_info=True)
+                op_log.warning("lifecycle.orphan_cleanup_failed", sandbox_id=sandbox_id, exc_info=True)
 
         try:
             agent = await _save_failed(agent_id)
@@ -415,7 +415,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
             await broadcast_event(agent, evt)
         except Exception:  # intentional: DB cleanup after failed provision — nothing more to do
-            op_log.warning("provision_cleanup_db_failed", agent_id=agent_id, exc_info=True)
+            op_log.warning("lifecycle.provision_cleanup_failed", agent_id=agent_id, exc_info=True)
     finally:
         clear_agent_context()
 
@@ -425,12 +425,12 @@ async def kill_agent(agent_id: str) -> bool:
     from config.telemetry import bind_agent_context, clear_agent_context
 
     op_log = log.bind(agent_id=agent_id)
-    op_log.info("killing_agent")
+    op_log.info("lifecycle.agent_killing")
 
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("lifecycle.agent_not_found")
         return False
 
     # Bind agent context for this operation
@@ -449,7 +449,7 @@ async def kill_agent(agent_id: str) -> bool:
     await broadcast_agent_update(agent)
     await create_and_broadcast_event(agent, event_type="stopped", data={})
 
-    op_log.info("agent_killed")
+    op_log.info("lifecycle.agent_killed")
     clear_agent_context()
     return True
 
@@ -463,12 +463,12 @@ async def remove_agent(agent_id: str) -> bool:
     from config.telemetry import bind_agent_context, clear_agent_context
 
     op_log = log.bind(agent_id=agent_id)
-    op_log.info("removing_agent")
+    op_log.info("lifecycle.agent_removing")
 
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("lifecycle.agent_not_found")
         return False
 
     bind_agent_context(
@@ -490,7 +490,7 @@ async def remove_agent(agent_id: str) -> bool:
 
     await agent.adelete()
 
-    op_log.info("agent_removed")
+    op_log.info("lifecycle.agent_removed")
     clear_agent_context()
     return True
 
@@ -575,18 +575,18 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     from config.telemetry import bind_agent_context, clear_agent_context
 
     op_log = log.bind(agent_id=agent_id)
-    op_log.info("restarting_agent")
+    op_log.info("lifecycle.agent_restarting")
 
     # Atomically lock, read, and reset agent state.
     # If the agent is already DEPLOYING, another restart won the race.
     try:
         result = await _atomic_reset_for_restart(agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("lifecycle.agent_not_found")
         raise ValueError(f"Agent {agent_id} not found")
 
     if result is None:
-        op_log.info("restart_skipped_already_deploying", agent_id=agent_id)
+        op_log.info("lifecycle.restart_skipped", agent_id=agent_id)
         agent = await Agent.objects.aget(id=agent_id)
         return agent
 
@@ -606,10 +606,10 @@ async def hard_restart_agent(agent_id: str) -> Agent:
         try:
             runtime = get_runtime(old_runtime)
             await runtime.terminate(old_sandbox_id)
-            op_log.info("container_terminated", sandbox_id=old_sandbox_id)
+            op_log.info("lifecycle.container_terminated", sandbox_id=old_sandbox_id)
         # intentional: old container kill is best-effort during restart — new one will be provisioned regardless
         except Exception:
-            op_log.warning("terminate_sandbox_failed", sandbox_id=old_sandbox_id, exc_info=True)
+            op_log.warning("runtime.terminate_failed", sandbox_id=old_sandbox_id, exc_info=True)
 
     # Resolve project secrets for this agent
     from projects.models import Project
@@ -621,7 +621,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
         agent, event_type="restarted", data={"agent_id": agent_id},
     )
 
-    op_log.info("agent_reset_complete", agent_id=agent_id)
+    op_log.info("lifecycle.agent_restarted", agent_id=agent_id)
 
     # Start provisioning in background — pass resume_session_id so the
     # new container can --resume the prior conversation.
@@ -642,9 +642,9 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
             ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' | grep -v grep"],
         )
         truncated = output[:200] if output else "(empty)"
-        op_log.info("sandbox_processes", output=truncated)
+        op_log.info("lifecycle.sandbox_processes", output=truncated)
     except Exception:  # intentional: log capture is diagnostic only — never block provisioning
-        op_log.warning("sandbox_log_capture_failed")
+        op_log.warning("lifecycle.log_capture_failed")
 
 
 def _build_agent_env(agent, project) -> dict[str, str]:
@@ -700,10 +700,10 @@ async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
             try:
                 merged[secret.key] = decrypt_value(bytes(secret.encrypted_value))
             except Exception:  # intentional: one corrupt secret must not block other secrets or provisioning
-                op_log.warning("secret_decrypt_failed", key=secret.key)
+                op_log.warning("lifecycle.secret_decrypt_failed", key=secret.key)
 
     if not merged:
         return None
 
-    op_log.info("secrets_resolved", count=len(merged), agent_name=agent.name)
+    op_log.info("lifecycle.secrets_resolved", count=len(merged), agent_name=agent.name)
     return merged

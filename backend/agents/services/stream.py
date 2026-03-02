@@ -28,7 +28,7 @@ from agents.services.broadcast import broadcast_agent_update, broadcast_event
 from agents.services.feed import broadcast_feed_item, create_feed_item, recompute_attention
 from agents.services.media import externalize_image_block
 
-log = structlog.get_logger("agents.stream")
+log = structlog.get_logger("abox.stream")
 
 
 def _externalize_media(parts: list[dict]) -> list[dict]:
@@ -142,7 +142,7 @@ async def _supersede_pending_plans(agent: Agent) -> None:
     for item_id in stale_ids:
         item = await TeamFeedItem.objects.aget(id=item_id)
         await broadcast_feed_item(item)
-    log.info("plans_superseded", agent_id=str(agent.id), count=len(stale_ids))
+    log.info("stream.plans_superseded", agent_id=str(agent.id), count=len(stale_ids))
 
 
 async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:
@@ -177,7 +177,7 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
         )
         from agents.services.comms import send_message
         await send_message(str(agent.id), "Plan approved. Proceed with the implementation.")
-        log.info("plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
+        log.info("stream.plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
         return
 
     # Supervised/plan mode: pending item, user must approve via dashboard.
@@ -196,7 +196,7 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
         tool_use_id=tool_use_id,
     )
     await recompute_attention(str(agent.project_id), str(agent.id))
-    log.info("plan_pending_approval", agent_id=str(agent.id), tool_use_id=tool_use_id)
+    log.info("stream.plan_pending", agent_id=str(agent.id), tool_use_id=tool_use_id)
 
 
 async def _maybe_set_running(agent: Agent) -> None:
@@ -343,7 +343,7 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         await agent.asave(update_fields=update_fields)
         await broadcast_agent_update(agent)
         log.info(
-            "stream_process_exit",
+            "stream.process_exit",
             agent_id=str(agent.id),
             exit_code=exit_code,
             stderr_len=len(stderr) if stderr else 0,

@@ -6,7 +6,7 @@ from asgiref.sync import sync_to_async
 from agents.models import Agent, AgentStatus, StreamEvent
 from agents.services.broadcast import broadcast_event
 
-log = structlog.get_logger("agents.utils")
+log = structlog.get_logger("abox.comms")
 
 
 async def create_and_broadcast_event(
@@ -60,5 +60,5 @@ async def terminate_sandbox(agent: Agent, op_log) -> bool:
         await runtime.terminate(agent.sandbox_id)
         return True
     except Exception:  # intentional: container may already be gone — log and report failure
-        op_log.exception("terminate_sandbox_failed", sandbox_id=agent.sandbox_id)
+        op_log.exception("runtime.terminate_failed", sandbox_id=agent.sandbox_id)
         return False

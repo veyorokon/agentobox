@@ -14,7 +14,7 @@ import boto3
 import structlog
 from django.conf import settings
 
-log = structlog.get_logger("agents.media")
+log = structlog.get_logger("abox.comms")
 
 
 _s3_client = None
@@ -101,5 +101,5 @@ def externalize_image_block(block: dict, prefix: str = "media") -> dict:
             "source": {"type": "url", "url": url},
         }
     except Exception:  # intentional: S3 upload fail-open — keep base64 so API call still works
-        log.exception("externalize_image_failed")
+        log.exception("comms.image_externalize_failed")
         return block

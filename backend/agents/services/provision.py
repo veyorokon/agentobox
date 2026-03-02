@@ -29,7 +29,7 @@ from agents.adapters import get_adapter
 from agents.runtimes.base import Runtime
 from projects.models import Project
 
-log = structlog.get_logger("agents.provision")
+log = structlog.get_logger("abox.lifecycle")
 
 
 async def provision_workspace(
@@ -73,7 +73,7 @@ async def provision_workspace(
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/agent"
     op_log.info(
-        "provisioning_workspace",
+        "lifecycle.provisioning_workspace",
         context_path=workspace,
         variant=variant,
         workspace_path=workspace_path,
@@ -147,7 +147,7 @@ async def provision_workspace(
     await _provision_api_key_files(runtime, sandbox_id, adapter.build_api_key_files(api_key), op_log)
     await _provision_scoped_sudo(runtime, sandbox_id, op_log)
 
-    op_log.info("workspace_provisioned")
+    op_log.info("lifecycle.workspace_provisioned")
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +163,7 @@ async def _provision_api_key_files(
     files to write; this function handles the I/O.
     """
     if not file_specs:
-        op_log.warning("api_key_helper_skipped", reason="no api key")
+        op_log.warning("lifecycle.api_key_skipped", reason="no api key")
         return
 
     for spec in file_specs:
@@ -187,7 +187,7 @@ async def _provision_api_key_files(
             user="root",
         )
 
-    op_log.info("api_key_helper_provisioned")
+    op_log.info("lifecycle.api_key_provisioned")
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ async def _provision_scoped_sudo(
         user="root",
     )
 
-    op_log.info("scoped_sudo_provisioned")
+    op_log.info("lifecycle.sudo_provisioned")
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +279,7 @@ async def _provision_skills(
             f"{skill_dir}/SKILL.md",
         )
 
-    op_log.info("skills_provisioned", count=len(matching))
+    op_log.info("lifecycle.skills_provisioned", count=len(matching))
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ async def write_theme_files(runtime: Runtime, sandbox_id: str, tokens: dict[str,
     json_content = json.dumps(tokens, indent=2) + "\n"
     await runtime.write_file(sandbox_id, json_content.encode("utf-8"), "/tmp/abox-theme.json")
 
-    log.info("theme_files_written", sandbox_id=sandbox_id[:12], token_count=len(tokens))
+    log.info("lifecycle.theme_written", sandbox_id=sandbox_id[:12], token_count=len(tokens))
 
 
 async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret_envs: dict[str, str]) -> None:
@@ -381,7 +381,7 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
     await write_secrets_env(runtime, sandbox_id, secret_envs)
 
     log.info(
-        "secrets_pushed",
+        "lifecycle.secrets_pushed",
         agent_name=agent.name,
         sandbox_id=sandbox_id[:12],
         secret_count=len(secret_envs),

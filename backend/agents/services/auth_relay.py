@@ -4,7 +4,7 @@ import structlog
 
 from agents.models import Agent
 
-log = structlog.get_logger("agents.auth_relay")
+log = structlog.get_logger("abox.auth")
 
 
 async def get_relay_agent(token: str) -> Agent:

@@ -15,7 +15,7 @@ from strawberry import ID
 from agents.graphql.auth import authorize_project
 from agents.graphql.types import AgentType, TeamFeedItemType, TimelineEntryType, model_to_feed_item_type
 
-log = structlog.get_logger("agents.subscriptions")
+log = structlog.get_logger("abox.graphql")
 
 
 @strawberry.type
@@ -33,7 +33,7 @@ class AgentSubscription:
         group = f"project_{project_id}_agents"
 
         await channel_layer.group_add(group, ws.channel_name)
-        log.info("subscription_connected", type="agent_changed", group=group)
+        log.info("graphql.subscription_connected", type="agent_changed", group=group)
 
         async with ws.listen_to_channel("agent.update", groups=[group]) as cm:
             async for message in cm:
@@ -53,7 +53,7 @@ class AgentSubscription:
         group = f"project_{project_id}_team_feed"
 
         await channel_layer.group_add(group, ws.channel_name)
-        log.info("subscription_connected", type="feed_item_changed", group=group)
+        log.info("graphql.subscription_connected", type="feed_item_changed", group=group)
 
         async with ws.listen_to_channel("team_feed.changed", groups=[group]) as cm:
             async for msg in cm:
@@ -61,7 +61,7 @@ class AgentSubscription:
                     item = await TeamFeedItem.objects.aget(id=msg["item_id"])
                     yield model_to_feed_item_type(item)
                 except TeamFeedItem.DoesNotExist:
-                    log.warning("team_feed_item_not_found", item_id=msg["item_id"])
+                    log.warning("graphql.feed_item_not_found", item_id=msg["item_id"])
 
     @strawberry.subscription
     async def event_stream(
@@ -79,7 +79,7 @@ class AgentSubscription:
         group = f"project_{project_id}_events"
 
         await channel_layer.group_add(group, ws.channel_name)
-        log.info("subscription_connected", type="event_stream", group=group)
+        log.info("graphql.subscription_connected", type="event_stream", group=group)
 
         async with ws.listen_to_channel("stream.event", groups=[group]) as cm:
             async for msg in cm:

@@ -25,7 +25,7 @@ from strawberry.scalars import JSON
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
 from agents.graphql.types import AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
-log = structlog.get_logger("agents.mutations")
+log = structlog.get_logger("abox.graphql")
 
 
 @strawberry.input
@@ -248,7 +248,7 @@ class AgentMutation:
                 if agent:
                     agent_ids.append(str(agent.id))
                 else:
-                    log.warning("recipient_not_found", type=r.type, value=r.value)
+                    log.warning("graphql.recipient_not_found", type=r.type, value=r.value)
             elif r.type == "tag":
                 tagged = [
                     a async for a in Agent.objects.filter(
@@ -353,7 +353,7 @@ class AgentMutation:
         cache_key = f"vnc_token:{token}"
         cache.set(cache_key, str(agent_id), timeout=60)
 
-        log.info("vnc_token_created", agent_id=str(agent_id), token_hash=token_hash)
+        log.info("graphql.vnc_token_created", agent_id=str(agent_id), token_hash=token_hash)
 
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
         return VncTokenResult(token=token, expires_at=expires_at.isoformat())
@@ -393,7 +393,7 @@ class AgentMutation:
                     "/home/agent/CLAUDE.md",
                 )
             except Exception:  # intentional: CLAUDE.md write is best-effort — instructions saved to DB regardless
-                log.exception("claude_md_write_failed", agent_name=agent.name)
+                log.exception("graphql.claude_md_failed", agent_name=agent.name)
 
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)

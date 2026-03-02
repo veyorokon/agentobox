@@ -11,7 +11,7 @@ from channels.layers import get_channel_layer
 
 from agents.models import Agent, TeamFeedItem
 
-log = structlog.get_logger("agents.feed")
+log = structlog.get_logger("abox.feed")
 
 ATTENTION_PRIORITY = {"none": 0, "review": 1, "plan": 2, "permission": 3}
 
@@ -217,4 +217,4 @@ async def broadcast_feed_item(feed_item: TeamFeedItem) -> None:
             },
         )
     except Exception:  # intentional: channel layer failure must not break feed item creation
-        log.exception("broadcast_feed_item_failed", item_id=str(feed_item.id))
+        log.exception("feed.broadcast_failed", item_id=str(feed_item.id))

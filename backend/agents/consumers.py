@@ -29,7 +29,7 @@ from channels.layers import get_channel_layer
 
 from agents.models import StreamEvent
 
-log = structlog.get_logger("agents.relay_ws")
+log = structlog.get_logger("abox.relay")
 
 # Valid Anthropic content block types — anything prefixed with _ is
 # internal metadata (e.g. _broadcast) and must be stripped before
@@ -69,14 +69,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             self.agent = await get_relay_agent(token)
         except ValueError:
             reason = "bad_token" if token else "missing_token"
-            log.warning("relay_ws_reject", reason=reason, agent_id=self.agent_id)
+            log.warning("relay.rejected", reason=reason, agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4001)
             return
 
         # Verify agent ID matches the URL
         if str(self.agent.id) != self.agent_id:
-            log.warning("relay_ws_reject", reason="agent_id_mismatch", agent_id=self.agent_id)
+            log.warning("relay.rejected", reason="agent_id_mismatch", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4001)
             return
@@ -174,7 +174,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.models import Agent
             await Agent.objects.filter(id=self.agent_id).aupdate(relay_disconnected_at=None)
 
-        log.info("relay_ws_connected", agent_id=self.agent_id)
+        log.info("relay.connected", agent_id=self.agent_id)
 
     async def disconnect(self, code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
@@ -191,10 +191,10 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 relay_disconnected_at=timezone.now(),
             )
         except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
-            log.warning("relay_connected_update_failed", agent_id=self.agent_id, exc_info=True)
+            log.warning("relay.update_failed", agent_id=self.agent_id, exc_info=True)
 
         disconnect_source = "server" if code and 4000 <= code <= 4999 else "client"
-        log.info("relay_ws_disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
+        log.info("relay.disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
 
     async def receive_json(self, content):
         """Each message from relay = one raw stream-json event.
@@ -210,7 +210,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             try:
                 await process_callback(self.agent, content)
             except Exception:  # intentional: callback failure must not break relay WS — log and continue
-                log.exception("callback_request_failed", agent_id=self.agent_id)
+                log.exception("relay.callback_failed", agent_id=self.agent_id)
             return
 
         from agents.services.stream import process_stream_event
@@ -219,7 +219,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             await process_stream_event(self.agent, content)
         except Exception:  # intentional: one bad event must not kill the relay WS connection
             log.exception(
-                "relay_ws_event_failed",
+                "relay.event_failed",
                 agent_id=self.agent_id,
                 event_type=event_type,
             )
@@ -255,7 +255,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         token = params.get("token", "")
 
         if not token:
-            log.warning("vnc_proxy_reject", reason="no_token", agent_id=self.agent_id)
+            log.warning("vnc.rejected", reason="no_token", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4001)
             return
@@ -266,7 +266,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         cached_agent_id = cache.get(cache_key)
 
         if not cached_agent_id or str(cached_agent_id) != self.agent_id:
-            log.warning("vnc_proxy_reject", reason="bad_token", agent_id=self.agent_id)
+            log.warning("vnc.rejected", reason="bad_token", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4001)
             return
@@ -281,13 +281,13 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         try:
             agent = await Agent.objects.aget(id=self.agent_id)
         except Agent.DoesNotExist:
-            log.warning("vnc_proxy_reject", reason="agent_not_found", agent_id=self.agent_id)
+            log.warning("vnc.rejected", reason="agent_not_found", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4004)
             return
 
         if not agent.vnc_url:
-            log.warning("vnc_proxy_reject", reason="no_vnc_url", agent_id=self.agent_id)
+            log.warning("vnc.rejected", reason="no_vnc_url", agent_id=self.agent_id)
             await self.accept()
             await self.close(code=4002)
             return
@@ -300,16 +300,16 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         elif not vnc_ws_url.endswith("/websockify"):
             vnc_ws_url = vnc_ws_url.rstrip("/") + "/websockify"
 
-        log.info("vnc_proxy_connecting", agent_id=self.agent_id, token_hash=self.token_hash, url=vnc_ws_url)
+        log.info("vnc.connecting", agent_id=self.agent_id, token_hash=self.token_hash, url=vnc_ws_url)
         try:
             self.upstream_ws = await websockets.connect(
                 vnc_ws_url,
                 max_size=2**20,
                 open_timeout=10,
             )
-            log.info("vnc_proxy_upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))
+            log.info("vnc.upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))
         except Exception:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
-            log.exception("vnc_proxy_upstream_failed", agent_id=self.agent_id, url=vnc_ws_url)
+            log.exception("vnc.upstream_failed", agent_id=self.agent_id, url=vnc_ws_url)
             await self.accept()
             await self.close(code=4003)
             return
@@ -318,7 +318,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
 
         # Start relay task: upstream → downstream
         self._relay_task = asyncio.create_task(self._relay_upstream())
-        log.info("vnc_proxy_connected", agent_id=self.agent_id, token_hash=self.token_hash)
+        log.info("vnc.connected", agent_id=self.agent_id, token_hash=self.token_hash)
 
     async def _relay_upstream(self):
         """Read frames from upstream websockify and send to browser."""
@@ -329,7 +329,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                 else:
                     await self.send(text_data=message)
         except Exception:  # intentional: upstream WS close/error ends relay loop — normal teardown path
-            log.debug("vnc_proxy_upstream_closed", agent_id=self.agent_id)
+            log.debug("vnc.upstream_closed", agent_id=self.agent_id)
         finally:
             await self.close()
 
@@ -342,7 +342,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                 elif text_data:
                     await self.upstream_ws.send(text_data)
             except Exception:  # intentional: upstream send failure — close proxy cleanly
-                log.debug("vnc_proxy_send_failed", agent_id=self.agent_id)
+                log.debug("vnc.send_failed", agent_id=self.agent_id)
                 await self.close()
 
     async def disconnect(self, code):
@@ -352,6 +352,6 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
             try:
                 await self.upstream_ws.close()
             except Exception:  # intentional: upstream WS may already be closed during teardown
-                log.debug("vnc_proxy_upstream_close_error", agent_id=self.agent_id, exc_info=True)
+                log.debug("vnc.upstream_close_error", agent_id=self.agent_id, exc_info=True)
         disconnect_source = "server" if code and 4000 <= code <= 4999 else "client"
-        log.info("vnc_proxy_disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
+        log.info("vnc.disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)

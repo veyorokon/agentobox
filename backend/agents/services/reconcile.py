@@ -26,7 +26,7 @@ from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item
 from agents.services.utils import terminate_sandbox
 
-log = structlog.get_logger("agents.reconcile")
+log = structlog.get_logger("abox.reconciler")
 
 INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
@@ -43,7 +43,7 @@ def ensure_running():
     global _task
     if _task is None or _task.done():
         _task = asyncio.create_task(_loop())
-        log.info("reconciler_started")
+        log.info("reconciler.started")
 
 
 async def _loop():
@@ -53,7 +53,7 @@ async def _loop():
         try:
             await reconcile_agents()
         except Exception:  # intentional: reconciliation loop must never crash — log and retry next interval
-            log.exception("reconciliation_failed")
+            log.exception("reconciler.failed")
 
 
 async def reconcile_agents():
@@ -110,7 +110,7 @@ def _reap_orphans_sync():
             filters={"label": "agentobox.managed=true"}
         )
     except docker.errors.DockerException:
-        log.exception("docker_list_failed")
+        log.exception("reconciler.docker_list_failed")
         return
 
     active_sandbox_ids = set(
@@ -125,9 +125,9 @@ def _reap_orphans_sync():
             try:
                 container.stop(timeout=5)
                 container.remove(force=True)
-                log.info("orphan_reaped", container_id=container.id[:12])
+                log.info("reconciler.orphan_reaped", container_id=container.id[:12])
             except docker.errors.DockerException:
-                log.exception("orphan_reap_failed", container_id=container.id[:12])
+                log.exception("reconciler.orphan_reap_failed", container_id=container.id[:12])
 
 
 async def _reap_orphans():
@@ -187,7 +187,7 @@ async def _detect_dead_containers():
             )
 
             log.info(
-                "dead_container_detected",
+                "reconciler.dead_container",
                 agent_id=str(agent.id),
                 agent_name=agent.name,
                 container_status=container_status,
@@ -217,7 +217,7 @@ async def _detect_stuck_deploys(now):
         agent = await _mark_error(agent.id)
         await broadcast_agent_update(agent)
         log.info(
-            "stuck_deploy_detected",
+            "reconciler.stuck_deploy",
             agent_id=str(agent.id),
             agent_name=agent.name,
         )
@@ -246,7 +246,7 @@ async def _reap_errored_agents(now):
         agent = await _mark_stopped(agent.id)
         await broadcast_agent_update(agent)
         log.info(
-            "error_agent_reaped",
+            "reconciler.error_reaped",
             agent_id=str(agent.id),
             agent_name=agent.name,
         )

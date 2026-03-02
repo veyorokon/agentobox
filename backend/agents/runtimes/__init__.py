@@ -10,7 +10,7 @@ import structlog
 
 from agents.runtimes.base import Runtime
 
-log = structlog.get_logger("agents.runtime")
+log = structlog.get_logger("abox.runtime")
 
 _cache: dict[str, Runtime] = {}
 
@@ -31,7 +31,7 @@ def get_runtime(name: str) -> Runtime:
             case _:
                 raise ValueError(f"Unknown runtime: {name}")
     except Exception:  # intentional: log with context before re-raising — caller gets the original exception
-        log.exception("get_runtime_failed", runtime=name)
+        log.exception("runtime.get_failed", runtime=name)
         raise
     _cache[name] = instance
     return instance

@@ -23,7 +23,7 @@ from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.utils import create_and_broadcast_event
 
-log = structlog.get_logger("agents.comms")
+log = structlog.get_logger("abox.comms")
 
 
 def _needs_restart(agent: Agent) -> bool:
@@ -56,7 +56,7 @@ def _normalize_content(content: list) -> list:
         if not url.startswith("https://"):
             parsed = urlparse(url)
             if parsed.hostname not in ("localhost", "localstack", "127.0.0.1"):
-                log.warning("url_fetch_blocked", url=url, reason="untrusted_host")
+                log.warning("comms.url_fetch_blocked", url=url, reason="untrusted_host")
                 continue
             fetch_url = url.replace("localhost:", "localstack:", 1)
             try:
@@ -69,7 +69,7 @@ def _normalize_content(content: list) -> list:
                 source["media_type"] = ct
                 source["data"] = b64
             except Exception:  # intentional: URL-to-base64 conversion is best-effort — keep original block
-                log.warning("url_to_base64_failed", url=url)
+                log.warning("comms.url_to_base64_failed", url=url)
 
     return content
 
@@ -85,11 +85,11 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
             id=agent_id,
         ).values_list("relay_connected", flat=True).afirst()
     except Exception:  # intentional: DB error checking relay state — fall through and attempt send anyway
-        log.warning("relay_connection_check_failed", agent_id=str(agent_id), exc_info=True)
+        log.warning("comms.relay_check_failed", agent_id=str(agent_id), exc_info=True)
         connected = None
 
     if connected is False:
-        log.warning("push_to_disconnected_relay", agent_id=agent_id, command_type=command.get("type", ""))
+        log.warning("comms.push_failed", agent_id=agent_id, command_type=command.get("type", ""))
         return False
 
     channel_layer = get_channel_layer()
@@ -107,7 +107,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("comms.agent_not_found")
         return False
 
     # Build parts from content blocks or plain text
@@ -134,9 +134,9 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
     # Auto-restart dead agents — relay will backfill the message on connect
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
-        op_log.info("auto_restarting_agent", current_status=agent.status)
+        op_log.info("comms.auto_restarting", current_status=agent.status)
         await hard_restart_agent(str(agent_id))
-        op_log.info("message_sent", delivery="backfill")
+        op_log.info("comms.message_sent", delivery="backfill")
         return True
 
     # Push to relay via WebSocket
@@ -146,7 +146,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
     }
     await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
-    op_log.info("message_sent")
+    op_log.info("comms.message_sent")
     return True
 
 
@@ -157,7 +157,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("comms.agent_not_found")
         return False
 
     parts = [{"type": "tool_result", "tool_use_id": tool_use_id, "content": answer_text}]
@@ -177,16 +177,16 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
     # Auto-restart dead agents — relay will backfill the answer on connect
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
-        op_log.info("auto_restarting_agent", current_status=agent.status)
+        op_log.info("comms.auto_restarting", current_status=agent.status)
         await hard_restart_agent(str(agent_id))
-        op_log.info("question_answered", delivery="backfill")
+        op_log.info("comms.question_answered", delivery="backfill")
         return True
 
     # Push to relay via WebSocket
     input_msg = {"type": "user", "message": {"role": "user", "content": parts}}
     await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
 
-    op_log.info("question_answered")
+    op_log.info("comms.question_answered")
     return True
 
 
@@ -213,7 +213,7 @@ async def broadcast_message(
     found_ids = {str(a.id) for a in agents}
     for aid in agent_ids:
         if aid not in found_ids:
-            op_log.warning("agent_not_found", agent_id=aid)
+            op_log.warning("comms.agent_not_found", agent_id=aid)
 
     if not agents:
         return False
@@ -243,7 +243,7 @@ async def broadcast_message(
         )
 
         if _needs_restart(agent):
-            op_log.info("auto_restarting_agent", agent_id=str(agent.id))
+            op_log.info("comms.auto_restarting", agent_id=str(agent.id))
             await hard_restart_agent(str(agent.id))
             # Relay will backfill the message on connect
             continue
@@ -252,7 +252,7 @@ async def broadcast_message(
         input_msg = {"type": "user", "message": {"role": "user", "content": api_parts}}
         await push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
 
-    op_log.info("broadcast_sent", targets=target_names)
+    op_log.info("comms.broadcast_sent", targets=target_names)
     return True
 
 
@@ -285,7 +285,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         raise ValueError(f"Agent must be running or idle (current: {agent.status})")
 
     if agent.mode == frontend_mode:
-        op_log.info("mode_change_noop")
+        op_log.info("comms.mode_noop")
         return agent
 
     agent.mode = frontend_mode
@@ -302,9 +302,9 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     # Push CC wire format to relay
     sent = await push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
     if not sent:
-        op_log.warning("mode_change_lost_relay_disconnected")
+        op_log.warning("comms.mode_change_failed")
 
-    op_log.info("mode_change_sent")
+    op_log.info("comms.mode_changed")
     return agent
 
 
@@ -315,7 +315,7 @@ async def interrupt_agent(agent_id: str) -> bool:
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("comms.agent_not_found")
         return False
 
     # Store as StreamEvent
@@ -324,10 +324,10 @@ async def interrupt_agent(agent_id: str) -> bool:
     # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
     if not sent:
-        op_log.warning("interrupt_lost_relay_disconnected")
+        op_log.warning("comms.interrupt_failed")
         return False
 
-    op_log.info("interrupt_sent")
+    op_log.info("comms.interrupt_sent")
     return True
 
 
@@ -338,11 +338,11 @@ async def restart_agent(agent_id: str) -> bool:
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("comms.agent_not_found")
         return False
 
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
-        op_log.warning("restart_skipped", status=agent.status)
+        op_log.warning("comms.restart_skipped", status=agent.status)
         return False
 
     # Store as StreamEvent
@@ -351,10 +351,10 @@ async def restart_agent(agent_id: str) -> bool:
     # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
     if not sent:
-        op_log.warning("restart_lost_relay_disconnected")
+        op_log.warning("comms.restart_failed")
         return False
 
-    op_log.info("restart_sent")
+    op_log.info("comms.restart_sent")
     return True
 
 
@@ -365,11 +365,11 @@ async def clear_agent_session(agent_id: str) -> bool:
     try:
         agent = await Agent.objects.aget(id=agent_id)
     except Agent.DoesNotExist:
-        op_log.warning("agent_not_found")
+        op_log.warning("comms.agent_not_found")
         return False
 
     if agent.status not in (AgentStatus.RUNNING, AgentStatus.IDLE):
-        op_log.warning("clear_session_skipped", status=agent.status)
+        op_log.warning("comms.clear_session_skipped", status=agent.status)
         return False
 
     # Clear session files from container
@@ -382,7 +382,7 @@ async def clear_agent_session(agent_id: str) -> bool:
             f"rm -rf {agent_state_dir}/projects/*/",
         ])
     except Exception:  # intentional: session file cleanup is best-effort — restart still proceeds
-        op_log.warning("clear_session_files_failed", exc_info=True)
+        op_log.warning("comms.clear_session_failed", exc_info=True)
 
     agent.session_id = ""
     await agent.asave(update_fields=["session_id"])
@@ -395,7 +395,7 @@ async def clear_agent_session(agent_id: str) -> bool:
     # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
     if not sent:
-        op_log.warning("clear_session_lost_relay_disconnected")
+        op_log.warning("comms.clear_session_lost")
 
-    op_log.info("session_cleared")
+    op_log.info("comms.session_cleared")
     return True

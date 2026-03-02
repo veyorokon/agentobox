@@ -21,7 +21,7 @@ from channels.layers import get_channel_layer
 
 from agents.models import Agent, StreamEvent
 
-log = structlog.get_logger("agents.broadcast")
+log = structlog.get_logger("abox.broadcast")
 
 
 def _group_name(project_id: str, suffix: str) -> str:
@@ -64,13 +64,13 @@ async def broadcast_agent_update(agent: Agent) -> None:
             },
         )
     except Exception:  # intentional: channel layer failure must not break agent state mutations
-        log.warning("broadcast_agent_update_failed", group=group, exc_info=True)
+        log.warning("broadcast.agent_failed", group=group, exc_info=True)
 
     # Detect status change and emit a status StreamEvent + feed item
     old_status = getattr(agent, "_original_status", None)
     if old_status is not None and old_status != agent.status:
         log.info(
-            "agent.status_changed",
+            "broadcast.agent_updated",
             agent_id=str(agent.id),
             agent_name=agent.name,
             from_status=old_status,
@@ -121,4 +121,4 @@ async def broadcast_event(agent: Agent, stream_event: StreamEvent) -> None:
             },
         )
     except Exception:  # intentional: channel layer failure must not break event creation
-        log.warning("broadcast_event_failed", group=group, exc_info=True)
+        log.warning("broadcast.event_failed", group=group, exc_info=True)

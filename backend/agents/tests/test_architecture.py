@@ -599,75 +599,28 @@ _VAGUE_EVENT_TERMS = {
 _BACKEND_ROOT = AGENTS_DIR.parent
 _LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"]
 
-# Existing event names that predate the domain.action convention.
-# New code MUST use dotted names. This set only shrinks — migrate names
-# to domain.action format and remove entries as you touch files.
-_GRANDFATHERED_EVENT_NAMES = {
-    "agent_created", "agent_killed", "agent_not_found",
-    "agent_provision_failed", "agent_provisioned", "agent_removed",
-    "agent_reset_complete", "api_key_helper_provisioned",
-    "api_key_helper_skipped", "auto_restarting_agent",
-    "broadcast_agent_update_failed", "broadcast_event_failed",
-    "broadcast_feed_item_failed", "broadcast_sent",
-    "callback_request_failed", "claude_md_write_failed",
-    "clear_session_files_failed", "clear_session_lost_relay_disconnected",
-    "clear_session_skipped", "container_created", "container_terminated",
-    "creating_agent", "creating_container", "creating_sandbox",
-    "dead_container_detected", "docker_list_failed", "error_agent_reaped",
-    "exec_done", "exec_failed", "exec_start",
-    "externalize_image_failed", "get_runtime_failed", "hook_bridge_error",
-    "interagent_broadcast_routed", "interrupt_lost_relay_disconnected",
-    "interrupt_sent", "killing_agent", "list_done", "list_start",
-    "malformed_callback", "mcp_lifespan_failed", "mcp_lifespan_recovery",
-    "mcp_registry_search_failed", "mcp_send_broadcast", "mcp_send_message",
-    "mcp_shutdown_request", "mcp_task_create", "mcp_task_delete",
-    "mcp_task_update", "mcp_teammate_spawn", "message_sent",
-    "modal_volumes_attached", "mode_change_lost_relay_disconnected",
-    "mode_change_noop", "mode_change_sent", "orphan_cleanup_failed",
-    "orphan_reap_failed", "orphan_reaped", "orphan_sandbox_terminated",
-    "permission_request", "plan_auto_approved", "plan_pending_approval",
-    "plans_superseded", "provision_cleanup_db_failed",
-    "provisioning_workspace", "push_to_disconnected_relay",
-    "question_answered", "recipient_not_found", "reconciler_started",
-    "reconciliation_failed", "relay_connected_update_failed",
-    "relay_connection_check_failed", "relay_launched",
-    "relay_ws_connected", "relay_ws_disconnected",
-    "relay_ws_event_failed", "relay_ws_reject",
-    "removed_stale_container", "removing_agent",
-    "restart_lost_relay_disconnected", "restart_sent", "restart_skipped",
-    "restart_skipped_already_deploying", "restarting_agent",
-    "sandbox_created", "sandbox_log_capture_failed", "sandbox_processes",
-    "scoped_sudo_provisioned", "secret_decrypt_failed",
-    "secret_push_failed", "secrets_pushed", "secrets_resolved",
-    "session_cleared", "shutdown_broadcast_failed", "skills_provisioned",
-    "stream_process_exit", "stuck_deploy_detected",
-    "subscription_connected", "task_create_feed_broadcast_failed",
-    "task_delete_broadcast_failed", "task_update_feed_broadcast_failed",
-    "team_feed_item_not_found", "terminate_done", "terminate_not_found",
-    "terminate_sandbox_failed", "terminate_start", "theme_files_written",
-    "unknown_callback_type", "url_fetch_blocked", "url_to_base64_failed",
-    "vnc_proxy_connected", "vnc_proxy_connecting",
-    "vnc_proxy_disconnected", "vnc_proxy_reject",
-    "vnc_proxy_send_failed", "vnc_proxy_upstream_close_error",
-    "vnc_proxy_upstream_closed", "vnc_proxy_upstream_failed",
-    "vnc_proxy_upstream_ok", "vnc_token_created",
-    "workspace_provisioned", "write_file_done", "write_file_start",
-    "ws_connect", "ws_disconnect", "ws_receive",
+# Valid event name domains — first segment of every domain.action event name.
+# Adding a new domain is a deliberate architectural decision, not an accident.
+_VALID_DOMAINS = {
+    "auth", "broadcast", "callback", "comms", "feed", "graphql",
+    "lifecycle", "mcp", "reconciler", "relay", "runtime", "stream", "vnc",
 }
+
+# Full regex: domain.action or domain.sub_action (1-2 dot-separated segments).
+# Each segment starts with a lowercase letter, then lowercase alphanumeric + underscore.
+_EVENT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*){1,2}$")
 
 
 class TestLogEventNames:
     """Principle: log event names are grep handles, not prose.
 
-    Every structlog event name must follow ``domain.action`` (at least one dot
-    separator) so logs are filterable by domain. Vague single-word names like
-    "error" or "request" are banned — they're useless when debugging production.
+    Every structlog event name must follow the ``domain.action`` taxonomy:
+    - Format: ``^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){1,2}$``
+    - First segment must be a registered domain in ``_VALID_DOMAINS``
+    - Vague single-word names are banned
 
     Uses AST parsing to extract literal string event names from log calls.
     f-strings and variable references are skipped (they have dynamic parts).
-
-    Existing underscore-only names are grandfathered in ``_GRANDFATHERED_EVENT_NAMES``.
-    New code must use dotted names. The grandfather set only shrinks over time.
     """
 
     _SKIP = {"tests", "migrations", "__pycache__"}
@@ -714,13 +667,15 @@ class TestLogEventNames:
 
         return results
 
-    def test_event_names_have_dot_separator(self):
-        """Every structlog event name must contain at least one dot (domain.action).
+    def test_event_names_follow_taxonomy(self):
+        """Every structlog event name must match domain.action format with a registered domain.
 
-        Grandfathered names from before this convention are exempt. New event
-        names must use dotted format — e.g. 'relay.ws_connected' not 'relay_ws_connected'.
+        Validates:
+        1. Name matches regex: lowercase domain, dot, lowercase action (1-2 segments)
+        2. First segment is a registered domain from _VALID_DOMAINS
         """
-        violations = []
+        format_violations = []
+        domain_violations = []
 
         for search_dir in _LOG_SEARCH_DIRS:
             if not search_dir.is_dir():
@@ -731,22 +686,32 @@ class TestLogEventNames:
                     continue
 
                 for event_name, lineno in self._extract_event_names(py_file):
-                    if "." in event_name:
-                        continue
-                    if event_name in _GRANDFATHERED_EVENT_NAMES:
-                        continue
                     try:
                         rel = py_file.relative_to(_REPO_ROOT)
                     except ValueError:
                         rel = py_file
-                    violations.append(f"{rel}:{lineno} → {event_name!r}")
+                    loc = f"{rel}:{lineno}"
 
-        assert not violations, (
-            "Structlog event names missing dot separator (need domain.action):\n"
-            + "\n".join(f"  {v}" for v in violations)
-            + "\n\nUse 'domain.action' format — e.g. 'stream.process_exit' not 'process_exit'."
-            "\nIf migrating an old name, remove it from _GRANDFATHERED_EVENT_NAMES."
-        )
+                    if not _EVENT_NAME_PATTERN.match(event_name):
+                        format_violations.append(f"{loc} → {event_name!r}")
+                        continue
+
+                    domain = event_name.split(".")[0]
+                    if domain not in _VALID_DOMAINS:
+                        domain_violations.append(f"{loc} → {event_name!r} (domain {domain!r})")
+
+        errors = []
+        if format_violations:
+            errors.append(
+                "Event names not matching domain.action format:\n"
+                + "\n".join(f"  {v}" for v in format_violations)
+            )
+        if domain_violations:
+            errors.append(
+                "Event names using unregistered domains (add to _VALID_DOMAINS if intentional):\n"
+                + "\n".join(f"  {v}" for v in domain_violations)
+            )
+        assert not errors, "\n\n".join(errors)
 
     def test_event_names_not_vague(self):
         """Event names must not be single vague terms from the denylist."""
@@ -773,31 +738,6 @@ class TestLogEventNames:
             "Structlog event names are too vague (denylist match):\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nUse specific domain.action names — e.g. 'relay.connection_error' not 'error'."
-        )
-
-    def test_grandfathered_names_still_exist(self):
-        """Grandfather set entries must still exist in the codebase.
-
-        When a grandfathered name is migrated to domain.action format, remove
-        it from _GRANDFATHERED_EVENT_NAMES. This test catches stale entries
-        so the set only shrinks.
-        """
-        # Collect all event names in the codebase
-        all_names: set[str] = set()
-        for search_dir in _LOG_SEARCH_DIRS:
-            if not search_dir.is_dir():
-                continue
-            for py_file in sorted(search_dir.rglob("*.py")):
-                if not self._should_check(py_file):
-                    continue
-                for event_name, _ in self._extract_event_names(py_file):
-                    all_names.add(event_name)
-
-        stale = _GRANDFATHERED_EVENT_NAMES - all_names
-        assert not stale, (
-            "Stale entries in _GRANDFATHERED_EVENT_NAMES (no longer in codebase):\n"
-            + "\n".join(f"  {n!r}" for n in sorted(stale))
-            + "\n\nRemove these — they've been migrated or deleted."
         )
 
 

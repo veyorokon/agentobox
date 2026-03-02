@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
-log = structlog.get_logger("agents.services.mcp_coord")
+log = structlog.get_logger("abox.mcp")
 
 mcp = FastMCP("team")
 
@@ -68,14 +68,14 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
         from agents.services.interagent import deliver_to_stdin
         await deliver_to_stdin(agent.name, target, content)
 
-        log.info("mcp_send_message", sender=agent.name, recipient=recipient)
+        log.info("mcp.message_sent", sender=agent.name, recipient=recipient)
         return {"ok": True, "recipient": recipient}
 
     elif type == "broadcast":
         from agents.services.interagent import deliver_broadcast
         await deliver_broadcast(agent, content, summary=summary)
 
-        log.info("mcp_send_broadcast", sender=agent.name)
+        log.info("mcp.broadcast_sent", sender=agent.name)
         return {"ok": True}
 
     elif type == "shutdown_request":
@@ -100,9 +100,9 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(target)
         except Exception:  # intentional: broadcast is best-effort — shutdown already committed to DB
-            log.warning("shutdown_broadcast_failed", target=recipient, exc_info=True)
+            log.warning("mcp.shutdown_broadcast_failed", target=recipient, exc_info=True)
 
-        log.info("mcp_shutdown_request", sender=agent.name, target=recipient)
+        log.info("mcp.shutdown_requested", sender=agent.name, target=recipient)
         return {"ok": True, "recipient": recipient}
 
     else:
@@ -160,7 +160,7 @@ async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
     except ValueError as e:
         raise ToolError(str(e))
 
-    log.info("mcp_teammate_spawn", spawner=agent.name, new_agent=name)
+    log.info("mcp.teammate_spawned", spawner=agent.name, new_agent=name)
     return {"ok": True, "agent_id": str(new_agent.id), "name": new_agent.name}
 
 
@@ -204,9 +204,9 @@ async def create_task(agent, *, subject: str, description: str = "", active_form
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
     except Exception:  # intentional: feed/broadcast is secondary — task creation already succeeded
-        log.warning("task_create_feed_broadcast_failed", agent_name=agent.name, exc_info=True)
+        log.warning("mcp.task_create_broadcast_failed", agent_name=agent.name, exc_info=True)
 
-    log.info("mcp_task_create", agent_name=agent.name, subject=subject[:80])
+    log.info("mcp.task_created", agent_name=agent.name, subject=subject[:80])
     return {"task_id": task.task_id, "subject": task.subject}
 
 
@@ -263,8 +263,8 @@ async def update_task(
                 from agents.services.broadcast import broadcast_agent_update
                 await broadcast_agent_update(agent)
             except Exception:  # intentional: broadcast is secondary — task deletion already committed
-                log.warning("task_delete_broadcast_failed", agent_name=agent.name, exc_info=True)
-            log.info("mcp_task_delete", agent_name=agent.name, task_id=task_id)
+                log.warning("mcp.task_delete_broadcast_failed", agent_name=agent.name, exc_info=True)
+            log.info("mcp.task_deleted", agent_name=agent.name, task_id=task_id)
             return {"ok": True, "deleted": True}
         task.status = status
         update_fields.append("status")
@@ -327,9 +327,9 @@ async def update_task(
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(agent)
     except Exception:  # intentional: feed/broadcast is secondary — task update already committed
-        log.warning("task_update_feed_broadcast_failed", agent_name=agent.name, exc_info=True)
+        log.warning("mcp.task_update_broadcast_failed", agent_name=agent.name, exc_info=True)
 
-    log.info("mcp_task_update", agent_name=agent.name, task_id=task_id, fields=update_fields)
+    log.info("mcp.task_updated", agent_name=agent.name, task_id=task_id, fields=update_fields)
     return {"ok": True, "task_id": task_id}
 
 

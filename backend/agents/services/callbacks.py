@@ -15,7 +15,7 @@ import structlog
 from agents.models import Agent, StreamEvent
 from agents.services.feed import create_feed_item, recompute_attention
 
-log = structlog.get_logger("agents.callbacks")
+log = structlog.get_logger("abox.callback")
 
 # Map callback_type → handler. Extensible: add hooks, future callbacks here.
 _HANDLERS: dict[str, ...] = {}
@@ -36,14 +36,14 @@ async def process_callback(agent: Agent, event: dict) -> None:
     payload = event.get("payload", {})
 
     if not callback_type or not request_id:
-        log.warning("malformed_callback", agent_id=str(agent.id))
+        log.warning("callback.malformed", agent_id=str(agent.id))
         return
 
     handler = _HANDLERS.get(callback_type)
     if handler:
         await handler(agent, request_id, payload)
     else:
-        log.warning("unknown_callback_type", type=callback_type, agent_id=str(agent.id))
+        log.warning("callback.unknown_type", type=callback_type, agent_id=str(agent.id))
 
 
 # ---------------------------------------------------------------------------
@@ -101,4 +101,4 @@ async def create_permission_request(agent: Agent, request_id: str, payload: dict
     )
 
     await recompute_attention(str(agent.project_id), str(agent.id))
-    log.info("permission_request", agent=agent.name, tool=tool_name, request_id=request_id)
+    log.info("callback.permission_requested", agent=agent.name, tool=tool_name, request_id=request_id)

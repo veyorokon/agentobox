@@ -31,7 +31,7 @@ from fastmcp.exceptions import ToolError
 
 from accounts.auth import authenticate_request
 
-log = structlog.get_logger("agents.views")
+log = structlog.get_logger("abox.graphql")
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
@@ -193,5 +193,5 @@ async def hook_bridge(request):
     except ToolError as e:
         return JsonResponse({"error": str(e)}, status=400)
     except Exception:  # intentional: catch-all for hook bridge — log and return 500 so agent gets error response
-        log.exception("hook_bridge_error", tool=tool_name, agent=agent.name)
+        log.exception("callback.hook_bridge_error", tool=tool_name, agent=agent.name)
         return JsonResponse({"error": "internal error"}, status=500)

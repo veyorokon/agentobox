@@ -17,7 +17,7 @@ from django.conf import settings
 
 from agents.runtimes.base import SandboxInstance, VolumeMount
 
-log = structlog.get_logger("agents.runtime.modal")
+log = structlog.get_logger("abox.runtime.modal")
 
 
 class ModalRuntime:
@@ -28,7 +28,7 @@ class ModalRuntime:
         volumes: list[VolumeMount] | None = None,
     ) -> SandboxInstance:
         op = log.bind(op="create", agent_name=name)
-        op.info("creating_sandbox", volumes=[m.name for m in volumes] if volumes else [])
+        op.info("runtime.sandbox_creating", volumes=[m.name for m in volumes] if volumes else [])
         t0 = time.monotonic()
 
         app = await modal.App.lookup.aio(
@@ -47,7 +47,7 @@ class ModalRuntime:
             for mount in volumes:
                 vol = modal.Volume.from_name(mount.name, create_if_missing=True)
                 modal_volumes[mount.mount_path] = vol
-            op.info("modal_volumes_attached", names=[m.name for m in volumes])
+            op.info("runtime.volumes_attached", names=[m.name for m in volumes])
 
         create_kwargs = dict(
             app=app,
@@ -70,7 +70,7 @@ class ModalRuntime:
         vnc_url = tunnels[6080].url if 6080 in tunnels else ""
 
         op.info(
-            "sandbox_created",
+            "runtime.sandbox_created",
             sandbox_id=sb.object_id,
             vnc_url=vnc_url,
             elapsed_s=round(time.monotonic() - t0, 2),
@@ -81,7 +81,7 @@ class ModalRuntime:
         self, sandbox_id: str, cmd: list[str], user: str = "agent"
     ) -> str:
         op = log.bind(op="exec", sandbox_id=sandbox_id, cmd=cmd[:3])
-        op.info("exec_start")
+        op.info("runtime.exec_start")
         t0 = time.monotonic()
 
         sb = await modal.Sandbox.from_id.aio(sandbox_id)
@@ -91,17 +91,17 @@ class ModalRuntime:
 
         elapsed = round(time.monotonic() - t0, 2)
         if process.returncode and process.returncode != 0:
-            op.warning("exec_failed", exit_code=process.returncode, elapsed_s=elapsed,
+            op.warning("runtime.exec_failed", exit_code=process.returncode, elapsed_s=elapsed,
                        output=output[:200] if output else "")
         else:
-            op.info("exec_done", elapsed_s=elapsed)
+            op.info("runtime.exec_done", elapsed_s=elapsed)
         return output
 
     async def write_file(
         self, sandbox_id: str, content: bytes, dest: str
     ) -> None:
         op = log.bind(op="write_file", sandbox_id=sandbox_id, dest=dest)
-        op.info("write_file_start", size=len(content))
+        op.info("runtime.write_file_start", size=len(content))
         t0 = time.monotonic()
 
         sb = await modal.Sandbox.from_id.aio(sandbox_id)
@@ -109,23 +109,23 @@ class ModalRuntime:
         f.write(content)
         f.close()
 
-        op.info("write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
+        op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
 
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", sandbox_id=sandbox_id)
-        op.info("terminate_start")
+        op.info("runtime.terminate_start")
         t0 = time.monotonic()
 
         try:
             sb = await modal.Sandbox.from_id.aio(sandbox_id)
             await sb.terminate.aio()
-            op.info("terminate_done", elapsed_s=round(time.monotonic() - t0, 2))
+            op.info("runtime.terminate_done", elapsed_s=round(time.monotonic() - t0, 2))
         except modal.exception.NotFoundError:
-            op.info("terminate_not_found")
+            op.info("runtime.terminate_not_found")
 
     async def list_sandboxes(self) -> list[SandboxInstance]:
         op = log.bind(op="list_sandboxes")
-        op.info("list_start")
+        op.info("runtime.list_start")
         t0 = time.monotonic()
 
         app = await modal.App.lookup.aio(settings.MODAL_APP_NAME)
@@ -136,7 +136,7 @@ class ModalRuntime:
             results.append(SandboxInstance(id=sb.object_id, vnc_url=vnc_url))
 
         op.info(
-            "list_done",
+            "runtime.list_done",
             count=len(results),
             elapsed_s=round(time.monotonic() - t0, 2),
         )

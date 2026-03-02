@@ -10,7 +10,7 @@ server-side).
 import structlog
 import httpx
 
-log = structlog.get_logger("agents.mcp_registry")
+log = structlog.get_logger("abox.mcp")
 
 REGISTRY_BASE = "https://registry.modelcontextprotocol.io/v0"
 
@@ -33,5 +33,5 @@ async def search_registry(
             resp.raise_for_status()
             return resp.json()
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
-        log.warning("mcp_registry_search_failed", error=str(exc), query=query)
+        log.warning("mcp.registry_search_failed", error=str(exc), query=query)
         return {"servers": [], "metadata": {}}

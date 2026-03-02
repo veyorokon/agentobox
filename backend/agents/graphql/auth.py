@@ -17,7 +17,7 @@ import structlog
 from agents.models import Agent
 from projects.models import Project
 
-log = structlog.get_logger("agents.auth")
+log = structlog.get_logger("abox.auth")
 
 
 async def _get_user(info):

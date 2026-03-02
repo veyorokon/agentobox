@@ -21,7 +21,7 @@ from agents.models import Agent, AgentStatus
 from agents.services.comms import push_to_relay
 from agents.services.utils import create_and_broadcast_event
 
-log = structlog.get_logger("agents.interagent")
+log = structlog.get_logger("abox.comms")
 
 
 async def deliver_broadcast(
@@ -43,7 +43,7 @@ async def deliver_broadcast(
         await deliver_to_stdin(sender.name, agent, content)
 
     log.info(
-        "interagent_broadcast_routed",
+        "comms.interagent_routed",
         sender=sender.name,
         recipients=[a.name for a in agents],
     )

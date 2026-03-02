@@ -26,7 +26,7 @@ from django.conf import settings
 
 from agents.runtimes.base import SandboxInstance, VolumeMount
 
-log = structlog.get_logger("agents.runtime.docker")
+log = structlog.get_logger("abox.runtime.docker")
 
 
 class DockerRuntime:
@@ -49,7 +49,7 @@ class DockerRuntime:
         network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
 
         op = log.bind(op="create", agent_name=name, image=image)
-        op.info("creating_container", volumes=[m.name for m in volumes] if volumes else [])
+        op.info("runtime.container_creating", volumes=[m.name for m in volumes] if volumes else [])
         t0 = time.monotonic()
 
         # Convert VolumeMount list to docker-py format
@@ -69,7 +69,7 @@ class DockerRuntime:
             try:
                 stale = self._client.containers.get(container_name)
                 stale.remove(force=True)
-                op.info("removed_stale_container", container_name=container_name)
+                op.info("runtime.stale_container_removed", container_name=container_name)
             except docker.errors.NotFound:
                 pass
 
@@ -101,7 +101,7 @@ class DockerRuntime:
 
         result = await self._run_sync(_create)
         op.info(
-            "container_created",
+            "runtime.container_created",
             container_id=result.id[:12],
             vnc_url=result.vnc_url,
             elapsed_s=round(time.monotonic() - t0, 2),
@@ -112,7 +112,7 @@ class DockerRuntime:
         self, sandbox_id: str, cmd: list[str], user: str = "agent"
     ) -> str:
         op = log.bind(op="exec", container_id=sandbox_id[:12], cmd=cmd[:3])
-        op.info("exec_start")
+        op.info("runtime.exec_start")
         t0 = time.monotonic()
 
         def _exec():
@@ -124,17 +124,17 @@ class DockerRuntime:
         exit_code, result = await self._run_sync(_exec)
         elapsed = round(time.monotonic() - t0, 2)
         if exit_code != 0:
-            op.warning("exec_failed", exit_code=exit_code, elapsed_s=elapsed,
+            op.warning("runtime.exec_failed", exit_code=exit_code, elapsed_s=elapsed,
                        output=result[:200] if result else "")
         else:
-            op.info("exec_done", elapsed_s=elapsed)
+            op.info("runtime.exec_done", elapsed_s=elapsed)
         return result
 
     async def write_file(
         self, sandbox_id: str, content: bytes, dest: str
     ) -> None:
         op = log.bind(op="write_file", container_id=sandbox_id[:12], dest=dest)
-        op.info("write_file_start", size=len(content))
+        op.info("runtime.write_file_start", size=len(content))
         t0 = time.monotonic()
 
         def _write():
@@ -152,11 +152,11 @@ class DockerRuntime:
             container.put_archive(parent_dir, buf)
 
         await self._run_sync(_write)
-        op.info("write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
+        op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
 
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", container_id=sandbox_id[:12])
-        op.info("terminate_start")
+        op.info("runtime.terminate_start")
         t0 = time.monotonic()
 
         def _terminate():
@@ -168,11 +168,11 @@ class DockerRuntime:
                 pass
 
         await self._run_sync(_terminate)
-        op.info("terminate_done", elapsed_s=round(time.monotonic() - t0, 2))
+        op.info("runtime.terminate_done", elapsed_s=round(time.monotonic() - t0, 2))
 
     async def list_sandboxes(self) -> list[SandboxInstance]:
         op = log.bind(op="list_sandboxes")
-        op.info("list_start")
+        op.info("runtime.list_start")
         t0 = time.monotonic()
 
         def _list():
@@ -188,7 +188,7 @@ class DockerRuntime:
 
         results = await self._run_sync(_list)
         op.info(
-            "list_done",
+            "runtime.list_done",
             count=len(results),
             elapsed_s=round(time.monotonic() - t0, 2),
         )
