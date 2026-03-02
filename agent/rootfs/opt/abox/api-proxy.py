@@ -22,8 +22,11 @@ LISTEN_PORT = 9999
 KEY_PATH = "/run/secrets/proxy_key"
 CHUNK_SIZE = 8192
 
-# Headers to strip from incoming requests (case-insensitive lookup)
-_STRIP_HEADERS = frozenset({"x-api-key", "authorization"})
+# Headers to strip from incoming requests (case-insensitive lookup).
+# "host" must be stripped because the CLI sends "host: localhost:9999"
+# which would create a duplicate when we set "Host: api.anthropic.com".
+# Cloudflare returns 403 on conflicting host headers.
+_STRIP_HEADERS = frozenset({"x-api-key", "authorization", "host"})
 
 
 def _load_key() -> str:
