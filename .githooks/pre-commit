@@ -1,0 +1,22 @@
+#!/bin/sh
+# Architecture boundary checks — runs on every commit.
+# Fast (~0.1s), no Django/DB needed, pure AST parsing.
+#
+# Checks:
+#   - Adapters don't import models or services
+#   - Write path (stream.py) doesn't import adapters at module level
+#   - Resolvers delegate to adapters (no raw JSON access)
+#   - Service/subscription naming conventions
+#   - No display fields on Agent model
+#   - No agent-specific vocabulary in Agent model
+
+# Only run if backend/agents/ files are staged
+if git diff --cached --name-only | grep -q "^backend/agents/"; then
+    python backend/agents/tests/check_architecture.py
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "Commit blocked by architecture checks."
+        echo "Fix the violations above, then try again."
+        exit 1
+    fi
+fi
