@@ -399,7 +399,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 op_log.info("orphan_sandbox_terminated", sandbox_id=sandbox_id)
             # intentional: orphan container kill is best-effort during provision failure cleanup
             except Exception:
-                op_log.exception("orphan_cleanup_failed", sandbox_id=sandbox_id)
+                op_log.warning("orphan_cleanup_failed", sandbox_id=sandbox_id, exc_info=True)
 
         try:
             agent = await _save_failed(agent_id)
@@ -410,7 +410,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
             await broadcast_event(agent, evt)
         except Exception:  # intentional: DB cleanup after failed provision — nothing more to do
-            op_log.exception("provision_cleanup_db_failed", agent_id=agent_id)
+            op_log.warning("provision_cleanup_db_failed", agent_id=agent_id, exc_info=True)
     finally:
         clear_agent_context()
 
@@ -602,7 +602,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
             op_log.info("container_terminated", sandbox_id=old_sandbox_id)
         # intentional: old container kill is best-effort during restart — new one will be provisioned regardless
         except Exception:
-            op_log.exception("terminate_sandbox_failed", sandbox_id=old_sandbox_id)
+            op_log.warning("terminate_sandbox_failed", sandbox_id=old_sandbox_id, exc_info=True)
 
     # Resolve project secrets for this agent
     from projects.models import Project

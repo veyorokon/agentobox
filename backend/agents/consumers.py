@@ -137,9 +137,10 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.models import Agent
             await Agent.objects.filter(id=self.agent_id).aupdate(relay_connected=False)
         except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
-            log.exception("relay_connected_update_failed", agent_id=self.agent_id)
+            log.warning("relay_connected_update_failed", agent_id=self.agent_id, exc_info=True)
 
-        log.info("relay_ws_disconnected", agent_id=self.agent_id, code=code)
+        disconnect_source = "server" if code and 4000 <= code <= 4999 else "client"
+        log.info("relay_ws_disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
 
     async def receive_json(self, content):
         """Each message from relay = one raw stream-json event.
@@ -219,6 +220,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         # Token is NOT consumed here — the 60s TTL handles expiry.
         # Single-use tokens break React strict mode (dev double-invoke)
         # and multi-tab scenarios where both tabs fire createVncToken.
+        self.token_hash = token[:8]
 
         # Look up agent's VNC URL
         from agents.models import Agent
@@ -244,7 +246,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         elif not vnc_ws_url.endswith("/websockify"):
             vnc_ws_url = vnc_ws_url.rstrip("/") + "/websockify"
 
-        log.info("vnc_proxy_connecting", agent_id=self.agent_id, url=vnc_ws_url)
+        log.info("vnc_proxy_connecting", agent_id=self.agent_id, token_hash=self.token_hash, url=vnc_ws_url)
         try:
             self.upstream_ws = await websockets.connect(
                 vnc_ws_url,
@@ -262,7 +264,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
 
         # Start relay task: upstream → downstream
         self._relay_task = asyncio.create_task(self._relay_upstream())
-        log.info("vnc_proxy_connected", agent_id=self.agent_id)
+        log.info("vnc_proxy_connected", agent_id=self.agent_id, token_hash=self.token_hash)
 
     async def _relay_upstream(self):
         """Read frames from upstream websockify and send to browser."""
@@ -297,4 +299,5 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                 await self.upstream_ws.close()
             except Exception:  # intentional: upstream WS may already be closed during teardown
                 log.debug("vnc_proxy_upstream_close_error", agent_id=self.agent_id, exc_info=True)
-        log.info("vnc_proxy_disconnected", agent_id=self.agent_id, code=code)
+        disconnect_source = "server" if code and 4000 <= code <= 4999 else "client"
+        log.info("vnc_proxy_disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)

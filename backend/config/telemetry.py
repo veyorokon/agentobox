@@ -45,6 +45,18 @@ def add_service_metadata(logger, method_name, event_dict):
     return event_dict
 
 
+# Fields injected by django_structlog that add noise without debugging value.
+# ip: proxy/CDN IP, not the real client. user_agent: never useful for debugging.
+_DROP_FIELDS = {"ip", "user_agent"}
+
+
+def drop_noisy_fields(logger, method_name, event_dict):
+    """Remove fields that consume log space without aiding debugging."""
+    for key in _DROP_FIELDS:
+        event_dict.pop(key, None)
+    return event_dict
+
+
 def extract_otel_exception_fields(logger, method_name, event_dict):
     """
     Extract exception into OpenTelemetry semantic convention fields.
@@ -303,6 +315,7 @@ def start_queue_listener():
             renderer,
         ],
         foreign_pre_chain=[
+            drop_noisy_fields,
             structlog.contextvars.merge_contextvars,
             merge_agent_context,
             truncate_graphql_request,
@@ -371,11 +384,18 @@ class GraphQLLoggingExtension:
         if result and hasattr(result, "errors") and result.errors:
             errors = [str(e) for e in result.errors]
 
+        event_name = f"graphql.{op_type}.{op_name}"
+
         log_kwargs = {
-            "operation": op_name,
-            "type": op_type,
             "duration_ms": elapsed_ms,
         }
+
+        # Bind user_id from request context when available
+        request = getattr(ctx.context, "request", None)
+        if request:
+            user = getattr(request, "user", None)
+            if user and getattr(user, "is_authenticated", False):
+                log_kwargs["user_id"] = user.id
 
         # Include variables but redact sensitive values
         if ctx.variables:
@@ -384,9 +404,9 @@ class GraphQLLoggingExtension:
 
         if errors:
             log_kwargs["errors"] = errors
-            log.error("graphql_operation", **log_kwargs)
+            log.error(event_name, **log_kwargs)
         else:
-            log.info("graphql_operation", **log_kwargs)
+            log.info(event_name, **log_kwargs)
 
     def resolve(self, _next, root, info, *args, **kwargs):
         return _next(root, info, *args, **kwargs)
@@ -416,6 +436,7 @@ def setup():
     structlog.configure(
         processors=[
             add_service_metadata,
+            drop_noisy_fields,  # Strip ip/user_agent injected by django_structlog
             structlog.contextvars.merge_contextvars,
             merge_agent_context,  # Add agent metadata from context
             truncate_graphql_request,  # Shorten URL-encoded GraphQL queries

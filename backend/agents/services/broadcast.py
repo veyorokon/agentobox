@@ -64,11 +64,18 @@ async def broadcast_agent_update(agent: Agent) -> None:
             },
         )
     except Exception:  # intentional: channel layer failure must not break agent state mutations
-        log.exception("broadcast_agent_update_failed", group=group)
+        log.warning("broadcast_agent_update_failed", group=group, exc_info=True)
 
     # Detect status change and emit a status StreamEvent + feed item
     old_status = getattr(agent, "_original_status", None)
     if old_status is not None and old_status != agent.status:
+        log.info(
+            "agent.status_changed",
+            agent_id=str(agent.id),
+            agent_name=agent.name,
+            from_status=old_status,
+            to_status=agent.status,
+        )
         event = await _create_status_event(agent, old_status)
         await broadcast_event(agent, event)
         # Reset to prevent double-emission on subsequent broadcasts
@@ -114,4 +121,4 @@ async def broadcast_event(agent: Agent, stream_event: StreamEvent) -> None:
             },
         )
     except Exception:  # intentional: channel layer failure must not break event creation
-        log.exception("broadcast_event_failed", group=group)
+        log.warning("broadcast_event_failed", group=group, exc_info=True)

@@ -100,7 +100,7 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(target)
         except Exception:  # intentional: broadcast is best-effort — shutdown already committed to DB
-            log.exception("shutdown_broadcast_failed", target=recipient)
+            log.warning("shutdown_broadcast_failed", target=recipient, exc_info=True)
 
         log.info("mcp_shutdown_request", sender=agent.name, target=recipient)
         return {"ok": True, "recipient": recipient}
@@ -204,7 +204,7 @@ async def create_task(agent, *, subject: str, description: str = "", active_form
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
     except Exception:  # intentional: feed/broadcast is secondary — task creation already succeeded
-        log.exception("task_create_feed_broadcast_failed", agent_name=agent.name)
+        log.warning("task_create_feed_broadcast_failed", agent_name=agent.name, exc_info=True)
 
     log.info("mcp_task_create", agent_name=agent.name, subject=subject[:80])
     return {"task_id": task.task_id, "subject": task.subject}
@@ -263,7 +263,7 @@ async def update_task(
                 from agents.services.broadcast import broadcast_agent_update
                 await broadcast_agent_update(agent)
             except Exception:  # intentional: broadcast is secondary — task deletion already committed
-                log.exception("task_delete_broadcast_failed", agent_name=agent.name)
+                log.warning("task_delete_broadcast_failed", agent_name=agent.name, exc_info=True)
             log.info("mcp_task_delete", agent_name=agent.name, task_id=task_id)
             return {"ok": True, "deleted": True}
         task.status = status
@@ -327,7 +327,7 @@ async def update_task(
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(agent)
     except Exception:  # intentional: feed/broadcast is secondary — task update already committed
-        log.exception("task_update_feed_broadcast_failed", agent_name=agent.name)
+        log.warning("task_update_feed_broadcast_failed", agent_name=agent.name, exc_info=True)
 
     log.info("mcp_task_update", agent_name=agent.name, task_id=task_id, fields=update_fields)
     return {"ok": True, "task_id": task_id}

@@ -382,7 +382,7 @@ async def clear_agent_session(agent_id: str) -> bool:
             f"rm -rf {agent_state_dir}/projects/*/",
         ])
     except Exception:  # intentional: session file cleanup is best-effort — restart still proceeds
-        op_log.exception("clear_session_files_failed")
+        op_log.warning("clear_session_files_failed", exc_info=True)
 
     agent.session_id = ""
     await agent.asave(update_fields=["session_id"])

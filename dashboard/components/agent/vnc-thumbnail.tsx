@@ -94,6 +94,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       fetchTokenAndConnect()
     }
     if (!hasContainer) {
+      // Disconnect RFB before VncScreen unmounts to avoid
+      // "Tried changing state of a disconnected RFB object"
+      try { vncRef.current?.disconnect() } catch {}
       setConnState("idle")
       setWsUrl(null)
       setErrorMsg(null)
@@ -151,7 +154,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   useEffect(() => {
     if (!showVnc) return
     const raf = requestAnimationFrame(() => {
-      vncRef.current?.connect()
+      try { vncRef.current?.connect() } catch {}
     })
     return () => cancelAnimationFrame(raf)
   }, [showVnc])

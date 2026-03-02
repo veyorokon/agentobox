@@ -349,8 +349,11 @@ class AgentMutation:
         await authorize_agent(info, agent_id)
 
         token = secrets.token_urlsafe(32)
+        token_hash = token[:8]
         cache_key = f"vnc_token:{token}"
         cache.set(cache_key, str(agent_id), timeout=60)
+
+        log.info("vnc_token_created", agent_id=str(agent_id), token_hash=token_hash)
 
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
         return VncTokenResult(token=token, expires_at=expires_at.isoformat())
