@@ -152,3 +152,66 @@ All in `backend/agents/models.py`:
 - `team.ts`: Composer recipients only (not agent data). Falls back to `team-lead` default.
 
 Zero prop drilling: all components subscribe directly to hooks/stores. The page component (`app/p/[projectId]/page.tsx`) is a pure layout shell.
+
+## Security & Secrets
+
+Agent containers need secrets (API keys, CLI tokens, MCP credentials) but the agent process is inherently untrusted — prompt injection, malicious MCPs, or careless `echo $SECRET` could leak credentials. Three defense layers, each addressing a different attack surface:
+
+### Layer 1: Secret File Mounts (protect at rest)
+
+`build_api_key_files()` writes secrets to `/run/secrets/<name>` with 0600 root:root permissions. The provisioning flow handles both Docker and Modal via the runtime adapter.
+
+**Blocks:** `docker inspect`, `/proc/1/environ`, cross-container access, agent user reading files directly.
+
+### Layer 2: HTTP Proxy for Anthropic Key (protect in transit)
+
+`svc-apiproxy` (`api-proxy.py`) runs on `localhost:9999`, reads the real key from `/run/secrets/proxy_key`, injects it into outbound requests to `api.anthropic.com`. The relay gets a placeholder key (`_PROXY_PLACEHOLDER_KEY`) that passes CLI validation but is worthless if leaked.
+
+```
+Claude CLI  →  ANTHROPIC_BASE_URL=http://localhost:9999
+            →  api-proxy.py reads /run/secrets/proxy_key
+            →  injects real Authorization header
+            →  forwards to api.anthropic.com
+```
+
+**Blocks:** Everything in Layer 1, plus `echo $ANTHROPIC_API_KEY` prints the placeholder, `env | grep` shows nothing useful, process memory inspection of the relay.
+
+| Component | Responsibility | File |
+|-----------|---------------|------|
+| Adapter (`claude_code/__init__.py`) | Decides WHAT secrets to provision, builds file specs and env content | Backend |
+| Provisioning (`provision.py`) | Writes secrets to container filesystem, sets permissions | Backend |
+| Lifecycle (`lifecycle.py`) | Orchestrates the provisioning sequence | Backend |
+| API Proxy (`api-proxy.py`) | Intercepts Anthropic API calls, injects real key | Agent image |
+| Relay (`relay.py`) | Redacts secrets from output stream before forwarding | Agent image |
+| s6 services (`svc-*/run`) | Process isolation — each service has own user/env | Agent image |
+
+### Layer 3: Output Stream Redaction (protect in output)
+
+The relay (`relay.py`) is the single chokepoint — every event flows through `_send_event()` before reaching the backend WebSocket. A `_Redactor` class loads secret values from `/run/secrets/` and `/mnt/abox-state/secrets/env` at boot, then scrubs matching substrings from every outbound event dict (via JSON serialize → replace → deserialize).
+
+**Blocks:** `echo $GITHUB_TOKEN` → `[REDACTED]` in dashboard, `env | grep TOKEN` → values redacted, `cat .env` → values redacted.
+
+**Does not block (by design):** network exfiltration (process sends secret to external URL), base64-encoded secrets, secrets the relay can't read (root-only files).
+
+This is a **UX safety net**, not a security boundary. See `docs/drafts/agent-secrets.md` for the full threat model.
+
+### Future: s6 MCP Secret Isolation
+
+When secret-bearing MCPs are added (github, aws, etc.), each MCP runs as its own s6 `longrun` service under its own linux user. The agent process never possesses the secret — only a socket path.
+
+```
+s6 orchestrator
+  ├── svc-relay (user: agent) — no secrets, only socket paths + placeholder key
+  ├── svc-apiproxy (user: root) — reads /run/secrets/proxy_key
+  ├── svc-mcp-github (user: mcp-github) — GITHUB_TOKEN via s6-envdir
+  └── svc-mcp-aws (user: mcp-aws) — AWS creds via s6-envdir
+```
+
+Each MCP:
+- Runs as its own s6 `longrun` service with a dedicated linux user
+- Gets secrets via `s6-envdir /run/secrets/mcp-<name>/`
+- Listens on unix socket `/run/mcp/<name>.sock` or local HTTP port
+- Agent connects via MCP SSE/HTTP transport (not stdio)
+- Agent never possesses the secret — only the socket path
+
+**Not built yet.** When the first secret-bearing MCP is added, create: the s6 service directory (`svc-mcp-<name>/`), the linux user in the Dockerfile, secret provisioning in lifecycle.py, and the `.mcp.json` entry with `type: "sse"` transport pointing to the local socket.

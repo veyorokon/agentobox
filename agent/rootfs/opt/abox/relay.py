@@ -172,6 +172,61 @@ WS_FATAL_CLOSE_CODES = {4001, 4003, 4004}
 CRITICAL_EVENT_TYPES = {"result", "system"}
 
 
+class _Redactor:
+    """Scrub known secret values from outbound event data.
+
+    Loads secret values from /run/secrets/ and the relay env at boot.
+    Applied to every event before WS send — prevents accidental credential
+    exposure in dashboard output. UX safety net, not a security boundary.
+    """
+
+    def __init__(self):
+        self._secrets: list[str] = []
+
+    def load(self):
+        """Read secret values from /run/secrets/ files + env."""
+        secrets_dir = "/run/secrets"
+        if os.path.isdir(secrets_dir):
+            for name in os.listdir(secrets_dir):
+                path = os.path.join(secrets_dir, name)
+                if os.path.isfile(path):
+                    try:
+                        val = open(path).read().strip()
+                        if len(val) >= 8:
+                            self._secrets.append(val)
+                    except PermissionError:
+                        pass  # intentional: root-only files when running as agent
+        # Also redact secrets from mounted env file if readable
+        env_file = "/mnt/abox-state/secrets/env"
+        if os.path.isfile(env_file):
+            try:
+                for line in open(env_file):
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        val = line.split("=", 1)[1].strip().strip("'\"")
+                        if len(val) >= 8:
+                            self._secrets.append(val)
+            except PermissionError:
+                pass  # intentional: restricted file
+        # Sort longest first so longer secrets are replaced before substrings
+        self._secrets.sort(key=len, reverse=True)
+        if self._secrets:
+            log.info("Redactor loaded %d secret(s)", len(self._secrets))
+
+    def redact(self, text: str) -> str:
+        """Replace known secret values with [REDACTED]."""
+        for secret in self._secrets:
+            if secret in text:
+                text = text.replace(secret, "[REDACTED]")
+        return text
+
+    def redact_event(self, event: dict) -> dict:
+        """Deep-redact string values in an event dict."""
+        if not self._secrets:
+            return event
+        return json.loads(self.redact(json.dumps(event)))
+
+
 class FatalWSClose(Exception):
     """Backend rejected the connection with a non-retryable close code."""
 
@@ -349,6 +404,8 @@ class SDKRelay:
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
         self._event_buffer: deque[dict] = deque(maxlen=20)  # bounded ring buffer for critical events
         self.ws = WSTransport()
+        self._redactor = _Redactor()
+        self._redactor.load()
 
     @staticmethod
     def _build_sdk_env() -> dict[str, str]:
@@ -569,6 +626,9 @@ class SDKRelay:
         If that also fails, buffer critical events for later delivery.
         Raises FatalWSClose if reconnect hits a non-retryable code.
         """
+        # Redact secrets before any WS send
+        event = self._redactor.redact_event(event)
+
         # Flush any previously buffered events first
         await self._flush_event_buffer()
 

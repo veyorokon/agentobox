@@ -618,10 +618,9 @@ class ClaudeCodeAdapter:
         ANTHROPIC_BASE_URL pointing to the localhost proxy. The real key
         never appears in the relay's environment.
         """
-        # tech-debt: proxy disabled until agent image is rebuilt with svc-apiproxy.
-        # Once image includes api-proxy.py, revert to _PROXY_PLACEHOLDER_KEY and
-        # ANTHROPIC_BASE_URL=http://localhost:{_PROXY_PORT}.
-        relay_api_key = api_key or ""
+        # Proxy active: relay gets a placeholder key that passes CLI validation.
+        # The real key lives in /run/secrets/proxy_key, read by svc-apiproxy.
+        relay_api_key = _PROXY_PLACEHOLDER_KEY if api_key else ""
 
         lines = [
             f"export AGENT_ID='{_shell_escape(agent_id)}'",
@@ -634,6 +633,11 @@ class ClaudeCodeAdapter:
             f"export CLAUDE_MODEL='{_shell_escape(_normalize_model_id(model))}'",
             f"export AGENT_MODE='{_shell_escape(mode)}'",
         ]
+
+        if api_key:
+            lines.append(
+                f"export ANTHROPIC_BASE_URL='http://localhost:{_PROXY_PORT}'"
+            )
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
