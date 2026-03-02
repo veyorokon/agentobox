@@ -13,6 +13,9 @@ This ensures the agent process never has access to the real API key.
 
 import http.client
 import http.server
+import json
+import logging
+import os
 import ssl
 import sys
 
@@ -51,6 +54,26 @@ _REAL_KEY = _load_key()
 
 # Reusable SSL context for upstream connections
 _SSL_CTX = ssl.create_default_context()
+
+# Structured JSON logger — matches relay format so logs are greppable together
+_log = logging.getLogger("abox-apiproxy")
+_handler = logging.StreamHandler(sys.stderr)
+
+
+class _JSONFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname.lower(),
+            "logger": record.name,
+            "agent_id": os.environ.get("AGENT_ID", ""),
+            "event": record.getMessage(),
+        })
+
+
+_handler.setFormatter(_JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ"))
+_log.addHandler(_handler)
+_log.setLevel(logging.INFO)
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -110,12 +133,18 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             conn.request(self.command, self.path, body=body, headers=upstream_headers)
             resp = conn.getresponse()
         except Exception as exc:
-            print(f"ERROR: upstream connection failed: {exc}", file=sys.stderr)
+            _log.error("proxy.upstream_connect_failed method=%s path=%s error=%s",
+                        self.command, self.path, exc)
             self.send_response(502)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"Bad Gateway: upstream connection failed")
             return
+
+        # Log non-2xx upstream responses
+        if resp.status >= 400:
+            _log.warning("proxy.upstream_error status=%d method=%s path=%s",
+                         resp.status, self.command, self.path)
 
         # Send response status
         self.send_response(resp.status)
@@ -143,12 +172,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    print(f"api-proxy: listening on 0.0.0.0:{LISTEN_PORT}, forwarding to {UPSTREAM_HOST}:{UPSTREAM_PORT}")
+    _log.info("proxy.started port=%d upstream=%s:%d", LISTEN_PORT, UPSTREAM_HOST, UPSTREAM_PORT)
     server = http.server.ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("api-proxy: shutting down")
+        _log.info("proxy.stopped")
         server.shutdown()
 
 
