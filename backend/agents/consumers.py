@@ -216,8 +216,9 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
             await self.close(code=4001)
             return
 
-        # Consume the token (single-use)
-        cache.delete(cache_key)
+        # Token is NOT consumed here — the 60s TTL handles expiry.
+        # Single-use tokens break React strict mode (dev double-invoke)
+        # and multi-tab scenarios where both tabs fire createVncToken.
 
         # Look up agent's VNC URL
         from agents.models import Agent
@@ -243,20 +244,21 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         elif not vnc_ws_url.endswith("/websockify"):
             vnc_ws_url = vnc_ws_url.rstrip("/") + "/websockify"
 
+        log.info("vnc_proxy_connecting", agent_id=self.agent_id, url=vnc_ws_url)
         try:
             self.upstream_ws = await websockets.connect(
                 vnc_ws_url,
-                subprotocols=["binary"],
                 max_size=2**20,
                 open_timeout=10,
             )
+            log.info("vnc_proxy_upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))
         except Exception:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
             log.exception("vnc_proxy_upstream_failed", agent_id=self.agent_id, url=vnc_ws_url)
             await self.accept()
             await self.close(code=4003)
             return
 
-        await self.accept(subprotocol="binary")
+        await self.accept()
 
         # Start relay task: upstream → downstream
         self._relay_task = asyncio.create_task(self._relay_upstream())
