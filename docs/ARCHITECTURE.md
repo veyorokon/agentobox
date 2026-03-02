@@ -95,6 +95,32 @@ All events flow through `services/stream.py` `process_stream_event()`. The write
 
 Raw events are stored verbatim — no filtering, no transformation. The relay forwards everything Claude Code outputs. New event types Anthropic adds are captured automatically.
 
+## Structured Logging (Event Taxonomy)
+
+All backend logging uses `structlog` with a `domain.action` naming convention enforced by architecture tests.
+
+**Logger names** use the `abox.` prefix: `abox.relay`, `abox.stream`, `abox.comms`, `abox.lifecycle`, `abox.mcp`, `abox.broadcast`, `abox.feed`, `abox.graphql`. Runtimes use 3-level: `abox.runtime.docker`, `abox.runtime.modal`.
+
+**Event names** follow `domain.action` or `domain.sub_action` format. The architecture test (`test_event_names_follow_taxonomy`) validates every event against a regex and a domain registry:
+
+| Domain | Scope | Files |
+|--------|-------|-------|
+| `lifecycle` | Agent create, provision, restart, kill | `lifecycle.py`, `provision.py` |
+| `relay` | WebSocket relay connection, events | `consumers.py` |
+| `vnc` | VNC proxy connection lifecycle | `consumers.py` |
+| `stream` | Stream event processing, plans | `stream.py` |
+| `comms` | Message delivery, mode changes, signals | `comms.py` |
+| `mcp` | MCP tool calls (send, task, spawn) | `mcp_coord.py` |
+| `broadcast` | Channels group_send to subscribers | `broadcast.py` |
+| `feed` | TeamFeedItem creation/broadcast | `feed.py` |
+| `reconciler` | GDA reconciliation loop | `reconcile.py` |
+| `runtime` | Container/sandbox operations | `runtimes/docker.py`, `runtimes/modal.py` |
+| `callback` | Permission/hook callbacks from relay | `callbacks.py` |
+| `graphql` | Query/mutation/subscription events | `mutations.py`, `subscriptions.py`, `views.py` |
+| `auth` | Relay token authentication | `auth_relay.py` |
+
+Adding a new domain requires adding it to `_VALID_DOMAINS` in `tests/test_architecture.py`. The full taxonomy spec is in `docs/drafts/event-taxonomy.md`.
+
 ## Adapters (Ports & Adapters)
 
 `backend/agents/adapters/` implements the Ports and Adapters pattern. `AgentAdapter` is a Protocol (`base.py`) defining pure functions: `last_output()`, `live_action()`, `cost()`, `duration()`, `turns()`, `is_permission_request()`, `is_plan_proposal()`. `ClaudeCodeAdapter` (`claude_code.py`) implements this for Claude Code's stream-json format. Adapters have no DB access, no side effects, and never mutate the snapshot. The registry (`__init__.py`) maps `agent_type` strings to adapter instances — currently only `"claude-code"` is registered.
