@@ -329,11 +329,38 @@ async def _handle_system(agent: Agent, event: dict) -> None:
 
     elif subtype == "process_exit":
         exit_code = event.get("exit_code", -1)
-        agent.status = AgentStatus.STOPPED if exit_code == 0 else AgentStatus.ERROR
+        is_error = exit_code != 0
+        agent.status = AgentStatus.STOPPED if not is_error else AgentStatus.ERROR
         agent.phase = ""
-        await agent.asave(update_fields=["status", "phase"])
+        update_fields = ["status", "phase"]
+
+        # Persist error context from relay stderr so it survives container reap
+        stderr = event.get("stderr", "").strip()
+        if is_error and stderr:
+            agent.error_message = stderr[:2000]  # cap at 2000 chars for DB
+            update_fields.append("error_message")
+
+        await agent.asave(update_fields=update_fields)
         await broadcast_agent_update(agent)
-        log.info("stream_process_exit", agent_id=str(agent.id), exit_code=exit_code)
+        log.info(
+            "stream_process_exit",
+            agent_id=str(agent.id),
+            exit_code=exit_code,
+            stderr_len=len(stderr) if stderr else 0,
+        )
+
+        # Create error feed item so users see WHY the agent crashed
+        if is_error:
+            # Use last line of stderr as summary, full stderr as text
+            lines = [l for l in stderr.splitlines() if l.strip()] if stderr else []
+            summary_line = lines[-1][:200] if lines else f"Process exited with code {exit_code}"
+            await create_feed_item(
+                project_id=str(agent.project_id),
+                type="error",
+                agent_name=agent.name,
+                agent_record=agent,
+                text=summary_line,
+            )
 
 
 async def _handle_phase(agent: Agent, event: dict) -> None:

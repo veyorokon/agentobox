@@ -195,6 +195,11 @@ class Agent(models.Model):
     task = models.CharField(max_length=500, blank=True, default="")       # current task description
     tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
 
+    # Last error context — stderr excerpt or crash diagnostics.
+    # Written by stream.py (process_exit) or reconcile.py (dead container).
+    # Cleared on successful restart.
+    error_message = models.TextField(blank=True, default="")
+
     # Auth token for WebSocket relay connection (generated during provisioning)
     relay_token = models.CharField(max_length=64, blank=True, db_index=True)
     # Whether the relay WebSocket is currently connected to this agent

@@ -66,6 +66,7 @@ export function useAgentsSubscription() {
           phase: () => agent.phase,
           task: () => agent.task,
           liveAction: () => agent.liveAction,
+          errorMessage: () => agent.errorMessage,
           taskProgress: () => agent.taskProgress,
         },
       })

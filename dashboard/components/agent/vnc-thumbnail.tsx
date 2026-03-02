@@ -1,10 +1,18 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, Component, type ReactNode } from "react"
 import { useMutation } from "@apollo/client"
 import { cn } from "@/lib/utils"
 import { CREATE_VNC_TOKEN } from "@/lib/graphql/mutations/vnc"
 import type { Agent } from "@/lib/types"
+
+/** Swallow react-vnc's internal "disconnected RFB" errors on unmount. */
+class VncErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch() {} // intentional: react-vnc throws on unmount when RFB is already disconnected — harmless
+  render() { return this.state.hasError ? null : this.props.children }
+}
 
 export interface VncThumbnailProps {
   agent: Agent
@@ -177,17 +185,19 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       {/* VNC viewport -- 16:10 aspect ratio */}
       <div className="relative w-full" style={{ aspectRatio: "16 / 10" }}>
         {showVnc ? (
-          <VncScreen
-            ref={vncRef}
-            url={wsUrl}
-            autoConnect={false}
-            scaleViewport
-            resizeSession
-            background="#0a0a0a"
-            style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
-            onConnect={handleConnect}
-            onDisconnect={handleDisconnect}
-          />
+          <VncErrorBoundary key={wsUrl}>
+            <VncScreen
+              ref={vncRef}
+              url={wsUrl}
+              autoConnect={false}
+              scaleViewport
+              resizeSession
+              background="#0a0a0a"
+              style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+            />
+          </VncErrorBoundary>
         ) : (
           <div className="absolute inset-0 flex flex-col">
             {/* Title bar */}
@@ -211,7 +221,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
               ) : isStopped ? (
                 <span className="text-[7px] font-mono text-muted/20">session ended</span>
               ) : agent.lifecycleStatus === "error" ? (
-                <span className="text-[6px] font-mono text-danger/50">Error: {agent.task}</span>
+                <span className="text-[6px] font-mono text-danger/50 line-clamp-3 text-center px-1">
+                  {agent.errorMessage
+                    ? agent.errorMessage.split("\n").pop()?.slice(0, 120)
+                    : `Process exited (${agent.task || "unknown error"})`}
+                </span>
               ) : (
                 <span className="text-[7px] font-mono text-muted/25">{agent.lifecycleStatus}</span>
               )}

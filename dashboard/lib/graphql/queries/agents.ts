@@ -51,6 +51,7 @@ export const GET_AGENTS = gql`
       phase
       liveAction
       lastOutput
+      errorMessage
       tags
       instructions
       mcpServers

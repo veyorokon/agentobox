@@ -21,6 +21,8 @@ export type Agent = {
   /** Live one-liner: last tool call or action, continuously updated.
    *  SOURCE: latest tool_use content block name + summary from StreamEvent */
   liveAction?: string
+  /** Last error context — stderr excerpt or crash diagnostics */
+  errorMessage?: string
   /** Compact task progress for live status bar */
   taskProgress?: { done: number; total: number }
   instructions: string

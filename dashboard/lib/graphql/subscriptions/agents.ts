@@ -38,6 +38,7 @@ export const ON_AGENT_CHANGED = gql`
       phase
       task
       liveAction
+      errorMessage
       taskProgress {
         done
         total

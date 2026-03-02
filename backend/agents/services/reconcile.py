@@ -75,10 +75,15 @@ def _get_agents(**filters):
 
 
 @_db
-def _mark_error(agent_id):
+def _mark_error(agent_id, error_message=""):
     agent = Agent.objects.get(id=agent_id)
     agent.status = AgentStatus.ERROR
-    agent.save(update_fields=["status", "updated_at"])
+    update_fields = ["status", "updated_at"]
+    # Only write error_message if not already set (stream.py may have set it first)
+    if error_message and not agent.error_message:
+        agent.error_message = error_message[:2000]
+        update_fields.append("error_message")
+    agent.save(update_fields=update_fields)
     return agent
 
 
@@ -148,7 +153,24 @@ async def _detect_dead_containers():
             # Capture crash diagnostics before marking ERROR
             crash_info = await runtime.get_crash_info(agent.sandbox_id)
 
-            agent = await _mark_error(agent.id)
+            # Build error message from crash info (backup path — stream.py
+            # may have already set it from relay's process_exit event)
+            error_msg = ""
+            if crash_info:
+                parts = []
+                exit_code = crash_info.get("exit_code", -1)
+                if crash_info.get("oom_killed"):
+                    parts.append("Container killed: out of memory (OOM)")
+                elif exit_code != 0:
+                    parts.append(f"Container exited with code {exit_code}")
+                logs = crash_info.get("logs", "").strip()
+                if logs:
+                    # Take last 10 lines — most relevant for diagnosis
+                    tail = "\n".join(logs.splitlines()[-10:])
+                    parts.append(tail)
+                error_msg = "\n".join(parts)
+
+            agent = await _mark_error(agent.id, error_message=error_msg)
             await broadcast_agent_update(agent)
             log.info(
                 "dead_container_detected",

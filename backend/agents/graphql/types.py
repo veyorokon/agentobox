@@ -215,6 +215,11 @@ class AgentType:
     task: auto
 
     @strawberry.field
+    def error_message(self) -> str:
+        """Last error context — stderr excerpt or crash diagnostics."""
+        return self.error_message or ""
+
+    @strawberry.field
     def lifecycle_status(self) -> str:
         """Map internal status to frontend LifecycleStatus."""
         return self.status
