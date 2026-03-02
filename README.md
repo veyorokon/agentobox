@@ -40,7 +40,7 @@ make up
 open http://localhost:5051
 ```
 
-Login: `vahid` / `test1234`
+Login: `demo` / `demo`
 
 ## Make Commands
 

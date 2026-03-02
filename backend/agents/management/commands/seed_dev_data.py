@@ -50,11 +50,11 @@ class Command(BaseCommand):
 
         # Get or create test user
         user, _ = User.objects.get_or_create(
-            username="vahid",
-            defaults={"email": "veyorokon@gmail.com"},
+            username="demo",
+            defaults={"email": "demo@agentobox.dev"},
         )
         if not user.has_usable_password():
-            user.set_password("test1234")
+            user.set_password("demo")
             user.save()
 
         # Get or create project

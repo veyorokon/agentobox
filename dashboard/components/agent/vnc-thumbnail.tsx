@@ -94,9 +94,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       fetchTokenAndConnect()
     }
     if (!hasContainer) {
-      // Disconnect RFB before VncScreen unmounts to avoid
+      // Disconnect RFB and clear URL before VncScreen unmounts to avoid
       // "Tried changing state of a disconnected RFB object"
       try { vncRef.current?.disconnect() } catch {}
+      vncRef.current = null
       setConnState("idle")
       setWsUrl(null)
       setErrorMsg(null)
@@ -122,6 +123,8 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
     const permanentMsg = code ? CLOSE_MESSAGES[code] : null
     if (permanentMsg) {
+      // Unmount VncScreen first to prevent RFB state errors during cleanup
+      setWsUrl(null)
       setConnState("error")
       setErrorMsg(permanentMsg)
       return
@@ -140,6 +143,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       }
     }
 
+    setWsUrl(null)
     setConnState("error")
     setErrorMsg("Connection lost")
   }, [hasContainer, fetchTokenAndConnect])

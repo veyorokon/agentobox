@@ -11,8 +11,8 @@ docker compose up -d          # postgres, redis, backend, dashboard
 
 ### Test credentials
 
-- Username: `vahid`
-- Password: `test1234`
+- Username: `demo`
+- Password: `demo`
 
 ## CI/CD
 
@@ -108,7 +108,7 @@ GraphQL testing requires Bearer auth:
 ```bash
 # Login
 curl -s localhost:8000/graphql -H 'Content-Type: application/json' \
-  --data-raw '{"query":"mutation { login(input: { username: \"vahid\", password: \"test1234\" }) { token } }"}'
+  --data-raw '{"query":"mutation { login(input: { username: \"demo\", password: \"demo\" }) { token } }"}'
 
 # Use token
 curl -s localhost:8000/graphql -H 'Content-Type: application/json' \
