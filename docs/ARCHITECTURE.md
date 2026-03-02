@@ -199,7 +199,7 @@ The relay (`relay.py`) is the single chokepoint — every event flows through `_
 
 **Does not block (by design):** network exfiltration, base64-encoded secrets, secrets the relay can't read (root-only files when relay runs as `agent` user).
 
-**Redaction strategy:** Substring matching (longest first). Trade-off: simple and fast, but short secrets (<8 chars) are excluded to avoid false positives. A secret that's a common English word could cause over-redaction — the 8-char minimum mitigates this.
+**Redaction strategy:** Recursive dict traversal with substring matching (longest first). Walks every string value in the event dict and replaces secret substrings. Operates on Python objects, not serialized JSON — avoids breakage when secrets contain JSON syntax characters (quotes, backslashes). Short secrets (<8 chars) are excluded to avoid false positives.
 
 ### Which layers protect which secrets
 

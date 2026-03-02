@@ -221,10 +221,26 @@ class _Redactor:
         return text
 
     def redact_event(self, event: dict) -> dict:
-        """Deep-redact string values in an event dict."""
+        """Deep-redact string values in an event dict.
+
+        Walks the dict recursively and replaces secret substrings in every
+        string value. Operates on Python objects, not JSON text — avoids
+        the json.dumps→replace→json.loads pattern which breaks when secrets
+        contain JSON syntax characters (quotes, backslashes).
+        """
         if not self._secrets:
             return event
-        return json.loads(self.redact(json.dumps(event)))
+        return self._redact_obj(event)
+
+    def _redact_obj(self, obj):
+        """Recursively redact secrets from any JSON-compatible object."""
+        if isinstance(obj, str):
+            return self.redact(obj)
+        if isinstance(obj, dict):
+            return {k: self._redact_obj(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._redact_obj(v) for v in obj]
+        return obj
 
 
 class FatalWSClose(Exception):

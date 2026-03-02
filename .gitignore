@@ -15,8 +15,12 @@ dist/
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
+
+# Linter cache
+.ruff_cache/
 
 # Claude Code
 .claude/

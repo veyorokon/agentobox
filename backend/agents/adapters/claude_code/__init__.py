@@ -648,7 +648,6 @@ class ClaudeCodeAdapter:
             lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
 
         if allowed_tools:
-            import json
             lines.append(f"export ALLOWED_TOOLS='{_shell_escape(json.dumps(allowed_tools))}'")
 
         if mcp_config_path:

@@ -63,7 +63,7 @@ The relay (`relay.py`) is the single chokepoint — every event flows through `_
 **Redaction mechanics:**
 - Loads at boot, before any events are processed
 - Applied in `_send_event()` before WS send AND before event buffering — no unredacted event ever leaves the container
-- Strategy: JSON serialize → substring replace (longest first) → deserialize
+- Strategy: recursive dict traversal with substring replace (longest first) — operates on Python objects, not serialized JSON, to avoid breakage when secrets contain quotes/backslashes
 - Minimum secret length: 8 chars (shorter values excluded to avoid false positives on common strings)
 - Logs a WARNING when `/run/secrets/` files cant be read (PermissionError on root-only files is expected when relay runs as `agent` user)
 
