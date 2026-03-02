@@ -19,8 +19,19 @@ import { createLogger } from "@/lib/logger"
 
 const log = createLogger("apollo")
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? API_URL.replace(/^http/, "ws")
+/** Derive GraphQL HTTP URL from the current browser hostname (same host, port 8000). */
+function getApiUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL
+  if (typeof window === "undefined") return "http://localhost:8000/graphql"
+  const { protocol, hostname } = window.location
+  return `${protocol}//${hostname}:8000/graphql`
+}
+
+/** Derive GraphQL WS URL from the HTTP URL. */
+function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL
+  return getApiUrl().replace(/^http/, "ws")
+}
 
 /* ── Auth header helper ───────────────────────────────────────────── */
 
@@ -50,7 +61,7 @@ const loggingLink = new ApolloLink((operation, forward) => {
 /* ── Network links ───────────────────────────────────────────────── */
 
 const httpLink = new HttpLink({
-  uri: API_URL,
+  uri: getApiUrl,
   headers: {
     get authorization() {
       const token = getAuthToken()
@@ -61,7 +72,7 @@ const httpLink = new HttpLink({
 
 const wsLink = new GraphQLWsLink(
   createClient({
-    url: WS_URL,
+    url: getWsUrl(),
     retryAttempts: Infinity,
     shouldRetry: () => true,
     connectionParams: () => {

@@ -17,11 +17,11 @@ const CLOSE_MESSAGES: Record<number, string> = {
   4004: "Agent not found",
 }
 
-/** Derive the VNC WebSocket URL from NEXT_PUBLIC_API_URL. */
+/** Derive the VNC WebSocket URL from current browser hostname. */
 function buildVncWsUrl(agentId: string, token: string): string {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
-  const base = apiUrl.replace(/\/graphql$/, "").replace(/^http/, "ws")
-  return `${base}/ws/vnc/${agentId}/?token=${token}`
+  const { hostname } = window.location
+  const wsProto = window.location.protocol === "https:" ? "wss" : "ws"
+  return `${wsProto}://${hostname}:8000/ws/vnc/${agentId}/?token=${token}`
 }
 
 /** Lifecycle states where the agent container is alive and VNC is reachable. */

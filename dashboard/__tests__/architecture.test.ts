@@ -214,6 +214,41 @@ describe("Component Architecture", () => {
     const src = readFile(pageFile)
     expect(src).not.toMatch(/cache\.modify/)
   })
+
+  it("components never call cache.modify directly (only hooks can)", () => {
+    const violations: string[] = []
+    for (const file of componentFiles) {
+      const src = readFile(file)
+      if (/cache\.modify\s*\(/.test(src)) {
+        violations.push(relPath(file))
+      }
+    }
+    expect(
+      violations,
+      `cache.modify belongs in hooks, not components:\n${violations.join("\n")}`
+    ).toEqual([])
+  })
+
+  it("zustand store hooks always use selectors (no bare useXStore() calls)", () => {
+    // useXStore() without a selector subscribes to the entire store — every
+    // state change triggers a re-render. Always use useXStore(s => s.field).
+    const bareStoreCall = /use\w+Store\(\)/
+    const violations: string[] = []
+    const allFiles = [...componentFiles, ...globTs(path.join(DASHBOARD, "app"))]
+    for (const file of allFiles) {
+      const src = readFile(file)
+      const lines = src.split("\n")
+      for (let i = 0; i < lines.length; i++) {
+        if (bareStoreCall.test(lines[i])) {
+          violations.push(`${relPath(file)}:${i + 1}: ${lines[i].trim()}`)
+        }
+      }
+    }
+    expect(
+      violations,
+      `Bare useXStore() calls cause unnecessary re-renders. Use useXStore(s => s.field):\n${violations.join("\n")}`
+    ).toEqual([])
+  })
 })
 
 describe("Logging Discipline", () => {

@@ -43,6 +43,7 @@ services:
       ALLOWED_HOSTS: "*"
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
       AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent:latest}
+      CORS_ALLOW_ALL: "true"
       ABOX_CALLBACK_URL: http://backend:8000
       ABOX_DASHBOARD_URL: http://dashboard:5051
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -78,9 +79,7 @@ services:
 
   dashboard:
     build: ./dashboard
-    environment:
-      NEXT_PUBLIC_GRAPHQL_HTTP: http://localhost:8000/graphql
-      NEXT_PUBLIC_GRAPHQL_WS: ws://localhost:8000/graphql
+    environment: {}
     ports:
       - "5051:5051"
     depends_on:

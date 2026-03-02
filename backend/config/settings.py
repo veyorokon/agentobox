@@ -216,6 +216,7 @@ SESSION_COOKIE_NAME = "agentobox_sessionid"
 
 # --- CORS ---
 
+CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL", default=False)
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5051",
