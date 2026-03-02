@@ -139,6 +139,41 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(self.agent)
 
+        # Backfill messages sent during transient relay disconnect.
+        # Unlike the DEPLOYING backfill above (which handles fresh deploys),
+        # this catches messages sent while the relay was briefly down
+        # (network hiccup, container restart, etc).
+        elif self.agent.relay_disconnected_at:
+            pending = StreamEvent.objects.filter(
+                agent_id=self.agent_id,
+                event_type="user",
+                created_at__gte=self.agent.relay_disconnected_at,
+            ).order_by("created_at")
+
+            _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
+
+            async for event in pending:
+                data = event.data
+                msg = data.get("message", {})
+                content = msg.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    await self.send_json({
+                        "type": "input",
+                        "payload": {"type": "user", "message": {"role": "user", "content": content}},
+                    })
+                elif isinstance(content, list):
+                    clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
+                    text_parts = [b for b in clean if b.get("type") == "text"]
+                    if text_parts and not any(b.get("type") == "tool_result" for b in clean):
+                        await self.send_json({
+                            "type": "input",
+                            "payload": {"type": "user", "message": {"role": "user", "content": clean}},
+                        })
+
+            # Clear the disconnect timestamp — backfill complete
+            from agents.models import Agent
+            await Agent.objects.filter(id=self.agent_id).aupdate(relay_disconnected_at=None)
+
         log.info("relay_ws_connected", agent_id=self.agent_id)
 
     async def disconnect(self, code):
@@ -146,9 +181,15 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
 
         # Track relay connection state — use filter().aupdate() because
         # self.agent may be stale or the agent row may have been deleted.
+        # Record disconnect timestamp so reconnect can backfill messages
+        # sent during the gap (fixes silent message loss on transient drops).
         try:
+            from django.utils import timezone
             from agents.models import Agent
-            await Agent.objects.filter(id=self.agent_id).aupdate(relay_connected=False)
+            await Agent.objects.filter(id=self.agent_id).aupdate(
+                relay_connected=False,
+                relay_disconnected_at=timezone.now(),
+            )
         except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
             log.warning("relay_connected_update_failed", agent_id=self.agent_id, exc_info=True)
 

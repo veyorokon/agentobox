@@ -204,6 +204,9 @@ class Agent(models.Model):
     relay_token = models.CharField(max_length=64, blank=True, db_index=True)
     # Whether the relay WebSocket is currently connected to this agent
     relay_connected = models.BooleanField(default=False)
+    # Timestamp of last relay WS disconnect — used to backfill messages
+    # sent while the relay was transiently disconnected.
+    relay_disconnected_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
