@@ -31,6 +31,11 @@ from agents.models import StreamEvent
 
 log = structlog.get_logger("agents.relay_ws")
 
+# Valid Anthropic content block types — anything prefixed with _ is
+# internal metadata (e.g. _broadcast) and must be stripped before
+# sending to Claude's stdin. Used by both deploy and reconnect backfill.
+_VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
+
 
 class RelayConsumer(AsyncJsonWebsocketConsumer):
     """Bidirectional WebSocket channel between agent relay and backend.
@@ -101,11 +106,6 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 event_type="user",
                 created_at__gte=backfill_cutoff,
             ).order_by("created_at")
-
-            # Valid Anthropic content block types — anything prefixed with _ is
-            # internal metadata (e.g. _broadcast) and must be stripped before
-            # sending to Claude's stdin.
-            _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
 
             async for event in pending:
                 data = event.data

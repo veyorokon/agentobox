@@ -251,6 +251,50 @@ Currently only runtime operations track elapsed time. Add to:
 
 ---
 
+## Log Level Convention
+
+Levels indicate severity and operational response:
+
+| Level | When to Use | Example |
+|-------|-------------|---------|
+| `debug` | High-frequency events useful only during active debugging. Not shown in production by default. | `stream.event_received` (every stream event) |
+| `info` | Normal operations worth recording. The default for all state transitions and completed actions. | `lifecycle.agent_created`, `relay.connected` |
+| `warning` | Degraded but recoverable situations. Best-effort operations that failed but didn't break the caller. Always include `exc_info=True` when wrapping an exception. | `broadcast.agent_failed`, `comms.push_failed` |
+| `exception` | Unexpected failures that indicate a bug or infrastructure problem. Use only when the error is NOT expected/handled. | `lifecycle.provision_failed`, `vnc.upstream_failed` |
+
+**Rule:** If the code catches an exception and continues (best-effort), use
+`warning` with `exc_info=True`. If the exception propagates or indicates a
+real problem, use `exception`. Currently 3 calls in reconcile.py use
+`exception` for best-effort operations — these should be demoted to `warning`.
+
+---
+
+## Logger Name Convention
+
+Each module creates a logger with a name matching its domain:
+
+```python
+# Current (inconsistent):
+log = structlog.get_logger("agents.relay_ws")
+log = structlog.get_logger("agents.lifecycle")
+log = structlog.get_logger("agents.reconcile")
+
+# New (matches domain registry):
+log = structlog.get_logger("abox.relay")
+log = structlog.get_logger("abox.lifecycle")
+log = structlog.get_logger("abox.reconciler")
+```
+
+Prefix `abox.` prevents collisions with Django/third-party loggers.
+Logger name matches the first segment of event names in that file:
+`abox.relay` logger emits `relay.connected`, `relay.disconnected`, etc.
+
+This enables log filtering by domain: `structlog.configure(wrapper_class=...,
+processors=[...], logger_factory=PrintLoggerFactory())` with logger name
+filtering.
+
+---
+
 ## Debugging Stories
 
 These are the narratives the event taxonomy must support. Each story is a
