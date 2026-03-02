@@ -4,7 +4,7 @@
 
 ## Modules
 
-### agents/adapters/__init__.py
+### app/agents/adapters/__init__.py
 
 Adapter registry — maps agent_type strings to AgentAdapter instances.
 
@@ -18,7 +18,7 @@ To add a new agent type:
     1. Create adapters/<name>/ package implementing AgentAdapter
     2. Import and register here: register_adapter("<name>", <Adapter>())
 
-### agents/adapters/base.py
+### app/agents/adapters/base.py
 
 AgentAdapter Protocol — the port in Ports and Adapters.
 
@@ -51,7 +51,7 @@ Adapters may NOT:
     - Mutate the snapshot dict
     - Raise exceptions (return defaults for missing/malformed data)
 
-### agents/adapters/claude_code/__init__.py
+### app/agents/adapters/claude_code/__init__.py
 
 Claude Code adapter — translates Claude Code stream-json into our vocabulary.
 
@@ -88,7 +88,7 @@ Semantics:
     - Result event adds "result" (turn complete)
     - live_action checks for "result" key: if present, turn is done -> empty string
 
-### agents/adapters/claude_code/registries.py
+### app/agents/adapters/claude_code/registries.py
 
 Claude Code-specific registries — models, MCP servers, team templates.
 
@@ -96,7 +96,7 @@ These are agent-type-specific data that other adapters (Codex, Gemini) would
 replace with their own equivalents. Kept separate from the adapter class
 so the data is easy to find and modify.
 
-### agents/admin.py
+### app/agents/admin.py
 
 Django admin registration for agent models.
 
@@ -104,11 +104,11 @@ Registers Agent with list display, filters, and search. Other models
 (StreamEvent, SessionResult, etc.) are intentionally excluded — they're
 high-volume append-only logs better inspected via GraphQL or shell.
 
-### agents/apps.py
+### app/agents/apps.py
 
 Django app configuration for the agents app.
 
-### agents/consumers.py
+### app/agents/consumers.py
 
 WebSocket consumers: agent relay and VNC proxy.
 
@@ -132,7 +132,7 @@ automatically captured. Thinking, tool progress, rate limits, deltas —
 all stored without code changes. The cost is ~1KB/row in Postgres, which
 is negligible compared to the value of having complete agent telemetry.
 
-### agents/graphql/auth.py
+### app/agents/graphql/auth.py
 
 GraphQL authorization helpers for Strawberry resolvers.
 
@@ -148,7 +148,7 @@ Every mutation/query that touches project-scoped data must call
 authorize_project or authorize_agent before proceeding. These raise
 PermissionError on failure — Strawberry converts that to a GraphQL error.
 
-### agents/graphql/mutations.py
+### app/agents/graphql/mutations.py
 
 GraphQL mutations for agent lifecycle, communication, and configuration.
 
@@ -167,7 +167,7 @@ Key mutation groups:
 - Skills: createSkill, updateSkill, deleteSkill
 - Secrets: setSecret, deleteSecret, scopeSecret
 
-### agents/graphql/queries.py
+### app/agents/graphql/queries.py
 
 Queries: agents, feed, and metadata.
 
@@ -176,7 +176,7 @@ Two feed layers:
     agentFeed   → raw StreamEvent log for agent detail view (event store)
     projectFeed → raw StreamEvent log for project-wide view (event store)
 
-### agents/graphql/subscriptions.py
+### app/agents/graphql/subscriptions.py
 
 GraphQL subscriptions — three channels, three subscriptions.
 
@@ -184,7 +184,7 @@ agent_changed      → project_{id}_agents     (Agent model state changes)
 feed_item_changed  → project_{id}_team_feed   (TeamFeedItem create/update)
 event_stream       → project_{id}_events      (StreamEvent log entries)
 
-### agents/graphql/types.py
+### app/agents/graphql/types.py
 
 Strawberry GraphQL type definitions for the agents app.
 
@@ -202,18 +202,18 @@ handles as a flat discriminated type.
 TimelineEntryType wraps raw StreamEvent rows for queries and subscriptions.
 The data field is the raw event dict — the frontend decides what to render.
 
-### agents/management/commands/generate_reference.py
+### app/agents/management/commands/generate_reference.py
 
 Generate docs/REFERENCE.md from codebase docstrings and annotations.
 
-Walks backend/agents/**/*.py, extracts module docstrings, test class
-docstrings (as principles), and # intentional: annotations. Renders
-a single markdown file for LLM consumption.
+Walks backend/agents/**/*.py and agent/rootfs/**/*.py, extracts module
+docstrings, test class docstrings (as principles), # intentional: annotations,
+and # tech-debt: annotations. Renders a single markdown file for LLM consumption.
 
 Usage:
     docker compose exec backend uv run python manage.py generate_reference
 
-### agents/management/commands/seed_dev_data.py
+### app/agents/management/commands/seed_dev_data.py
 
 Seed development data matching the frontend mock data.
 
@@ -226,7 +226,7 @@ Creates:
     - ~25 TeamFeedItems covering all types
     - 4 ProjectSecrets
 
-### agents/models.py
+### app/agents/models.py
 
 Domain models for the agents app.
 
@@ -248,7 +248,7 @@ Key design decisions:
 - config_snapshot captures creation-time config so hard_restart can
   reprovision identically without re-resolving defaults.
 
-### agents/runtimes/__init__.py
+### app/agents/runtimes/__init__.py
 
 Runtime registry — maps runtime names to Runtime protocol implementations.
 
@@ -257,7 +257,7 @@ ModalRuntime. Instances are cached after first creation. Imports are lazy
 (inside the match arms) to avoid pulling in docker-py or modal SDK when
 only one runtime is used.
 
-### agents/runtimes/base.py
+### app/agents/runtimes/base.py
 
 Runtime Protocol — the port in Ports and Adapters for container orchestration.
 
@@ -271,7 +271,7 @@ get_runtime(name) from __init__.py and program against this Protocol. Adding
 a new runtime (e.g. Fly.io) means implementing this interface and registering
 it in __init__.py; no service code changes.
 
-### agents/runtimes/docker.py
+### app/agents/runtimes/docker.py
 
 Docker runtime — local container orchestration via docker-py.
 
@@ -288,7 +288,7 @@ processes.
 VNC URLs use container name DNS (http://<container-name>:6080) — resolved
 by the backend's VncProxyConsumer, never by the browser directly.
 
-### agents/runtimes/modal.py
+### app/agents/runtimes/modal.py
 
 Modal runtime — serverless container orchestration via Modal Python SDK.
 
@@ -300,11 +300,11 @@ VNC is exposed via Modal's encrypted tunnel on port 6080.
 Modal Sandbox.create is natively async (.aio suffix), so no executor
 wrapping needed unlike DockerRuntime.
 
-### agents/services/auth_relay.py
+### app/agents/services/auth_relay.py
 
 Relay token authentication -- single implementation for all entry points.
 
-### agents/services/broadcast.py
+### app/agents/services/broadcast.py
 
 Broadcast agent updates and stream events to Channels groups.
 
@@ -322,7 +322,7 @@ Status change detection still works via Agent.from_db() setting _original_status
 When a status change is detected, we create a StreamEvent for it (replacing the
 old AgentEvent creation) and broadcast it.
 
-### agents/services/callbacks.py
+### app/agents/services/callbacks.py
 
 Handle SDK callback requests from the relay.
 
@@ -335,7 +335,7 @@ The callback_type field is data, not code — adding a new callback type
 means adding a handler function here and a renderer in the dashboard.
 No transport changes needed.
 
-### agents/services/comms.py
+### app/agents/services/comms.py
 
 Agent communication: send messages, signals, and mode changes.
 
@@ -349,14 +349,14 @@ persistent connection. Each command goes through:
 The relay consumer (consumers.py) receives group_send messages on the
 relay_{agent_id} group and forwards them to the relay process over WebSocket.
 
-### agents/services/feed.py
+### app/agents/services/feed.py
 
 TeamFeedItem creation and attention management.
 
 This is the materialized view layer. StreamEvent = raw audit log.
 TeamFeedItem = curated dashboard feed items created when feed-worthy events occur.
 
-### agents/services/interagent.py
+### app/agents/services/interagent.py
 
 Inter-agent message delivery through the Agentobox backend.
 
@@ -371,7 +371,7 @@ Flow:
     4. Command pushed to relay via WebSocket
     5. Relay writes to Claude's stdin -> agent receives it immediately
 
-### agents/services/lifecycle.py
+### app/agents/services/lifecycle.py
 
 Agent lifecycle management: create, kill, remove, hard-restart.
 
@@ -397,7 +397,7 @@ Container provisioning sequence:
     provision_workspace → write .relay_env → save relay_token →
     signal s6 to start relay → spawn tmux log tail
 
-### agents/services/mcp_coord.py
+### app/agents/services/mcp_coord.py
 
 MCP Coordination Server for agent-to-agent communication.
 
@@ -411,7 +411,7 @@ the Authorization header and looking up the Agent by relay_token.
 
 See: docs/ARCHITECTURE.md, "MCP Coordination Server"
 
-### agents/services/mcp_registry.py
+### app/agents/services/mcp_registry.py
 
 Proxy client for the official MCP server registry at registry.modelcontextprotocol.io.
 
@@ -421,7 +421,7 @@ query so the dashboard can browse available MCP servers without a direct
 browser-to-registry connection (avoids CORS and keeps the registry URL
 server-side).
 
-### agents/services/media.py
+### app/agents/services/media.py
 
 S3 media externalization for base64 image content blocks.
 
@@ -429,7 +429,7 @@ Uploads base64-encoded images to S3 (LocalStack in dev, DigitalOcean Spaces in p
 and returns a public URL. Used by stream.py to swap inline base64 data with URLs
 before storing Messages in the database.
 
-### agents/services/provision.py
+### app/agents/services/provision.py
 
 Workspace provisioning — write config files into agent containers.
 
@@ -453,7 +453,7 @@ only the I/O orchestration.
 Also provides utilities for hot-reloading secrets (write_secrets_env,
 push_secrets_to_agent) and theme files (write_theme_files) on running agents.
 
-### agents/services/reconcile.py
+### app/agents/services/reconcile.py
 
 Background reconciliation loop for agents.
 
@@ -468,7 +468,7 @@ NOTE: This runs inside asyncio.create_task() where Django's
 CurrentThreadExecutor is unavailable. All ORM calls MUST use
 @sync_to_async(thread_sensitive=False) — never async ORM (asave, async for).
 
-### agents/services/secrets.py
+### app/agents/services/secrets.py
 
 Fernet-based encryption for project secrets.
 
@@ -485,7 +485,7 @@ Usage:
     encrypted = encrypt_value("sk-ant-...")
     plaintext = decrypt_value(encrypted)  # -> "sk-ant-..."
 
-### agents/services/stream.py
+### app/agents/services/stream.py
 
 Process Claude Code stream-json events into the append-only StreamEvent log.
 
@@ -507,11 +507,11 @@ the raw event dict, verbatim. We are an event log, not a relational model.
 Intelligence lives in the read path (the frontend) which reconstructs
 logical messages by grouping StreamEvents by message_id.
 
-### agents/services/utils.py
+### app/agents/services/utils.py
 
 Shared service utilities -- thin helpers for repeated patterns.
 
-### agents/tests/check_architecture.py
+### app/agents/tests/check_architecture.py
 
 Fast architecture checks — no Django, no DB, no pytest.
 
@@ -522,11 +522,11 @@ discipline. Exits 0 on pass, 1 on failure with details.
 Usage:
     python backend/agents/tests/check_architecture.py
 
-### agents/tests/conftest.py
+### app/agents/tests/conftest.py
 
 Shared test fixtures for agents tests.
 
-### agents/tests/test_adapters.py
+### app/agents/tests/test_adapters.py
 
 Contract tests for the adapter layer.
 
@@ -538,7 +538,7 @@ Tests verify:
     5. Seed data parity — seed_dev_data snapshots match real CC event structure
     6. Real event parity — adapter handles actual CC v2.1.59 stream-json events
 
-### agents/tests/test_architecture.py
+### app/agents/tests/test_architecture.py
 
 Architectural enforcement tests.
 
@@ -546,19 +546,19 @@ These tests catch drift mechanically — import boundaries, naming conventions,
 and model field discipline. They read source files as text and check patterns.
 No Django ORM needed (except schema contract test which needs Strawberry).
 
-### agents/tests/test_auth.py
+### app/agents/tests/test_auth.py
 
 Tests for agents.graphql.auth authorization helpers.
 
-### agents/tests/test_comms.py
+### app/agents/tests/test_comms.py
 
 Tests for agents.services.comms — content normalization and SSRF prevention.
 
-### agents/tests/test_lifecycle.py
+### app/agents/tests/test_lifecycle.py
 
 Tests for agents.adapters.claude_code — shell escape utility.
 
-### agents/tests/test_mcp_coord.py
+### app/agents/tests/test_mcp_coord.py
 
 Contract tests for MCP coordination tools — CC native schema parity.
 
@@ -573,18 +573,18 @@ NOTE: mcp_coord.py uses lazy imports inside functions (to avoid circular
 imports), so we patch at the source module (agents.models) not at the
 consumer (agents.services.mcp_coord).
 
-### agents/tests/test_resolvers.py
+### app/agents/tests/test_resolvers.py
 
 Tests for GraphQL resolver adapter delegation.
 
 Verifies that display field resolvers read from latest_snapshot via adapter,
 not from stale model columns.
 
-### agents/tests/test_stream.py
+### app/agents/tests/test_stream.py
 
 Tests for stream.py snapshot writes and phase logic.
 
-### agents/views.py
+### app/agents/views.py
 
 REST endpoints: file uploads and the hook bridge for CC native team tools.
 
@@ -658,6 +658,18 @@ Verify ClaudeCodeAdapter.build_settings produces correct settings.json.
 
 Verify ClaudeCodeAdapter.build_instructions produces correct CLAUDE.md.
 
+### test_adapters.py — TestBuildApiKeyFiles
+
+Verify build_api_key_files produces proxy-mode file specs.
+
+### test_adapters.py — TestBuildOnboardingState
+
+Verify build_onboarding_state pre-approves the placeholder key.
+
+### test_adapters.py — TestBuildRelayEnv
+
+Verify build_relay_env uses proxy placeholder and sets ANTHROPIC_BASE_URL.
+
 ### test_architecture.py — TestImportBoundaries
 
 Principle: layer boundaries are enforced by import direction.
@@ -722,6 +734,18 @@ Principle: Fail loud, never fail silent.
 Every broad except (Exception/BaseException/bare) must be annotated with
 ``# intentional:`` explaining why the broad catch is necessary. Unannotated
 blocks are likely silent-failure bugs. This test catches them mechanically.
+
+### test_architecture.py — TestTechDebtAnnotations
+
+Principle: Track technical debt explicitly, not in comments or memory.
+
+Every ``# tech-debt:`` annotation must include a non-empty explanation
+describing what the debt is and when/how it can be removed. Bare tags
+without explanations are worse than no tag — they signal debt exists but
+give no context for resolving it.
+
+This test walks ALL Python files in both backend/agents/ and agent/rootfs/
+to ensure tech-debt annotations are well-formed wherever they appear.
 
 ### test_mcp_coord.py — TestSchemaParity
 
@@ -795,16 +819,16 @@ display — it must never contradict the event log.
 | File | Line | Annotation |
 |------|------|------------|
 | consumers.py | 139 | agent row may be deleted — don't crash disconnect handler |
-| consumers.py | 157 | callback failure must not break relay WS — log and continue |
-| consumers.py | 165 | one bad event must not kill the relay WS connection |
-| consumers.py | 253 | upstream connect failure — reject client with 4003 instead of crashing |
-| consumers.py | 273 | upstream WS close/error ends relay loop — normal teardown path |
-| consumers.py | 286 | upstream send failure — close proxy cleanly |
-| consumers.py | 296 | upstream WS may already be closed during teardown |
-| mutations.py | 392 | CLAUDE.md write is best-effort — instructions saved to DB regardless |
+| consumers.py | 158 | callback failure must not break relay WS — log and continue |
+| consumers.py | 166 | one bad event must not kill the relay WS connection |
+| consumers.py | 257 | upstream connect failure — reject client with 4003 instead of crashing |
+| consumers.py | 277 | upstream WS close/error ends relay loop — normal teardown path |
+| consumers.py | 290 | upstream send failure — close proxy cleanly |
+| consumers.py | 300 | upstream WS may already be closed during teardown |
+| mutations.py | 395 | CLAUDE.md write is best-effort — instructions saved to DB regardless |
 | __init__.py | 33 | log with context before re-raising — caller gets the original exception |
 | broadcast.py | 66 | channel layer failure must not break agent state mutations |
-| broadcast.py | 116 | channel layer failure must not break event creation |
+| broadcast.py | 123 | channel layer failure must not break event creation |
 | comms.py | 71 | URL-to-base64 conversion is best-effort — keep original block |
 | comms.py | 87 | DB error checking relay state — fall through and attempt send anyway |
 | comms.py | 384 | session file cleanup is best-effort — restart still proceeds |
@@ -824,3 +848,9 @@ display — it must never contradict the event log.
 | secrets.py | 77 | one agent's push failure must not block other agents' secrets |
 | utils.py | 62 | container may already be gone — log and report failure |
 | views.py | 195 | catch-all for hook bridge — log and return 500 so agent gets error response |
+
+## Tech Debt
+
+| File | Line | Annotation |
+|------|------|------------|
+| relay.py | 91 | SDK monkey-patch — attaches _raw dict to parsed messages. Remove when SDK adds .to_dict() on message types. |

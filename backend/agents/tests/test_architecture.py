@@ -591,6 +591,11 @@ ANNOTATION_TYPES = {
         "applies_to": "except_handler",
         "description": "Broad exception catch with documented rationale",
     },
+    "tech-debt": {
+        "pattern": r"#\s*tech-debt:",
+        "applies_to": "any",
+        "description": "Known technical debt with documented rationale",
+    },
 }
 
 
@@ -655,4 +660,69 @@ class TestExplicitErrorHandling:
             f"Broad except blocks without # intentional: annotation:\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nAdd '# intentional: <reason>' on the except line or the line above."
+        )
+
+
+class TestTechDebtAnnotations:
+    """Principle: Track technical debt explicitly, not in comments or memory.
+
+    Every ``# tech-debt:`` annotation must include a non-empty explanation
+    describing what the debt is and when/how it can be removed. Bare tags
+    without explanations are worse than no tag — they signal debt exists but
+    give no context for resolving it.
+
+    This test walks ALL Python files in both backend/agents/ and agent/rootfs/
+    to ensure tech-debt annotations are well-formed wherever they appear.
+    """
+
+    _SKIP = {"tests", "migrations", "__pycache__"}
+    _SEARCH_DIRS = [AGENTS_DIR, AGENT_ROOT / "rootfs"]
+
+    def _should_check(self, path: Path) -> bool:
+        return not any(part in self._SKIP for part in path.parts)
+
+    def test_tech_debt_annotations_have_explanations(self):
+        """Every # tech-debt: tag must have a non-empty explanation after it."""
+        tag_pattern = re.compile(ANNOTATION_TYPES["tech-debt"]["pattern"])
+        full_pattern = re.compile(r"#\s*tech-debt:\s*(.+)")
+        violations = []
+
+        for search_dir in self._SEARCH_DIRS:
+            if not search_dir.is_dir():
+                continue
+
+            for py_file in sorted(search_dir.rglob("*.py")):
+                if not self._should_check(py_file):
+                    continue
+
+                src = py_file.read_text(encoding="utf-8")
+                lines = src.splitlines()
+
+                # Find lines inside string literals so we skip them
+                string_lines: set[int] = set()
+                try:
+                    tree = ast.parse(src)
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                            if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
+                                for ln in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                                    string_lines.add(ln)
+                except SyntaxError:
+                    continue
+
+                for i, line in enumerate(lines, 1):
+                    if i in string_lines:
+                        continue
+                    if tag_pattern.search(line) and not full_pattern.search(line):
+                        try:
+                            rel = py_file.relative_to(_REPO_ROOT)
+                        except ValueError:
+                            rel = py_file
+                        violations.append(f"{rel}:{i}")
+
+        assert not violations, (
+            f"tech-debt annotations without explanation:\n"
+            + "\n".join(f"  {v}" for v in violations)
+            + "\n\nAdd a description after '# tech-debt:' — e.g. "
+            "'# tech-debt: SDK monkey-patch — remove when SDK adds .to_dict()'"
         )

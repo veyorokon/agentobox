@@ -1,8 +1,8 @@
 """Generate docs/REFERENCE.md from codebase docstrings and annotations.
 
-Walks backend/agents/**/*.py, extracts module docstrings, test class
-docstrings (as principles), and # intentional: annotations. Renders
-a single markdown file for LLM consumption.
+Walks backend/agents/**/*.py and agent/rootfs/**/*.py, extracts module
+docstrings, test class docstrings (as principles), # intentional: annotations,
+and # tech-debt: annotations. Renders a single markdown file for LLM consumption.
 
 Usage:
     docker compose exec backend uv run python manage.py generate_reference
@@ -33,6 +33,7 @@ else:
     # Local: backend/ is under repo root
     REPO_ROOT = BACKEND_DIR.parent
 
+AGENT_ROOTFS_DIR = REPO_ROOT / "agent" / "rootfs"
 OUTPUT_PATH = REPO_ROOT / "docs" / "REFERENCE.md"
 
 SKIP_DIRS = {"migrations", "__pycache__", ".venv"}
@@ -43,15 +44,18 @@ class DocChunk:
     title: str
     content: str
     source: str
-    chunk_type: str  # "module" | "test_principle" | "annotation"
+    chunk_type: str  # "module" | "test_principle" | "annotation" | "tech_debt"
 
 
 def _rel(path: Path) -> str:
-    """Path relative to backend/ for display."""
+    """Path relative to repo root for display."""
     try:
-        return str(path.relative_to(AGENTS_DIR.parent))
+        return str(path.relative_to(REPO_ROOT))
     except ValueError:
-        return str(path)
+        try:
+            return str(path.relative_to(AGENTS_DIR.parent))
+        except ValueError:
+            return str(path)
 
 
 def _should_walk(path: Path) -> bool:
@@ -141,44 +145,50 @@ class Command(BaseCommand):
         return chunks
 
     def _extract_annotations(self) -> list[DocChunk]:
-        """Walk all .py files, find # intentional: comments on code lines."""
-        pattern = re.compile(r"#\s*intentional:\s*(.+)")
+        """Walk all .py files, find # intentional: and # tech-debt: comments."""
+        pattern = re.compile(r"#\s*(intentional|tech-debt):\s*(.+)")
         chunks = []
+        search_dirs = [AGENTS_DIR]
+        if AGENT_ROOTFS_DIR.is_dir():
+            search_dirs.append(AGENT_ROOTFS_DIR)
 
-        for py_file in sorted(AGENTS_DIR.rglob("*.py")):
-            if not _should_walk(py_file):
-                continue
-            # Skip test files for annotation extraction
-            if "tests" in py_file.parts:
-                continue
-
-            src = py_file.read_text(encoding="utf-8")
-            lines = src.splitlines()
-            rel = _rel(py_file)
-
-            # Find lines inside string literals (docstrings, etc.) so we skip them
-            string_lines: set[int] = set()
-            try:
-                tree = ast.parse(src)
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                        if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
-                            for ln in range(node.lineno, (node.end_lineno or node.lineno) + 1):
-                                string_lines.add(ln)
-            except SyntaxError:
-                continue
-
-            for i, line in enumerate(lines, 1):
-                if i in string_lines:
+        for search_dir in search_dirs:
+            for py_file in sorted(search_dir.rglob("*.py")):
+                if not _should_walk(py_file):
                     continue
-                match = pattern.search(line)
-                if match:
-                    chunks.append(DocChunk(
-                        title=f"{py_file.name}:{i}",
-                        content=match.group(1).strip(),
-                        source=f"{rel}:{i}",
-                        chunk_type="annotation",
-                    ))
+                # Skip test files for annotation extraction
+                if "tests" in py_file.parts:
+                    continue
+
+                src = py_file.read_text(encoding="utf-8")
+                lines = src.splitlines()
+                rel = _rel(py_file)
+
+                # Find lines inside string literals (docstrings, etc.) so we skip them
+                string_lines: set[int] = set()
+                try:
+                    tree = ast.parse(src)
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                            if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
+                                for ln in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                                    string_lines.add(ln)
+                except SyntaxError:
+                    continue
+
+                for i, line in enumerate(lines, 1):
+                    if i in string_lines:
+                        continue
+                    match = pattern.search(line)
+                    if match:
+                        tag = match.group(1)
+                        chunk_type = "annotation" if tag == "intentional" else "tech_debt"
+                        chunks.append(DocChunk(
+                            title=f"{py_file.name}:{i}",
+                            content=match.group(2).strip(),
+                            source=f"{rel}:{i}",
+                            chunk_type=chunk_type,
+                        ))
         return chunks
 
     def _render_markdown(self, chunks: list[DocChunk]) -> str:
@@ -220,6 +230,20 @@ class Command(BaseCommand):
             lines.append("| File | Line | Annotation |")
             lines.append("|------|------|------------|")
             for chunk in annotations:
+                parts = chunk.title.split(":")
+                fname = parts[0]
+                lineno = parts[1] if len(parts) > 1 else "?"
+                lines.append(f"| {fname} | {lineno} | {chunk.content} |")
+            lines.append("")
+
+        # Tech debt annotations
+        tech_debt = [c for c in chunks if c.chunk_type == "tech_debt"]
+        if tech_debt:
+            lines.append("## Tech Debt")
+            lines.append("")
+            lines.append("| File | Line | Annotation |")
+            lines.append("|------|------|------------|")
+            for chunk in tech_debt:
                 parts = chunk.title.split(":")
                 fname = parts[0]
                 lineno = parts[1] if len(parts) > 1 else "?"

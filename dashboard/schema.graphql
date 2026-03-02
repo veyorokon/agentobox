@@ -23,6 +23,7 @@ type AgentType {
   id: UUID!
   name: String!
   model: String!
+  role: String!
   instructions: String!
   runtime: String!
   phase: String!
