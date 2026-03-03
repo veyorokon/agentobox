@@ -17,7 +17,7 @@ export function AssistantMessage({
   showAvatar = true,
 }: AssistantMessageProps) {
   return (
-    <div className="group/msg flex gap-2 min-w-0 relative">
+    <div className="group/msg flex gap-2 min-w-0">
       {showAvatar ? (
         <ChatAvatar name={agent} />
       ) : (
@@ -25,8 +25,13 @@ export function AssistantMessage({
       )}
       <div className="min-w-0 flex-1">
         {showAvatar && (
-          <div className="text-[11px] text-muted font-mono mb-0.5">
-            {agent}
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className="text-[11px] text-muted font-mono">{agent}</span>
+            {content.length > 0 && (
+              <div className="opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                <CopyButton text={content} />
+              </div>
+            )}
           </div>
         )}
         <MarkdownRenderer
@@ -34,11 +39,6 @@ export function AssistantMessage({
           className="text-sm text-default"
         />
       </div>
-      {content.length > 0 && (
-        <div className="absolute top-0 -left-6 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-          <CopyButton text={content} />
-        </div>
-      )}
     </div>
   )
 }

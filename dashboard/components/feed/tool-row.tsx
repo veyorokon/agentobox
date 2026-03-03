@@ -102,7 +102,7 @@ function ToolResultContent({
         <button
           type="button"
           onClick={() => setClamped(!clamped)}
-          className="pt-1 text-[10px] text-muted/60 hover:text-secondary transition-colors"
+          className="pt-1.5 pb-0.5 text-xs text-info/80 hover:text-info transition-colors"
         >
           {clamped ? "Show more" : "Show less"}
         </button>
