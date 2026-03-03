@@ -20,7 +20,7 @@ export interface VncThumbnailProps {
 
 /** Map VNC proxy close codes to user-facing messages (permanent errors only). */
 const CLOSE_MESSAGES: Record<number, string> = {
-  4002: "Desktop not available",
+  4002: "Desktop not ready — VNC server starting",
   4004: "Agent not found",
 }
 
@@ -154,10 +154,19 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       }
     }
 
+    // Build context-aware error message from agent lifecycle + close reason
+    let msg = "Desktop disconnected"
+    if (agent.lifecycleStatus === "stopped") msg = "Desktop stopped — session ended"
+    else if (agent.lifecycleStatus === "error") msg = "Desktop lost — agent errored"
+    else if (agent.lifecycleStatus === "provisioning") msg = "Desktop not ready yet"
+    else if (!agent.relayConnected) msg = "Desktop lost — relay disconnected"
+    else if (clean) msg = "Desktop closed by server"
+    else msg = "Desktop unreachable — retries exhausted"
+
     setWsUrl(null)
     setConnState("error")
-    setErrorMsg("Connection lost")
-  }, [hasContainer, fetchTokenAndConnect])
+    setErrorMsg(msg)
+  }, [hasContainer, agent.lifecycleStatus, agent.relayConnected, fetchTokenAndConnect])
 
   const showVnc = hasContainer && VncScreen && wsUrl && (connState === "connecting" || connState === "connected")
 
