@@ -1,6 +1,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    mem_limit: 512m
     environment:
       POSTGRES_DB: agentobox
       POSTGRES_USER: agentobox
@@ -12,11 +13,13 @@ services:
 
   redis:
     image: redis:7-alpine
+    mem_limit: 128m
     ports:
       - "6379:6379"
 
   localstack:
     image: localstack/localstack:latest
+    mem_limit: 512m
     environment:
       SERVICES: s3,secretsmanager
       DEFAULT_REGION: us-east-1
@@ -34,6 +37,7 @@ services:
 
   backend:
     build: ./backend
+    mem_limit: 1g
     entrypoint: ["bash", "/app/entrypoint.sh"]
     command: ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
     environment:
@@ -79,7 +83,11 @@ services:
 
   dashboard:
     build: ./dashboard
-    environment: {}
+    mem_limit: 4g
+    restart: unless-stopped
+    environment:
+      # Cap Node heap below the container limit so OOM triggers GC, not kill
+      NODE_OPTIONS: "--max-old-space-size=3584"
     ports:
       - "5051:5051"
     depends_on:
