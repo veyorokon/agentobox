@@ -29,6 +29,13 @@ export const ON_AGENT_CHANGED = gql`
   subscription OnAgentChanged($projectId: ID!) {
     agentChanged(projectId: $projectId) {
       id
+      name
+      model
+      tags
+      runtime
+      workspacePath
+      instructions
+      mcpServers
       lifecycleStatus
       attentionLevel
       relayConnected
@@ -39,6 +46,7 @@ export const ON_AGENT_CHANGED = gql`
       phase
       task
       liveAction
+      lastOutput
       errorMessage
       taskProgress {
         done

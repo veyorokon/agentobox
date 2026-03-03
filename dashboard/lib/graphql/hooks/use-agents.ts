@@ -44,6 +44,7 @@ export function useAgents() {
 /** Subscription hook — call ONCE from the page-level component. */
 export function useAgentsSubscription() {
   const { projectId } = useParams<{ projectId: string }>()
+  const queryVars = useMemo(() => ({ projectId }), [projectId])
 
   useSubscription(ON_AGENT_CHANGED, {
     variables: { projectId: projectId ?? "" },
@@ -51,25 +52,20 @@ export function useAgentsSubscription() {
     onData: ({ client, data: subData }) => {
       const agent = subData.data?.agentChanged
       if (!agent) return
-      log("subscription.agent_changed", { id: agent.id })
 
-      // Merge into cache — Apollo auto-merges by keyFields (id)
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "AgentType", id: agent.id }),
-        fields: {
-          lifecycleStatus: () => agent.lifecycleStatus,
-          attentionLevel: () => agent.attentionLevel,
-          mode: () => agent.mode,
-          cost: () => agent.cost,
-          duration: () => agent.duration,
-          turns: () => agent.turns,
-          phase: () => agent.phase,
-          task: () => agent.task,
-          liveAction: () => agent.liveAction,
-          errorMessage: () => agent.errorMessage,
-          taskProgress: () => agent.taskProgress,
-        },
-      })
+      // Upsert into the GET_AGENTS query cache
+      const existing = client.readQuery<AgentsData>({ query: GET_AGENTS, variables: queryVars })
+      const agents = existing?.agents ?? []
+      const idx = agents.findIndex(a => a.id === agent.id)
+
+      if (idx >= 0) {
+        const updated = [...agents]
+        updated[idx] = { ...updated[idx], ...agent }
+        client.writeQuery({ query: GET_AGENTS, variables: queryVars, data: { agents: updated } })
+      } else {
+        log("subscription.agent_added", { id: agent.id, name: agent.name })
+        client.writeQuery({ query: GET_AGENTS, variables: queryVars, data: { agents: [...agents, agent] } })
+      }
     },
   })
 }
