@@ -35,6 +35,7 @@ Semantics:
 """
 
 import json
+import shlex
 import textwrap
 
 from agents.adapters.claude_code.registries import (
@@ -97,8 +98,13 @@ isolated from your shell.
 
 
 def _shell_escape(val: str) -> str:
-    """Escape a value for safe use inside single quotes in shell."""
-    return val.replace("'", "'\\''")
+    """Escape a value for safe use in shell export lines.
+
+    Delegates to shlex.quote() which wraps in single quotes and handles
+    all shell metacharacters (quotes, $, backticks, spaces, etc.).
+    Returns the fully-quoted string including outer quotes.
+    """
+    return shlex.quote(val)
 
 
 # Display name → CC model ID. Catches bad data from seed scripts or manual DB edits.
@@ -628,15 +634,15 @@ class ClaudeCodeAdapter:
         relay_api_key = _PROXY_PLACEHOLDER_KEY if api_key else ""
 
         lines = [
-            f"export AGENT_ID='{_shell_escape(agent_id)}'",
-            f"export AGENT_NAME='{_shell_escape(agent_name)}'",
-            f"export TEAM_NAME='{_shell_escape(team_name)}'",
-            f"export PARENT_SESSION_ID='{_shell_escape(parent_session_id)}'",
-            f"export ABOX_CALLBACK_URL='{_shell_escape(callback_url)}'",
-            f"export RELAY_AUTH_TOKEN='{_shell_escape(relay_token)}'",
-            f"export ANTHROPIC_API_KEY='{_shell_escape(relay_api_key)}'",
-            f"export CLAUDE_MODEL='{_shell_escape(_normalize_model_id(model))}'",
-            f"export AGENT_MODE='{_shell_escape(mode)}'",
+            f"export AGENT_ID={_shell_escape(agent_id)}",
+            f"export AGENT_NAME={_shell_escape(agent_name)}",
+            f"export TEAM_NAME={_shell_escape(team_name)}",
+            f"export PARENT_SESSION_ID={_shell_escape(parent_session_id)}",
+            f"export ABOX_CALLBACK_URL={_shell_escape(callback_url)}",
+            f"export RELAY_AUTH_TOKEN={_shell_escape(relay_token)}",
+            f"export ANTHROPIC_API_KEY={_shell_escape(relay_api_key)}",
+            f"export CLAUDE_MODEL={_shell_escape(_normalize_model_id(model))}",
+            f"export AGENT_MODE={_shell_escape(mode)}",
         ]
 
         if api_key:
@@ -645,13 +651,13 @@ class ClaudeCodeAdapter:
             )
 
         if resume_session_id:
-            lines.append(f"export RESUME_SESSION_ID='{_shell_escape(resume_session_id)}'")
+            lines.append(f"export RESUME_SESSION_ID={_shell_escape(resume_session_id)}")
 
         if allowed_tools:
-            lines.append(f"export ALLOWED_TOOLS='{_shell_escape(json.dumps(allowed_tools))}'")
+            lines.append(f"export ALLOWED_TOOLS={_shell_escape(json.dumps(allowed_tools))}")
 
         if mcp_config_path:
-            lines.append(f"export MCP_CONFIG='{_shell_escape(mcp_config_path)}'")
+            lines.append(f"export MCP_CONFIG={_shell_escape(mcp_config_path)}")
 
         return "\n".join(lines) + "\n"
 
