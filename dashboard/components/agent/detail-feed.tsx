@@ -31,6 +31,23 @@ function summarizeToolInput(toolUse: ContentBlock): string {
   if (input.pattern) return String(input.pattern)
   if (input.query) return String(input.query).slice(0, 100)
   if (input.url) return String(input.url)
+
+  // AskUserQuestion — show the question text, not raw JSON
+  if (input.questions && Array.isArray(input.questions)) {
+    const q = input.questions[0] as Record<string, unknown> | undefined
+    if (q?.question) return String(q.question).slice(0, 100)
+    if (q?.header) return String(q.header)
+  }
+
+  // Plan/prompt — show first meaningful line
+  if (input.plan) {
+    const firstLine = String(input.plan).split("\n").find(l => l.trim())?.replace(/^#+\s*/, "")
+    if (firstLine) return firstLine.slice(0, 100)
+  }
+  if (input.subject) return String(input.subject).slice(0, 100)
+  if (input.prompt) return String(input.prompt).slice(0, 100)
+  if (input.description) return String(input.description).slice(0, 100)
+
   const json = JSON.stringify(input)
   return json.length > 80 ? json.slice(0, 77) + "..." : json
 }
@@ -156,6 +173,8 @@ function TimelineEntryRow({
         const code = data?.exit_code
         return <SystemMessage text={`Process exited (code ${code ?? "?"})`} />
       }
+      // "status" subtype is redundant with the dedicated "status" entryType
+      if (subtype === "status") return null
       return <SystemMessage text={subtype} />
     }
 
