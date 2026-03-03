@@ -39,21 +39,29 @@ async def deliver_broadcast(
     if not agents:
         return
 
+    failed = []
     for agent in agents:
-        await deliver_to_stdin(sender.name, agent, content)
+        sent = await deliver_to_stdin(sender.name, agent, content)
+        if not sent:
+            failed.append(agent.name)
 
     log.info(
         "comms.interagent_routed",
         sender=sender.name,
         recipients=[a.name for a in agents],
+        failed=failed or None,
     )
 
 
-async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> None:
+async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> bool:
     """Deliver an inter-agent message via relay WebSocket push.
 
     Formats the message as a stream-json user input so the relay writes it
     to Claude's stdin. The prefix identifies it as a team message.
+
+    Returns True if the relay accepted the push, False if disconnected.
+    The message is always persisted as a StreamEvent regardless — backfill
+    on reconnect will replay it.
     """
     team_msg = f"[Team message from {sender_name}]: {content}"
     parts = [{"type": "text", "text": team_msg}]
@@ -75,4 +83,8 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> Non
         "type": "user",
         "message": {"role": "user", "content": parts},
     }
-    await push_to_relay(str(target.id), {"type": "input", "payload": input_msg})
+    sent = await push_to_relay(str(target.id), {"type": "input", "payload": input_msg})
+    if not sent:
+        log.warning("comms.interagent_delivery_failed",
+                    sender=sender_name, target=target.name)
+    return sent

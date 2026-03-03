@@ -59,30 +59,38 @@ def auto_deploy_team_lead(sender, instance, created, **kwargs):
 
 
 async def _create_team_lead(project_id: str, config: dict, op_log):
-    """Async helper to create the team lead agent."""
-    from agents.adapters import get_adapter
-    from agents.services.lifecycle import create_agent
+    """Async helper to create the team lead agent.
 
-    # Resolve MCP server names to full config
-    adapter = get_adapter("claude-code")
-    mcp_config = None
-    if config.get("mcp_servers"):
-        mcp_config = adapter.resolve_mcp_servers(config["mcp_servers"])
+    When called via loop.create_task() (ASGI context), exceptions are
+    unobserved unless explicitly caught. The try/except ensures failures
+    are logged instead of silently swallowed.
+    """
+    try:
+        from agents.adapters import get_adapter
+        from agents.services.lifecycle import create_agent
 
-    agent = await create_agent(
-        project_id=project_id,
-        name=config["name"],
-        runtime_name="docker",  # Default to docker for local dev
-        model=config["model"],
-        mcp_servers=mcp_config,
-        workspace_path="",
-        instructions=config["instructions"],
-        role=config["role"],
-    )
+        # Resolve MCP server names to full config
+        adapter = get_adapter("claude-code")
+        mcp_config = None
+        if config.get("mcp_servers"):
+            mcp_config = adapter.resolve_mcp_servers(config["mcp_servers"])
 
-    op_log.info(
-        "team_lead_auto_deployed",
-        agent_id=str(agent.id),
-        agent_name=agent.name,
-        model=agent.model,
-    )
+        agent = await create_agent(
+            project_id=project_id,
+            name=config["name"],
+            runtime_name="docker",  # Default to docker for local dev
+            model=config["model"],
+            mcp_servers=mcp_config,
+            workspace_path="",
+            instructions=config["instructions"],
+            role=config["role"],
+        )
+
+        op_log.info(
+            "team_lead_auto_deployed",
+            agent_id=str(agent.id),
+            agent_name=agent.name,
+            model=agent.model,
+        )
+    except Exception:  # intentional: fire-and-forget task — log instead of unobserved exception
+        op_log.exception("team_lead_auto_deploy_failed")

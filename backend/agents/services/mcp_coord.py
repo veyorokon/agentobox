@@ -66,9 +66,12 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
             raise ToolError(f"Teammate '{recipient}' not found")
 
         from agents.services.interagent import deliver_to_stdin
-        await deliver_to_stdin(agent.name, target, content)
+        sent = await deliver_to_stdin(agent.name, target, content)
 
-        log.info("mcp.message_sent", sender=agent.name, recipient=recipient)
+        log.info("mcp.message_sent", sender=agent.name, recipient=recipient, delivered=sent)
+        if not sent:
+            return {"ok": True, "recipient": recipient, "queued": True,
+                    "note": f"'{recipient}' is disconnected. Message queued for delivery on reconnect."}
         return {"ok": True, "recipient": recipient}
 
     elif type == "broadcast":
@@ -93,6 +96,7 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
 
         from agents.services.interagent import deliver_to_stdin
         shutdown_msg = f"Shutdown requested by {agent.name}: {content}"
+        # Delivery failure is acceptable — status is already STOPPED in DB
         await deliver_to_stdin(agent.name, target, shutdown_msg)
 
         # Broadcast status change so dashboard sees the agent stop

@@ -120,7 +120,9 @@ async def resolve_permission(
 
     item = await update_feed_item(item, perm_status=verdict)
 
-    # Send callback_response to relay (resolves the pending Future)
+    # Send callback_response to relay (resolves the pending Future).
+    # If relay is disconnected, revert feed item to pending — the agent's
+    # callback Future is gone anyway (relay disconnect kills the process).
     if item.tool_use_id and item.agent_record_id:
         from agents.services.comms import push_to_relay
         result = (
@@ -128,11 +130,20 @@ async def resolve_permission(
             if verdict == "allowed"
             else {"behavior": "deny", "message": "Denied by user"}
         )
-        await push_to_relay(str(item.agent_record_id), {
+        sent = await push_to_relay(str(item.agent_record_id), {
             "type": "callback_response",
             "request_id": item.tool_use_id,
             "result": result,
         })
+        if not sent:
+            # Revert — agent didn't receive the verdict
+            item = await update_feed_item(item, perm_status="pending")
+            log.warning("feed.permission_delivery_failed",
+                        agent_id=str(item.agent_record_id), verdict=verdict)
+            raise ValueError(
+                "Agent is disconnected. Permission verdict will be "
+                "delivered when the agent reconnects."
+            )
 
     # Persist "Always Allow" — add tool to agent's allowed_tools facet.
     # Takes effect on next SDK session spawn (provision-only facet).

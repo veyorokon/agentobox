@@ -29,12 +29,11 @@ class AgentSubscription:
 
         await authorize_project(info, project_id)
         ws = info.context["ws"]
-        channel_layer = ws.channel_layer
         group = f"project_{project_id}_agents"
 
-        await channel_layer.group_add(group, ws.channel_name)
         log.info("graphql.subscription_connected", type="agent_changed", group=group)
 
+        # listen_to_channel handles group_add on enter and group_discard on exit
         async with ws.listen_to_channel("agent.update", groups=[group]) as cm:
             async for message in cm:
                 agent = await Agent.objects.aget(id=message["agent_id"])
@@ -49,10 +48,8 @@ class AgentSubscription:
 
         await authorize_project(info, project_id)
         ws = info.context["ws"]
-        channel_layer = ws.channel_layer
         group = f"project_{project_id}_team_feed"
 
-        await channel_layer.group_add(group, ws.channel_name)
         log.info("graphql.subscription_connected", type="feed_item_changed", group=group)
 
         async with ws.listen_to_channel("team_feed.changed", groups=[group]) as cm:
@@ -75,10 +72,8 @@ class AgentSubscription:
         """
         await authorize_project(info, project_id)
         ws = info.context["ws"]
-        channel_layer = ws.channel_layer
         group = f"project_{project_id}_events"
 
-        await channel_layer.group_add(group, ws.channel_name)
         log.info("graphql.subscription_connected", type="event_stream", group=group)
 
         async with ws.listen_to_channel("stream.event", groups=[group]) as cm:

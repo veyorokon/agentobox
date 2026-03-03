@@ -150,8 +150,6 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 created_at__gte=self.agent.relay_disconnected_at,
             ).order_by("created_at")
 
-            _VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
-
             async for event in pending:
                 data = event.data
                 msg = data.get("message", {})
@@ -162,9 +160,11 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                         "payload": {"type": "user", "message": {"role": "user", "content": content}},
                     })
                 elif isinstance(content, list):
+                    # Reconnect backfill: replay ALL valid content including
+                    # tool_results (answers to AskUserQuestion). The Claude
+                    # session is still alive — tool_use_ids are still valid.
                     clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
-                    text_parts = [b for b in clean if b.get("type") == "text"]
-                    if text_parts and not any(b.get("type") == "tool_result" for b in clean):
+                    if clean:
                         await self.send_json({
                             "type": "input",
                             "payload": {"type": "user", "message": {"role": "user", "content": clean}},
