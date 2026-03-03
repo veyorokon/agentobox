@@ -6,6 +6,9 @@ import { useQuery, useMutation } from "@apollo/client"
 import { Plus, FolderOpen, ChevronRight } from "lucide-react"
 import { GET_PROJECTS } from "@/lib/graphql/queries/projects"
 import { CREATE_PROJECT } from "@/lib/graphql/mutations/projects"
+import { createLogger } from "@/lib/logger"
+
+const log = createLogger("router")
 
 type Project = {
   id: string
@@ -25,6 +28,7 @@ export default function HomePage() {
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [error, setError] = useState("")
 
   useEffect(() => {
     const token = localStorage.getItem("auth_token")
@@ -40,22 +44,23 @@ export default function HomePage() {
     fetchPolicy: "network-only",
   })
 
-  const [createProject, { loading: creating }] = useMutation(CREATE_PROJECT, {
-    refetchQueries: [{ query: GET_PROJECTS }],
-  })
+  const [createProject, { loading: creating }] = useMutation(CREATE_PROJECT)
 
   const projects = data?.projects ?? []
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
+    setError("")
     try {
       const { data: result } = await createProject({
         variables: { input: { name: name.trim(), description: description.trim() } },
       })
       router.push(`/p/${result.createProject.id}`)
-    } catch {
-      // GraphQL errors surface via Apollo — no silent swallow
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to create project"
+      setError(msg)
+      log("project.create_failed", { message: msg }, "error")
     }
   }
 
@@ -130,6 +135,9 @@ export default function HomePage() {
                   className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
+              {error && (
+                <p className="text-[11px] text-red-400">{error}</p>
+              )}
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="submit"
@@ -140,7 +148,7 @@ export default function HomePage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowCreate(false); setName(""); setDescription("") }}
+                  onClick={() => { setShowCreate(false); setName(""); setDescription(""); setError("") }}
                   className="text-[11px] text-muted hover:text-secondary transition-colors"
                 >
                   Cancel

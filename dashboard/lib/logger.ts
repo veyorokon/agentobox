@@ -6,7 +6,7 @@
 /*  - consoleSink: pretty-print with colors (dev)                      */
 /*  - Add more sinks for prod: OTel, Datadog, custom HTTP, etc.        */
 /*                                                                      */
-/*  Gate: NEXT_PUBLIC_DEBUG=1                                           */
+/*  Gate: NEXT_PUBLIC_DEBUG=1 for debug/info. Errors always log.        */
 /*                                                                      */
 /*  Usage:                                                              */
 /*    const log = createLogger("apollo")                                */
@@ -70,7 +70,8 @@ export function addSink(sink: LogSink) {
 
 export function createLogger(namespace: string) {
   return function log(action: string, detail?: unknown, level: LogLevel = "debug") {
-    if (!ENABLED) return
+    // Errors and warnings always log — only gate debug/info behind the flag
+    if (!ENABLED && (level === "debug" || level === "info")) return
 
     const entry: LogEntry = {
       ts: new Date().toISOString(),

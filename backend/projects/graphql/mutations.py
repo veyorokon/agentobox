@@ -61,21 +61,10 @@ class ProjectMutation:
             owner=user,
         )
 
-        # Auto-create a team-lead agent for every new project
-        try:
-            from agents.services.lifecycle import create_agent
-
-            await create_agent(
-                project_id=str(project.id),
-                name="team-lead",
-                runtime_name="docker",
-                model="claude-opus-4-6",
-                role="lead",
-                instructions="You are the team lead. Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
-                mode="plan",
-            )
-        except Exception:
-            log.exception("auto_team_lead_failed", project_id=str(project.id))
+        # Team-lead auto-deploy is handled by the post_save signal in
+        # projects/signals.py — no need to duplicate here. The signal
+        # fires from acreate() above and schedules the agent creation
+        # asynchronously so the mutation returns immediately.
 
         return project
 
