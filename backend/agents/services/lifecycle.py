@@ -512,16 +512,19 @@ def _atomic_reset_for_restart(agent_id):
         old_runtime = agent.runtime
         resume_session_id = agent.session_id
 
-        # Extract config from snapshot
+        # Extract config — prefer live agent fields (which may have been
+        # updated post-creation via mutations) over config_snapshot (which
+        # is a creation-time record). config_snapshot is only the fallback
+        # for fields that might be missing on very old agent rows.
         config = agent.config_snapshot or {}
-        runtime_name = config.get("runtime", agent.runtime)
-        model = config.get("model", agent.model)
-        mcp_servers = config.get("mcp_servers", agent.mcp_servers)
-        workspace_path = config.get("workspace_path", agent.workspace_path)
-        volume_mounts = config.get("volume_mounts", agent.volume_mounts)
-        instructions = config.get("instructions", agent.instructions)
-        role = config.get("role", agent.role)
-        mode = config.get("mode", agent.mode)
+        runtime_name = agent.runtime or config.get("runtime", "docker")
+        model = agent.model or config.get("model", "")
+        mcp_servers = agent.mcp_servers if agent.mcp_servers is not None else config.get("mcp_servers", [])
+        workspace_path = agent.workspace_path or config.get("workspace_path", "")
+        volume_mounts = agent.volume_mounts if agent.volume_mounts is not None else config.get("volume_mounts", [])
+        instructions = agent.instructions or config.get("instructions", "")
+        role = agent.role or config.get("role", "")
+        mode = agent.mode or config.get("mode", "auto")
 
         # Reset agent state to DEPLOYING — clear stale session data.
         # latest_snapshot must be cleared so derived fields (liveAction,

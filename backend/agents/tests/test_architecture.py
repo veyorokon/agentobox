@@ -886,3 +886,62 @@ class TestTechDebtAnnotations:
             + "\n\nAdd a description after '# tech-debt:' — e.g. "
             "'# tech-debt: SDK monkey-patch — remove when SDK adds .to_dict()'"
         )
+
+
+# ── Async safety enforcement ──
+
+
+class TestSyncToAsyncExplicit:
+    """Every sync_to_async() call must specify thread_sensitive explicitly.
+
+    The default thread_sensitive=True routes work to a single shared thread,
+    which silently serializes all callers. Non-Django-ORM blocking I/O (S3
+    uploads, HTTP fetches, cache calls) MUST use thread_sensitive=False.
+
+    By requiring the kwarg everywhere, authors are forced to think about
+    which thread pool the work runs on, preventing accidental serialization.
+    """
+
+    # Match sync_to_async calls WITHOUT thread_sensitive kwarg.
+    # Catches: sync_to_async(fn), sync_to_async(fn)(args)
+    # Allows: sync_to_async(fn, thread_sensitive=False), _s2a(fn, thread_sensitive=False)
+    _CALL_RE = re.compile(r"sync_to_async\s*\([^)]*\)")
+
+    def _find_violations(self):
+        violations = []
+        dirs = [SERVICES_DIR, GRAPHQL_DIR, AGENTS_DIR]
+        for d in dirs:
+            for py_file in d.glob("**/*.py"):
+                src = _read_source(py_file)
+                lines = src.splitlines()
+                for i, line in enumerate(lines, 1):
+                    stripped = line.lstrip()
+                    if stripped.startswith("#"):
+                        continue
+                    if not re.search(r"(?:sync_to_async|_s2a)\s*\(", line):
+                        continue
+                    # Collect the full call expression (may span multiple lines)
+                    # by tracking paren depth from this line forward.
+                    depth = 0
+                    call_text = ""
+                    for j in range(i - 1, min(i + 9, len(lines))):
+                        call_text += lines[j]
+                        depth += lines[j].count("(") - lines[j].count(")")
+                        if depth <= 0:
+                            break
+                    if "thread_sensitive" not in call_text:
+                        try:
+                            rel = py_file.relative_to(_REPO_ROOT)
+                        except ValueError:
+                            rel = py_file
+                        violations.append(f"{rel}:{i}: {stripped.strip()}")
+        return violations
+
+    def test_sync_to_async_has_explicit_thread_sensitive(self):
+        violations = self._find_violations()
+        assert not violations, (
+            f"sync_to_async() calls without explicit thread_sensitive= kwarg:\n"
+            + "\n".join(f"  {v}" for v in violations)
+            + "\n\nAlways specify thread_sensitive=True or thread_sensitive=False "
+            "to prevent accidental single-thread serialization."
+        )

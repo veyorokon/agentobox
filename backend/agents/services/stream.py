@@ -79,7 +79,7 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
         msg_data = event.get("message", {})
         content = msg_data.get("content", [])
         if content:
-            externalized = await sync_to_async(_externalize_media)(content)
+            externalized = await sync_to_async(_externalize_media, thread_sensitive=False)(content)
             # Mutate the event dict — this is our copy, not the relay's
             event = {**event, "message": {**msg_data, "content": externalized}}
 

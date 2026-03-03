@@ -113,7 +113,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
     # Build parts from content blocks or plain text
     if content:
         parts = content
-        api_parts = await _s2a(_normalize_content)(copy.deepcopy(parts))
+        api_parts = await _s2a(_normalize_content, thread_sensitive=False)(copy.deepcopy(parts))
     else:
         parts = [{"type": "text", "text": message}]
         api_parts = parts
@@ -204,7 +204,7 @@ async def broadcast_message(
 
     if content:
         parts = content
-        api_parts = await _s2a(_normalize_content)(copy.deepcopy(parts))
+        api_parts = await _s2a(_normalize_content, thread_sensitive=False)(copy.deepcopy(parts))
     else:
         parts = [{"type": "text", "text": message}]
         api_parts = parts
@@ -288,6 +288,8 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         op_log.info("comms.mode_noop")
         return agent
 
+    old_mode, old_perm = agent.mode, agent.permission_mode
+
     agent.mode = frontend_mode
     agent.permission_mode = wire_mode
     await agent.asave(update_fields=["mode", "permission_mode"])
@@ -299,10 +301,18 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
-    # Push CC wire format to relay
+    # Push CC wire format to relay — revert DB if relay unreachable
     sent = await push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
     if not sent:
-        op_log.warning("comms.mode_change_failed")
+        op_log.warning("comms.mode_change_reverted")
+        agent.mode = old_mode
+        agent.permission_mode = old_perm
+        await agent.asave(update_fields=["mode", "permission_mode"])
+        await broadcast_agent_update(agent)
+        raise ValueError(
+            f"Mode change failed: relay is disconnected. "
+            f"Agent remains in '{old_mode}' mode."
+        )
 
     op_log.info("comms.mode_changed")
     return agent

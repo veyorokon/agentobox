@@ -209,8 +209,18 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.services.callbacks import process_callback
             try:
                 await process_callback(self.agent, content)
-            except Exception:  # intentional: callback failure must not break relay WS — log and continue
+            except Exception:  # intentional: callback failure must not break relay WS — log and send deny
                 log.exception("relay.callback_failed", agent_id=self.agent_id)
+                # Send deny response so the relay's Future resolves immediately
+                # instead of hanging for the 300s timeout.
+                request_id = content.get("request_id", "")
+                if request_id:
+                    await self.send_json({
+                        "type": "callback_response",
+                        "request_id": request_id,
+                        "behavior": "deny",
+                        "message": "Internal error processing callback",
+                    })
             return
 
         from agents.services.stream import process_stream_event
@@ -263,7 +273,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         # Validate and consume token from cache
         from django.core.cache import cache
         cache_key = f"vnc_token:{token}"
-        cached_agent_id = cache.get(cache_key)
+        cached_agent_id = await cache.aget(cache_key)
 
         if not cached_agent_id or str(cached_agent_id) != self.agent_id:
             log.warning("vnc.rejected", reason="bad_token", agent_id=self.agent_id)

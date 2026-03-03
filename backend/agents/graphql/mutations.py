@@ -351,7 +351,7 @@ class AgentMutation:
         token = secrets.token_urlsafe(32)
         token_hash = token[:8]
         cache_key = f"vnc_token:{token}"
-        cache.set(cache_key, str(agent_id), timeout=60)
+        await cache.aset(cache_key, str(agent_id), timeout=60)
 
         log.info("graphql.vnc_token_created", agent_id=str(agent_id), token_hash=token_hash)
 

@@ -92,7 +92,7 @@ async def upload_media(request):
     from agents.services.media import upload_raw
 
     data = uploaded.read()
-    url = await sync_to_async(upload_raw)(data, uploaded.content_type, "uploads")
+    url = await sync_to_async(upload_raw, thread_sensitive=False)(data, uploaded.content_type, "uploads")
     return JsonResponse({"url": url})
 
 
