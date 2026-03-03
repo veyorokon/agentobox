@@ -32,7 +32,18 @@ class Subscription(AgentSubscription):
     pass
 
 
-schema = strawberry.Schema(
+class _Schema(strawberry.Schema):
+    """Suppress Strawberry's default error logging.
+
+    Errors are logged with full context (classification, timing, user,
+    variables) by GraphQLLoggingExtension instead.
+    """
+
+    def process_errors(self, errors, execution_context=None):
+        pass
+
+
+schema = _Schema(
     query=Query,
     mutation=Mutation,
     subscription=Subscription,

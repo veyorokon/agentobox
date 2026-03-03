@@ -43,6 +43,7 @@ const NS_COLORS: Record<string, string> = {
   apollo: "#7c3aed",
   zustand: "#059669",
   router: "#0284c7",
+  vnc: "#d97706",
   error: "#dc2626",
 }
 

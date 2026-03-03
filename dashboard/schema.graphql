@@ -69,6 +69,7 @@ input CreateAgentInput {
   role: String! = "worker"
   mode: String! = "auto"
   tags: [String!] = null
+  agentType: String! = "claude-code"
 }
 
 input CreateProjectInput {

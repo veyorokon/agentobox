@@ -199,7 +199,10 @@ export function useSendMessage() {
         return { type: r.type, value: r.value }
       })
 
-      mutate({ variables: { projectId, text, recipients: recipientInputs } }).catch(err => {
+      mutate({
+        variables: { projectId, text, recipients: recipientInputs },
+        refetchQueries: [{ query: GET_FEED, variables: { projectId } }],
+      }).catch(err => {
         log("mutation.error", { mutation: "sendMessage", error: err.message })
       })
     },

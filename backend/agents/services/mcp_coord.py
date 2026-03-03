@@ -91,20 +91,10 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
         except Agent.DoesNotExist:
             raise ToolError(f"Teammate '{recipient}' not found")
 
-        target.status = AgentStatus.STOPPED
-        await target.asave(update_fields=["status"])
-
-        from agents.services.interagent import deliver_to_stdin
-        shutdown_msg = f"Shutdown requested by {agent.name}: {content}"
-        # Delivery failure is acceptable — status is already STOPPED in DB
-        await deliver_to_stdin(agent.name, target, shutdown_msg)
-
-        # Broadcast status change so dashboard sees the agent stop
-        try:
-            from agents.services.broadcast import broadcast_agent_update
-            await broadcast_agent_update(target)
-        except Exception:  # intentional: broadcast is best-effort — shutdown already committed to DB
-            log.warning("mcp.shutdown_broadcast_failed", target=recipient, exc_info=True)
+        # Actually kill the container — same path as the killAgent mutation.
+        # The team-lead's authority is sufficient; no approval needed.
+        from agents.services.lifecycle import kill_agent
+        await kill_agent(str(target.id))
 
         log.info("mcp.shutdown_requested", sender=agent.name, target=recipient)
         return {"ok": True, "recipient": recipient}

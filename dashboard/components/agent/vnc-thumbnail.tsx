@@ -4,7 +4,10 @@ import { useState, useEffect, useRef, useCallback, Component, type ReactNode } f
 import { useMutation } from "@apollo/client"
 import { cn } from "@/lib/utils"
 import { CREATE_VNC_TOKEN } from "@/lib/graphql/mutations/vnc"
+import { createLogger } from "@/lib/logger"
 import type { Agent } from "@/lib/types"
+
+const log = createLogger("vnc")
 
 /** Swallow react-vnc's internal "disconnected RFB" errors on unmount. */
 class VncErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -67,11 +70,24 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     return () => { mountedRef.current = false }
   }, [])
 
+  // Suppress noVNC's "disconnected RFB" errors — thrown in event handlers
+  // when a WebSocket drops, unreachable by React error boundaries.
+  useEffect(() => {
+    const handler = (e: ErrorEvent) => {
+      if (e.message?.includes("disconnected RFB")) {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener("error", handler)
+    return () => window.removeEventListener("error", handler)
+  }, [])
+
   const fetchTokenAndConnect = useCallback(async () => {
     if (!mountedRef.current || connectingRef.current) return
     connectingRef.current = true
     setConnState("fetching-token")
     setErrorMsg(null)
+    log("token.fetch", { agent: agent.id, name: agent.name })
 
     try {
       const { data } = await createVncToken({ variables: { agentId: agent.id } })
@@ -79,6 +95,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
       const token = data?.createVncToken?.token
       if (!token) {
+        log("token.failed", { agent: agent.id, reason: "no token in response" }, "warn")
         setConnState("error")
         setErrorMsg("Failed to get VNC token")
         connectingRef.current = false
@@ -86,16 +103,18 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       }
 
       const url = buildVncWsUrl(agent.id, token)
+      log("connecting", { agent: agent.id, name: agent.name })
       setWsUrl(url)
       setConnState("connecting")
       // connectingRef stays true until onConnect or onDisconnect
     } catch (err: any) {
       if (!mountedRef.current) { connectingRef.current = false; return }
+      log("token.error", { agent: agent.id, error: err.message }, "error")
       setConnState("error")
       setErrorMsg(err.message ?? "Failed to connect")
       connectingRef.current = false
     }
-  }, [agent.id, createVncToken])
+  }, [agent.id, agent.name, createVncToken])
 
   // Single entry point: connect when container becomes alive
   useEffect(() => {
@@ -104,6 +123,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       fetchTokenAndConnect()
     }
     if (!hasContainer) {
+      log("cleanup", { agent: agent.id, lifecycle: agent.lifecycleStatus, relay: agent.relayConnected })
       // Disconnect RFB and clear URL before VncScreen unmounts to avoid
       // "Tried changing state of a disconnected RFB object"
       try { vncRef.current?.disconnect() } catch {}
@@ -120,8 +140,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     if (!mountedRef.current) return
     connectingRef.current = false
     retryCountRef.current = 0
+    log("connected", { agent: agent.id, name: agent.name })
     setConnState("connected")
-  }, [])
+  }, [agent.id, agent.name])
 
   const handleDisconnect = useCallback((e: any) => {
     connectingRef.current = false
@@ -132,6 +153,8 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     const detail = e?.detail ?? e
     const clean = detail?.clean ?? false
     const code = detail?.code
+
+    log("disconnected", { agent: agent.id, clean, code, lifecycle: agent.lifecycleStatus }, clean ? "debug" : "warn")
 
     const permanentMsg = code ? CLOSE_MESSAGES[code] : null
     if (permanentMsg) {
@@ -145,6 +168,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     if (!clean || code === 4001 || (code && TRANSIENT_CODES.has(code))) {
       retryCountRef.current += 1
       if (retryCountRef.current <= 5) {
+        log("reconnecting", { agent: agent.id, attempt: retryCountRef.current, code })
         setWsUrl(null)
         setConnState("idle")
         setTimeout(() => {
@@ -163,10 +187,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     else if (clean) msg = "Desktop closed by server"
     else msg = "Desktop unreachable — retries exhausted"
 
+    log("error", { agent: agent.id, message: msg }, "error")
     setWsUrl(null)
     setConnState("error")
     setErrorMsg(msg)
-  }, [hasContainer, agent.lifecycleStatus, agent.relayConnected, fetchTokenAndConnect])
+  }, [hasContainer, agent.id, agent.lifecycleStatus, agent.relayConnected, fetchTokenAndConnect])
 
   const showVnc = hasContainer && VncScreen && wsUrl && (connState === "connecting" || connState === "connected")
 

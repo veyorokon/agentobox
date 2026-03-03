@@ -218,6 +218,9 @@ LOGGING = {
         # Daphne HTTP logs - suppress in favor of Django middleware structured logs
         "daphne.server": {"level": "ERROR"},
         "daphne.http_protocol": {"level": "ERROR"},
+        # Strawberry default error logging — suppressed in favor of
+        # GraphQLLoggingExtension which logs with classification + context
+        "strawberry.execution": {"level": "CRITICAL"},
     },
 }
 

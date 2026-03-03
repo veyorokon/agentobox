@@ -352,20 +352,48 @@ def stop_queue_listener():
         _queue_listener = None
 
 
+def _classify_graphql_error(error):
+    """Classify a GraphQL error for structured logging.
+
+    Returns ``(error_code, is_client_error, original_exception | None)``.
+
+    Client errors are expected conditions (bad input, not found, forbidden)
+    — logged at ``warning``, no stack trace.  Server errors are bugs that
+    need developer attention — logged at ``error`` with full traceback.
+    """
+    original = getattr(error, "original_error", None)
+    if original is None:
+        # Pure GraphQL error (syntax, validation) — client's fault
+        return "VALIDATION", True, None
+
+    exc_name = type(original).__name__
+    if "DoesNotExist" in exc_name:
+        return "NOT_FOUND", True, original
+    if exc_name == "PermissionDenied":
+        return "FORBIDDEN", True, original
+    if exc_name == "ValidationError":
+        return "VALIDATION", True, original
+
+    return "INTERNAL", False, original
+
+
 class GraphQLLoggingExtension:
     """
     Strawberry schema extension that logs every GraphQL operation.
 
-    Emits structured logs with operation name, type, variables, timing,
-    and errors — replacing the opaque `POST /graphql → 200` lines.
+    Emits one structured log per operation with timing, user, variables,
+    and — when errors occur — classified error details.
 
-    Logger name: ``graphql.query`` or ``graphql.mutation`` (never
-    ``graphql.operation``).
+    Client errors (not-found, forbidden, validation) log at ``warning``
+    without a stack trace.  Server errors log at ``error`` with a full
+    traceback via structlog's ``exc_info`` processing.
 
-    Event name: ``graphql.{type}.{OperationName}`` when the client sends
-    an explicit operation name.  For anonymous operations the first root
-    field is used instead (e.g. ``graphql.query.agents``).  The word
-    "anonymous" never appears.
+    Strawberry's default ``process_errors`` logging is suppressed in
+    ``_Schema`` so this extension is the single source of truth.
+
+    Logger: ``graphql.query`` or ``graphql.mutation``.
+    Event:  ``graphql.{type}.{OperationName}`` (first root field for
+    anonymous operations).
     """
 
     def on_operation(self):
@@ -378,17 +406,9 @@ class GraphQLLoggingExtension:
         ctx = self.execution_context
         op_type, op_name = _extract_operation_info(ctx)
         log = structlog.get_logger(f"graphql.{op_type}")
-
-        result = ctx.result
-        errors = None
-        if result and hasattr(result, "errors") and result.errors:
-            errors = [str(e) for e in result.errors]
-
         event_name = f"graphql.{op_type}.{op_name}"
 
-        log_kwargs = {
-            "duration_ms": elapsed_ms,
-        }
+        log_kwargs = {"duration_ms": elapsed_ms}
 
         # Bind user_id from request context when available
         request = getattr(ctx.context, "request", None)
@@ -399,14 +419,33 @@ class GraphQLLoggingExtension:
 
         # Include variables but redact sensitive values
         if ctx.variables:
-            safe_vars = _redact_variables(ctx.variables)
-            log_kwargs["variables"] = safe_vars
+            log_kwargs["variables"] = _redact_variables(ctx.variables)
 
-        if errors:
-            log_kwargs["errors"] = errors
-            log.error(event_name, **log_kwargs)
-        else:
+        result = ctx.result
+        errors = result.errors if result and hasattr(result, "errors") and result.errors else None
+
+        if not errors:
             log.info(event_name, **log_kwargs)
+            return
+
+        for error in errors:
+            code, is_client, original = _classify_graphql_error(error)
+
+            kw = {
+                **log_kwargs,
+                "error.code": code,
+                "error.is_client_error": is_client,
+                "error.message": str(original) if original else getattr(error, "message", str(error)),
+            }
+            if original:
+                kw["error.type"] = f"{type(original).__module__}.{type(original).__name__}"
+
+            if is_client:
+                log.warning(event_name, **kw)
+            elif original and getattr(original, "__traceback__", None):
+                log.error(event_name, exc_info=(type(original), original, original.__traceback__), **kw)
+            else:
+                log.error(event_name, **kw)
 
     def resolve(self, _next, root, info, *args, **kwargs):
         return _next(root, info, *args, **kwargs)
