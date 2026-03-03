@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useEffect } from "react"
+import { useRef, useEffect, useMemo } from "react"
 import type { Agent, TimelineEntry } from "@/lib/types"
 import { formatDuration, friendlyToolName, friendlyModelName } from "@/lib/utils"
 import { useAgentFeed } from "@/lib/graphql/hooks/use-feed"
@@ -35,8 +35,54 @@ function summarizeToolInput(toolUse: ContentBlock): string {
   return json.length > 80 ? json.slice(0, 77) + "..." : json
 }
 
+/** Build a map from tool_use_id → result content string by scanning user entries. */
+function buildToolResultMap(entries: TimelineEntry[]): Map<string, { content: string; isError: boolean }> {
+  const map = new Map<string, { content: string; isError: boolean }>()
+
+  for (const entry of entries) {
+    if (entry.entryType !== "user") continue
+
+    const data = entry.data as Record<string, unknown>
+    const message = data?.message as Record<string, unknown> | undefined
+    const content = (message?.content ?? []) as ContentBlock[]
+
+    for (const block of content) {
+      if (block.type !== "tool_result" || !block.tool_use_id) continue
+
+      const toolUseId = String(block.tool_use_id)
+      const isError = Boolean(block.is_error)
+      const raw = block.content
+
+      // content can be a string or an array of content blocks
+      let text: string
+      if (typeof raw === "string") {
+        text = raw
+      } else if (Array.isArray(raw)) {
+        text = raw
+          .filter((b: unknown) => typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "text")
+          .map((b: unknown) => String((b as Record<string, unknown>).text ?? ""))
+          .join("\n")
+      } else {
+        text = ""
+      }
+
+      map.set(toolUseId, { content: text, isError })
+    }
+  }
+
+  return map
+}
+
 /** Render a single TimelineEntry based on its entryType and raw data. */
-function TimelineEntryRow({ entry, agentName }: { entry: TimelineEntry; agentName: string }) {
+function TimelineEntryRow({
+  entry,
+  agentName,
+  toolResultMap,
+}: {
+  entry: TimelineEntry
+  agentName: string
+  toolResultMap: Map<string, { content: string; isError: boolean }>
+}) {
   const data = entry.data as Record<string, unknown>
 
   switch (entry.entryType) {
@@ -50,18 +96,31 @@ function TimelineEntryRow({ entry, agentName }: { entry: TimelineEntry; agentNam
       return (
         <>
           {text && <AssistantMessage agent={agentName} content={text} showAvatar={true} />}
-          {toolUses.length === 1 && (
-            <SingleToolRow
-              toolName={friendlyToolName(String(toolUses[0].name ?? "tool"))}
-              summary={summarizeToolInput(toolUses[0])}
-            />
-          )}
+          {toolUses.length === 1 && (() => {
+            const tu = toolUses[0]
+            const tuId = String(tu.id ?? "")
+            const result = toolResultMap.get(tuId)
+            return (
+              <SingleToolRow
+                toolName={friendlyToolName(String(tu.name ?? "tool"))}
+                summary={summarizeToolInput(tu)}
+                result={result?.content}
+                isError={result?.isError}
+              />
+            )
+          })()}
           {toolUses.length > 1 && (
             <MultiToolGroup
-              tools={toolUses.map(t => ({
-                name: friendlyToolName(String(t.name ?? "tool")),
-                summary: summarizeToolInput(t),
-              }))}
+              tools={toolUses.map(t => {
+                const tuId = String(t.id ?? "")
+                const result = toolResultMap.get(tuId)
+                return {
+                  name: friendlyToolName(String(t.name ?? "tool")),
+                  summary: summarizeToolInput(t),
+                  result: result?.content,
+                  isError: result?.isError,
+                }
+              })}
             />
           )}
         </>
@@ -131,6 +190,9 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
   const entries = data?.agentFeed ?? []
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Build tool_use_id → result map once per entry set
+  const toolResultMap = useMemo(() => buildToolResultMap(entries), [entries])
+
   // Auto-scroll to bottom when new entries arrive
   useEffect(() => {
     const el = scrollRef.current
@@ -163,7 +225,12 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
           </div>
         )}
         {entries.map(entry => (
-          <TimelineEntryRow key={entry.id} entry={entry} agentName={agent.name} />
+          <TimelineEntryRow
+            key={entry.id}
+            entry={entry}
+            agentName={agent.name}
+            toolResultMap={toolResultMap}
+          />
         ))}
       </div>
     </div>
