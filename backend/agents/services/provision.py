@@ -4,17 +4,15 @@ Workspace provisioning — write config files into agent containers.
 Called during _provision_agent (lifecycle.py) after the container is created.
 Writes into the container filesystem via runtime.write_file/exec:
 
-    1. CLAUDE.md — instructions built by the adapter (team roster, MCP docs,
-       role-specific context, user-provided instructions)
-    2. .claude/settings.json — agent settings (API key, permission mode)
-    3. .mcp.json — MCP server configs with env blocks for project secrets,
-       plus the team coordination HTTP server if relay_token is set
-    4. .claude.json — onboarding state (marks setup complete)
+    1. Instruction file — adapter-determined path (CLAUDE.md or AGENTS.md)
+    2. Settings file — adapter-determined path and format
+    3. MCP config — adapter-determined path (.mcp.json), skipped if empty
+    4. Onboarding state — adapter-determined path, skipped if empty
     5. API key files — adapter-provided file specs (path, content, mode, owner)
     6. Scoped sudoers — restricts sudo to package management only
-    7. Skills — project skills matching agent tags as .claude/skills/<name>/SKILL.md
+    7. Skills — project skills matching agent tags
 
-All agent-type-specific config (file formats, instruction content) is
+All agent-type-specific config (file formats, paths, instruction content) is
 delegated to the adapter via get_adapter(agent_type). This module handles
 only the I/O orchestration.
 
@@ -53,15 +51,15 @@ async def provision_workspace(
     agent_tags: list[str] | None = None,
 ) -> None:
     """
-    Write instruction file, settings, .mcp.json, and security
+    Write instruction file, settings, MCP config, and security
     hardening files into the agent container.
 
-    Delegates agent-type-specific config (settings format, instruction content)
-    to the adapter registered for `agent_type`.
+    Delegates agent-type-specific config (settings format, instruction content,
+    file paths) to the adapter registered for `agent_type`.
 
     Args:
-        agent_type: Adapter key (e.g. "claude-code"). Determines settings
-            format and instruction file content.
+        agent_type: Adapter key (e.g. "claude-code", "opencode"). Determines
+            settings format, instruction file content, and file paths.
         secret_envs: Flat {key: value} dict of decrypted secrets from
             ProjectSecret. Injected into every MCP server env block.
         agent_role: "lead" or "worker".
@@ -72,6 +70,7 @@ async def provision_workspace(
     adapter = get_adapter(agent_type)
     op_log = log.bind(project_id=str(project.id), sandbox_id=sandbox_id)
     workspace = "/home/agent"
+    paths = adapter.provision_paths(workspace)
     op_log.info(
         "lifecycle.provisioning_workspace",
         context_path=workspace,
@@ -85,7 +84,7 @@ async def provision_workspace(
     # Resolve MCP instruction strings via adapter
     mcp_instr = adapter.resolve_mcp_instructions(mcp_servers)
 
-    # Build instruction file (e.g. CLAUDE.md) via adapter
+    # Build instruction file (e.g. CLAUDE.md, AGENTS.md) via adapter
     instruction_content = adapter.build_instructions(
         project_name=project.name,
         agent_name=agent_name,
@@ -100,27 +99,28 @@ async def provision_workspace(
     await runtime.write_file(
         sandbox_id,
         instruction_content.encode("utf-8"),
-        f"{workspace}/CLAUDE.md",
+        paths["instruction_file"],
     )
 
     # Build settings file via adapter
-    claude_dir = f"{workspace}/.claude"
-    await runtime.exec(sandbox_id, ["mkdir", "-p", claude_dir])
+    config_dir = paths["config_dir"]
+    await runtime.exec(sandbox_id, ["mkdir", "-p", config_dir])
 
     settings_content = adapter.build_settings(api_key=api_key, mode=mode)
     await runtime.write_file(
         sandbox_id,
         settings_content.encode("utf-8"),
-        f"{claude_dir}/settings.json",
+        paths["settings_file"],
     )
 
-    # MCP servers go in .mcp.json with env blocks for secrets.
+    # MCP servers config (skipped if adapter returns empty mcp_config_file path).
     # Always write when relay_token is set (team coord server is always injected).
+    mcp_config_path = paths["mcp_config_file"]
     coord_server = (
         _build_coord_server_config(callback_url, relay_token)
         if relay_token and callback_url else None
     )
-    if mcp_servers or coord_server:
+    if mcp_config_path and (mcp_servers or coord_server):
         mcp_config = adapter.build_mcp_config(
             mcp_servers=mcp_servers, secret_envs=secret_envs,
             coord_server=coord_server,
@@ -128,19 +128,21 @@ async def provision_workspace(
         await runtime.write_file(
             sandbox_id,
             mcp_config.encode("utf-8"),
-            f"{workspace}/.mcp.json",
+            mcp_config_path,
         )
 
-    # Write project skills that match this agent's tags as .claude/skills/<name>/SKILL.md
-    await _provision_skills(runtime, sandbox_id, project, agent_tags or [], workspace, op_log)
+    # Write project skills that match this agent's tags
+    skills_dir = paths["skills_dir"]
+    await _provision_skills(runtime, sandbox_id, project, agent_tags or [], skills_dir, op_log)
 
-    # Mark onboarding complete via adapter
+    # Mark onboarding complete via adapter (skipped if path is empty)
+    onboarding_path = paths["onboarding_file"]
     onboarding_content = adapter.build_onboarding_state(api_key=api_key)
-    if onboarding_content:
+    if onboarding_path and onboarding_content:
         await runtime.write_file(
             sandbox_id,
             onboarding_content.encode("utf-8"),
-            f"{workspace}/.claude.json",
+            onboarding_path,
         )
 
     # --- Security hardening ---
@@ -242,10 +244,10 @@ async def _provision_skills(
     sandbox_id: str,
     project: Project,
     agent_tags: list[str],
-    workspace: str,
+    skills_dir: str,
     op_log,
 ) -> None:
-    """Write project skills matching the agent's tags as .claude/skills/<name>/SKILL.md."""
+    """Write project skills matching the agent's tags as <skills_dir>/<name>/SKILL.md."""
     from asgiref.sync import sync_to_async
     from agents.models import Skill
 
@@ -263,15 +265,14 @@ async def _provision_skills(
     if not matching:
         return
 
-    skills_base = f"{workspace}/.claude/skills"
-    await runtime.exec(sandbox_id, ["mkdir", "-p", skills_base])
+    await runtime.exec(sandbox_id, ["mkdir", "-p", skills_dir])
 
     for skill in matching:
         # Sanitize skill name to prevent path traversal
         safe_name = skill.name.replace("/", "_").replace("..", "_").strip(".")
         if not safe_name:
             continue
-        skill_dir = f"{skills_base}/{safe_name}"
+        skill_dir = f"{skills_dir}/{safe_name}"
         await runtime.exec(sandbox_id, ["mkdir", "-p", skill_dir])
         await runtime.write_file(
             sandbox_id,
@@ -357,13 +358,14 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
     """
     Hot-reload secrets on a running agent by rewriting files.
 
-    1. Rewrites .mcp.json with updated env blocks (MCP servers re-init on restart)
+    1. Rewrites MCP config with updated env blocks (MCP servers re-init on restart)
     2. Writes /mnt/abox-state/secrets/env for immediate shell access
     """
     from django.conf import settings as django_settings
 
     workspace = "/home/agent"
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
+    paths = adapter.provision_paths(workspace)
 
     # Rebuild coord server config if agent has a relay_token
     coord_server = None
@@ -372,7 +374,8 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
         if callback_url:
             coord_server = _build_coord_server_config(callback_url, agent.relay_token)
 
-    if agent.mcp_servers or coord_server:
+    mcp_config_path = paths["mcp_config_file"]
+    if mcp_config_path and (agent.mcp_servers or coord_server):
         mcp_config = adapter.build_mcp_config(
             mcp_servers=agent.mcp_servers, secret_envs=secret_envs,
             coord_server=coord_server,
@@ -380,7 +383,7 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
         await runtime.write_file(
             sandbox_id,
             mcp_config.encode("utf-8"),
-            f"{workspace}/.mcp.json",
+            mcp_config_path,
         )
 
     # Write secrets env file for shell access (zero-restart path)

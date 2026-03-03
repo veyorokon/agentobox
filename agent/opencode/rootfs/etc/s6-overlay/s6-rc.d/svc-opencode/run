@@ -1,0 +1,24 @@
+#!/command/with-contenv bash
+exec 2>&1
+
+# OpenCode server — runs `opencode serve` on localhost:4096.
+# The relay connects to this via HTTP/SSE to subscribe to events
+# and send commands.
+#
+# Waits for .relay_env like the relay service — the env file contains
+# OPENCODE_PORT and model config needed for the serve command.
+
+while [ ! -f /home/agent/.relay_env ]; do
+    sleep 2
+done
+
+source /home/agent/.relay_env
+
+WORK_DIR="/home/agent/workspace"
+[ -d "$WORK_DIR" ] && cd "$WORK_DIR" || cd /home/agent
+
+export HOME=/home/agent
+
+PORT="${OPENCODE_PORT:-4096}"
+
+exec s6-setuidgid agent opencode serve --port "$PORT" --hostname 127.0.0.1

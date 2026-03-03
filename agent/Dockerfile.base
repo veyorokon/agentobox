@@ -1,17 +1,11 @@
-# ── Base layer (generic, any agent type) ──
-# s6-overlay, system packages, Xvfb/VNC/noVNC, AwesomeWM, Node.js,
-# GitHub CLI, Firefox, fonts, user setup, rootfs overlay, env vars
+# ── Agentobox Agent — Base Image ──
 #
-# ── Claude Code layer (agent-type-specific) ──
-# Lines 33-35: Python websockets + claude-agent-sdk
-# Lines 75-77: Claude Code CLI (npm install -g @anthropic-ai/claude-code)
-# Lines 79-89: Computer Use MCP server
+# Shared infrastructure for all agent types: s6-overlay, Xvfb/VNC/noVNC,
+# AwesomeWM, Node.js, GitHub CLI, Firefox, fonts, Python websockets,
+# user setup, shared rootfs overlay, env vars.
 #
-# When adding a second agent type, split this file:
-#   Dockerfile.base  — everything above
-#   Dockerfile.claude — FROM agentobox-base, adds CC-specific deps
-#   Dockerfile.codex  — FROM agentobox-base, adds Codex-specific deps
-# Each adapter dir can own an image/ subdir with its Dockerfile + relay.
+# Agent-type-specific images (claude/, opencode/) build FROM this image
+# and add their CLI tools, SDKs, relay processes, and MCP servers.
 
 FROM debian:bookworm-slim
 
@@ -39,9 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && dbus-uuidgen > /etc/machine-id \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Python websockets (relay WS transport) ---
+# --- Python websockets (relay WS transport — shared by all relays) ---
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
-    && pip3 install --break-system-packages websockets==15.0.1 claude-agent-sdk==0.1.39 pytest \
+    && pip3 install --break-system-packages websockets==15.0.1 pytest \
     && apt-get purge -y python3-pip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
@@ -82,22 +76,6 @@ RUN git clone https://github.com/adriankarlen/textfox.git /opt/textfox \
     && cd /opt/textfox && git checkout ${TEXTFOX_COMMIT} \
     && rm -rf /opt/textfox/.git
 
-# --- Claude Code CLI ---
-ARG CLAUDE_CODE_VERSION=2.1.59
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
-
-# --- Computer Use MCP server ---
-COPY mcp-servers/computer-use/package.json mcp-servers/computer-use/package-lock.json /opt/mcp-servers/computer-use/
-COPY mcp-servers/computer-use/dist/ /opt/mcp-servers/computer-use/dist/
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 make g++ libx11-dev libxtst-dev libxinerama-dev libpng-dev libvips-dev \
-    && cd /opt/mcp-servers/computer-use \
-    && (npm ci --omit=dev 2>/dev/null || npm install --omit=dev) \
-    && npm cache clean --force \
-    && apt-get purge -y make g++ libx11-dev libxtst-dev libxinerama-dev libpng-dev libvips-dev \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
 # --- User ---
 # Scoped sudo: package management only. No blanket NOPASSWD:ALL.
 # _provision_scoped_sudo in provision.py writes the same rule at runtime
@@ -109,14 +87,13 @@ RUN useradd -m -s /bin/bash agent \
     && echo "agent ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg" >> /etc/sudoers.d/agentobox \
     && chmod 0440 /etc/sudoers.d/agentobox
 
-# --- Filesystem overlay (configs + s6 services) ---
+# --- Shared filesystem overlay (s6 services, abox tools, browser configs) ---
 COPY rootfs/ /
 RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run /etc/s6-overlay/s6-rc.d/*/finish 2>/dev/null || true \
-    && chmod +x /opt/abox/relay.py \
+    && chmod +x /opt/abox/relay_common.py \
     && chmod +x /opt/abox/api-proxy.py \
     && chmod +x /opt/abox/theme-bridge.py \
-    && chmod +x /opt/abox/hooks/*.py \
     && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
     && python3 -c "import zipfile; z = zipfile.ZipFile('/opt/abox/firefox-theme.xpi', 'w'); z.write('/opt/abox/firefox-theme/manifest.json', 'manifest.json'); z.write('/opt/abox/firefox-theme/background.js', 'background.js'); z.close()" \
     && chown -R agent:agent /home/agent

@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude agent-image-opencode up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -18,12 +18,18 @@ check:
 schema:
 	docker compose exec -T backend uv run python -c "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); import django; django.setup(); from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
 
-VARIANT ?= debian
 PLATFORM ?= linux/amd64
 
-agent-image:
-	docker build --platform $(PLATFORM) -f agent/Dockerfile.$(VARIANT) -t agentobox-agent:$(VARIANT) ./agent
-	docker tag agentobox-agent:$(VARIANT) agentobox-agent:latest
+agent-image-base:
+	docker build --platform $(PLATFORM) -f agent/Dockerfile.base -t agentobox-agent-base:latest ./agent
+
+agent-image-claude: agent-image-base
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent/claude
+
+agent-image-opencode: agent-image-base
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/opencode/Dockerfile -t agentobox-agent-opencode:latest ./agent/opencode
+
+agent-image: agent-image-claude agent-image-opencode
 
 up:
 	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build
@@ -41,7 +47,7 @@ test-local:
 	cd backend && uv run python -m pytest agents/tests/ -v
 
 test-agent:
-	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent:latest \
+	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent-claude:latest \
 		-m pytest /opt/abox/tests -v
 
 lint:

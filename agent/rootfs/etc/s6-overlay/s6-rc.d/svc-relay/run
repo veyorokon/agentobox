@@ -29,4 +29,7 @@ WORK_DIR="/home/agent/workspace"
 # access. This was the root cause of "Control request timeout: initialize".
 export HOME=/home/agent
 
+# Select relay based on agent type. Each agent image ships its own relay.py
+# at /opt/abox/relay.py (CC uses SDK pipe, OpenCode uses HTTP/SSE).
+# Both share relay_common.py for WS transport + redaction.
 exec s6-setuidgid agent python3 /opt/abox/relay.py

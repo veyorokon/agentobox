@@ -92,6 +92,17 @@ class AgentAdapter(Protocol):
         """
         ...
 
+    # ── Provisioning paths ──
+
+    def provision_paths(self, workspace: str) -> dict:
+        """Agent-type-specific file paths for provisioning.
+
+        Returns a dict of logical names -> filesystem paths.
+        Empty string means "skip this file" (agent type doesn't need it).
+        provision.py uses these instead of hardcoding CC-specific paths.
+        """
+        ...
+
     # ── Provisioning config builders (pure data, no I/O) ──
 
     def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:

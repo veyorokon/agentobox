@@ -8,7 +8,7 @@ env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     REDIS_URL=(str, "redis://localhost:6379/0"),
-    AGENT_IMAGE=(str, "agentobox-agent:latest"),
+    AGENT_IMAGE=(str, "agentobox-agent-claude:latest"),
     ABOX_CALLBACK_URL=(str, "http://backend:8000"),
     ABOX_DASHBOARD_URL=(str, ""),
     ANTHROPIC_API_KEY=(str, ""),
@@ -16,7 +16,7 @@ env = environ.Env(
     DOCKER_NETWORK=(str, "agentobox_default"),
     AGENT_ROOTFS_PATH=(str, ""),
     MODAL_APP_NAME=(str, "agentobox"),
-    MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent:latest"),
+    MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent-claude:latest"),
 )
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 
@@ -138,6 +138,17 @@ DOCKER_NETWORK = env("DOCKER_NETWORK")
 AGENT_ROOTFS_PATH = env("AGENT_ROOTFS_PATH")
 MODAL_APP_NAME = env("MODAL_APP_NAME")
 MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
+
+# Per-agent-type image selection. Runtimes look up agent_type in these maps;
+# if missing, they fall back to AGENT_IMAGE / MODAL_AGENT_IMAGE.
+AGENT_IMAGE_MAP = {
+    "claude-code": "agentobox-agent-claude:latest",
+    "opencode": "agentobox-agent-opencode:latest",
+}
+MODAL_AGENT_IMAGE_MAP = {
+    "claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest",
+    "opencode": "ghcr.io/veyorokon/agentobox-agent-opencode:latest",
+}
 
 # --- Media / S3 ---
 

@@ -34,8 +34,13 @@ class ModalRuntime:
         app = await modal.App.lookup.aio(
             settings.MODAL_APP_NAME, create_if_missing=True
         )
+        # Select image based on agent_type. The env dict carries AGENT_TYPE
+        # (set by lifecycle.py from the Agent model field).
+        agent_type = env.get("AGENT_TYPE", "claude-code")
+        modal_image_map = getattr(settings, "MODAL_AGENT_IMAGE_MAP", {})
+        image_ref = modal_image_map.get(agent_type, settings.MODAL_AGENT_IMAGE)
         image = modal.Image.from_registry(
-            settings.MODAL_AGENT_IMAGE,
+            image_ref,
             secret=modal.Secret.from_name("ghcr-secret"),
         )
         env_secret = modal.Secret.from_dict(env)

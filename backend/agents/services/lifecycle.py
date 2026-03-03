@@ -58,6 +58,7 @@ async def create_agent(
     volume_mounts: list[dict] | None = None,
     mode: str = "auto",
     tags: list[str] | None = None,
+    agent_type: str = "claude-code",
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from config.telemetry import bind_agent_context
@@ -94,6 +95,7 @@ async def create_agent(
     config_snapshot = {
         "runtime": runtime_name,
         "model": model,
+        "agent_type": agent_type,
         "mcp_servers": resolved_mcps,
         "workspace_path": workspace_path,
         "instructions": instructions,
@@ -106,6 +108,7 @@ async def create_agent(
         project=project,
         runtime=runtime_name,
         model=model,
+        agent_type=agent_type,
         sandbox_id="",
         vnc_url="",
         status=AgentStatus.DEPLOYING,
@@ -654,6 +657,7 @@ def _build_agent_env(agent, project) -> dict[str, str]:
     """
     return {
         "AGENT_ID": str(agent.id),
+        "AGENT_TYPE": agent.agent_type,
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
         "ABOX_CALLBACK_URL": getattr(settings, "ABOX_CALLBACK_URL", ""),

@@ -45,7 +45,11 @@ class DockerRuntime:
     ) -> SandboxInstance:
         agent_id = env.get("AGENT_ID", "")
         container_name = f"agentobox-agent-{agent_id}"
-        image = getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest")
+        # Select image based on agent_type. The env dict carries AGENT_TYPE
+        # (set by lifecycle.py from the Agent model field).
+        agent_type = env.get("AGENT_TYPE", "claude-code")
+        image_map = getattr(settings, "AGENT_IMAGE_MAP", {})
+        image = image_map.get(agent_type, getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest"))
         network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
 
         op = log.bind(op="create", agent_name=name, image=image)

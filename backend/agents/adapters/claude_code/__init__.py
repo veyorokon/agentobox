@@ -292,6 +292,19 @@ class ClaudeCodeAdapter:
         """Our mode -> agent wire format. e.g. "auto" -> "bypassPermissions"."""
         return _MODE_TO_PERMISSION.get(mode, "")
 
+    # ── Provisioning paths ──
+
+    def provision_paths(self, workspace: str) -> dict:
+        """Claude Code file paths for provisioning."""
+        return {
+            "instruction_file": f"{workspace}/CLAUDE.md",
+            "settings_file": f"{workspace}/.claude/settings.json",
+            "mcp_config_file": f"{workspace}/.mcp.json",
+            "onboarding_file": f"{workspace}/.claude.json",
+            "config_dir": f"{workspace}/.claude",
+            "skills_dir": f"{workspace}/.claude/skills",
+        }
+
     # ── Provisioning config builders (pure data, no I/O) ──
 
     def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:

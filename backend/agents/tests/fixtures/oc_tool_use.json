@@ -1,0 +1,98 @@
+{
+  "info": {
+    "role": "assistant",
+    "time": {
+      "created": 1772565757188,
+      "completed": 1772565758601
+    },
+    "parentID": "msg_user_002",
+    "modelID": "us.anthropic.claude-sonnet-4-6",
+    "providerID": "amazon-bedrock",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+      "cwd": "/home/agent/workspace",
+      "root": "/home/agent/workspace"
+    },
+    "cost": 0.00707295,
+    "tokens": {
+      "total": 21132,
+      "input": 1,
+      "output": 26,
+      "reasoning": 0,
+      "cache": {
+        "read": 21004,
+        "write": 101
+      }
+    },
+    "finish": "stop",
+    "id": "msg_assistant_002",
+    "sessionID": "ses_test_session_002"
+  },
+  "parts": [
+    {
+      "type": "step-start",
+      "snapshot": "abc123def456",
+      "id": "prt_step_start_002",
+      "sessionID": "ses_test_session_002",
+      "messageID": "msg_assistant_002"
+    },
+    {
+      "type": "tool",
+      "callID": "tooluse_test_001",
+      "tool": "write",
+      "state": {
+        "status": "completed",
+        "input": {
+          "filePath": "/home/agent/workspace/hello.txt",
+          "content": "hello world"
+        },
+        "output": "Wrote file successfully.",
+        "title": "hello.txt",
+        "metadata": {
+          "diagnostics": {},
+          "filepath": "/home/agent/workspace/hello.txt",
+          "exists": false,
+          "truncated": false
+        },
+        "time": {
+          "start": 1772565757132,
+          "end": 1772565757140
+        }
+      },
+      "id": "prt_tool_001",
+      "sessionID": "ses_test_session_002",
+      "messageID": "msg_assistant_002"
+    },
+    {
+      "type": "text",
+      "text": "done. `hello.txt` created.",
+      "time": {
+        "start": 1772565758560,
+        "end": 1772565758560
+      },
+      "id": "prt_text_002",
+      "sessionID": "ses_test_session_002",
+      "messageID": "msg_assistant_002"
+    },
+    {
+      "type": "step-finish",
+      "reason": "stop",
+      "snapshot": "abc123def456",
+      "cost": 0.00707295,
+      "tokens": {
+        "total": 21132,
+        "input": 1,
+        "output": 26,
+        "reasoning": 0,
+        "cache": {
+          "read": 21004,
+          "write": 101
+        }
+      },
+      "id": "prt_step_finish_002",
+      "sessionID": "ses_test_session_002",
+      "messageID": "msg_assistant_002"
+    }
+  ]
+}

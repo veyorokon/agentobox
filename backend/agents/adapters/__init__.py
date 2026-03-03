@@ -4,7 +4,7 @@ Public API:
     get_adapter(agent_type) -> AgentAdapter
     register_adapter(agent_type, adapter) -> None
 
-Auto-registers ClaudeCodeAdapter for "claude-code" on import.
+Auto-registers built-in adapters on import.
 
 To add a new agent type:
     1. Create adapters/<name>/ package implementing AgentAdapter
@@ -13,6 +13,7 @@ To add a new agent type:
 
 from agents.adapters.base import AgentAdapter
 from agents.adapters.claude_code import ClaudeCodeAdapter
+from agents.adapters.opencode import OpenCodeAdapter
 
 _REGISTRY: dict[str, AgentAdapter] = {}
 
@@ -32,3 +33,4 @@ def get_adapter(agent_type: str) -> AgentAdapter:
 
 # Auto-register built-in adapters
 register_adapter("claude-code", ClaudeCodeAdapter())
+register_adapter("opencode", OpenCodeAdapter())

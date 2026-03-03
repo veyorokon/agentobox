@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """
-Localhost reverse proxy that injects the Anthropic API key header.
+Localhost reverse proxy that injects the real API key header.
 
 Part of the Layer 2 secret protection (see docs/ARCHITECTURE.md "Security & Secrets").
 Runs as root, reads the real key from /run/secrets/proxy_key (mode 0600 root:root)
-at startup, and serves on 0.0.0.0:9999. The agent process gets
-ANTHROPIC_BASE_URL=http://localhost:9999 with a placeholder key that passes CLI
-format validation but is worthless if leaked. The proxy strips the placeholder and
-injects the real key before forwarding to api.anthropic.com.
+at startup, and serves on 0.0.0.0:9999. The agent process gets a base URL pointing
+to localhost:9999 with a placeholder key that passes CLI format validation but is
+worthless if leaked. The proxy strips the placeholder and injects the real key before
+forwarding to the upstream API.
+
+Upstream is configurable via env vars (set by the adapter's build_relay_env()):
+  PROXY_UPSTREAM_HOST  — default: api.anthropic.com
+  PROXY_UPSTREAM_PORT  — default: 443
+  PROXY_AUTH_HEADER    — default: x-api-key (Anthropic), or "authorization" (OpenAI)
 
 This ensures the agent process never has access to the real API key — process-level
 isolation, not just environment variable hiding.
 
-SCOPE: All requests to this proxy get the real key injected. This is correct because
-only Claude CLI traffic hits localhost:9999 (via ANTHROPIC_BASE_URL). Do not reuse
-this proxy for non-Anthropic APIs without adding path-based filtering.
+SCOPE: All requests to this proxy get the real key injected. Only agent CLI traffic
+should hit localhost:9999 (via *_BASE_URL env vars).
 
 OPS: If the proxy enters a restart loop (visible in s6 logs), check:
   1. /run/secrets/proxy_key exists and is non-empty (provisioning issue)
   2. Port 9999 is not already in use (another process grabbed it)
-  3. DNS resolution for api.anthropic.com works (network issue)
+  3. DNS resolution for the upstream host works (network issue)
 """
 
 import http.client
@@ -28,15 +32,17 @@ import os
 import ssl
 import sys
 
-UPSTREAM_HOST = "api.anthropic.com"
-UPSTREAM_PORT = 443
+UPSTREAM_HOST = os.environ.get("PROXY_UPSTREAM_HOST", "api.anthropic.com")
+UPSTREAM_PORT = int(os.environ.get("PROXY_UPSTREAM_PORT", "443"))
+AUTH_HEADER = os.environ.get("PROXY_AUTH_HEADER", "x-api-key")
 LISTEN_PORT = 9999
 KEY_PATH = "/run/secrets/proxy_key"
 CHUNK_SIZE = 8192
 
 # Headers to strip from incoming requests (case-insensitive lookup).
 # "host" must be stripped because the CLI sends "host: localhost:9999"
-# which would create a duplicate when we set "Host: api.anthropic.com".
+# which would create a duplicate when we set the real upstream Host.
+# Auth headers are stripped because we inject the real key ourselves.
 # Cloudflare returns 403 on conflicting host headers.
 _STRIP_HEADERS = frozenset({"x-api-key", "authorization", "host"})
 
@@ -115,7 +121,13 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         for key, value in self.headers.items():
             if key.lower() not in _STRIP_HEADERS:
                 upstream_headers[key] = value
-        upstream_headers["x-api-key"] = _REAL_KEY
+        # Inject real key using the configured auth header name.
+        # Anthropic: "x-api-key: sk-..."
+        # OpenAI:    "Authorization: Bearer sk-..."
+        if AUTH_HEADER == "authorization":
+            upstream_headers[AUTH_HEADER] = f"Bearer {_REAL_KEY}"
+        else:
+            upstream_headers[AUTH_HEADER] = _REAL_KEY
         # Override host header for upstream
         upstream_headers["Host"] = UPSTREAM_HOST
 

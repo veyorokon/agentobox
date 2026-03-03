@@ -28,11 +28,6 @@ import os
 import signal
 import sys
 import time
-from collections import deque
-from urllib.parse import urlparse, urlunparse
-
-import websockets
-import websockets.exceptions
 
 # ---------------------------------------------------------------------------
 # SDK monkey-patch: preserve raw stdout dicts on parsed messages
@@ -114,6 +109,15 @@ from claude_agent_sdk import (  # noqa: E402
 )
 
 from abox_logging import setup as _setup_logging  # noqa: E402
+from relay_common import (  # noqa: E402
+    AGENT_ID,
+    CALLBACK_URL,
+    EventSender,
+    FatalWSClose,
+    Redactor,
+    WSTransport,
+    validate_config,
+)
 
 log = _setup_logging("abox-relay")
 
@@ -121,9 +125,6 @@ log = _setup_logging("abox-relay")
 # Configuration
 # ---------------------------------------------------------------------------
 
-AGENT_ID = os.environ.get("AGENT_ID", "")
-CALLBACK_URL = os.environ.get("ABOX_CALLBACK_URL", "").rstrip("/")
-RELAY_AUTH_TOKEN = os.environ.get("RELAY_AUTH_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # Mode mapping: backend sends our vocabulary, relay translates to SDK format.
@@ -133,243 +134,6 @@ _MODE_MAP = {
     "plan": "plan",
     "supervised": "default",
 }
-
-# WebSocket reconnect
-WS_RECONNECT_DELAY_S = 1.0
-WS_MAX_RECONNECT_DELAY_S = 30.0
-
-# Close codes the backend sends that mean "stop retrying" — the problem is
-# permanent and reconnecting won't help. Defined in consumers.py:
-#   4001 = bad_token (auth failure)
-#   4003 = forbidden
-#   4004 = agent_not_found
-WS_FATAL_CLOSE_CODES = {4001, 4003, 4004}
-
-
-# Critical event types that must not be silently dropped.
-# "system" includes process_exit subtype (agent lifecycle).
-# "result" includes cost/usage data (session_cost_usd).
-CRITICAL_EVENT_TYPES = {"result", "system"}
-
-
-class _Redactor:
-    """Scrub known secret values from outbound event data.
-
-    Loads secret values from /run/secrets/ and the relay env at boot.
-    Applied to every event before WS send — prevents accidental credential
-    exposure in dashboard output. UX safety net, not a security boundary.
-    """
-
-    def __init__(self):
-        self._secrets: list[str] = []
-
-    def load(self):
-        """Read secret values from /run/secrets/ files + env."""
-        secrets_dir = "/run/secrets"
-        if os.path.isdir(secrets_dir):
-            for name in os.listdir(secrets_dir):
-                path = os.path.join(secrets_dir, name)
-                if os.path.isfile(path):
-                    try:
-                        val = open(path).read().strip()
-                        if len(val) >= 8:
-                            self._secrets.append(val)
-                    except PermissionError:
-                        log.warning("relay.redactor_skip", extra={"path": path, "reason": "permission_denied"})
-        # Also redact secrets from mounted env file if readable
-        env_file = "/mnt/abox-state/secrets/env"
-        if os.path.isfile(env_file):
-            try:
-                for line in open(env_file):
-                    line = line.strip()
-                    if "=" in line and not line.startswith("#"):
-                        val = line.split("=", 1)[1].strip().strip("'\"")
-                        if len(val) >= 8:
-                            self._secrets.append(val)
-            except PermissionError:
-                log.warning("relay.redactor_skip", extra={"path": env_file, "reason": "permission_denied"})
-        # Sort longest first so longer secrets are replaced before substrings
-        self._secrets.sort(key=len, reverse=True)
-        if self._secrets:
-            log.info("relay.redactor_loaded", extra={"secrets": len(self._secrets)})
-
-    def redact(self, text: str) -> str:
-        """Replace known secret values with [REDACTED]."""
-        for secret in self._secrets:
-            if secret in text:
-                text = text.replace(secret, "[REDACTED]")
-        return text
-
-    def redact_event(self, event: dict) -> dict:
-        """Deep-redact string values in an event dict.
-
-        Walks the dict recursively and replaces secret substrings in every
-        string value. Operates on Python objects, not JSON text — avoids
-        the json.dumps→replace→json.loads pattern which breaks when secrets
-        contain JSON syntax characters (quotes, backslashes).
-        """
-        if not self._secrets:
-            return event
-        return self._redact_obj(event)
-
-    def _redact_obj(self, obj):
-        """Recursively redact secrets from any JSON-compatible object."""
-        if isinstance(obj, str):
-            return self.redact(obj)
-        if isinstance(obj, dict):
-            return {k: self._redact_obj(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [self._redact_obj(v) for v in obj]
-        return obj
-
-
-class FatalWSClose(Exception):
-    """Backend rejected the connection with a non-retryable close code."""
-
-    def __init__(self, code: int, reason: str = ""):
-        self.code = code
-        self.reason = reason
-        super().__init__(f"Fatal WS close: code={code} reason={reason}")
-
-
-# ---------------------------------------------------------------------------
-# WebSocket transport
-# ---------------------------------------------------------------------------
-
-
-class WSTransport:
-    """WebSocket connection to the backend relay endpoint.
-
-    Handles connect, reconnect, send, and receive. No fallback —
-    if WS is down, events are lost until reconnection succeeds.
-    """
-
-    def __init__(self):
-        self.ws = None
-        self._connected = False
-        self._reconnect_delay = WS_RECONNECT_DELAY_S
-
-    def _ws_url(self) -> str:
-        """Build WS URL from HTTP callback URL.
-
-        Properly swaps scheme via urlparse rather than naive string replace.
-        """
-        parsed = urlparse(CALLBACK_URL)
-        ws_scheme = "wss" if parsed.scheme == "https" else "ws"
-        ws_parsed = parsed._replace(
-            scheme=ws_scheme,
-            path=f"/ws/relay/{AGENT_ID}/",
-        )
-        return urlunparse(ws_parsed)
-
-    async def connect(self) -> bool:
-        """Connect to the backend WS endpoint with Authorization header.
-
-        Token is sent as an HTTP header on the WS upgrade request — same
-        pattern as REST auth. Never appears in URLs, logs, or proxy traces.
-
-        Raises FatalWSClose if the backend rejects with a non-retryable code
-        (4001 bad token, 4003 forbidden, 4004 agent not found). Callers must
-        not retry after FatalWSClose — the problem is permanent.
-        """
-        try:
-            self.ws = await websockets.connect(
-                self._ws_url(),
-                additional_headers={
-                    "Authorization": f"Bearer {RELAY_AUTH_TOKEN}",
-                },
-                max_size=16 * 2**20,  # 16MB — computer-use screenshots are 2-5MB base64
-                ping_interval=20,
-                ping_timeout=10,
-            )
-            self._connected = True
-            self._reconnect_delay = WS_RECONNECT_DELAY_S
-            log.info("relay.ws_connected")
-            return True
-        except websockets.exceptions.InvalidStatus as exc:
-            # HTTP-level rejection before upgrade completed (e.g. 403).
-            code = exc.response.status_code if hasattr(exc, "response") else 0
-            log.warning("relay.ws_rejected", extra={"status": code, "reason": str(exc)})
-            self._connected = False
-            if code in WS_FATAL_CLOSE_CODES:
-                raise FatalWSClose(code, str(exc)) from exc
-            return False
-        except websockets.exceptions.ConnectionClosed as exc:
-            # Server accepted the upgrade then immediately sent a close frame
-            # (this is how our consumer rejects: accept() then close(code=4001)).
-            code = exc.rcvd.code if exc.rcvd else 0
-            reason = exc.rcvd.reason if exc.rcvd else ""
-            log.warning("relay.ws_closed_on_connect", extra={"code": code, "reason": reason})
-            self._connected = False
-            if code in WS_FATAL_CLOSE_CODES:
-                raise FatalWSClose(code, reason) from exc
-            return False
-        except Exception as exc:
-            log.warning("relay.ws_connect_failed", extra={"error": str(exc)})
-            self._connected = False
-            return False
-
-    async def reconnect(self) -> bool:
-        """Reconnect with exponential backoff.
-
-        Raises FatalWSClose if the backend rejects with a non-retryable code.
-        Callers must catch FatalWSClose and stop retrying.
-        """
-        await asyncio.sleep(self._reconnect_delay)
-        self._reconnect_delay = min(self._reconnect_delay * 2, WS_MAX_RECONNECT_DELAY_S)
-        return await self.connect()
-
-    async def send(self, event: dict) -> bool:
-        """Send an event via WS. Returns False if WS is unavailable."""
-        if not self._connected or not self.ws:
-            return False
-        try:
-            await self.ws.send(json.dumps(event))
-            return True
-        except Exception:
-            self._connected = False
-            return False
-
-    async def recv(self) -> dict | None:
-        """Receive a command from the backend. Returns None on disconnect.
-
-        Raises FatalWSClose if the connection was closed with a non-retryable
-        code. JSON parse failures are logged but do NOT mark as disconnected —
-        the WS connection is still alive, only the message was malformed.
-        """
-        if not self._connected or not self.ws:
-            return None
-        try:
-            data = await self.ws.recv()
-        except websockets.exceptions.ConnectionClosed as exc:
-            code = exc.rcvd.code if exc.rcvd else 0
-            reason = exc.rcvd.reason if exc.rcvd else ""
-            log.warning("relay.ws_recv_closed", extra={"code": code, "reason": reason})
-            self._connected = False
-            if code in WS_FATAL_CLOSE_CODES:
-                raise FatalWSClose(code, reason) from exc
-            return None
-        except Exception:
-            self._connected = False
-            return None
-
-        try:
-            return json.loads(data)
-        except (json.JSONDecodeError, TypeError) as exc:
-            log.warning("relay.ws_recv_malformed_json", extra={"error": str(exc)})
-            return None
-
-    @property
-    def connected(self) -> bool:
-        return self._connected
-
-    async def close(self):
-        if self.ws:
-            try:
-                await self.ws.close()
-            except Exception:
-                pass
-            self._connected = False
 
 
 # ---------------------------------------------------------------------------
@@ -398,10 +162,10 @@ class SDKRelay:
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
-        self._event_buffer: deque[dict] = deque(maxlen=20)  # bounded ring buffer for critical events
-        self.ws = WSTransport()
-        self._redactor = _Redactor()
+        self.ws = WSTransport(log=log)
+        self._redactor = Redactor(log=log)
         self._redactor.load()
+        self._sender = EventSender(self.ws, self._redactor, log=log)
 
     @staticmethod
     def _build_sdk_env() -> dict[str, str]:
@@ -505,7 +269,7 @@ class SDKRelay:
         request_id = _uuid.uuid4().hex
         future = asyncio.get_running_loop().create_future()
         self._pending_callbacks[request_id] = future
-        await self._send_event({
+        await self._sender.send({
             "type": "callback",
             "callback_type": callback_type,
             "request_id": request_id,
@@ -613,60 +377,6 @@ class SDKRelay:
 
     # ── Event forwarding ──
 
-    async def _send_event(self, event: dict):
-        """Send an event to the backend via WS.
-
-        If the send fails, attempt reconnect and retry once.
-        If that also fails, buffer critical events for later delivery.
-        Raises FatalWSClose if reconnect hits a non-retryable code.
-        """
-        # Redact secrets before any WS send
-        event = self._redactor.redact_event(event)
-
-        # Flush any previously buffered events first
-        await self._flush_event_buffer()
-
-        sent = await self.ws.send(event)
-        if sent:
-            return
-
-        log.warning("relay.ws_send_failed")
-        reconnected = await self.ws.reconnect()  # may raise FatalWSClose
-        if reconnected:
-            await self._flush_event_buffer()
-            sent = await self.ws.send(event)
-            if sent:
-                return
-
-        # Buffer critical events instead of dropping
-        event_type = event.get("type", "")
-        if event_type in CRITICAL_EVENT_TYPES:
-            self._event_buffer.append(event)
-            log.warning("relay.event_buffered", extra={"type": event_type, "buffer_size": len(self._event_buffer)})
-        else:
-            log.warning("relay.event_dropped", extra={"type": event_type})
-
-    async def _flush_event_buffer(self):
-        """Flush buffered critical events to the backend.
-
-        Called on successful WS send opportunities. Events are sent FIFO.
-        Failed flushes leave events in the buffer for the next attempt.
-        """
-        if not self._event_buffer or not self.ws.connected:
-            return
-
-        flushed = 0
-        while self._event_buffer:
-            event = self._event_buffer[0]  # peek
-            sent = await self.ws.send(event)
-            if not sent:
-                break  # WS went down again — stop flushing
-            self._event_buffer.popleft()
-            flushed += 1
-
-        if flushed:
-            log.info("relay.event_buffer_flushed", extra={"flushed": flushed, "remaining": len(self._event_buffer)})
-
     async def _forward_messages(self):
         """Iterate SDK messages and forward each to the backend via WS.
 
@@ -683,7 +393,7 @@ class SDKRelay:
                 event = self._message_to_event(msg)
                 if event:
                     forwarded_count += 1
-                    await self._send_event(event)
+                    await self._sender.send(event)
             elapsed = time.monotonic() - t0
             log.info("relay.turn_complete", extra={"received": msg_count, "forwarded": forwarded_count, "elapsed": round(elapsed, 1)})
         except ProcessError as e:
@@ -719,7 +429,7 @@ class SDKRelay:
                     try:
                         if await self.ws.reconnect():
                             log.info("relay.ws_reconnected")
-                            await self._flush_event_buffer()
+                            await self._sender.flush_buffer()
                     except FatalWSClose:
                         raise  # propagate to run loop
                 continue
@@ -804,7 +514,7 @@ class SDKRelay:
             "agent_id": AGENT_ID,
         }
         log.info("relay.process_exit", extra={"code": exit_code})
-        await self._send_event(event)
+        await self._sender.send(event)
 
     # ── Signal handling ──
 
@@ -853,7 +563,7 @@ class SDKRelay:
             return
 
         # Flush any events buffered from a previous connection attempt
-        await self._flush_event_buffer()
+        await self._sender.flush_buffer()
 
         # Send relay_init diagnostic event through WS so backend has it
         # even if the container dies before we can inspect logs.
@@ -869,7 +579,7 @@ class SDKRelay:
             },
         }
         try:
-            await self._send_event(init_diag)
+            await self._sender.send(init_diag)
         except FatalWSClose as exc:
             log.error("relay.ws_rejected_init", extra={"code": exc.code, "reason": exc.reason})
             return
@@ -1043,7 +753,7 @@ class SDKRelay:
                         log.warning("relay.idle_ws_disconnected")
                         try:
                             if await self.ws.reconnect():
-                                await self._flush_event_buffer()
+                                await self._sender.flush_buffer()
                         except FatalWSClose:
                             idle_fatal = True
                             break
@@ -1090,12 +800,7 @@ class SDKRelay:
 
 
 def main():
-    if not AGENT_ID:
-        log.error("relay.config_missing_agent_id")
-        sys.exit(1)
-    if not CALLBACK_URL:
-        log.error("relay.config_missing_callback_url")
-        sys.exit(1)
+    validate_config()
 
     # Log env diagnostics at startup — these go to tmux pane AND
     # are visible in container logs before the container is cleaned up.

@@ -49,6 +49,7 @@ class CreateAgentInput:
     role: str = "worker"
     mode: str = "auto"
     tags: list[str] | None = None
+    agent_type: str = "claude-code"
 
 
 @strawberry.input
@@ -135,7 +136,7 @@ class AgentMutation:
         mcp_config = None
         if input.mcp_servers:
             if isinstance(input.mcp_servers, list):
-                adapter = get_adapter("claude-code")
+                adapter = get_adapter(input.agent_type)
                 mcp_config = adapter.resolve_mcp_servers(input.mcp_servers)
             elif isinstance(input.mcp_servers, dict):
                 mcp_config = input.mcp_servers
@@ -165,6 +166,7 @@ class AgentMutation:
             volume_mounts=vm_dicts,
             mode=input.mode,
             tags=input.tags,
+            agent_type=input.agent_type,
         )
 
     @strawberry.mutation
