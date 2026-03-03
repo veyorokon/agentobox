@@ -29,6 +29,7 @@ export default function HomePage() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [error, setError] = useState("")
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null)
 
   useEffect(() => {
     const token = localStorage.getItem("auth_token")
@@ -56,6 +57,7 @@ export default function HomePage() {
       const { data: result } = await createProject({
         variables: { input: { name: name.trim(), description: description.trim() } },
       })
+      setNavigatingTo(result.createProject.id)
       router.push(`/p/${result.createProject.id}`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to create project"
@@ -141,10 +143,10 @@ export default function HomePage() {
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="submit"
-                  disabled={creating || !name.trim()}
+                  disabled={creating || navigatingTo !== null || !name.trim()}
                   className="rounded-md bg-accent px-4 py-1.5 text-[11px] font-medium text-on-emphasis hover:bg-accent/90 transition-colors disabled:opacity-50"
                 >
-                  {creating ? "Creating..." : "Create project"}
+                  {navigatingTo ? "Opening..." : creating ? "Creating..." : "Create project"}
                 </button>
                 <button
                   type="button"
@@ -175,11 +177,27 @@ export default function HomePage() {
               <button
                 key={project.id}
                 type="button"
-                onClick={() => router.push(`/p/${project.id}`)}
-                className="w-full group flex items-center gap-3 px-4 py-3 rounded-lg border border-transparent hover:border-border-default hover:bg-surface-raised/30 transition-all text-left"
+                disabled={navigatingTo !== null}
+                onClick={() => {
+                  setNavigatingTo(project.id)
+                  router.push(`/p/${project.id}`)
+                }}
+                className={`w-full group flex items-center gap-3 px-4 py-3 rounded-lg border transition-all text-left ${
+                  navigatingTo === project.id
+                    ? "border-accent/30 bg-accent/5"
+                    : navigatingTo !== null
+                      ? "opacity-40 pointer-events-none border-transparent"
+                      : "border-transparent hover:border-border-default hover:bg-surface-raised/30"
+                }`}
               >
-                <div className="h-8 w-8 rounded-md bg-accent/10 flex items-center justify-center text-[11px] font-bold text-accent shrink-0 uppercase">
-                  {project.name.charAt(0)}
+                <div className={`h-8 w-8 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0 uppercase ${
+                  navigatingTo === project.id ? "bg-accent/20 text-accent" : "bg-accent/10 text-accent"
+                }`}>
+                  {navigatingTo === project.id ? (
+                    <div className="h-3.5 w-3.5 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+                  ) : (
+                    project.name.charAt(0)
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-default truncate">{project.name}</div>
@@ -190,7 +208,11 @@ export default function HomePage() {
                 <span className="text-[10px] text-muted/40 tabular-nums shrink-0">
                   {formatDate(project.createdAt)}
                 </span>
-                <ChevronRight className="h-3.5 w-3.5 text-muted/30 group-hover:text-muted/60 transition-colors shrink-0" />
+                {navigatingTo === project.id ? (
+                  <span className="text-[10px] text-accent/60 shrink-0">Opening...</span>
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 text-muted/30 group-hover:text-muted/60 transition-colors shrink-0" />
+                )}
               </button>
             ))}
           </div>
