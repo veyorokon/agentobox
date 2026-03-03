@@ -301,8 +301,9 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
-    # Push CC wire format to relay — revert DB if relay unreachable
-    sent = await push_to_relay(agent_id, {"type": "mode", "mode": wire_mode})
+    # Push our vocabulary to relay — relay translates to SDK format via _MODE_MAP.
+    # Must NOT send wire_mode ("default") — relay's _MODE_MAP keys are our vocab.
+    sent = await push_to_relay(agent_id, {"type": "mode", "mode": frontend_mode})
     if not sent:
         op_log.warning("comms.mode_change_reverted")
         agent.mode = old_mode

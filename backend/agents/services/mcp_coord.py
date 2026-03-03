@@ -68,6 +68,21 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
         from agents.services.interagent import deliver_to_stdin
         sent = await deliver_to_stdin(agent.name, target, content)
 
+        # Create feed item so the team feed shows inter-agent messages
+        try:
+            from agents.services.feed import create_feed_item
+            await create_feed_item(
+                project_id=str(agent.project_id),
+                agent_record=agent,
+                type="agent-message",
+                agent_name=agent.name,
+                from_value=agent.name,
+                to_value=recipient,
+                text=content[:500],
+            )
+        except Exception:  # intentional: feed is secondary — message delivery already succeeded
+            log.warning("mcp.message_feed_item_failed", sender=agent.name, recipient=recipient, exc_info=True)
+
         log.info("mcp.message_sent", sender=agent.name, recipient=recipient, delivered=sent)
         if not sent:
             return {"ok": True, "recipient": recipient, "queued": True,
@@ -77,6 +92,21 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
     elif type == "broadcast":
         from agents.services.interagent import deliver_broadcast
         await deliver_broadcast(agent, content, summary=summary)
+
+        # Create feed item for the broadcast
+        try:
+            from agents.services.feed import create_feed_item
+            await create_feed_item(
+                project_id=str(agent.project_id),
+                agent_record=agent,
+                type="agent-message",
+                agent_name=agent.name,
+                from_value=agent.name,
+                to_value="all",
+                text=content[:500],
+            )
+        except Exception:  # intentional: feed is secondary — broadcast delivery already succeeded
+            log.warning("mcp.broadcast_feed_item_failed", sender=agent.name, exc_info=True)
 
         log.info("mcp.broadcast_sent", sender=agent.name)
         return {"ok": True}

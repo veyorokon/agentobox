@@ -106,6 +106,7 @@ _P_DELIVER = "agents.services.interagent.deliver_to_stdin"
 _P_BROADCAST = "agents.services.interagent.deliver_broadcast"
 _P_FEED_CREATE = "agents.services.feed.create_feed_item"
 _P_AGENT_BROADCAST = "agents.services.broadcast.broadcast_agent_update"
+_P_KILL_AGENT = "agents.services.lifecycle.kill_agent"
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +132,7 @@ class TestSendMessage:
             _patch_auth(sender),
             patch(_P_AGENT) as MockAgent,
             patch(_P_DELIVER, new_callable=AsyncMock) as mock_deliver,
+            patch(_P_FEED_CREATE, new_callable=AsyncMock),
         ):
             MockAgent.objects.aget = AsyncMock(return_value=target)
 
@@ -164,6 +166,7 @@ class TestSendMessage:
         with (
             _patch_auth(sender),
             patch(_P_BROADCAST, new_callable=AsyncMock) as mock_broadcast,
+            patch(_P_FEED_CREATE, new_callable=AsyncMock),
         ):
             result = await send_message(
                 type="broadcast",
@@ -176,15 +179,14 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_shutdown_request(self):
-        """type='shutdown_request' sets target status to STOPPED and delivers message."""
+        """type='shutdown_request' calls kill_agent to terminate the container."""
         sender = _mock_agent(name="team-lead")
         target = _mock_agent(name="qa")
-        target.asave = AsyncMock()
 
         with (
             _patch_auth(sender),
             patch(_P_AGENT) as MockAgent,
-            patch(_P_DELIVER, new_callable=AsyncMock) as mock_deliver,
+            patch(_P_KILL_AGENT, new_callable=AsyncMock) as mock_kill,
         ):
             MockAgent.objects.aget = AsyncMock(return_value=target)
 
@@ -195,8 +197,7 @@ class TestSendMessage:
             )
 
         assert result["ok"] is True
-        target.asave.assert_called_once()
-        mock_deliver.assert_called_once()
+        mock_kill.assert_called_once_with(str(target.id))
 
     @pytest.mark.asyncio
     async def test_invalid_type_errors(self):
