@@ -21,7 +21,6 @@ import { AgentLeftPanel } from "@/components/panels/left-panel"
 import { AgentCardsPanel } from "@/components/panels/agent-cards-panel"
 import { SkillsPanel } from "@/components/panels/skills-panel"
 import { TabBar } from "@/components/layout/tab-bar"
-import { BreakpointIndicator } from "@/components/layout/breakpoint-indicator"
 import { AttentionBar } from "@/components/attention/attention-bar"
 import { TeamFeed } from "@/components/feed/team-feed"
 import { ComposerBar } from "@/components/composer/composer-bar"
@@ -165,7 +164,6 @@ export default function ProjectPage() {
         )}
       </div>
 
-      <BreakpointIndicator bp={bp} />
     </div>
   )
 }
