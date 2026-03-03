@@ -158,6 +158,7 @@ class SDKRelay:
         self.restart_requested = False
         self.clear_requested = False
         self.next_permission_mode: str = ""
+        self.permission_mode: str = "bypassPermissions"  # live mode, read by can_use_tool callback
         self._exit_posted = False  # guards against double process_exit events
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
@@ -218,9 +219,10 @@ class SDKRelay:
 
         perm = permission_mode if permission_mode else "bypassPermissions"
 
-        # Only register can_use_tool in supervised mode ("default").
-        # In bypassPermissions the SDK never fires the callback — keep None.
-        can_use_tool = self._make_can_use_tool_callback() if perm == "default" else None
+        # Always register can_use_tool so mid-session mode changes work.
+        # The callback checks the live permission mode — auto returns allow
+        # immediately, supervised routes through the backend approval flow.
+        can_use_tool = self._make_can_use_tool_callback()
 
         # Parse allowed_tools facet (JSON list from env, e.g. '["Read","Glob"]')
         allowed_tools: list[str] | None = None
@@ -284,11 +286,15 @@ class SDKRelay:
             self._pending_callbacks.pop(request_id, None)
 
     def _make_can_use_tool_callback(self):
-        """Build the can_use_tool callback for supervised mode.
+        """Build the can_use_tool callback that respects live mode changes.
 
-        Thin wrapper translating SDK callback ↔ our generic bridge.
+        Always registered so mid-session mode switches take effect immediately.
+        In auto mode, returns allow without prompting. In supervised mode,
+        routes through the backend approval flow.
         """
         async def _can_use_tool(tool_name, tool_input, context):
+            if self.permission_mode == "bypassPermissions":
+                return PermissionResultAllow()
             result = await self._request_callback("can_use_tool", {
                 "tool_name": tool_name,
                 "tool_input": tool_input,
@@ -482,6 +488,7 @@ class SDKRelay:
             our_mode = cmd.get("mode", "")
             if our_mode:
                 sdk_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                self.permission_mode = sdk_mode  # live update — callback reads this
                 if self.client:
                     log.info("relay.mode_changed", extra={"from": our_mode, "to": sdk_mode, "applied": "immediate"})
                     try:
@@ -548,6 +555,7 @@ class SDKRelay:
         # Read our vocabulary, translate to SDK format
         agent_mode = os.environ.get("AGENT_MODE", "auto")
         permission_mode = _MODE_MAP.get(agent_mode, "bypassPermissions")
+        self.permission_mode = permission_mode
         sdk_connect_failures = 0
         SDK_MAX_CONNECT_RETRIES = 3
         SDK_CONNECT_RETRY_DELAY_S = 5.0
@@ -711,6 +719,7 @@ class SDKRelay:
                     log.info("relay.sdk_soft_restart_fresh")
                 if self.next_permission_mode:
                     permission_mode = self.next_permission_mode
+                    self.permission_mode = permission_mode
                     self.next_permission_mode = ""
                     log.info("relay.mode_queued", extra={"mode": permission_mode})
                 self.session_id = ""
@@ -735,6 +744,7 @@ class SDKRelay:
             # Apply deferred mode change (set during active session)
             if self.next_permission_mode:
                 permission_mode = self.next_permission_mode
+                self.permission_mode = permission_mode
                 self.next_permission_mode = ""
                 log.info("relay.mode_applied", extra={"mode": permission_mode})
 
@@ -782,6 +792,7 @@ class SDKRelay:
                     our_mode = cmd.get("mode", "")
                     if our_mode:
                         permission_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                        self.permission_mode = permission_mode
                         log.info("relay.idle_mode_changed", extra={"from": our_mode, "to": permission_mode})
                         # Don't break — no need to respawn just for a mode change.
                         # The new mode takes effect when the next input arrives.
