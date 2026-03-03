@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- Python websockets (relay WS transport) ---
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
-    && pip3 install --break-system-packages websockets==15.0.1 claude-agent-sdk==0.1.39 \
+    && pip3 install --break-system-packages websockets==15.0.1 claude-agent-sdk==0.1.39 pytest \
     && apt-get purge -y python3-pip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 

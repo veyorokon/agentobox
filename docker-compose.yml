@@ -83,11 +83,10 @@ services:
 
   dashboard:
     build: ./dashboard
-    mem_limit: 4g
     restart: unless-stopped
     environment:
-      # Cap Node heap below the container limit so OOM triggers GC, not kill
-      NODE_OPTIONS: "--max-old-space-size=3584"
+      # Let Node use up to 8 GB heap — turbopack dev server is memory-hungry
+      NODE_OPTIONS: "--max-old-space-size=8192"
     ports:
       - "5051:5051"
     depends_on:

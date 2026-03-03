@@ -11,18 +11,14 @@ CC process. Inherits env vars from relay: ABOX_CALLBACK_URL, RELAY_AUTH_TOKEN.
 """
 
 import json
-import logging
 import os
 import sys
 import urllib.request
 
-# Log to stderr (captured by relay log infrastructure)
-logging.basicConfig(
-    stream=sys.stderr,
-    level=logging.DEBUG,
-    format='%(asctime)s %(levelname)s %(message)s',
-)
-log = logging.getLogger("team-bridge")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from abox_logging import setup as _setup_logging
+
+log = _setup_logging("team-bridge", level="DEBUG")
 
 # Structure is the grouping — no per-tool "phase" attribute needed.
 PRE = {"TaskList", "TaskGet"}
@@ -62,11 +58,11 @@ def main():
     tool_name = data.get("tool_name", "")
 
     if tool_name not in BRIDGED:
-        log.debug("not bridged, passthrough: %s", tool_name)
+        log.debug("hook.passthrough", extra={"tool": tool_name})
         json.dump({}, sys.stdout)
         return
 
-    log.debug("hook invoked: %s", tool_name)
+    log.debug("hook.invoked", extra={"tool": tool_name})
 
     tool_input = data.get("tool_input", {})
     url = os.environ.get("ABOX_CALLBACK_URL", "")
@@ -74,13 +70,13 @@ def main():
 
     if not url or not token:
         # No backend config — let native tool run unimpeded
-        log.warning("no ABOX_CALLBACK_URL or RELAY_AUTH_TOKEN, passthrough")
+        log.warning("hook.config_missing")
         json.dump({}, sys.stdout)
         return
 
     endpoint = url.rstrip("/") + "/hook-bridge/"
     try:
-        log.debug("calling backend: %s %s", tool_name, endpoint)
+        log.debug("hook.backend_call", extra={"tool": tool_name, "endpoint": endpoint})
         req = urllib.request.Request(
             endpoint,
             data=json.dumps({"tool_name": tool_name, "tool_input": tool_input}).encode(),
@@ -91,9 +87,9 @@ def main():
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read())
-            log.info("backend response: %s status=%d", tool_name, resp.status)
+            log.info("hook.backend_response", extra={"tool": tool_name, "status": resp.status})
     except Exception as e:
-        log.error("backend error for %s: %s", tool_name, e)
+        log.error("hook.backend_error", extra={"tool": tool_name, "error": str(e)})
         # PreToolUse: deny so CC doesnt write stale local files
         # PostToolUse: empty output is fine (native tool already ran)
         if tool_name in PRE:

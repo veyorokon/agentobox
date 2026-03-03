@@ -24,7 +24,6 @@ Synthetic events (not from Claude):
 
 import asyncio
 import json
-import logging
 import os
 import signal
 import sys
@@ -114,28 +113,9 @@ from claude_agent_sdk import (  # noqa: E402
     UserMessage,
 )
 
-class JSONFormatter(logging.Formatter):
-    """JSON log formatter — zero dependencies, matches backend structlog output shape."""
+from abox_logging import setup as _setup_logging  # noqa: E402
 
-    def format(self, record):
-        entry = {
-            "timestamp": self.formatTime(record, self.datefmt),
-            "level": record.levelname.lower(),
-            "logger": record.name,
-            "agent_id": os.environ.get("AGENT_ID", ""),
-            "event": record.getMessage(),
-        }
-        if record.exc_info and record.exc_info[0]:
-            entry["exception"] = self.formatException(record.exc_info)
-        return json.dumps(entry)
-
-
-_handler = logging.StreamHandler(sys.stderr)
-_handler.setFormatter(JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ"))
-logging.root.addHandler(_handler)
-logging.root.setLevel(logging.INFO)
-
-log = logging.getLogger("abox-relay")
+log = _setup_logging("abox-relay")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -195,7 +175,7 @@ class _Redactor:
                         if len(val) >= 8:
                             self._secrets.append(val)
                     except PermissionError:
-                        log.warning("redactor.skip_secret path=%s reason=permission_denied", path)
+                        log.warning("relay.redactor_skip", extra={"path": path, "reason": "permission_denied"})
         # Also redact secrets from mounted env file if readable
         env_file = "/mnt/abox-state/secrets/env"
         if os.path.isfile(env_file):
@@ -207,11 +187,11 @@ class _Redactor:
                         if len(val) >= 8:
                             self._secrets.append(val)
             except PermissionError:
-                log.warning("redactor.skip_env_file path=%s reason=permission_denied", env_file)
+                log.warning("relay.redactor_skip", extra={"path": env_file, "reason": "permission_denied"})
         # Sort longest first so longer secrets are replaced before substrings
         self._secrets.sort(key=len, reverse=True)
         if self._secrets:
-            log.info("Redactor loaded %d secret(s)", len(self._secrets))
+            log.info("relay.redactor_loaded", extra={"secrets": len(self._secrets)})
 
     def redact(self, text: str) -> str:
         """Replace known secret values with [REDACTED]."""
@@ -304,12 +284,12 @@ class WSTransport:
             )
             self._connected = True
             self._reconnect_delay = WS_RECONNECT_DELAY_S
-            log.info("WebSocket connected")
+            log.info("relay.ws_connected")
             return True
         except websockets.exceptions.InvalidStatus as exc:
             # HTTP-level rejection before upgrade completed (e.g. 403).
             code = exc.response.status_code if hasattr(exc, "response") else 0
-            log.warning("WebSocket upgrade rejected: status=%s %s", code, exc)
+            log.warning("relay.ws_rejected", extra={"status": code, "reason": str(exc)})
             self._connected = False
             if code in WS_FATAL_CLOSE_CODES:
                 raise FatalWSClose(code, str(exc)) from exc
@@ -319,13 +299,13 @@ class WSTransport:
             # (this is how our consumer rejects: accept() then close(code=4001)).
             code = exc.rcvd.code if exc.rcvd else 0
             reason = exc.rcvd.reason if exc.rcvd else ""
-            log.warning("WebSocket closed during connect: code=%s reason=%s", code, reason)
+            log.warning("relay.ws_closed_on_connect", extra={"code": code, "reason": reason})
             self._connected = False
             if code in WS_FATAL_CLOSE_CODES:
                 raise FatalWSClose(code, reason) from exc
             return False
         except Exception as exc:
-            log.warning("WebSocket connect failed: %s", exc)
+            log.warning("relay.ws_connect_failed", extra={"error": str(exc)})
             self._connected = False
             return False
 
@@ -364,7 +344,7 @@ class WSTransport:
         except websockets.exceptions.ConnectionClosed as exc:
             code = exc.rcvd.code if exc.rcvd else 0
             reason = exc.rcvd.reason if exc.rcvd else ""
-            log.warning("WS recv closed: code=%s reason=%s", code, reason)
+            log.warning("relay.ws_recv_closed", extra={"code": code, "reason": reason})
             self._connected = False
             if code in WS_FATAL_CLOSE_CODES:
                 raise FatalWSClose(code, reason) from exc
@@ -376,7 +356,7 @@ class WSTransport:
         try:
             return json.loads(data)
         except (json.JSONDecodeError, TypeError) as exc:
-            log.warning("WS recv: malformed JSON (connection still alive): %s", exc)
+            log.warning("relay.ws_recv_malformed_json", extra={"error": str(exc)})
             return None
 
     @property
@@ -484,7 +464,7 @@ class SDKRelay:
             try:
                 allowed_tools = json.loads(allowed_tools_raw)
             except json.JSONDecodeError:
-                log.warning("Invalid ALLOWED_TOOLS env: %s", allowed_tools_raw)
+                log.warning("relay.config_invalid_allowed_tools", extra={"raw": allowed_tools_raw})
 
         return ClaudeAgentOptions(
             model=model or None,
@@ -495,6 +475,9 @@ class SDKRelay:
             cli_path="claude",
             cwd=os.getcwd(),
             can_use_tool=can_use_tool,
+            # 16MB buffer — computer-use screenshots are 2-5MB base64.
+            # SDK default is 1MB which truncates large tool results.
+            max_buffer_size=16 * 2**20,
             # IS_SANDBOX=1 tells the Claude CLI this is a sandboxed container,
             # so it accepts bypassPermissions even when the user has sudo.
             # Without this, the CLI detects sudo capability and refuses to start.
@@ -531,8 +514,7 @@ class SDKRelay:
         try:
             return await asyncio.wait_for(future, timeout=300)
         except asyncio.TimeoutError:
-            log.warning("Callback timeout after 300s: request_id=%s type=%s",
-                        request_id, callback_type)
+            log.warning("relay.callback_timeout", extra={"request_id": request_id, "type": callback_type})
             return {"behavior": "deny", "message": "Timed out waiting for user response"}
         finally:
             self._pending_callbacks.pop(request_id, None)
@@ -562,8 +544,7 @@ class SDKRelay:
         if future and not future.done():
             future.set_result(result)
         else:
-            suffix = f" ({context})" if context else ""
-            log.warning("Stale callback_response%s: request_id=%s", suffix, request_id)
+            log.warning("relay.callback_stale", extra={"request_id": request_id, "context": context or ""})
 
     def _on_stderr(self, line: str):
         """Capture CLI stderr for diagnostics.
@@ -574,7 +555,7 @@ class SDKRelay:
         """
         stripped = line.rstrip()
         if stripped:
-            log.info("[claude-stderr] %s", stripped)
+            log.info("relay.claude_stderr", extra={"line": stripped})
             self._stderr_lines.append(stripped)
 
     def _get_stderr(self, error: Exception | None = None) -> str:
@@ -608,10 +589,7 @@ class SDKRelay:
         if raw is None:
             # Monkey-patch didn't fire — this is a bug, not a normal case.
             # Log loudly so we notice and fix, rather than silently dropping.
-            log.error(
-                "Message missing _raw dict (monkey-patch failed?): type=%s",
-                type(msg).__name__,
-            )
+            log.error("relay.message_missing_raw", extra={"type": type(msg).__name__})
             return None
 
         # Skip text-only user messages (echoes of dashboard input).
@@ -652,7 +630,7 @@ class SDKRelay:
         if sent:
             return
 
-        log.warning("WS send failed, attempting reconnect")
+        log.warning("relay.ws_send_failed")
         reconnected = await self.ws.reconnect()  # may raise FatalWSClose
         if reconnected:
             await self._flush_event_buffer()
@@ -664,12 +642,9 @@ class SDKRelay:
         event_type = event.get("type", "")
         if event_type in CRITICAL_EVENT_TYPES:
             self._event_buffer.append(event)
-            log.warning(
-                "Critical event buffered (WS unavailable): type=%s buffer_size=%d",
-                event_type, len(self._event_buffer),
-            )
+            log.warning("relay.event_buffered", extra={"type": event_type, "buffer_size": len(self._event_buffer)})
         else:
-            log.warning("Event dropped (WS unavailable, non-critical): type=%s", event_type)
+            log.warning("relay.event_dropped", extra={"type": event_type})
 
     async def _flush_event_buffer(self):
         """Flush buffered critical events to the backend.
@@ -690,7 +665,7 @@ class SDKRelay:
             flushed += 1
 
         if flushed:
-            log.info("Flushed %d buffered events, %d remaining", flushed, len(self._event_buffer))
+            log.info("relay.event_buffer_flushed", extra={"flushed": flushed, "remaining": len(self._event_buffer)})
 
     async def _forward_messages(self):
         """Iterate SDK messages and forward each to the backend via WS.
@@ -710,9 +685,9 @@ class SDKRelay:
                     forwarded_count += 1
                     await self._send_event(event)
             elapsed = time.monotonic() - t0
-            log.info("Turn complete: %d messages received, %d forwarded, %.1fs elapsed", msg_count, forwarded_count, elapsed)
+            log.info("relay.turn_complete", extra={"received": msg_count, "forwarded": forwarded_count, "elapsed": round(elapsed, 1)})
         except ProcessError as e:
-            log.warning("Claude exited: code=%s (after %d messages)", e.exit_code, msg_count)
+            log.warning("relay.claude_exited", extra={"code": e.exit_code, "messages": msg_count})
             # Use accumulated stderr (from _on_stderr callback) over the
             # SDK's generic ProcessError.stderr which just says
             # "Check stderr output for details".
@@ -720,7 +695,7 @@ class SDKRelay:
         except (asyncio.CancelledError, FatalWSClose):
             raise  # propagate — run loop handles these
         except Exception as e:
-            log.error("Forward messages error: %s", e)
+            log.error("relay.forward_error", extra={"error": str(e)})
             await self._post_exit_event(1, str(e))
 
     # ── WS downstream: receive commands from backend ──
@@ -740,10 +715,10 @@ class SDKRelay:
 
             if cmd is None:
                 if not self.ws.connected:
-                    log.warning("WS disconnected, attempting reconnect")
+                    log.warning("relay.ws_disconnected")
                     try:
                         if await self.ws.reconnect():
-                            log.info("WS reconnected")
+                            log.info("relay.ws_reconnected")
                             await self._flush_event_buffer()
                     except FatalWSClose:
                         raise  # propagate to run loop
@@ -758,7 +733,7 @@ class SDKRelay:
         routing target changes (SDK methods instead of process signals/stdin).
         """
         cmd_type = cmd.get("type", "")
-        log.info("Handling command: type=%s (client_active=%s)", cmd_type, self.client is not None)
+        log.info("relay.command_received", extra={"type": cmd_type, "client_active": self.client is not None})
 
         if cmd_type == "input":
             payload = cmd.get("payload")
@@ -770,22 +745,22 @@ class SDKRelay:
                 try:
                     await self.client.query(_raw())
                 except Exception as e:
-                    log.error("Query failed: %s", e)
+                    log.error("relay.command_query_failed", extra={"error": str(e)})
 
         elif cmd_type == "signal":
             sig = cmd.get("signal", "")
             if not self.client:
                 return
             if sig == "clear":
-                log.info("Clear requested via WS")
+                log.info("relay.command_clear")
                 self.clear_requested = True
                 await self.client.interrupt()
             elif sig == "restart":
-                log.info("Restart requested via WS")
+                log.info("relay.command_restart")
                 self.restart_requested = True
                 await self.client.interrupt()
             elif sig == "SIGINT":
-                log.info("SIGINT requested via WS")
+                log.info("relay.command_sigint")
                 await self.client.interrupt()
 
         elif cmd_type == "callback_response":
@@ -798,14 +773,14 @@ class SDKRelay:
             if our_mode:
                 sdk_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
                 if self.client:
-                    log.info("Mode change via WS: %s -> %s (applying immediately via SDK)", our_mode, sdk_mode)
+                    log.info("relay.mode_changed", extra={"from": our_mode, "to": sdk_mode, "applied": "immediate"})
                     try:
                         await self.client.set_permission_mode(sdk_mode)
                     except Exception as e:
-                        log.error("set_permission_mode failed: %s", e)
+                        log.error("relay.mode_change_failed", extra={"error": str(e)})
                         self.next_permission_mode = sdk_mode
                 else:
-                    log.info("Mode change via WS: %s -> %s (no client, deferred to next spawn)", our_mode, sdk_mode)
+                    log.info("relay.mode_changed", extra={"from": our_mode, "to": sdk_mode, "applied": "deferred"})
                     self.next_permission_mode = sdk_mode
 
     # ── Synthetic events ──
@@ -828,7 +803,7 @@ class SDKRelay:
             "session_id": self.session_id,
             "agent_id": AGENT_ID,
         }
-        log.info("Posting process_exit (code=%d)", exit_code)
+        log.info("relay.process_exit", extra={"code": exit_code})
         await self._send_event(event)
 
     # ── Signal handling ──
@@ -840,7 +815,7 @@ class SDKRelay:
         behavior). Claude wraps up gracefully, emits a ResultMessage, and
         the run loop decides whether to restart or exit.
         """
-        log.info("Received %s, interrupting Claude", signal.Signals(signum).name)
+        log.info("relay.signal_received", extra={"signal": signal.Signals(signum).name})
         if self.client:
             asyncio.create_task(self.client.interrupt())
 
@@ -871,10 +846,10 @@ class SDKRelay:
         try:
             connected = await self.ws.connect()
             while not connected:
-                log.warning("WS not connected, retrying...")
+                log.warning("relay.ws_not_connected")
                 connected = await self.ws.reconnect()
         except FatalWSClose as exc:
-            log.error("Backend rejected connection (code=%d): %s — not retrying", exc.code, exc.reason)
+            log.error("relay.ws_rejected_fatal", extra={"code": exc.code, "reason": exc.reason})
             return
 
         # Flush any events buffered from a previous connection attempt
@@ -896,54 +871,54 @@ class SDKRelay:
         try:
             await self._send_event(init_diag)
         except FatalWSClose as exc:
-            log.error("Backend rejected during init_diag (code=%d): %s", exc.code, exc.reason)
+            log.error("relay.ws_rejected_init", extra={"code": exc.code, "reason": exc.reason})
             return
 
         while True:
             options = self._build_options(resume_session_id, permission_mode)
-            log.info("Starting SDK client (model=%s, resume=%s)", options.model, options.resume)
+            log.info("relay.sdk_starting", extra={"model": options.model, "resume": options.resume})
 
             try:
                 self._stderr_lines.clear()
-                log.info(
-                    "Creating SDK client (cli_path=%s, cwd=%s, perm=%s, extra_args=%s)",
-                    options.cli_path, options.cwd, options.permission_mode,
-                    {k: v for k, v in (options.extra_args or {}).items()},
-                )
+                log.info("relay.sdk_creating", extra={
+                    "cli_path": options.cli_path, "cwd": options.cwd,
+                    "perm": options.permission_mode,
+                    "extra_args": {k: v for k, v in (options.extra_args or {}).items()},
+                })
                 self.client = ClaudeSDKClient(options=options)
-                log.info("SDK client created, calling connect()...")
+                log.info("relay.sdk_created")
                 await self.client.connect()
                 sdk_connect_failures = 0  # reset on success
             except CLINotFoundError:
-                log.error("claude binary not found — cannot recover")
+                log.error("relay.sdk_cli_not_found")
                 await self._post_exit_event(127, "claude: command not found")
                 break
             except ProcessError as e:
                 real_stderr = self._get_stderr(e)
-                log.error(
-                    "SDK connect ProcessError: code=%s stderr=%s (captured %d stderr lines)",
-                    e.exit_code, real_stderr, len(self._stderr_lines),
-                )
+                log.error("relay.sdk_process_error", extra={
+                    "code": e.exit_code, "stderr": real_stderr,
+                    "captured_lines": len(self._stderr_lines),
+                })
                 await self._post_exit_event(e.exit_code or 1, real_stderr)
                 break
             except Exception as e:
                 sdk_connect_failures += 1
                 real_stderr = self._get_stderr(e)
-                log.error(
-                    "SDK client connect failed (%d/%d): %s type=%s (captured %d stderr lines: %s)",
-                    sdk_connect_failures, SDK_MAX_CONNECT_RETRIES,
-                    e, type(e).__name__, len(self._stderr_lines), real_stderr[:500],
-                )
+                log.error("relay.sdk_connect_failed", extra={
+                    "attempt": sdk_connect_failures, "max_attempts": SDK_MAX_CONNECT_RETRIES,
+                    "error": str(e), "type": type(e).__name__,
+                    "captured_lines": len(self._stderr_lines), "stderr": real_stderr[:500],
+                })
                 if sdk_connect_failures >= SDK_MAX_CONNECT_RETRIES:
-                    log.error("SDK connect failed %d times, giving up", sdk_connect_failures)
+                    log.error("relay.sdk_connect_exhausted", extra={"attempts": sdk_connect_failures})
                     await self._post_exit_event(1, real_stderr)
                     break
                 delay = SDK_CONNECT_RETRY_DELAY_S * sdk_connect_failures
-                log.info("Retrying SDK connect in %.1fs...", delay)
+                log.info("relay.sdk_connect_retry", extra={"delay": round(delay, 1)})
                 await asyncio.sleep(delay)
                 continue
 
-            log.info("SDK client connected (perm=%s, resume=%s)", permission_mode, resume_session_id or "fresh")
+            log.info("relay.sdk_connected", extra={"perm": permission_mode, "resume": resume_session_id or "fresh"})
 
             # Two tasks: forward messages upstream, receive commands downstream
             forward_task = asyncio.create_task(self._forward_messages(), name="forward")
@@ -953,7 +928,7 @@ class SDKRelay:
             # start so forward_task is already iterating receive_messages() and
             # will capture Claude's response.
             if self._pending_input:
-                log.info("Draining pending input from idle wait")
+                log.info("relay.idle_drain_pending")
                 pending_payload = self._pending_input
                 self._pending_input = None
                 await self._handle_command({"type": "input", "payload": pending_payload})
@@ -978,11 +953,7 @@ class SDKRelay:
                 except asyncio.CancelledError:
                     continue
                 if isinstance(exc, FatalWSClose):
-                    log.error(
-                        "Backend rejected with fatal code=%d: %s — shutting down",
-                        exc.code,
-                        exc.reason,
-                    )
+                    log.error("relay.ws_fatal_rejection", extra={"code": exc.code, "reason": exc.reason})
                     fatal = True
                     break
 
@@ -1000,8 +971,10 @@ class SDKRelay:
                     fut.cancel()
             self._pending_callbacks.clear()
 
-            log.info("SDK client disconnected, evaluating exit path (fatal=%s, restart=%s, clear=%s, exit_posted=%s)",
-                     fatal, self.restart_requested, self.clear_requested, self._exit_posted)
+            log.info("relay.sdk_disconnected", extra={
+                "fatal": fatal, "restart": self.restart_requested,
+                "clear": self.clear_requested, "exit_posted": self._exit_posted,
+            })
 
             if fatal:
                 break
@@ -1014,7 +987,7 @@ class SDKRelay:
                 self._stderr_lines.clear()
                 resume_session_id = ""
                 self.session_id = ""
-                log.info("Clear: respawning fresh (no resume)")
+                log.info("relay.sdk_clear_respawn")
                 continue
 
             if self.restart_requested:
@@ -1023,13 +996,13 @@ class SDKRelay:
                 self._stderr_lines.clear()
                 if self.session_id:
                     resume_session_id = self.session_id
-                    log.info("Soft restart: resume %s", self.session_id)
+                    log.info("relay.sdk_soft_restart", extra={"resume": self.session_id})
                 else:
-                    log.info("Soft restart: no session_id, starting fresh")
+                    log.info("relay.sdk_soft_restart_fresh")
                 if self.next_permission_mode:
                     permission_mode = self.next_permission_mode
                     self.next_permission_mode = ""
-                    log.info("Permission mode for next spawn: %s", permission_mode)
+                    log.info("relay.mode_queued", extra={"mode": permission_mode})
                 self.session_id = ""
                 continue
 
@@ -1053,9 +1026,9 @@ class SDKRelay:
             if self.next_permission_mode:
                 permission_mode = self.next_permission_mode
                 self.next_permission_mode = ""
-                log.info("Applying deferred mode change: %s", permission_mode)
+                log.info("relay.mode_applied", extra={"mode": permission_mode})
 
-            log.info("Claude finished turn, entering idle wait (resume=%s, mode=%s)", resume_session_id, permission_mode)
+            log.info("relay.idle_waiting", extra={"resume": resume_session_id, "mode": permission_mode})
 
             idle_fatal = False
             while True:
@@ -1067,7 +1040,7 @@ class SDKRelay:
 
                 if cmd is None:
                     if not self.ws.connected:
-                        log.warning("WS disconnected while idle, reconnecting")
+                        log.warning("relay.idle_ws_disconnected")
                         try:
                             if await self.ws.reconnect():
                                 await self._flush_event_buffer()
@@ -1077,14 +1050,14 @@ class SDKRelay:
                     continue
 
                 cmd_type = cmd.get("type", "")
-                log.info("Idle received command: type=%s", cmd_type)
+                log.info("relay.idle_command", extra={"type": cmd_type})
                 if cmd_type == "input":
                     self._pending_input = cmd.get("payload")
-                    log.info("Idle: got input, will respawn SDK client")
+                    log.info("relay.idle_input_received")
                     break
                 elif cmd_type == "signal":
                     sig = cmd.get("signal", "")
-                    log.info("Idle: signal=%s", sig)
+                    log.info("relay.idle_signal", extra={"signal": sig})
                     if sig == "clear":
                         resume_session_id = ""
                         break
@@ -1099,7 +1072,7 @@ class SDKRelay:
                     our_mode = cmd.get("mode", "")
                     if our_mode:
                         permission_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
-                        log.info("Idle: mode %s -> %s (effective next spawn)", our_mode, permission_mode)
+                        log.info("relay.idle_mode_changed", extra={"from": our_mode, "to": permission_mode})
                         # Don't break — no need to respawn just for a mode change.
                         # The new mode takes effect when the next input arrives.
 
@@ -1118,10 +1091,10 @@ class SDKRelay:
 
 def main():
     if not AGENT_ID:
-        log.error("AGENT_ID not set")
+        log.error("relay.config_missing_agent_id")
         sys.exit(1)
     if not CALLBACK_URL:
-        log.error("ABOX_CALLBACK_URL not set — cannot connect to backend")
+        log.error("relay.config_missing_callback_url")
         sys.exit(1)
 
     # Log env diagnostics at startup — these go to tmux pane AND
@@ -1132,18 +1105,18 @@ def main():
                  "ANTHROPIC_BASE_URL"]
     diag = {k: ("set" if k == "ANTHROPIC_API_KEY" and os.environ.get(k) else os.environ.get(k, ""))
             for k in diag_keys}
-    log.info("abox-relay starting (agent=%s) env=%s", AGENT_ID, diag)
+    log.info("relay.starting", extra={"agent": AGENT_ID, "env": diag})
 
     base_url = os.environ.get("ANTHROPIC_BASE_URL", "")
-    log.info("api_proxy active=%s base_url=%s", bool(base_url), base_url or "direct")
+    log.info("relay.proxy_status", extra={"active": bool(base_url), "base_url": base_url or "direct"})
 
     relay = SDKRelay()
     try:
         asyncio.run(relay.run())
-        log.info("Relay exiting cleanly")
+        log.info("relay.stopped")
         sys.exit(0)
     except Exception as e:
-        log.error("Relay crashed: %s type=%s", e, type(e).__name__)
+        log.error("relay.crashed", extra={"error": str(e), "type": type(e).__name__})
         sys.exit(1)
 
 

@@ -24,8 +24,6 @@ OPS: If the proxy enters a restart loop (visible in s6 logs), check:
 
 import http.client
 import http.server
-import json
-import logging
 import os
 import ssl
 import sys
@@ -66,25 +64,9 @@ _REAL_KEY = _load_key()
 # Reusable SSL context for upstream connections
 _SSL_CTX = ssl.create_default_context()
 
-# Structured JSON logger — matches relay format so logs are greppable together
-_log = logging.getLogger("abox-apiproxy")
-_handler = logging.StreamHandler(sys.stderr)
+from abox_logging import setup as _setup_logging
 
-
-class _JSONFormatter(logging.Formatter):
-    def format(self, record):
-        return json.dumps({
-            "timestamp": self.formatTime(record, self.datefmt),
-            "level": record.levelname.lower(),
-            "logger": record.name,
-            "agent_id": os.environ.get("AGENT_ID", ""),
-            "event": record.getMessage(),
-        })
-
-
-_handler.setFormatter(_JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ"))
-_log.addHandler(_handler)
-_log.setLevel(logging.INFO)
+_log = _setup_logging("abox-apiproxy")
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -144,8 +126,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             conn.request(self.command, self.path, body=body, headers=upstream_headers)
             resp = conn.getresponse()
         except Exception as exc:
-            _log.error("proxy.upstream_connect_failed method=%s path=%s error=%s",
-                        self.command, self.path, exc)
+            _log.error("proxy.upstream_connect_failed", extra={
+                        "method": self.command, "path": self.path, "error": str(exc)})
             self.send_response(502)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
@@ -154,8 +136,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Log non-2xx upstream responses
         if resp.status >= 400:
-            _log.warning("proxy.upstream_error status=%d method=%s path=%s",
-                         resp.status, self.command, self.path)
+            _log.warning("proxy.upstream_error", extra={
+                         "status": resp.status, "method": self.command, "path": self.path})
 
         # Send response status
         self.send_response(resp.status)
@@ -183,7 +165,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    _log.info("proxy.started port=%d upstream=%s:%d", LISTEN_PORT, UPSTREAM_HOST, UPSTREAM_PORT)
+    _log.info("proxy.started", extra={"port": LISTEN_PORT, "upstream": f"{UPSTREAM_HOST}:{UPSTREAM_PORT}"})
     server = http.server.ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), ProxyHandler)
     try:
         server.serve_forever()

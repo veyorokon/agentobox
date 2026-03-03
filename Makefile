@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs test test-local lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -39,6 +39,10 @@ test:
 
 test-local:
 	cd backend && uv run python -m pytest agents/tests/ -v
+
+test-agent:
+	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent:latest \
+		-m pytest /opt/abox/tests -v
 
 lint:
 	cd backend && uv run ruff check agents/

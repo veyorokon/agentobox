@@ -314,7 +314,8 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         try:
             self.upstream_ws = await websockets.connect(
                 vnc_ws_url,
-                max_size=2**20,
+                # 16 MB — VNC frames with high-res screenshots can exceed 1 MB.
+                max_size=16 * 2**20,
                 open_timeout=10,
             )
             log.info("vnc.upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))

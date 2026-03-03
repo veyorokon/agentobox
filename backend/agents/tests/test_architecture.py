@@ -594,16 +594,17 @@ _VAGUE_EVENT_TERMS = {
     "message", "data", "result", "process", "handle",
 }
 
-# Directories to search for structlog usage.
+# Directories to search for log calls (structlog on backend, stdlib logging on agent).
 # AGENTS_DIR.parent is the backend root (/app in Docker, backend/ on host).
 _BACKEND_ROOT = AGENTS_DIR.parent
-_LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"]
+_AGENT_ABOX_DIR = AGENT_ROOT / "rootfs" / "opt" / "abox"
+_LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config", _AGENT_ABOX_DIR]
 
 # Valid event name domains — first segment of every domain.action event name.
 # Adding a new domain is a deliberate architectural decision, not an accident.
 _VALID_DOMAINS = {
-    "auth", "broadcast", "callback", "comms", "feed", "graphql",
-    "lifecycle", "mcp", "reconciler", "relay", "runtime", "stream", "vnc",
+    "auth", "broadcast", "callback", "comms", "feed", "graphql", "hook",
+    "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime", "stream", "vnc",
 }
 
 # Full regex: domain.action or domain.sub_action (1-2 dot-separated segments).
