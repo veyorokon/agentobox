@@ -169,7 +169,15 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   useEffect(() => {
     if (!showVnc) return
     const raf = requestAnimationFrame(() => {
+      // Suppress noVNC's "requires a secure context (TLS)" console warning —
+      // expected in local dev (http://localhost), harmless, distracting in logs.
+      const origWarn = console.warn
+      console.warn = (...args: unknown[]) => {
+        if (typeof args[0] === "string" && args[0].includes("secure context")) return
+        origWarn.apply(console, args)
+      }
       try { vncRef.current?.connect() } catch {}
+      console.warn = origWarn
     })
     return () => cancelAnimationFrame(raf)
   }, [showVnc])
