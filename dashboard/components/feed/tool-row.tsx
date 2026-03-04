@@ -171,7 +171,7 @@ function ToolResultContent({
   const cleaned = stripSystemReminders(result)
 
   return (
-    <div>
+    <div className="group/result">
       <div
         ref={contentRef}
         className={cn(
@@ -179,8 +179,8 @@ function ToolResultContent({
           clamped && needsClamp && "max-h-32",
         )}
         style={
-          clamped && needsClamp
-            ? { maskImage: "linear-gradient(black 80%, transparent)" }
+          needsClamp
+            ? { maskImage: clamped ? "linear-gradient(black 70%, transparent)" : undefined }
             : undefined
         }
       >
@@ -203,7 +203,7 @@ function ToolResultContent({
         <button
           type="button"
           onClick={() => setClamped(!clamped)}
-          className="text-xs text-muted hover:text-secondary transition-colors cursor-pointer"
+          className="text-xs text-muted hover:text-secondary transition-colors cursor-pointer opacity-0 group-hover/result:opacity-100 transition-opacity"
         >
           {clamped ? "Show more" : "Show less"}
         </button>
