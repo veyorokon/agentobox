@@ -3354,8 +3354,8 @@ function AgentCardRow({
             </div>
           )}
           <div className="relative shrink-0">
-            <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
-            {/* Attention dot overlay on avatar — takes precedence over lifecycle */}
+            <AgentTag name={agent.name} />
+            {/* Attention dot */}
             {hasAttention && attCfg && (
               <span
                 className={cn(
@@ -3366,14 +3366,6 @@ function AgentCardRow({
               />
             )}
           </div>
-          <span
-            className={cn(
-              "text-[12px] font-medium shrink-0",
-              isStopped ? "text-muted" : "text-default",
-            )}
-          >
-            {agent.name}
-          </span>
           <ModePill mode={agentMode} onChange={setAgentMode} />
           {/* Tag pills — show 1 + overflow count, shrink before mode */}
           {agent.tags.length > 0 && (

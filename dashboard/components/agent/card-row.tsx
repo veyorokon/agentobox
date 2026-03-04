@@ -22,7 +22,7 @@ import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAcknowledgeAgent, useSetAgentMode, useInterruptAgent, useRestartAgent, useHardRestartAgent, useRemoveAgent } from "@/lib/graphql/hooks/use-agents"
 import { useFeed, useResolvePermission, useResolvePlan, useSendMessage } from "@/lib/graphql/hooks/use-feed"
 import { Collapsible } from "@/components/ui/collapsible"
-import { AgentAvatar } from "@/components/agent/avatar"
+import { AgentTag } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
 import { VncThumbnail } from "@/components/agent/vnc-thumbnail"
 import { AgentDetailFeed } from "@/components/agent/detail-feed"
@@ -187,8 +187,8 @@ export function AgentCardRow({
             </div>
           )}
           <div className="relative shrink-0">
-            <AgentAvatar name={agent.name} size="sm" stopped={isStopped} />
-            {/* Attention dot overlay on avatar -- takes precedence over lifecycle */}
+            <AgentTag name={agent.name} className={cn("text-[12px]", isStopped && "opacity-50")} />
+            {/* Attention dot */}
             {hasAttention && attCfg && (
               <span
                 className={cn(
@@ -199,14 +199,6 @@ export function AgentCardRow({
               />
             )}
           </div>
-          <span
-            className={cn(
-              "text-[12px] font-medium shrink-0",
-              isStopped ? "text-muted" : "text-default",
-            )}
-          >
-            {agent.name}
-          </span>
           <ModePill mode={agent.mode} onChange={handleModeChange} />
           {/* Tag pills -- show 1 + overflow count, shrink before mode */}
           {agent.tags.length > 0 && (
