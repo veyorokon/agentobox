@@ -36,6 +36,7 @@ Semantics:
 
 import json
 import shlex
+import structlog
 import textwrap
 
 from agents.adapters.claude_code.registries import (
@@ -43,6 +44,8 @@ from agents.adapters.claude_code.registries import (
     MODELS_REGISTRY,
     TEAM_CONFIGS,
 )
+
+log = structlog.get_logger("abox.adapter.cc")
 
 # ---------------------------------------------------------------------------
 # CC-specific constants (private — services never import these directly)
@@ -730,9 +733,11 @@ class ClaudeCodeAdapter:
         for name in names:
             entry = MCP_REGISTRY.get(name)
             if not entry:
+                log.warning("adapter.mcp_unknown_server", server=name)
                 continue
             compat = entry.get("compat")
             if compat and variant not in compat:
+                log.info("adapter.mcp_incompatible", server=name, variant=variant, compat=compat)
                 continue
             resolved[name] = {
                 "command": entry["command"],

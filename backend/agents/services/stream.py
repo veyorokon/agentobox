@@ -133,17 +133,18 @@ async def _supersede_pending_plans(agent: Agent) -> None:
         type="plan",
         plan_status="pending",
     )
-    # Fetch before bulk update so we can broadcast each one
-    stale_ids = [item.id async for item in stale_qs.only("id")]
-    if not stale_ids:
+    # Fetch full objects before bulk update so we can broadcast after
+    stale_items = [item async for item in stale_qs]
+    if not stale_items:
         return
 
     await stale_qs.aupdate(plan_status="superseded")
-    # Broadcast so dashboard subscribers see the status change
-    for item_id in stale_ids:
-        item = await TeamFeedItem.objects.aget(id=item_id)
+    # Broadcast so dashboard subscribers see the status change.
+    # Refresh from DB to get the updated plan_status value.
+    for item in stale_items:
+        item.plan_status = "superseded"
         await broadcast_feed_item(item)
-    log.info("stream.plans_superseded", agent_id=str(agent.id), count=len(stale_ids))
+    log.info("stream.plans_superseded", agent_id=str(agent.id), count=len(stale_items))
 
 
 async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:

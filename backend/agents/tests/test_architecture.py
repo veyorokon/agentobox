@@ -603,7 +603,7 @@ _LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config", _AGENT_ABOX_DIR]
 # Valid event name domains — first segment of every domain.action event name.
 # Adding a new domain is a deliberate architectural decision, not an accident.
 _VALID_DOMAINS = {
-    "auth", "broadcast", "callback", "comms", "feed", "graphql", "hook",
+    "adapter", "auth", "broadcast", "callback", "comms", "feed", "graphql", "hook",
     "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime", "stream", "vnc",
 }
 

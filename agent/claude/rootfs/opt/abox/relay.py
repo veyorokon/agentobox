@@ -136,6 +136,11 @@ _MODE_MAP = {
 }
 
 
+def _translate_mode(our_mode: str) -> str:
+    """Translate backend vocabulary to SDK permission format."""
+    return _MODE_MAP.get(our_mode, "bypassPermissions")
+
+
 # ---------------------------------------------------------------------------
 # Main relay
 # ---------------------------------------------------------------------------
@@ -492,7 +497,7 @@ class SDKRelay:
             # relay translates to SDK format (bypassPermissions/plan/default)
             our_mode = cmd.get("mode", "")
             if our_mode:
-                sdk_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                sdk_mode = _translate_mode(our_mode)
                 self.permission_mode = sdk_mode  # live update — callback reads this
                 if self.client:
                     log.info("relay.mode_changed", extra={"from": our_mode, "to": sdk_mode, "applied": "immediate"})
@@ -559,7 +564,7 @@ class SDKRelay:
         resume_session_id = os.environ.get("RESUME_SESSION_ID", "")
         # Read our vocabulary, translate to SDK format
         agent_mode = os.environ.get("AGENT_MODE", "auto")
-        permission_mode = _MODE_MAP.get(agent_mode, "bypassPermissions")
+        permission_mode = _translate_mode(agent_mode)
         self.permission_mode = permission_mode
         sdk_connect_failures = 0
         SDK_MAX_CONNECT_RETRIES = 3
@@ -798,7 +803,7 @@ class SDKRelay:
                 elif cmd_type == "mode":
                     our_mode = cmd.get("mode", "")
                     if our_mode:
-                        permission_mode = _MODE_MAP.get(our_mode, "bypassPermissions")
+                        permission_mode = _translate_mode(our_mode)
                         self.permission_mode = permission_mode
                         log.info("relay.idle_mode_changed", extra={"from": our_mode, "to": permission_mode})
                         # Don't break — no need to respawn just for a mode change.

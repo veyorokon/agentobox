@@ -28,6 +28,17 @@ from agents.graphql.types import AgentFeedbackType, AgentTaskType, AgentType, Pr
 log = structlog.get_logger("abox.graphql")
 
 
+async def _authorize_feed_item(info, feed_item_id: ID):
+    """Fetch a feed item and verify the requesting user owns its project."""
+    from agents.models import TeamFeedItem
+    from projects.models import Project
+
+    item = await TeamFeedItem.objects.aget(id=feed_item_id)
+    user = info.context["request"].user
+    await Project.objects.aget(id=item.project_id, owner=user)
+    return item
+
+
 @strawberry.input
 class VolumeMountInput:
     name: str
@@ -301,17 +312,10 @@ class AgentMutation:
         always_allow: if True, persist the tool to Agent.allowed_tools
         so future sessions pre-authorize it (no more prompts).
         """
-        from agents.models import TeamFeedItem
         from agents.services.feed import resolve_permission
         from agents.graphql.types import model_to_feed_item_type
 
-        item = await TeamFeedItem.objects.aget(id=feed_item_id)
-
-        # Auth: ensure user owns the project
-        user = info.context["request"].user
-        from projects.models import Project
-        await Project.objects.aget(id=item.project_id, owner=user)
-
+        item = await _authorize_feed_item(info, feed_item_id)
         item = await resolve_permission(item, verdict, always_allow=always_allow)
         return model_to_feed_item_type(item)
 
@@ -323,16 +327,10 @@ class AgentMutation:
         info: strawberry.types.Info,
     ) -> TeamFeedItemType:
         """Resolve a plan proposal. verdict: 'approved' | 'rejected'."""
-        from agents.models import TeamFeedItem
         from agents.services.feed import resolve_plan
         from agents.graphql.types import model_to_feed_item_type
 
-        item = await TeamFeedItem.objects.aget(id=feed_item_id)
-
-        user = info.context["request"].user
-        from projects.models import Project
-        await Project.objects.aget(id=item.project_id, owner=user)
-
+        item = await _authorize_feed_item(info, feed_item_id)
         item = await resolve_plan(item, verdict)
         return model_to_feed_item_type(item)
 

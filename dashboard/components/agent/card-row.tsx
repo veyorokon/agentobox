@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   ArrowUp,
   ChevronRight,
@@ -30,6 +30,7 @@ import { AgentSettingsPanel, type SettingsPanelHandle } from "@/components/agent
 import { AgentSkillsView } from "@/components/agent/skills-view"
 import { AgentTasksView } from "@/components/agent/tasks-view"
 import { CardActionStrip } from "@/components/agent/card-action-strip"
+import { useClickOutside } from "@/lib/hooks/use-click-outside"
 import type { Agent, AttentionLevel, CardActionItem, ViewMode } from "@/lib/types"
 
 export interface AgentCardRowProps {
@@ -98,16 +99,8 @@ export function AgentCardRow({
   }, [globalViewMode])
 
   // Close kebab on outside click
-  useEffect(() => {
-    if (!kebabOpen) return
-    const handler = (e: MouseEvent) => {
-      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) {
-        setKebabOpen(false)
-      }
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [kebabOpen])
+  const closeKebab = useCallback(() => setKebabOpen(false), [])
+  useClickOutside(kebabRef, closeKebab, kebabOpen)
 
   const handleSendMessage = () => {
     const text = composerText.trim()

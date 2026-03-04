@@ -45,6 +45,7 @@ Snapshot structure (our internal format for OpenCode):
 
 import json
 import shlex
+import structlog
 import textwrap
 
 from agents.adapters.opencode.registries import (
@@ -52,6 +53,8 @@ from agents.adapters.opencode.registries import (
     MODELS_REGISTRY,
     TEAM_CONFIGS,
 )
+
+log = structlog.get_logger("abox.adapter.oc")
 
 # ---------------------------------------------------------------------------
 # OC-specific constants (private)
@@ -591,15 +594,17 @@ class OpenCodeAdapter:
             # Route through local proxy — provider-specific env vars
             # point to localhost proxy which injects the real key
             provider = model.split("/")[0] if "/" in model else "anthropic"
-            if provider == "anthropic":
-                lines.append(f"export ANTHROPIC_API_KEY='proxy-placeholder'")
-                lines.append(f"export ANTHROPIC_BASE_URL='http://localhost:{_PROXY_PORT}'")
-            elif provider == "openai":
-                lines.append(f"export OPENAI_API_KEY='proxy-placeholder'")
-                lines.append(f"export OPENAI_BASE_URL='http://localhost:{_PROXY_PORT}'")
-            elif provider == "google":
-                lines.append(f"export GEMINI_API_KEY='proxy-placeholder'")
-                lines.append(f"export GEMINI_BASE_URL='http://localhost:{_PROXY_PORT}'")
+            # Placeholder keys pass provider format validation while routing
+            # through the local proxy which swaps in the real key.
+            _PLACEHOLDERS = {
+                "anthropic": ("ANTHROPIC_API_KEY", "sk-ant-proxy00-placeholder-for-agentobox"),
+                "openai": ("OPENAI_API_KEY", "sk-proxy-placeholder-for-agentobox"),
+                "google": ("GEMINI_API_KEY", "proxy-placeholder-for-agentobox"),
+            }
+            env_key, placeholder = _PLACEHOLDERS.get(provider, ("ANTHROPIC_API_KEY", "proxy-placeholder"))
+            base_url_key = env_key.replace("_API_KEY", "_BASE_URL")
+            lines.append(f"export {env_key}='{placeholder}'")
+            lines.append(f"export {base_url_key}='http://localhost:{_PROXY_PORT}'")
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID={_shell_escape(resume_session_id)}")
@@ -635,9 +640,11 @@ class OpenCodeAdapter:
         for name in names:
             entry = MCP_REGISTRY.get(name)
             if not entry:
+                log.warning("adapter.mcp_unknown_server", server=name)
                 continue
             compat = entry.get("compat")
             if compat and variant not in compat:
+                log.info("adapter.mcp_incompatible", server=name, variant=variant, compat=compat)
                 continue
             resolved[name] = {
                 "command": list(entry["command"]),
