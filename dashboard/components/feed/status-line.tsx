@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils"
 import { LIFECYCLE_CONFIG } from "@/lib/config"
 import type { LifecycleStatus } from "@/lib/types"
-import { AgentAvatar } from "@/components/agent/avatar"
+import { AgentTag } from "@/components/agent/avatar"
 
 export interface AgentStatusLineProps {
   agent: string
@@ -21,12 +21,7 @@ export function AgentStatusLine({ agent, from, to, onClickAgent }: AgentStatusLi
 
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
-      <button type="button" onClick={() => onClickAgent?.(agent)} className="shrink-0 cursor-pointer">
-        <AgentAvatar name={agent} size="sm" />
-      </button>
-      <span className="text-[10px] text-muted font-mono">
-        {agent}
-      </span>
+      <AgentTag name={agent} onClick={onClickAgent} />
       <span className="text-[10px] text-muted/40 font-mono">{from}</span>
       <span className="text-[10px] text-muted/30">→</span>
       <span className={cn("text-[10px] font-mono font-medium", toConfig.text)}>

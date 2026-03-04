@@ -777,6 +777,20 @@ function useBreakpoint(): Breakpoint {
 /*  AGENT AVATAR                                                       */
 /* ================================================================== */
 
+/** Colored @name tag — replaces circle avatars in feed contexts */
+function AgentTag({ name }: { name: string }) {
+  const hue = agentHue(name)
+  return (
+    <span
+      className="text-[11px] font-mono font-medium shrink-0"
+      style={{ color: `hsl(${hue} 55% 68%)` }}
+    >
+      @{name}
+    </span>
+  )
+}
+
+/** Letter avatar — only used in sidebar (collapsed card headers) */
 function AgentAvatar({
   name,
   size = "md",
@@ -804,19 +818,9 @@ function AgentAvatar({
   )
 }
 
-/** Round avatar for chat feed (matches assistant-message.tsx) */
+/** @name tag alias — replaces ChatAvatar in feed */
 function ChatAvatar({ name }: { name: string }) {
-  const hue = agentHue(name)
-  return (
-    <div
-      className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-on-emphasis mt-1"
-      style={{
-        backgroundColor: `hsl(${hue} var(--color-avatar-saturation) var(--color-avatar-lightness))`,
-      }}
-    >
-      {name.charAt(0).toUpperCase()}
-    </div>
-  )
+  return <AgentTag name={name} />
 }
 
 /* ================================================================== */
@@ -1083,7 +1087,7 @@ function PlanCard({
   if (planStatus === "superseded") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
         <span className="text-[10px] font-mono text-muted">
           Plan: {title} · superseded
         </span>
@@ -1094,7 +1098,7 @@ function PlanCard({
   if (planStatus === "approved") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
         <span className="text-[10px] font-mono text-success">
           Plan: {title} <Check className="inline h-3 w-3" strokeWidth={2.5} /> approved
         </span>
@@ -1105,7 +1109,7 @@ function PlanCard({
   if (planStatus === "rejected") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
         <span className="text-[10px] font-mono text-muted">
           Plan: {title} <X className="inline h-3 w-3" strokeWidth={2.5} /> rejected
         </span>
@@ -1116,7 +1120,7 @@ function PlanCard({
   // Pending — just a notification line, no card
   return (
     <div className="flex items-center gap-2 py-0.5 justify-center">
-      <AgentAvatar name={agent} size="sm" />
+      <AgentTag name={agent} />
       <span className="text-[10px] font-mono text-warning">
         Plan: {title} · awaiting review
       </span>
@@ -1141,7 +1145,7 @@ function PermissionCard({
   if (status === "allowed") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
         <span className="text-[10px] font-mono text-success">
           Allowed: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <Check className="inline h-3 w-3" strokeWidth={2.5} />
         </span>
@@ -1152,7 +1156,7 @@ function PermissionCard({
   if (status === "denied") {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
         <span className="text-[10px] font-mono text-muted">
           Denied: <code className="bg-surface-sunken/60 px-1 rounded">{command}</code> <X className="inline h-3 w-3" strokeWidth={2.5} />
         </span>
@@ -1223,7 +1227,7 @@ function MultiQuestionCard({
   if (submitted) {
     return (
       <div className="flex items-center gap-2 py-0.5 justify-center">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
         <span className="text-[10px] font-mono text-success">
           Answered {questions.length} questions <Check className="inline h-3 w-3" strokeWidth={2.5} />
         </span>
@@ -1506,11 +1510,8 @@ function AgentStatusLine({ agent, from, to, onClickAgent }: { agent: string; fro
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
       <button type="button" onClick={() => onClickAgent?.(agent)} className="shrink-0 cursor-pointer">
-        <AgentAvatar name={agent} size="sm" />
+        <AgentTag name={agent} />
       </button>
-      <span className="text-[10px] text-muted font-mono">
-        {agent}
-      </span>
       <span className="text-[10px] text-muted/40 font-mono">{from}</span>
       <span className="text-[10px] text-muted/30">→</span>
       <span className={cn("text-[10px] font-mono font-medium", toConfig.text)}>
@@ -1528,11 +1529,11 @@ function AgentToAgentMessage({ from, to, text, onClickAgent }: { from: string; t
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
       <button type="button" onClick={() => onClickAgent?.(from)} className="shrink-0 cursor-pointer">
-        <AgentAvatar name={from} size="sm" />
+        <AgentTag name={from} />
       </button>
       <span className="text-[10px] text-muted/30">→</span>
       <button type="button" onClick={() => onClickAgent?.(to)} className="shrink-0 cursor-pointer">
-        <AgentAvatar name={to} size="sm" />
+        <AgentTag name={to} />
       </button>
       <span className="text-[10px] text-secondary font-mono truncate max-w-md">{text}</span>
     </div>
@@ -2767,11 +2768,11 @@ function AttentionBar({
 
       {/* Current item */}
       <div className={cn("flex items-center gap-2 min-w-0", isFocused && "opacity-50")}>
-        <AgentAvatar name={item.agent} size="sm" />
+        <AgentTag name={item.agent} />
         <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
           {item.type === "permission"
-            ? `${item.agent} wants to run: ${item.command}`
-            : `${item.agent} proposed: ${item.title}`}
+            ? `wants to run: ${item.command}`
+            : `proposed: ${item.title}`}
         </span>
         <div className="flex items-center gap-1 shrink-0">
           {item.type === "permission" ? (

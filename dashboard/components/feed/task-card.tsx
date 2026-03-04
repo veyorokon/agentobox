@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { AgentAvatar } from "@/components/agent/avatar"
+import { AgentTag } from "@/components/agent/avatar"
 
 export interface TaskFeedCardProps {
   agent: string
@@ -30,11 +30,9 @@ export function TaskFeedCard({ agent, text, from, to, target }: TaskFeedCardProp
 
   return (
     <div className="flex items-center justify-center gap-2 py-0.5">
-      <div className="shrink-0">
-        <AgentAvatar name={actor} size="sm" />
-      </div>
+      <AgentTag name={actor} />
       <span className="text-[10px] text-muted font-mono truncate max-w-md">
-        {actor} {verb(from, to)} &ldquo;{text}&rdquo;
+        {verb(from, to)} &ldquo;{text}&rdquo;
       </span>
       <span className={cn("text-[10px] font-mono font-medium", style.text)}>
         {to === "completed" ? "\u2713" : style.label}

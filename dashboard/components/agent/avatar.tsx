@@ -31,6 +31,37 @@ export function AgentAvatar({
   )
 }
 
+/* ── Colored @name tag (replaces avatar in feed contexts) ──────────── */
+
+export interface AgentTagProps {
+  name: string
+  onClick?: (name: string) => void
+  className?: string
+}
+
+/** Colored @agent-name inline tag — replaces circle avatars in feeds. */
+export function AgentTag({ name, onClick, className }: AgentTagProps) {
+  const hue = agentHue(name)
+  const tag = (
+    <span
+      className={cn("text-[11px] font-mono font-medium shrink-0", className)}
+      style={{ color: `hsl(${hue} 55% 68%)` }}
+    >
+      @{name}
+    </span>
+  )
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={() => onClick(name)} className="shrink-0 cursor-pointer">
+        {tag}
+      </button>
+    )
+  }
+
+  return tag
+}
+
 export interface ChatAvatarProps {
   name: string
 }

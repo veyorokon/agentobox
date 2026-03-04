@@ -11,7 +11,7 @@ import type { PendingItem } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
 import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { AgentAvatar } from "@/components/agent/avatar"
+import { AgentTag } from "@/components/agent/avatar"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 import { ActionButtonPair } from "@/components/feed/action-button-pair"
 import { StepperNav } from "@/components/shared/stepper-nav"
@@ -152,11 +152,11 @@ export function AttentionBar() {
 
       {/* Current item */}
       <div className={cn("flex items-center gap-2 min-w-0", isFocused && "opacity-50")}>
-        <AgentAvatar name={item.agent} size="sm" />
+        <AgentTag name={item.agent} />
         <span className="text-[11px] text-secondary truncate flex-1 min-w-0">
           {item.type === "permission"
-            ? `${item.agent} wants to run: ${item.command}`
-            : `${item.agent} proposed: ${item.title}`}
+            ? `wants to run: ${item.command}`
+            : `proposed: ${item.title}`}
         </span>
         <div className="flex items-center gap-1 shrink-0">
           {item.type === "permission" ? (
