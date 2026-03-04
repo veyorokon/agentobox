@@ -123,7 +123,11 @@ application = ProtocolTypeRouter(
                 [
                     re_path(
                         r"^graphql$",
-                        LoggingGraphQLWSConsumer.as_asgi(schema=schema),
+                        LoggingGraphQLWSConsumer.as_asgi(
+                            schema=schema,
+                            keep_alive=True,
+                            keep_alive_interval=30,
+                        ),
                     ),
                     # Relay WebSocket — bidirectional channel for stream events
                     # and commands (replaces HTTP POST + piggyback pattern)

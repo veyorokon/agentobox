@@ -438,6 +438,19 @@ async def kill_agent(agent_id: str) -> bool:
         project_id=str(agent.project_id),
     )
 
+    # Close the relay WS cleanly before stopping the container.
+    # This triggers RelayConsumer.disconnect() immediately instead of
+    # waiting for TCP teardown after container stop.
+    try:
+        from channels.layers import get_channel_layer
+        channel_layer = get_channel_layer()
+        await channel_layer.group_send(
+            f"relay_{agent_id}",
+            {"type": "relay.shutdown"},
+        )
+    except Exception:  # intentional: best-effort — container stop is the real cleanup
+        pass
+
     await terminate_sandbox(agent, op_log)
 
     agent.status = AgentStatus.STOPPED

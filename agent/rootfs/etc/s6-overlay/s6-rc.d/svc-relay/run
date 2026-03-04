@@ -20,6 +20,10 @@ done
 # Relay env written by lifecycle.py — source it for SDK + WS config
 source /home/agent/.relay_env
 
+# Reset crash counter — we made it past .relay_env polling, so the
+# environment is valid. Consecutive crash counting starts fresh.
+rm -f /tmp/svc-relay-crashes
+
 WORK_DIR="/home/agent/workspace"
 [ -d "$WORK_DIR" ] && cd "$WORK_DIR" || cd /home/agent
 

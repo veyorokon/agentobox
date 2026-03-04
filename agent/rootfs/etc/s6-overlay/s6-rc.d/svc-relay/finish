@@ -1,33 +1,39 @@
 #!/command/with-contenv bash
-# s6 finish script — runs after the service process exits.
+# s6 finish script — runs after the relay process exits.
 #
-# $1 = exit code of the run script (or 256 if killed by signal)
-# $2 = signal number that killed it (0 if normal exit)
+# $1 = exit code (256 if killed by signal)
+# $2 = signal number (0 if normal exit)
 #
-# On clean exit (code 0): touch the down file so s6-supervise does NOT
-# restart the relay. A clean exit means the relay decided to stop
-# (e.g., fatal WS close, clean shutdown). Restarting would be wrong.
+# On clean exit (code 0): touch down to prevent restart — the relay
+# decided to stop (fatal WS close, clean shutdown).
 #
-# On non-zero exit: terminate the entire container. Relay holds the
-# websocket, SDK session, and auth token — all lost on crash. A
-# restarted relay is a zombie with no resumption path. Crash visibly.
+# On crash (non-zero): let s6-supervise auto-restart. The relay has
+# reconnection logic (WS backoff + SDK retry) and the backend backfills
+# missed messages on reconnect. After MAX_CRASHES consecutive failures,
+# halt the container to avoid infinite loops.
 
+MAX_CRASHES=5
+CRASH_FILE="/tmp/svc-relay-crashes"
 EXIT_CODE=${1:-0}
 
 if [ "$EXIT_CODE" = "0" ]; then
-    # Prevent s6-supervise from restarting after clean exit.
-    # s6-rc manages down files internally for state tracking, but
-    # s6-supervise honors them regardless of who creates them.
+    # Clean exit — prevent restart, reset crash counter.
+    rm -f "$CRASH_FILE"
     if [ -d /run/service/svc-relay ]; then
         touch /run/service/svc-relay/down
     fi
 else
-    # Non-zero exit means relay crashed. Terminate the entire supervision
-    # tree so the container exits instead of restarting into a zombie loop.
-    s6-svscanctl -t /run/service
+    # Crash — count consecutive failures.
+    COUNT=$(cat "$CRASH_FILE" 2>/dev/null || echo 0)
+    COUNT=$((COUNT + 1))
+    echo "$COUNT" > "$CRASH_FILE"
+
+    if [ "$COUNT" -ge "$MAX_CRASHES" ]; then
+        # Too many consecutive crashes — halt container.
+        exec /run/s6/basedir/bin/halt
+    fi
+    # Otherwise s6-supervise auto-restarts after ~1s.
 fi
 
-# Clean up any orphaned Claude CLI processes the SDK may have left behind.
-# The SDK spawns node processes internally; if relay dies mid-session,
-# these can linger and hold file locks or API connections.
+# Clean up orphaned Claude CLI processes the SDK may have left behind.
 pkill -f 'node.*claude' 2>/dev/null || true

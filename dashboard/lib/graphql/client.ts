@@ -78,6 +78,7 @@ const wsClient = createClient({
   url: getWsUrl(),
   retryAttempts: Infinity,
   shouldRetry: () => true,
+  connectionAckWaitTimeout: 10_000,
   connectionParams: () => {
     const token = getAuthToken()
     return token ? { authorization: `Bearer ${token}` } : {}

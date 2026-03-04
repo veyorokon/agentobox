@@ -241,6 +241,10 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         """Forward a command (input, signal, mode) to the relay."""
         await self.send_json(event["command"])
 
+    async def relay_shutdown(self, event):
+        """Close the WS connection from server side (e.g. on kill_agent)."""
+        await self.close(code=4010)
+
 
 class VncProxyConsumer(AsyncWebsocketConsumer):
     """Binary WebSocket proxy: browser ↔ backend ↔ websockify ↔ x11vnc.
