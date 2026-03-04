@@ -19,7 +19,7 @@ import structlog
 
 from agents.models import Agent, AgentStatus
 from agents.services.comms import push_to_relay
-from agents.services.utils import create_and_broadcast_event
+from agents.services.utils import create_stream_event
 
 log = structlog.get_logger("abox.comms")
 
@@ -67,7 +67,7 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
     parts = [{"type": "text", "text": team_msg}]
 
     # Store as StreamEvent so the dashboard feed shows inbound team messages
-    stream_event = await create_and_broadcast_event(
+    stream_event = await create_stream_event(
         target,
         event_type="user",
         data={

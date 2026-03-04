@@ -129,10 +129,9 @@ class TestImportBoundaries:
 class TestNamingConventions:
     """Principle: public API names are self-documenting via verb_entity pattern.
 
-    Service functions, mutations, and subscriptions follow naming conventions
-    that make the codebase navigable without reading implementations. Service
-    functions start with a verb, mutations are verb_entity, subscriptions end
-    with _changed or _stream.
+    Service functions and mutations follow naming conventions that make the
+    codebase navigable without reading implementations. Service functions
+    start with a verb, mutations are verb_entity.
     """
 
     def test_service_functions_are_verb_entity(self):
@@ -192,30 +191,6 @@ class TestNamingConventions:
             f"Mutation names not following verb_entity pattern: {violations}"
         )
 
-    def test_subscription_names_end_with_changed_or_stream(self):
-        """Subscription method names should end with _changed or _stream."""
-        subs_path = GRAPHQL_DIR / "subscriptions.py"
-        tree = ast.parse(_read_source(subs_path))
-
-        violations = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-                name = node.name
-                if name.startswith("_"):
-                    continue
-                for dec in node.decorator_list:
-                    dec_name = ""
-                    if isinstance(dec, ast.Attribute):
-                        dec_name = dec.attr
-                    elif isinstance(dec, ast.Name):
-                        dec_name = dec.id
-                    if dec_name == "subscription":
-                        if not (name.endswith("_changed") or name.endswith("_stream")):
-                            violations.append(name)
-
-        assert not violations, (
-            f"Subscription names should end with _changed or _stream: {violations}"
-        )
 
 
 # ── Model field discipline ──
@@ -440,7 +415,7 @@ class TestObservationLoop:
 
         assert not violations, (
             f"MCP coord functions missing broadcast_agent_update: {violations}. "
-            "Task mutations must notify the dashboard."
+            "Task mutations must create status events and feed items."
         )
 
     def test_lifecycle_state_changes_broadcast(self):

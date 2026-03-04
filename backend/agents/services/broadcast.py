@@ -1,31 +1,18 @@
-"""Broadcast agent updates and stream events to Channels groups.
+"""Broadcast agent updates via status events and feed items.
 
-Two broadcast functions, two channel groups. That's it.
-
-    broadcast_agent_update(agent)  → project_{id}_agents  (Agent model state)
-    broadcast_event(agent, event)  → project_{id}_events   (StreamEvent log entries)
-
-The old system had 3 functions and 4 groups (agents, events, messages, timeline)
-because Messages and AgentEvents were separate tables that needed separate
-subscription paths. With StreamEvent as the single source, we need one event
-channel group.
+    broadcast_agent_update(agent) — detects status changes, creates StreamEvents
+    and feed items. No longer pushes to Channels groups (subscriptions removed).
 
 Status change detection still works via Agent.from_db() setting _original_status.
-When a status change is detected, we create a StreamEvent for it (replacing the
-old AgentEvent creation) and broadcast it.
+When a status change is detected, we create a StreamEvent for it.
 """
 
 import structlog
 from asgiref.sync import sync_to_async
-from channels.layers import get_channel_layer
 
 from agents.models import Agent, StreamEvent
 
 log = structlog.get_logger("abox.broadcast")
-
-
-def _group_name(project_id: str, suffix: str) -> str:
-    return f"project_{project_id}_{suffix}"
 
 
 def _create_status_event_sync(agent: Agent, old_status: str) -> StreamEvent:
@@ -48,25 +35,11 @@ _create_status_event = sync_to_async(_create_status_event_sync, thread_sensitive
 
 
 async def broadcast_agent_update(agent: Agent) -> None:
-    """Push agent state change to the project's agent_updated subscription.
+    """Detect status changes and create StreamEvents + feed items.
 
-    Also detects status changes (via _original_status from Agent.from_db)
-    and creates a StreamEvent + broadcasts when status differs.
+    Uses _original_status from Agent.from_db() to detect transitions.
+    Dashboard picks up changes via polling.
     """
-    channel_layer = get_channel_layer()
-    group = _group_name(str(agent.project_id), "agents")
-    try:
-        await channel_layer.group_send(
-            group,
-            {
-                "type": "agent.update",
-                "agent_id": str(agent.id),
-            },
-        )
-    except Exception:  # intentional: channel layer failure must not break agent state mutations
-        log.warning("broadcast.agent_send_failed", group=group, exc_info=True)
-
-    # Detect status change and emit a status StreamEvent + feed item
     old_status = getattr(agent, "_original_status", None)
     if old_status is not None and old_status != agent.status:
         log.info(
@@ -77,7 +50,6 @@ async def broadcast_agent_update(agent: Agent) -> None:
             to_status=agent.status,
         )
         event = await _create_status_event(agent, old_status)
-        await broadcast_event(agent, event)
         # Reset to prevent double-emission on subsequent broadcasts
         agent._original_status = agent.status
 
@@ -96,33 +68,3 @@ async def broadcast_agent_update(agent: Agent) -> None:
                 from_value=old_status,
                 to_value=agent.status,
             )
-
-
-async def broadcast_event(agent: Agent, stream_event: StreamEvent) -> None:
-    """Push a StreamEvent to the project's event_stream subscription.
-
-    This is the single event broadcast path. Replaces the old trifecta of
-    broadcast_stream_message + broadcast_agent_event + _broadcast_timeline_entry.
-    """
-    channel_layer = get_channel_layer()
-    group = _group_name(str(agent.project_id), "events")
-    created_at_str = (
-        stream_event.created_at.isoformat() if stream_event.created_at else ""
-    )
-    try:
-        await channel_layer.group_send(
-            group,
-            {
-                "type": "stream.event",
-                "event_id": stream_event.id,
-                "event_type": stream_event.event_type,
-                "message_id": stream_event.message_id,
-                "data": stream_event.data,
-                "agent_id": str(agent.id),
-                "agent_name": agent.name,
-                "session_id": stream_event.session_id,
-                "created_at": created_at_str,
-            },
-        )
-    except Exception:  # intentional: channel layer failure must not break event creation
-        log.warning("broadcast.event_failed", group=group, exc_info=True)

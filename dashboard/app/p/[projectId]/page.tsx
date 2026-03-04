@@ -12,8 +12,8 @@ import { formatCost } from "@/lib/utils"
 import { getAllPendingItems } from "@/lib/attention"
 import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useAgents, useAgentsSubscription } from "@/lib/graphql/hooks/use-agents"
-import { useFeed, useFeedSubscription } from "@/lib/graphql/hooks/use-feed"
+import { useAgents } from "@/lib/graphql/hooks/use-agents"
+import { useFeed } from "@/lib/graphql/hooks/use-feed"
 
 import { SecretsModal } from "@/components/panels/secrets-modal"
 import { CreateAgentModal } from "@/components/agent/create-agent-modal"
@@ -42,10 +42,6 @@ export default function ProjectPage() {
   const setMainTab = useSidebarStore(s => s.setMainTab)
 
   // ── Apollo (agents + feed) ──────────────────────────────────────
-  // Subscriptions called ONCE here — child components use query-only hooks
-  useAgentsSubscription()
-  useFeedSubscription()
-
   const { data: agentsData } = useAgents()
   const agents = agentsData?.agents ?? []
   const { data: feedData } = useFeed()

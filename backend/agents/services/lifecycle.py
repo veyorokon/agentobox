@@ -34,9 +34,9 @@ from django.db import transaction
 from agents.models import Agent, AgentStatus, StreamEvent
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
-from agents.services.broadcast import broadcast_agent_update, broadcast_event
+from agents.services.broadcast import broadcast_agent_update
 from agents.services.provision import provision_workspace, write_secrets_env, write_theme_files
-from agents.services.utils import create_and_broadcast_event, terminate_sandbox
+from agents.services.utils import create_stream_event, terminate_sandbox
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
@@ -126,7 +126,7 @@ async def create_agent(
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    await create_and_broadcast_event(
+    await create_stream_event(
         agent, event_type="created",
         data={"name": name, "runtime": runtime_name},
         session_id="",
@@ -406,11 +406,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         try:
             agent = await _save_failed(agent_id)
             await broadcast_agent_update(agent)
-            evt = await _create_stream_event(
+            await _create_stream_event(
                 agent, "", "provision_failed",
                 {"error": "Container provisioning failed"},
             )
-            await broadcast_event(agent, evt)
         except Exception:  # intentional: DB cleanup after failed provision — nothing more to do
             op_log.warning("lifecycle.provision_cleanup_failed", agent_id=agent_id, exc_info=True)
     finally:
@@ -457,7 +456,7 @@ async def kill_agent(agent_id: str) -> bool:
     await agent.asave(update_fields=["status"])
 
     await broadcast_agent_update(agent)
-    await create_and_broadcast_event(agent, event_type="stopped", data={})
+    await create_stream_event(agent, event_type="stopped", data={})
 
     op_log.info("lifecycle.agent_killed")
     clear_agent_context()
@@ -494,7 +493,7 @@ async def remove_agent(agent_id: str) -> bool:
     agent_name = agent.name
 
     # Broadcast before delete -- the event FK needs the agent row to exist
-    await create_and_broadcast_event(
+    await create_stream_event(
         agent, event_type="removed", data={"agent_id": agent_id},
     )
 
@@ -630,7 +629,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)
-    await create_and_broadcast_event(
+    await create_stream_event(
         agent, event_type="restarted", data={"agent_id": agent_id},
     )
 

@@ -182,7 +182,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     let msg = "Desktop disconnected"
     if (agent.lifecycleStatus === "stopped") msg = "Desktop stopped — session ended"
     else if (agent.lifecycleStatus === "error") msg = "Desktop lost — agent errored"
-    else if (agent.lifecycleStatus === "provisioning") msg = "Desktop not ready yet"
+    else if (agent.lifecycleStatus === "deploying") msg = "Desktop not ready yet"
     else if (!agent.relayConnected) msg = "Desktop lost — relay disconnected"
     else if (clean) msg = "Desktop closed by server"
     else msg = "Desktop unreachable — retries exhausted"

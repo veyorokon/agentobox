@@ -7,7 +7,6 @@ TeamFeedItem = curated dashboard feed items created when feed-worthy events occu
 
 import structlog
 from asgiref.sync import sync_to_async
-from channels.layers import get_channel_layer
 
 from agents.models import Agent, TeamFeedItem
 
@@ -36,26 +35,24 @@ _create_feed_item_db = sync_to_async(_create_feed_item_sync, thread_sensitive=Fa
 
 
 async def create_feed_item(project_id, source_event=None, agent_record=None, **kwargs) -> TeamFeedItem:
-    """Create a TeamFeedItem and broadcast it to subscribers."""
+    """Create a TeamFeedItem. Dashboard picks up new items via polling."""
     item = await _create_feed_item_db(
         project_id,
         source_event,
         agent_record,
         **kwargs,
     )
-    await broadcast_feed_item(item)
     return item
 
 
 async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
-    """Update a TeamFeedItem's fields and re-broadcast."""
+    """Update a TeamFeedItem's fields."""
     update_fields = []
     for field, value in kwargs.items():
         setattr(item, field, value)
         update_fields.append(field)
     if update_fields:
         await item.asave(update_fields=update_fields)
-        await broadcast_feed_item(item)
     return item
 
 
@@ -216,16 +213,3 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
     return item
 
 
-async def broadcast_feed_item(feed_item: TeamFeedItem) -> None:
-    """Push new/updated TeamFeedItem to team_feed subscribers."""
-    channel_layer = get_channel_layer()
-    try:
-        await channel_layer.group_send(
-            f"project_{feed_item.project_id}_team_feed",
-            {
-                "type": "team_feed.changed",
-                "item_id": str(feed_item.id),
-            },
-        )
-    except Exception:  # intentional: channel layer failure must not break feed item creation
-        log.exception("feed.broadcast_failed", item_id=str(feed_item.id))

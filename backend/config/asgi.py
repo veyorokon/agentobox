@@ -12,8 +12,6 @@ django_asgi_app = get_asgi_application()
 
 from agents.services.mcp_coord import mcp  # noqa: E402
 from agents.consumers import RelayConsumer, VncProxyConsumer  # noqa: E402
-from schema import schema  # noqa: E402
-from strawberry.channels.handlers.ws_handler import GraphQLWSConsumer  # noqa: E402
 
 log = structlog.get_logger("abox.graphql")
 
@@ -84,26 +82,6 @@ async def _ensure_mcp_ready():
     await _mcp_ready.wait()
 
 
-class LoggingGraphQLWSConsumer(GraphQLWSConsumer):
-    """GraphQLWSConsumer with lifecycle logging."""
-
-    async def websocket_connect(self, message):
-        log.info(
-            "graphql.ws_connected",
-            path=self.scope.get("path"),
-            subprotocols=self.scope.get("subprotocols", []),
-        )
-        await super().websocket_connect(message)
-
-    async def websocket_disconnect(self, message):
-        log.info("graphql.ws_disconnected", path=self.scope.get("path"))
-        await super().websocket_disconnect(message)
-
-    async def websocket_receive(self, message):
-        log.debug("graphql.ws_received", path=self.scope.get("path"))
-        await super().websocket_receive(message)
-
-
 async def http_dispatch(scope, receive, send):
     """Route /mcp to FastMCP, everything else to Django."""
     if scope["path"].startswith("/mcp"):
@@ -114,21 +92,13 @@ async def http_dispatch(scope, receive, send):
 
 
 # HTTP: /mcp -> FastMCP coordination server, else -> Django ASGI
-# WebSocket: Channels for GraphQL subscriptions
+# WebSocket: Channels for relay + VNC proxy
 application = ProtocolTypeRouter(
     {
         "http": http_dispatch,
         "websocket": AuthMiddlewareStack(
             URLRouter(
                 [
-                    re_path(
-                        r"^graphql$",
-                        LoggingGraphQLWSConsumer.as_asgi(
-                            schema=schema,
-                            keep_alive=True,
-                            keep_alive_interval=30,
-                        ),
-                    ),
                     # Relay WebSocket — bidirectional channel for stream events
                     # and commands (replaces HTTP POST + piggyback pattern)
                     re_path(

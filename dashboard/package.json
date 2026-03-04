@@ -12,7 +12,6 @@
     "@apollo/client": "^3.12",
     "clsx": "^2",
     "graphql": "^16",
-    "graphql-ws": "^6",
     "lucide-react": "^0.475",
     "next": "^15",
     "react": "^19",

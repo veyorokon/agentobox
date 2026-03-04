@@ -2,12 +2,9 @@
 GraphQL authorization helpers for Strawberry resolvers.
 
 Extracts the authenticated user from Strawberry's info context and verifies
-project/agent ownership. Three auth paths in priority order:
+project/agent ownership. Two auth paths in priority order:
 1. HTTP request.user (TokenAuthMiddleware — Bearer/ApiKey header)
-2. WS scope["user"] (AuthMiddlewareStack — session cookies)
-3. WS connectionParams Bearer token (graphql-ws connection_init — browsers
-   can't set custom headers on WebSocket upgrades, so the dashboard sends
-   the token in connectionParams instead)
+2. WS scope["user"] (AuthMiddlewareStack — session cookies, used by relay/VNC)
 
 Every mutation/query that touches project-scoped data must call
 authorize_project or authorize_agent before proceeding. These raise
@@ -23,14 +20,9 @@ log = structlog.get_logger("abox.auth")
 async def _get_user(info):
     """Extract authenticated user from Strawberry info context.
 
-    Three auth paths in priority order:
+    Two auth paths in priority order:
     1. HTTP request.user — set by TokenAuthMiddleware (Bearer/ApiKey header)
     2. WS scope["user"] — set by AuthMiddlewareStack (session cookies)
-    3. WS connectionParams — Bearer token sent via graphql-ws connection_init
-
-    Path 3 exists because browsers can't set custom headers on WebSocket
-    connections. The dashboard sends the Bearer token in connectionParams
-    instead, and Strawberry stores it in context["connection_params"].
     """
     request = info.context["request"]
 
@@ -43,21 +35,6 @@ async def _get_user(info):
         scope_user = request.scope.get("user")
         if scope_user and scope_user.is_authenticated:
             return scope_user
-
-    # WS: check connectionParams Bearer token (graphql-ws protocol)
-    # Strawberry sets connection_params as a dict key for WS contexts,
-    # but HTTP contexts use StrawberryDjangoContext (dataclass, no .get()).
-    ctx = info.context
-    params = (
-        ctx.get("connection_params")
-        if isinstance(ctx, dict)
-        else getattr(ctx, "connection_params", None)
-    ) or {}
-    auth_header = params.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        from accounts.auth import adecode_token
-
-        return await adecode_token(auth_header[7:])
 
     return None
 

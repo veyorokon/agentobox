@@ -21,7 +21,7 @@ from channels.layers import get_channel_layer
 
 from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
-from agents.services.utils import create_and_broadcast_event
+from agents.services.utils import create_stream_event
 
 log = structlog.get_logger("abox.comms")
 
@@ -120,7 +120,7 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
 
     # Store as StreamEvent BEFORE restart so the message is persisted
     # regardless of whether the relay is connected yet.
-    stream_event = await create_and_broadcast_event(
+    stream_event = await create_stream_event(
         agent,
         event_type="user",
         data={
@@ -163,7 +163,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
     parts = [{"type": "tool_result", "tool_use_id": tool_use_id, "content": answer_text}]
 
     # Store as StreamEvent
-    stream_event = await create_and_broadcast_event(
+    stream_event = await create_stream_event(
         agent,
         event_type="user",
         data={
@@ -231,7 +231,7 @@ async def broadcast_message(
 
     for agent in agents:
         # Store with broadcast metadata BEFORE restart so the message is persisted
-        stream_event = await create_and_broadcast_event(
+        stream_event = await create_stream_event(
             agent,
             event_type="user",
             data={
@@ -297,7 +297,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     await broadcast_agent_update(agent)
 
     # Store mode change as StreamEvent
-    stream_event = await create_and_broadcast_event(
+    stream_event = await create_stream_event(
         agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
@@ -330,7 +330,7 @@ async def interrupt_agent(agent_id: str) -> bool:
         return False
 
     # Store as StreamEvent
-    await create_and_broadcast_event(agent, event_type="interrupted", data={})
+    await create_stream_event(agent, event_type="interrupted", data={})
 
     # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
@@ -357,7 +357,7 @@ async def restart_agent(agent_id: str) -> bool:
         return False
 
     # Store as StreamEvent
-    await create_and_broadcast_event(agent, event_type="restarting", data={})
+    await create_stream_event(agent, event_type="restarting", data={})
 
     # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
@@ -399,7 +399,7 @@ async def clear_agent_session(agent_id: str) -> bool:
     await agent.asave(update_fields=["session_id"])
 
     # Store as StreamEvent
-    await create_and_broadcast_event(
+    await create_stream_event(
         agent, event_type="cleared", data={}, session_id="",
     )
 

@@ -4,17 +4,13 @@ import {
   HttpLink,
   InMemoryCache,
   Observable,
-  split,
 } from "@apollo/client"
-import { GraphQLWsLink } from "@apollo/client/link/subscriptions"
-import { getMainDefinition } from "@apollo/client/utilities"
-import { createClient } from "graphql-ws"
 import { createLogger } from "@/lib/logger"
 
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
 /*                                                                     */
-/*  HTTP + WS links, cache-and-network, subscriptions.                 */
+/*  HTTP link, cache-and-network, poll-based updates.                  */
 /* ================================================================== */
 
 const log = createLogger("apollo")
@@ -25,12 +21,6 @@ function getApiUrl(): string {
   if (typeof window === "undefined") return "http://localhost:8000/graphql"
   const { protocol, hostname } = window.location
   return `${protocol}//${hostname}:8000/graphql`
-}
-
-/** Derive GraphQL WS URL from the HTTP URL. */
-function getWsUrl(): string {
-  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL
-  return getApiUrl().replace(/^http/, "ws")
 }
 
 /* ── Auth header helper ───────────────────────────────────────────── */
@@ -74,39 +64,7 @@ const httpLink = new HttpLink({
   },
 })
 
-const wsClient = createClient({
-  url: getWsUrl(),
-  retryAttempts: Infinity,
-  shouldRetry: () => true,
-  connectionAckWaitTimeout: 10_000,
-  connectionParams: () => {
-    const token = getAuthToken()
-    return token ? { authorization: `Bearer ${token}` } : {}
-  },
-  on: {
-    // Suppress noisy console errors on page navigation / tab suspension.
-    // graphql-ws auto-reconnects via retryAttempts — these are transient.
-    closed: (event) => {
-      const e = event as CloseEvent
-      if (e?.code !== 1000) log("ws.closed", { code: e?.code, reason: e?.reason })
-    },
-    error: (error) => {
-      log("ws.error", { error: String(error) })
-    },
-  },
-})
-
-const wsLink = new GraphQLWsLink(wsClient)
-
-// Route subscriptions → WS, everything else → HTTP
-const networkLink = split(
-  ({ query }) => {
-    const def = getMainDefinition(query)
-    return def.kind === "OperationDefinition" && def.operation === "subscription"
-  },
-  wsLink,
-  httpLink,
-)
+const networkLink = httpLink
 
 /* ── Client ──────────────────────────────────────────────────────── */
 

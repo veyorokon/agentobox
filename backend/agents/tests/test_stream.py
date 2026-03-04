@@ -11,11 +11,10 @@ def mock_broadcast():
     """Patch broadcast functions to no-op."""
     with (
         patch("agents.services.stream.broadcast_agent_update", new_callable=AsyncMock) as ba,
-        patch("agents.services.stream.broadcast_event", new_callable=AsyncMock) as be,
         patch("agents.services.stream.create_feed_item", new_callable=AsyncMock) as cf,
         patch("agents.services.stream.recompute_attention", new_callable=AsyncMock) as ra,
     ):
-        yield {"broadcast_agent": ba, "broadcast_event": be, "create_feed": cf, "recompute": ra}
+        yield {"broadcast_agent": ba, "create_feed": cf, "recompute": ra}
 
 
 @pytest.mark.django_db(transaction=True)

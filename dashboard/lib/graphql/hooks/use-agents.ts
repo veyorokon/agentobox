@@ -1,8 +1,7 @@
-import { useQuery, useSubscription, useMutation, useApolloClient, gql } from "@apollo/client"
+import { useQuery, useMutation, useApolloClient, gql } from "@apollo/client"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
-import { ON_AGENT_CHANGED } from "@/lib/graphql/subscriptions/agents"
 import {
   SET_AGENT_MODE,
   KILL_AGENT,
@@ -21,8 +20,7 @@ import type { Agent, AttentionLevel } from "@/lib/types"
 /*  AGENT HOOKS                                                         */
 /*                                                                      */
 /*  Query hook (useAgents) is safe to call from multiple components —   */
-/*  Apollo deduplicates queries. Subscription hook must be called ONCE  */
-/*  at the page level to avoid duplicate WebSocket subscriptions.       */
+/*  Apollo deduplicates queries. Poll-based updates via pollInterval.   */
 /* ================================================================== */
 
 const log = createLogger("apollo")
@@ -36,37 +34,9 @@ export function useAgents() {
 
   return useQuery<AgentsData>(GET_AGENTS, {
     fetchPolicy: "cache-and-network",
+    pollInterval: 10_000,
     variables: queryVars,
     skip: !projectId,
-  })
-}
-
-/** Subscription hook — call ONCE from the page-level component. */
-export function useAgentsSubscription() {
-  const { projectId } = useParams<{ projectId: string }>()
-  const queryVars = useMemo(() => ({ projectId }), [projectId])
-
-  useSubscription(ON_AGENT_CHANGED, {
-    variables: { projectId: projectId ?? "" },
-    skip: !projectId,
-    onData: ({ client, data: subData }) => {
-      const agent = subData.data?.agentChanged
-      if (!agent) return
-
-      // Upsert into the GET_AGENTS query cache
-      const existing = client.readQuery<AgentsData>({ query: GET_AGENTS, variables: queryVars })
-      const agents = existing?.agents ?? []
-      const idx = agents.findIndex(a => a.id === agent.id)
-
-      if (idx >= 0) {
-        const updated = [...agents]
-        updated[idx] = { ...updated[idx], ...agent }
-        client.writeQuery({ query: GET_AGENTS, variables: queryVars, data: { agents: updated } })
-      } else {
-        log("subscription.agent_added", { id: agent.id, name: agent.name })
-        client.writeQuery({ query: GET_AGENTS, variables: queryVars, data: { agents: [...agents, agent] } })
-      }
-    },
   })
 }
 

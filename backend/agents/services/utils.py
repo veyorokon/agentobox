@@ -4,22 +4,18 @@ import structlog
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent, AgentStatus, StreamEvent
-from agents.services.broadcast import broadcast_event
 
 log = structlog.get_logger("abox.comms")
 
 
-async def create_and_broadcast_event(
+async def create_stream_event(
     agent: Agent,
     event_type: str,
     data: dict,
     session_id: str = "",
     message_id: str = "",
 ) -> StreamEvent:
-    """Create a StreamEvent and broadcast it to dashboard subscribers.
-
-    Consolidates the repeated acreate + broadcast_event two-liner.
-    """
+    """Create a StreamEvent row. Dashboard picks up new events via polling."""
     stream_event = await StreamEvent.objects.acreate(
         agent=agent,
         session_id=session_id or agent.session_id or "",
@@ -27,7 +23,6 @@ async def create_and_broadcast_event(
         message_id=message_id,
         data=data,
     )
-    await broadcast_event(agent, stream_event)
     return stream_event
 
 

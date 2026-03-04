@@ -24,8 +24,8 @@ import structlog
 from asgiref.sync import sync_to_async
 
 from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
-from agents.services.broadcast import broadcast_agent_update, broadcast_event
-from agents.services.feed import broadcast_feed_item, create_feed_item, recompute_attention
+from agents.services.broadcast import broadcast_agent_update
+from agents.services.feed import create_feed_item, recompute_attention
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("abox.stream")
@@ -92,10 +92,7 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
         data=event,
     )
 
-    # 2. Broadcast to dashboard subscribers
-    await broadcast_event(agent, stream_event)
-
-    # 3. Agent model side effects (materialized view updates)
+    # 2. Agent model side effects (materialized view updates)
     # These update denormalized fields on Agent for fast dashboard reads.
     # The StreamEvent log is the source of truth; these are just caches.
     #
@@ -139,11 +136,6 @@ async def _supersede_pending_plans(agent: Agent) -> None:
         return
 
     await stale_qs.aupdate(plan_status="superseded")
-    # Broadcast so dashboard subscribers see the status change.
-    # Refresh from DB to get the updated plan_status value.
-    for item in stale_items:
-        item.plan_status = "superseded"
-        await broadcast_feed_item(item)
     log.info("stream.plans_superseded", agent_id=str(agent.id), count=len(stale_items))
 
 
