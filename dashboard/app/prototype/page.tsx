@@ -860,7 +860,13 @@ function AssistantMessage({
   )
 }
 
-/** 3. Tool call group — single tool, collapsible */
+/* Tool row components imported from real implementation */
+import {
+  SingleToolRow as RealSingleToolRow,
+  MultiToolGroup as RealMultiToolGroup,
+} from "@/components/feed/tool-row"
+
+/** 3. Tool call group — adapter wrapping real component with prototype data */
 function SingleToolRow({
   toolName,
   summary,
@@ -868,134 +874,54 @@ function SingleToolRow({
   toolName: string
   summary: string
 }) {
-  const [expanded, setExpanded] = useState(false)
-
+  // Parse summary: if it looks like a file path, use filePath; otherwise use summary
+  const isFilePath = summary.includes("/") || summary.includes(".")
   return (
-    <div className="ml-8">
-      <div className="border-l-2 rounded-r border-l-muted/40">
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
-        >
-          <ChevronRight
-            size={12}
-            className={cn(
-              "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-              expanded && "rotate-90",
-            )}
-          />
-          <span className="text-xs font-medium shrink-0 text-info">
-            {toolName}
-          </span>
-          <span className="text-xs text-muted font-mono truncate min-w-0">
-            {summary}
-          </span>
-        </button>
-        <Collapsible open={expanded}>
-          <div className="px-3 py-2 ml-4">
-            <div className="rounded bg-surface-sunken/60 p-2">
-              <p className="font-mono text-xs text-secondary whitespace-pre-wrap">
-                {toolName === "Read"
-                  ? "Reading file contents... (47 lines)"
-                  : toolName === "Edit"
-                    ? 'old_string: "Date.now()"\nnew_string: "Math.floor(Date.now() / 1000)"'
-                    : toolName === "Bash"
-                      ? "$ npm run lint\n✓ No errors found"
-                      : "Operation completed successfully"}
-              </p>
-            </div>
-          </div>
-        </Collapsible>
-      </div>
-    </div>
+    <RealSingleToolRow
+      tool={{
+        name: toolName,
+        summary: isFilePath ? "" : summary,
+        filePath: isFilePath ? summary : undefined,
+        lineDelta: toolName === "Edit" ? { added: 5, removed: 3 } : null,
+        oldString: toolName === "Edit"
+          ? "  const now = Date.now()\n  return decoded.exp > now"
+          : undefined,
+        newString: toolName === "Edit"
+          ? "  const now = Math.floor(Date.now() / 1000)\n  const skew = 30\n  return decoded.exp > (now - skew)"
+          : undefined,
+        result: toolName === "Read"
+          ? "Reading file contents... (47 lines)"
+          : toolName === "Bash"
+            ? "$ npm run lint\n✓ No errors found"
+            : "Operation completed successfully",
+      }}
+    />
   )
 }
 
-/** 3b. Multi-tool group — collapsible group header */
+/** 3b. Multi-tool group — adapter wrapping real component */
 function MultiToolGroup({
   tools,
 }: {
   tools: { name: string; summary: string }[]
 }) {
-  const [expanded, setExpanded] = useState(false)
-
-  const uniqueNames = tools
-    .map((t) => t.name)
-    .filter((v, i, a) => a.indexOf(v) === i)
-    .join(", ")
-
   return (
-    <div className="ml-8">
-      <div className="border-l-2 rounded-r border-l-muted/40">
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
-        >
-          <ChevronRight
-            size={12}
-            className={cn(
-              "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-              expanded && "rotate-90",
-            )}
-          />
-          <span className="text-xs text-secondary">
-            {tools.length} tool uses
-          </span>
-          <span className="text-[11px] text-muted font-mono truncate min-w-0">
-            {uniqueNames}
-          </span>
-        </button>
-        <Collapsible open={expanded}>
-          <div className="ml-2 space-y-px">
-            {tools.map((tool, i) => (
-              <ToolRow key={i} toolName={tool.name} summary={tool.summary} />
-            ))}
-          </div>
-        </Collapsible>
-      </div>
-    </div>
-  )
-}
-
-function ToolRow({ toolName, summary }: { toolName: string; summary: string }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        aria-expanded={expanded}
-        className="flex items-center gap-2 w-full text-left px-2.5 py-0.5 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
-      >
-        <ChevronRight
-          size={10}
-          className={cn(
-            "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-            expanded && "rotate-90",
-          )}
-        />
-        <span className="text-[11px] font-medium shrink-0 text-info">
-          {toolName}
-        </span>
-        <span className="text-[11px] text-muted font-mono truncate min-w-0">
-          {summary}
-        </span>
-      </button>
-      <Collapsible open={expanded}>
-        <div className="px-3 py-1.5 ml-4">
-          <div className="rounded bg-surface-sunken/60 p-2">
-            <p className="font-mono text-[11px] text-secondary">
-              Tool output for {toolName}
-            </p>
-          </div>
-        </div>
-      </Collapsible>
-    </div>
+    <RealMultiToolGroup
+      tools={tools.map(t => {
+        const isFilePath = t.summary.includes("/") || t.summary.includes(".")
+        // Extract file path from "file — description" format
+        const dashIdx = t.summary.indexOf(" — ")
+        const filePart = dashIdx > -1 ? t.summary.slice(0, dashIdx) : t.summary
+        const summaryPart = dashIdx > -1 ? t.summary.slice(dashIdx + 3) : ""
+        return {
+          name: t.name,
+          summary: isFilePath ? summaryPart : t.summary,
+          filePath: isFilePath ? filePart : undefined,
+          lineDelta: t.name === "Edit" ? { added: 12, removed: 4 } : null,
+          result: `Tool output for ${t.name}: ${t.summary}`,
+        }
+      })}
+    />
   )
 }
 
@@ -4618,7 +4544,7 @@ export default function PrototypePage() {
 
         {/* Center: team feed + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
-          <main className="flex-1 min-w-0 flex flex-col min-h-0">
+          <main className="flex-1 min-w-0 flex flex-col min-h-0 bg-surface-raised">
             <TeamFeed
               feedItems={feedItems}
               agentFilter={effectiveAgentFilter}

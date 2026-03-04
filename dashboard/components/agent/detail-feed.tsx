@@ -2,10 +2,16 @@
 
 import { useRef, useEffect, useMemo } from "react"
 import type { Agent, TimelineEntry } from "@/lib/types"
-import { formatDuration, friendlyToolName, friendlyModelName } from "@/lib/utils"
+import {
+  formatDuration,
+  friendlyToolName,
+  friendlyModelName,
+  computeLineDelta,
+  shortenFilePath,
+} from "@/lib/utils"
 import { useAgentFeed } from "@/lib/graphql/hooks/use-feed"
 import { AssistantMessage } from "@/components/feed/assistant-message"
-import { SingleToolRow, MultiToolGroup } from "@/components/feed/tool-row"
+import { SingleToolRow, MultiToolGroup, type ToolEntryData } from "@/components/feed/tool-row"
 import { ResultPill } from "@/components/feed/result-pill"
 import { SystemMessage } from "@/components/feed/system-message"
 import { TeamUserMessage } from "@/components/feed/user-message"
@@ -23,33 +29,50 @@ export interface AgentDetailFeedProps {
 
 type ContentBlock = Record<string, unknown>
 
-/** Extract the most useful input field from a tool_use block for display. */
-function summarizeToolInput(toolUse: ContentBlock): string {
+/** Extract summary, filePath, lineDelta, and diff strings from a tool_use block. */
+function extractToolSummary(toolUse: ContentBlock): {
+  summary: string
+  filePath?: string
+  lineDelta?: { added: number; removed: number } | null
+  oldString?: string
+  newString?: string
+} {
   const input = (toolUse.input ?? {}) as Record<string, unknown>
-  if (input.file_path) return String(input.file_path)
-  if (input.command) return String(input.command).slice(0, 100)
-  if (input.pattern) return String(input.pattern)
-  if (input.query) return String(input.query).slice(0, 100)
-  if (input.url) return String(input.url)
+  const name = String(toolUse.name ?? "")
 
-  // AskUserQuestion — show the question text, not raw JSON
-  if (input.questions && Array.isArray(input.questions)) {
+  // File path extraction
+  const filePath = input.file_path ? shortenFilePath(String(input.file_path)) : undefined
+
+  // Line delta for Edit/Write
+  const lineDelta = (name === "Edit" || name === "Write") ? computeLineDelta(input) : null
+
+  // Summary: same priority chain but skip file_path (shown as pill)
+  let summary = ""
+  if (input.command) summary = String(input.command).slice(0, 100)
+  else if (input.pattern) summary = String(input.pattern)
+  else if (input.query) summary = String(input.query).slice(0, 100)
+  else if (input.url) summary = String(input.url)
+  else if (input.questions && Array.isArray(input.questions)) {
     const q = input.questions[0] as Record<string, unknown> | undefined
-    if (q?.question) return String(q.question).slice(0, 100)
-    if (q?.header) return String(q.header)
-  }
-
-  // Plan/prompt — show first meaningful line
-  if (input.plan) {
+    if (q?.question) summary = String(q.question).slice(0, 100)
+    else if (q?.header) summary = String(q.header)
+  } else if (input.plan) {
     const firstLine = String(input.plan).split("\n").find(l => l.trim())?.replace(/^#+\s*/, "")
-    if (firstLine) return firstLine.slice(0, 100)
+    if (firstLine) summary = firstLine.slice(0, 100)
+  } else if (input.subject) summary = String(input.subject).slice(0, 100)
+  else if (input.prompt) summary = String(input.prompt).slice(0, 100)
+  else if (input.description) summary = String(input.description).slice(0, 100)
+  else if (filePath) summary = "" // file path shown as pill, no redundant summary
+  else {
+    const json = JSON.stringify(input)
+    summary = json.length > 80 ? json.slice(0, 77) + "..." : json
   }
-  if (input.subject) return String(input.subject).slice(0, 100)
-  if (input.prompt) return String(input.prompt).slice(0, 100)
-  if (input.description) return String(input.description).slice(0, 100)
 
-  const json = JSON.stringify(input)
-  return json.length > 80 ? json.slice(0, 77) + "..." : json
+  // Extract old/new strings for diff view (Edit tool)
+  const oldString = typeof input.old_string === "string" ? input.old_string : undefined
+  const newString = typeof input.new_string === "string" ? input.new_string : undefined
+
+  return { summary, filePath, lineDelta, oldString, newString }
 }
 
 /** Build a map from tool_use_id → result content string by scanning user entries. */
@@ -117,12 +140,19 @@ function TimelineEntryRow({
             const tu = toolUses[0]
             const tuId = String(tu.id ?? "")
             const result = toolResultMap.get(tuId)
+            const { summary, filePath, lineDelta, oldString, newString } = extractToolSummary(tu)
             return (
               <SingleToolRow
-                toolName={friendlyToolName(String(tu.name ?? "tool"))}
-                summary={summarizeToolInput(tu)}
-                result={result?.content}
-                isError={result?.isError}
+                tool={{
+                  name: friendlyToolName(String(tu.name ?? "tool")),
+                  summary,
+                  filePath,
+                  lineDelta,
+                  result: result?.content,
+                  isError: result?.isError,
+                  oldString,
+                  newString,
+                }}
               />
             )
           })()}
@@ -131,12 +161,17 @@ function TimelineEntryRow({
               tools={toolUses.map(t => {
                 const tuId = String(t.id ?? "")
                 const result = toolResultMap.get(tuId)
+                const { summary, filePath, lineDelta, oldString, newString } = extractToolSummary(t)
                 return {
                   name: friendlyToolName(String(t.name ?? "tool")),
-                  summary: summarizeToolInput(t),
+                  summary,
+                  filePath,
+                  lineDelta,
                   result: result?.content,
                   isError: result?.isError,
-                }
+                  oldString,
+                  newString,
+                } satisfies ToolEntryData
               })}
             />
           )}

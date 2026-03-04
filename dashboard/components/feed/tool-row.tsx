@@ -1,50 +1,163 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { ChevronRight, Check, X } from "lucide-react"
-import { cn, stripSystemReminders } from "@/lib/utils"
+import { ChevronDown } from "lucide-react"
+import { cn, stripSystemReminders, summarizeSingleTool, summarizeToolGroup } from "@/lib/utils"
 import { Collapsible } from "@/components/ui/collapsible"
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
-export interface ToolRowProps {
-  toolName: string
+export interface ToolEntryData {
+  name: string
   summary: string
+  filePath?: string
+  lineDelta?: { added: number; removed: number } | null
   result?: string
   isError?: boolean
-}
-
-export interface SingleToolRowProps {
-  toolName: string
-  summary: string
-  result?: string
-  isError?: boolean
-}
-
-export interface MultiToolGroupProps {
-  tools: { name: string; summary: string; result?: string; isError?: boolean }[]
+  /** For Edit tools: the old string being replaced */
+  oldString?: string
+  /** For Edit tools: the new string replacing it */
+  newString?: string
 }
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
-/** Max height (px) before "Show more" kicks in */
 const CLAMP_HEIGHT = 128
+const OVERFLOW_LIMIT = 3
 
-/** Tools whose results render as terminal output (dark bg, monospace) */
-const TERMINAL_TOOLS = new Set(["Bash", "bash"])
+/* ── Unified diff view ──────────────────────────────────────────────── */
 
-/* ── Result content block ───────────────────────────────────────────── */
+interface DiffLine {
+  type: "context" | "added" | "removed"
+  oldNum?: number
+  newNum?: number
+  text: string
+}
+
+/** Compute a unified diff from old/new strings with N lines of context. */
+function computeUnifiedDiff(oldStr: string, newStr: string, contextLines = 3): DiffLine[] {
+  const oldLines = oldStr.split("\n")
+  const newLines = newStr.split("\n")
+
+  // Simple LCS-based diff
+  const m = oldLines.length
+  const n = newLines.length
+  // Build edit script using DP (O(mn) but inputs are small — tool edits)
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = oldLines[i - 1] === newLines[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1])
+    }
+  }
+
+  // Backtrack to get raw operations
+  const ops: Array<{ type: "equal" | "removed" | "added"; old?: string; new?: string; oldIdx?: number; newIdx?: number }> = []
+  let i = m, j = n
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      ops.unshift({ type: "equal", old: oldLines[i - 1], oldIdx: i, newIdx: j })
+      i--; j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.unshift({ type: "added", new: newLines[j - 1], newIdx: j })
+      j--
+    } else {
+      ops.unshift({ type: "removed", old: oldLines[i - 1], oldIdx: i })
+      i--
+    }
+  }
+
+  // Find changed regions and include context
+  const changeIndices = new Set<number>()
+  ops.forEach((op, idx) => {
+    if (op.type !== "equal") {
+      for (let c = Math.max(0, idx - contextLines); c <= Math.min(ops.length - 1, idx + contextLines); c++) {
+        changeIndices.add(c)
+      }
+    }
+  })
+
+  const lines: DiffLine[] = []
+  let oldNum = 0, newNum = 0
+  for (let idx = 0; idx < ops.length; idx++) {
+    const op = ops[idx]
+    if (op.type === "equal") {
+      oldNum++; newNum++
+      if (changeIndices.has(idx)) {
+        lines.push({ type: "context", oldNum, newNum, text: op.old! })
+      } else if (lines.length > 0 && lines[lines.length - 1]?.type !== undefined) {
+        // Gap marker — skip (we just omit lines not in context)
+      }
+    } else if (op.type === "removed") {
+      oldNum++
+      if (changeIndices.has(idx)) {
+        lines.push({ type: "removed", oldNum, text: op.old! })
+      }
+    } else {
+      newNum++
+      if (changeIndices.has(idx)) {
+        lines.push({ type: "added", newNum, text: op.new! })
+      }
+    }
+  }
+
+  return lines
+}
+
+function UnifiedDiffView({ oldString, newString }: { oldString: string; newString: string }) {
+  const lines = computeUnifiedDiff(oldString, newString)
+
+  return (
+    <div className="mt-1 rounded border border-border-default/20 overflow-hidden font-mono text-[11px] leading-[18px]">
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          className={cn(
+            "flex",
+            line.type === "removed" && "bg-danger/10",
+            line.type === "added" && "bg-success/10",
+          )}
+        >
+          {/* Old line number */}
+          <span className="w-8 shrink-0 text-right pr-1 select-none text-muted/40 border-r border-border-default/10">
+            {line.type !== "added" ? line.oldNum : ""}
+          </span>
+          {/* New line number */}
+          <span className="w-8 shrink-0 text-right pr-1 select-none text-muted/40 border-r border-border-default/10">
+            {line.type !== "removed" ? line.newNum : ""}
+          </span>
+          {/* +/- indicator */}
+          <span className={cn(
+            "w-4 shrink-0 text-center select-none",
+            line.type === "removed" && "text-danger",
+            line.type === "added" && "text-success",
+          )}>
+            {line.type === "removed" ? "-" : line.type === "added" ? "+" : ""}
+          </span>
+          {/* Line content */}
+          <span className={cn(
+            "flex-1 whitespace-pre-wrap break-all px-1",
+            line.type === "removed" && "text-danger/80",
+            line.type === "added" && "text-success/80",
+            line.type === "context" && "text-muted",
+          )}>
+            {line.text}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ── Result content ────────────────────────────────────────────────── */
 
 function ToolResultContent({
   result,
-  toolName,
   isError,
-  fontSize = "text-xs",
 }: {
   result: string
-  toolName: string
   isError?: boolean
-  fontSize?: string
 }) {
   const [clamped, setClamped] = useState(true)
   const [needsClamp, setNeedsClamp] = useState(false)
@@ -56,53 +169,41 @@ function ToolResultContent({
   }, [result])
 
   const cleaned = stripSystemReminders(result)
-  const isTerminal = TERMINAL_TOOLS.has(toolName)
 
   return (
-    <div className="relative">
+    <div>
       <div
         ref={contentRef}
         className={cn(
-          "rounded-b border-t border-border-default/8 overflow-hidden transition-[max-height] duration-(--duration-slow) ease-out",
-          isTerminal
-            ? "bg-surface-sunken"
-            : "bg-surface-sunken/80",
+          "overflow-hidden transition-[max-height] duration-(--duration-slow) ease-out",
           clamped && needsClamp && "max-h-32",
         )}
+        style={
+          clamped && needsClamp
+            ? { maskImage: "linear-gradient(black 80%, transparent)" }
+            : undefined
+        }
       >
-        <pre
-          className={cn(
-            "p-2.5 font-mono whitespace-pre-wrap break-words overflow-x-hidden",
-            fontSize,
-            isError
-              ? "text-danger/80"
-              : isTerminal
-                ? "text-secondary/90"
-                : "text-muted",
-          )}
-        >
-          {cleaned}
-        </pre>
-      </div>
-
-      {/* Gradient fade overlay */}
-      {needsClamp && clamped && (
         <div
           className={cn(
-            "absolute bottom-0 left-0 right-0 h-12 pointer-events-none rounded-b",
-            isTerminal
-              ? "bg-gradient-to-t from-surface-sunken to-transparent"
-              : "bg-gradient-to-t from-surface-sunken/80 to-transparent",
+            "font-mono text-[11px] font-light whitespace-pre-wrap break-all pt-1",
+            isError ? "text-danger/80" : "text-muted",
           )}
-        />
-      )}
+        >
+          {cleaned.split("\n").map((line, i) => (
+            <span key={i}>
+              {line}
+              {"\n"}
+            </span>
+          ))}
+        </div>
+      </div>
 
-      {/* Show more / Show less toggle */}
       {needsClamp && (
         <button
           type="button"
           onClick={() => setClamped(!clamped)}
-          className="pt-1.5 pb-0.5 text-xs text-info/80 hover:text-info transition-colors"
+          className="text-xs text-muted hover:text-secondary transition-colors cursor-pointer"
         >
           {clamped ? "Show more" : "Show less"}
         </button>
@@ -111,84 +212,91 @@ function ToolResultContent({
   )
 }
 
-/* ── Status dot ─────────────────────────────────────────────────────── */
+/* ── Tool entry row (inside expanded tree) ─────────────────────────── */
 
-function StatusDot({ isError, hasResult }: { isError?: boolean; hasResult: boolean }) {
-  if (!hasResult) return null
-  if (isError) return <X size={10} className="shrink-0 text-danger/60" />
-  return <Check size={10} className="shrink-0 text-success/50" />
-}
-
-/* ── Single tool row ────────────────────────────────────────────────── */
-
-/** Single tool call row, collapsible — shows result output when expanded */
-export function SingleToolRow({
-  toolName,
-  summary,
-  result,
-  isError,
-}: SingleToolRowProps) {
-  const [expanded, setExpanded] = useState(false)
-  const hasResult = Boolean(result?.trim())
+function ToolEntryRow({
+  tool,
+  isLast,
+}: {
+  tool: ToolEntryData
+  isLast: boolean
+}) {
+  const [subExpanded, setSubExpanded] = useState(false)
+  const hasResult = Boolean(tool.result?.trim())
+  const hasDiff = Boolean(tool.oldString !== undefined || tool.newString !== undefined)
+  const canExpand = hasResult || hasDiff
 
   return (
-    <div className="ml-8">
-      <div className={cn(
-        "border-l-2 rounded-r",
-        isError ? "border-l-danger/40" : "border-l-muted/40",
-      )}>
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
-        >
-          <ChevronRight
-            size={12}
-            className={cn(
-              "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-              expanded && "rotate-90",
-            )}
-          />
-          <span className={cn(
-            "text-xs font-medium shrink-0",
-            isError ? "text-danger/80" : "text-info",
-          )}>
-            {toolName}
+    <div className="relative flex flex-col">
+      {/* Tree connectors */}
+      <div
+        className="absolute left-0 top-0 w-px bg-border-default/40"
+        style={{ bottom: isLast ? "calc(100% - 13px)" : 0 }}
+      />
+
+      <div
+        className={cn(
+          "flex items-center gap-1.5 py-0.5",
+          canExpand && "cursor-pointer",
+        )}
+        onClick={canExpand ? () => setSubExpanded(!subExpanded) : undefined}
+      >
+        {/* Horizontal arm */}
+        <div className="w-1.5 h-px bg-border-default/40 shrink-0 -ml-0" />
+
+        {/* Tool name label */}
+        <span className="text-[13px] text-muted shrink-0">{tool.name}</span>
+
+        {/* File path pill */}
+        {tool.filePath && (
+          <span className="font-mono text-[11px] bg-surface px-1 py-0.5 rounded truncate min-w-0 text-muted">
+            {tool.filePath}
           </span>
-          <span className="text-xs text-muted font-mono truncate min-w-0">
-            {summary}
+        )}
+
+        {/* Command/summary as pill when no file path */}
+        {!tool.filePath && tool.summary && (
+          <span className="font-mono text-[11px] bg-surface px-1 py-0.5 rounded truncate min-w-0 text-muted">
+            {tool.summary}
           </span>
-          <StatusDot isError={isError} hasResult={hasResult} />
-        </button>
-        <Collapsible open={expanded}>
-          <div className="ml-4 mr-1 mb-1">
-            {hasResult ? (
-              <ToolResultContent
-                result={result!}
-                toolName={toolName}
-                isError={isError}
+        )}
+
+        {/* Line delta badges */}
+        {tool.lineDelta && tool.lineDelta.added > 0 && (
+          <span className="font-mono text-[11px] font-light text-success shrink-0">
+            +{tool.lineDelta.added}
+          </span>
+        )}
+        {tool.lineDelta && tool.lineDelta.removed > 0 && (
+          <span className="font-mono text-[11px] font-light text-danger shrink-0">
+            -{tool.lineDelta.removed}
+          </span>
+        )}
+      </div>
+
+      {/* Sub-expanded content: diff view or plain result */}
+      {canExpand && (
+        <Collapsible open={subExpanded}>
+          <div className="ml-3.5">
+            {hasDiff ? (
+              <UnifiedDiffView
+                oldString={tool.oldString ?? ""}
+                newString={tool.newString ?? ""}
               />
             ) : (
-              <div className="rounded bg-surface-sunken/60 p-2">
-                <p className="font-mono text-xs text-muted/60 italic">
-                  No output
-                </p>
-              </div>
+              <ToolResultContent result={tool.result!} isError={tool.isError} />
             )}
           </div>
         </Collapsible>
-      </div>
+      )}
     </div>
   )
 }
 
-/* ── Tool row (inside multi-group) ──────────────────────────────────── */
+/* ── Single tool row ────────────────────────────────────────────────── */
 
-/** Individual tool row inside a multi-tool group */
-export function ToolRow({ toolName, summary, result, isError }: ToolRowProps) {
+export function SingleToolRow({ tool }: { tool: ToolEntryData }) {
   const [expanded, setExpanded] = useState(false)
-  const hasResult = Boolean(result?.trim())
 
   return (
     <div>
@@ -196,42 +304,22 @@ export function ToolRow({ toolName, summary, result, isError }: ToolRowProps) {
         type="button"
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
-        className="flex items-center gap-2 w-full text-left px-2.5 py-0.5 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
+        className="flex items-center gap-1.5 w-full text-left py-0.5 cursor-pointer group"
       >
-        <ChevronRight
-          size={10}
+        <ChevronDown
+          size={14}
           className={cn(
             "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-            expanded && "rotate-90",
+            !expanded && "-rotate-90",
           )}
         />
-        <span className={cn(
-          "text-[11px] font-medium shrink-0",
-          isError ? "text-danger/80" : "text-info",
-        )}>
-          {toolName}
+        <span className="text-[13px] text-muted group-hover:text-secondary transition-colors">
+          {summarizeSingleTool(tool.name)}
         </span>
-        <span className="text-[11px] text-muted font-mono truncate min-w-0">
-          {summary}
-        </span>
-        <StatusDot isError={isError} hasResult={hasResult} />
       </button>
       <Collapsible open={expanded}>
-        <div className="ml-4 mr-1 mb-0.5">
-          {hasResult ? (
-            <ToolResultContent
-              result={result!}
-              toolName={toolName}
-              isError={isError}
-              fontSize="text-[11px]"
-            />
-          ) : (
-            <div className="rounded bg-surface-sunken/60 p-2">
-              <p className="font-mono text-[11px] text-muted/60 italic">
-                No output
-              </p>
-            </div>
-          )}
+        <div className="pl-3 ml-1.5">
+          <ToolEntryRow tool={tool} isLast={true} />
         </div>
       </Collapsible>
     </div>
@@ -240,58 +328,64 @@ export function ToolRow({ toolName, summary, result, isError }: ToolRowProps) {
 
 /* ── Multi-tool group ───────────────────────────────────────────────── */
 
-/** Multi-tool group -- collapsible group header */
-export function MultiToolGroup({
-  tools,
-}: MultiToolGroupProps) {
+export function MultiToolGroup({ tools }: { tools: ToolEntryData[] }) {
   const [expanded, setExpanded] = useState(false)
+  const [showAll, setShowAll] = useState(false)
 
-  const hasErrors = tools.some(t => t.isError)
-  const uniqueNames = tools
-    .map((t) => t.name)
-    .filter((v, i, a) => a.indexOf(v) === i)
-    .join(", ")
+  const overflowCount = tools.length - OVERFLOW_LIMIT
+  const visibleTools = showAll ? tools : tools.slice(0, OVERFLOW_LIMIT)
 
   return (
-    <div className="ml-8">
-      <div className={cn(
-        "border-l-2 rounded-r",
-        hasErrors ? "border-l-danger/40" : "border-l-muted/40",
-      )}>
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          className="flex items-center gap-2 w-full text-left px-2.5 py-1 cursor-pointer hover:bg-surface-sunken/40 transition-colors"
-        >
-          <ChevronRight
-            size={12}
-            className={cn(
-              "shrink-0 text-muted transition-transform duration-(--duration-normal)",
-              expanded && "rotate-90",
-            )}
-          />
-          <span className="text-xs text-secondary">
-            {tools.length} tool uses
-          </span>
-          <span className="text-[11px] text-muted font-mono truncate min-w-0">
-            {uniqueNames}
-          </span>
-        </button>
-        <Collapsible open={expanded}>
-          <div className="ml-2 space-y-px">
-            {tools.map((tool, i) => (
-              <ToolRow
-                key={i}
-                toolName={tool.name}
-                summary={tool.summary}
-                result={tool.result}
-                isError={tool.isError}
-              />
-            ))}
-          </div>
-        </Collapsible>
-      </div>
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        className="flex items-center gap-1.5 w-full text-left py-0.5 cursor-pointer group"
+      >
+        <ChevronDown
+          size={14}
+          className={cn(
+            "shrink-0 text-muted transition-transform duration-(--duration-normal)",
+            !expanded && "-rotate-90",
+          )}
+        />
+        <span className="text-[13px] text-muted group-hover:text-secondary transition-colors">
+          {summarizeToolGroup(tools)}
+        </span>
+      </button>
+      <Collapsible open={expanded}>
+        <div className="pl-3 ml-1.5">
+          {visibleTools.map((tool, i) => (
+            <ToolEntryRow
+              key={i}
+              tool={tool}
+              isLast={!showAll && i === visibleTools.length - 1 && overflowCount <= 0}
+            />
+          ))}
+          {overflowCount > 0 && !showAll && (
+            <div className="relative">
+              <div className="absolute left-0 top-0 w-px bg-border-default/40 h-[9px]" />
+              <button
+                type="button"
+                onClick={() => setShowAll(true)}
+                className="ml-3 text-[11px] text-muted hover:text-secondary transition-colors cursor-pointer py-0.5"
+              >
+                Show {overflowCount} more
+              </button>
+            </div>
+          )}
+          {showAll && overflowCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAll(false)}
+              className="ml-3 text-[11px] text-muted hover:text-secondary transition-colors cursor-pointer py-0.5"
+            >
+              Show less
+            </button>
+          )}
+        </div>
+      </Collapsible>
     </div>
   )
 }

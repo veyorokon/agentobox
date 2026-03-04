@@ -67,3 +67,74 @@ export function friendlyModelName(raw: string): string {
   // Fallback: strip "claude-" prefix and capitalize
   return raw.replace(/^claude-/, "").replace(/-\d{8}$/, "")
 }
+
+/* ── Tool row helpers ──────────────────────────────────────────────── */
+
+const TOOL_CATEGORIES: Record<string, string> = {
+  Edit: "edit",
+  Write: "edit",
+  Read: "read",
+  WebFetch: "read",
+  Bash: "command",
+  bash: "command",
+  Grep: "search",
+  Glob: "search",
+  WebSearch: "search",
+}
+
+export function toolCategory(name: string): string {
+  return TOOL_CATEGORIES[name] ?? "tool"
+}
+
+const CATEGORY_LABELS: Record<string, { singular: string; plural: (n: number) => string }> = {
+  edit: { singular: "Edited a file", plural: (n) => `Edited ${n} files` },
+  read: { singular: "Read a file", plural: (n) => `Read ${n} files` },
+  command: { singular: "Ran a command", plural: (n) => `Ran ${n} commands` },
+  search: { singular: "Searched code", plural: () => "Searched code" },
+  tool: { singular: "Used a tool", plural: (n) => `Used ${n} tools` },
+}
+
+export function summarizeSingleTool(name: string): string {
+  const cat = toolCategory(name)
+  return CATEGORY_LABELS[cat]?.singular ?? "Used a tool"
+}
+
+export function summarizeToolGroup(tools: { name: string }[]): string {
+  const counts = new Map<string, number>()
+  for (const t of tools) {
+    const cat = toolCategory(t.name)
+    counts.set(cat, (counts.get(cat) ?? 0) + 1)
+  }
+  const phrases: string[] = []
+  for (const [cat, count] of counts) {
+    const labels = CATEGORY_LABELS[cat] ?? CATEGORY_LABELS.tool!
+    phrases.push(count === 1 ? labels.singular : labels.plural(count))
+  }
+  return phrases.join(", ")
+}
+
+export function computeLineDelta(
+  input: Record<string, unknown>,
+): { added: number; removed: number } | null {
+  const oldStr = input.old_string
+  const newStr = input.new_string
+  if (typeof oldStr !== "string" && typeof newStr !== "string") return null
+  const oldLines = typeof oldStr === "string" ? oldStr.split("\n").length : 0
+  const newLines = typeof newStr === "string" ? newStr.split("\n").length : 0
+  // For Write tool (content field, no old_string)
+  if (typeof oldStr !== "string" && typeof input.content === "string") {
+    return { added: String(input.content).split("\n").length, removed: 0 }
+  }
+  return { added: newLines, removed: oldLines }
+}
+
+export function shortenFilePath(path: string, maxLen = 60): string {
+  if (path.length <= maxLen) return path
+  const parts = path.split("/")
+  // Keep progressively fewer leading segments
+  for (let skip = 1; skip < parts.length - 1; skip++) {
+    const shortened = "…/" + parts.slice(skip).join("/")
+    if (shortened.length <= maxLen) return shortened
+  }
+  return "…/" + parts[parts.length - 1]
+}

@@ -140,7 +140,7 @@ export default function ProjectPage() {
 
         {/* Center: team feed + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
-          <main className="flex-1 min-w-0 flex flex-col min-h-0">
+          <main className="flex-1 min-w-0 flex flex-col min-h-0 bg-surface-raised">
             <TeamFeed />
             <AttentionBar />
             <ComposerBar />
