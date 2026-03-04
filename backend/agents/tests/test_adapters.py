@@ -46,6 +46,7 @@ class TestRegistry:
             def turns(self, snapshot): return 0
             def is_permission_request(self, event): return None
             def is_plan_proposal(self, event): return None
+            def is_message_send(self, event): return None
             def wire_to_mode(self, wire_mode): return ""
             def mode_to_wire(self, mode): return ""
             def build_settings(self, *, api_key="", mode="auto"): return "{}"

@@ -241,6 +241,11 @@ class SDKRelay:
             cli_path="claude",
             cwd=os.getcwd(),
             can_use_tool=can_use_tool,
+            # Load user-level settings so hooks from ~/.claude/settings.json
+            # are active. The SDK defaults setting_sources=None which the
+            # transport layer converts to --setting-sources "" (empty),
+            # causing CC to load ZERO settings — breaking all user hooks.
+            setting_sources=["user"],
             # 16MB buffer — computer-use screenshots are 2-5MB base64.
             # SDK default is 1MB which truncates large tool results.
             max_buffer_size=16 * 2**20,
@@ -584,6 +589,7 @@ class SDKRelay:
                 "IS_SANDBOX": os.environ.get("IS_SANDBOX", ""),
                 "CLAUDE_CODE_ENTRYPOINT": os.environ.get("CLAUDE_CODE_ENTRYPOINT", ""),
                 "has_api_key": bool(ANTHROPIC_API_KEY),
+                "setting_sources": ["user"],
             },
         }
         try:
@@ -601,6 +607,7 @@ class SDKRelay:
                 log.info("relay.sdk_creating", extra={
                     "cli_path": options.cli_path, "cwd": options.cwd,
                     "perm": options.permission_mode,
+                    "setting_sources": list(options.setting_sources or []),
                     "extra_args": {k: v for k, v in (options.extra_args or {}).items()},
                 })
                 self.client = ClaudeSDKClient(options=options)

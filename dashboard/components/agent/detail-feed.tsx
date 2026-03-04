@@ -135,7 +135,7 @@ function TimelineEntryRow({
 
       return (
         <>
-          {text && <AssistantMessage agent={agentName} content={text} showAvatar={true} />}
+          {text && <AssistantMessage agent={agentName} content={text} showAvatar={false} />}
           {toolUses.length === 1 && (() => {
             const tu = toolUses[0]
             const tuId = String(tu.id ?? "")
@@ -187,7 +187,7 @@ function TimelineEntryRow({
 
       if (isError) {
         const errorText = String(data?.error ?? "Agent encountered an error")
-        return <ErrorBubble agent={agentName} text={errorText} />
+        return <ErrorBubble agent={agentName} text={errorText} showAgent={false} />
       }
 
       return (

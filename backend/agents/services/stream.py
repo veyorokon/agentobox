@@ -106,6 +106,7 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
         await _maybe_set_running(agent)
         await _update_assistant_fields(agent, event)
         await _maybe_create_plan_item(agent, event, stream_event)
+        await _maybe_create_message_item(agent, event, stream_event)
     elif event_type == "result":
         await _handle_result(agent, event, stream_event)
     elif event_type == "system":
@@ -197,6 +198,45 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
     )
     await recompute_attention(str(agent.project_id), str(agent.id))
     log.info("stream.plan_pending", agent_id=str(agent.id), tool_use_id=tool_use_id)
+
+
+async def _maybe_create_message_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:
+    """Detect SendMessage tool_use and create an agent-message feed item.
+
+    CC's native SendMessage doesn't trigger PostToolUse hooks, so the hook
+    bridge never fires. We intercept the tool_use block in the assistant
+    stream event instead — same pattern as _maybe_create_plan_item.
+    # tech-debt: remove if CC ever fires PostToolUse for native team tools
+    """
+    from agents.adapters import get_adapter
+
+    adapter = get_adapter(agent.agent_type)
+    msg_info = adapter.is_message_send(event)
+    if not msg_info:
+        return
+
+    msg_type = msg_info["type"]
+    recipient = msg_info["recipient"]
+    content = msg_info["content"]
+
+    # Only create feed items for DMs and broadcasts — shutdown_request
+    # is an operational action, not a conversation message
+    if msg_type == "shutdown_request":
+        return
+
+    to_value = recipient if msg_type == "message" else "all"
+
+    await create_feed_item(
+        project_id=str(agent.project_id),
+        source_event=source_event,
+        agent_record=agent,
+        type="agent-message",
+        agent_name=agent.name,
+        from_value=agent.name,
+        to_value=to_value,
+        text=content[:500],
+    )
+    log.info("stream.message_intercepted", agent_name=agent.name, to=to_value)
 
 
 async def _maybe_set_running(agent: Agent) -> None:

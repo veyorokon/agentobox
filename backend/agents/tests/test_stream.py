@@ -204,3 +204,143 @@ class TestPhaseLogic:
         }
         await _handle_phase(agent, event)
         assert agent.phase == "tool-input"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestMessageInterception:
+    """Principle: CC native SendMessage doesnt fire PostToolUse hooks.
+
+    The stream processor intercepts SendMessage tool_use blocks in assistant
+    events and creates agent-message feed items — same data as MCP coord would
+    produce, but triggered from the stream instead of the hook bridge.
+    """
+
+    @pytest.fixture
+    def agent(self, db):
+        from projects.models import Project
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.create_user(username="test_msg", password="test")
+        project = Project.objects.create(name="Test Msg", owner=user)
+        return Agent.objects.create(
+            name="sender",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.RUNNING,
+            session_id="session_msg",
+            agent_type="claude-code",
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_message_creates_feed_item(self, agent, mock_broadcast):
+        from agents.services.stream import _maybe_create_message_item
+        from agents.models import StreamEvent
+
+        source = await StreamEvent.objects.acreate(
+            agent=agent, session_id="s1", event_type="assistant", data={},
+        )
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Sending a message"},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_123",
+                        "name": "SendMessage",
+                        "input": {
+                            "type": "message",
+                            "recipient": "team-lead",
+                            "content": "Hello from sender",
+                            "summary": "Greeting",
+                        },
+                    },
+                ],
+            },
+        }
+        await _maybe_create_message_item(agent, event, source)
+
+        mock_broadcast["create_feed"].assert_called_once()
+        call_kwargs = mock_broadcast["create_feed"].call_args[1]
+        assert call_kwargs["type"] == "agent-message"
+        assert call_kwargs["from_value"] == "sender"
+        assert call_kwargs["to_value"] == "team-lead"
+        assert call_kwargs["text"] == "Hello from sender"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_creates_feed_item(self, agent, mock_broadcast):
+        from agents.services.stream import _maybe_create_message_item
+        from agents.models import StreamEvent
+
+        source = await StreamEvent.objects.acreate(
+            agent=agent, session_id="s1", event_type="assistant", data={},
+        )
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_456",
+                    "name": "SendMessage",
+                    "input": {
+                        "type": "broadcast",
+                        "content": "Attention everyone",
+                        "summary": "Team announcement",
+                    },
+                }],
+            },
+        }
+        await _maybe_create_message_item(agent, event, source)
+
+        call_kwargs = mock_broadcast["create_feed"].call_args[1]
+        assert call_kwargs["to_value"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_request_no_feed_item(self, agent, mock_broadcast):
+        from agents.services.stream import _maybe_create_message_item
+        from agents.models import StreamEvent
+
+        source = await StreamEvent.objects.acreate(
+            agent=agent, session_id="s1", event_type="assistant", data={},
+        )
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_789",
+                    "name": "SendMessage",
+                    "input": {
+                        "type": "shutdown_request",
+                        "recipient": "worker",
+                        "content": "Shutting down",
+                    },
+                }],
+            },
+        }
+        await _maybe_create_message_item(agent, event, source)
+
+        mock_broadcast["create_feed"].assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_sendmessage_tool_ignored(self, agent, mock_broadcast):
+        from agents.services.stream import _maybe_create_message_item
+        from agents.models import StreamEvent
+
+        source = await StreamEvent.objects.acreate(
+            agent=agent, session_id="s1", event_type="assistant", data={},
+        )
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_abc",
+                    "name": "Edit",
+                    "input": {"file_path": "/foo.py"},
+                }],
+            },
+        }
+        await _maybe_create_message_item(agent, event, source)
+
+        mock_broadcast["create_feed"].assert_not_called()

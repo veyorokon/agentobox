@@ -77,6 +77,16 @@ class AgentAdapter(Protocol):
         """
         ...
 
+    def is_message_send(self, event: dict) -> dict | None:
+        """Check if an assistant event contains a message send tool call.
+
+        Returns a dict with keys (type, recipient, content, summary) or None.
+        Agent types with native team tools (CC) need this because the backend
+        doesn't see tool calls that bypass MCP. Agent types using MCP for team
+        tools (OpenCode) return None — MCP coord already creates feed items.
+        """
+        ...
+
     def wire_to_mode(self, wire_mode: str) -> str:
         """Agent wire format -> our mode. e.g. "bypassPermissions" -> "auto".
 

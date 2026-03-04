@@ -1,6 +1,7 @@
 "use client"
 
 import { AlertCircle } from "lucide-react"
+import { CopyButton } from "@/components/shared/copy-button"
 
 export interface TeamErrorAlertProps {
   agent: string
@@ -14,7 +15,7 @@ export interface TeamErrorAlertProps {
  */
 export function TeamErrorAlert({ agent, text, onClickAgent }: TeamErrorAlertProps) {
   return (
-    <div className="flex gap-2.5 min-w-0">
+    <div className="group/msg relative flex gap-2.5 min-w-0">
       <button type="button" onClick={() => onClickAgent?.(agent)} className="shrink-0 cursor-pointer">
         <div className="w-6 h-6 rounded-full flex items-center justify-center bg-danger-subtle mt-1">
           <AlertCircle className="h-3.5 w-3.5 text-danger" />
@@ -28,6 +29,11 @@ export function TeamErrorAlert({ agent, text, onClickAgent }: TeamErrorAlertProp
           </p>
         </div>
       </div>
+      {text.length > 0 && (
+        <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+          <CopyButton text={text} />
+        </div>
+      )}
     </div>
   )
 }

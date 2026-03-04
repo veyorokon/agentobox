@@ -1,6 +1,7 @@
 "use client"
 
 import { AgentTag } from "@/components/agent/avatar"
+import { CopyButton } from "@/components/shared/copy-button"
 
 export interface AgentToAgentMessageProps {
   from: string
@@ -15,11 +16,16 @@ export interface AgentToAgentMessageProps {
  */
 export function AgentToAgentMessage({ from, to, text, onClickAgent }: AgentToAgentMessageProps) {
   return (
-    <div className="flex items-center justify-center gap-2 py-0.5">
+    <div className="group/msg flex items-center justify-center gap-2 py-0.5">
       <AgentTag name={from} onClick={onClickAgent} />
       <span className="text-[10px] text-muted/30">→</span>
       <AgentTag name={to} onClick={onClickAgent} />
       <span className="text-[10px] text-secondary font-mono truncate max-w-md">{text}</span>
+      {text.length > 0 && (
+        <div className="opacity-0 group-hover/msg:opacity-100 transition-opacity shrink-0">
+          <CopyButton text={text} />
+        </div>
+      )}
     </div>
   )
 }

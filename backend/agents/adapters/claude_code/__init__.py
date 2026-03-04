@@ -280,6 +280,40 @@ class ClaudeCodeAdapter:
             }
         return None
 
+    def is_message_send(self, event: dict) -> dict | None:
+        """Detect SendMessage tool_use in assistant event.
+
+        CC's native SendMessage tool doesn't trigger PostToolUse hooks,
+        so the hook bridge never fires. Stream interception catches it here.
+        # tech-debt: remove if CC ever fires PostToolUse for native team tools
+        """
+        content = event.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            return None
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "tool_use":
+                continue
+            if block.get("name") != "SendMessage":
+                continue
+
+            tool_input = block.get("input", {})
+            if not isinstance(tool_input, dict):
+                continue
+
+            msg_type = tool_input.get("type", "")
+            if msg_type not in ("message", "broadcast", "shutdown_request"):
+                continue
+
+            return {
+                "type": msg_type,
+                "recipient": tool_input.get("recipient", ""),
+                "content": tool_input.get("content", ""),
+                "summary": tool_input.get("summary", ""),
+            }
+        return None
+
     def wire_to_mode(self, wire_mode: str) -> str:
         """Agent wire format -> our mode. e.g. "bypassPermissions" -> "auto".
 

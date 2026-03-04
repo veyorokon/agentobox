@@ -266,6 +266,13 @@ class OpenCodeAdapter:
         """
         return None
 
+    def is_message_send(self, event: dict) -> dict | None:
+        """OpenCode uses MCP for team tools — MCP coord creates feed items.
+
+        Returns None always. No stream interception needed.
+        """
+        return None
+
     def wire_to_mode(self, wire_mode: str) -> str:
         """OpenCode wire format -> our mode. e.g. "allow" -> "auto"."""
         return _PERM_TO_MODE.get(wire_mode, "")

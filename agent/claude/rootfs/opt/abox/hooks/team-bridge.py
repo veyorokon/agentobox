@@ -7,18 +7,25 @@ PostToolUse: mutating tools (SendMessage, TaskCreate, TaskUpdate) — native
     tool already ran, forward to backend for DB persistence.
 
 Stdlib only — no pip dependencies. Runs inside agent container as child of
-CC process. Inherits env vars from relay: ABOX_CALLBACK_URL, RELAY_AUTH_TOKEN.
+CC process. Reads config from ~/.relay_env (CC strips custom env vars from
+hook subprocesses so we cannot rely on env var inheritance).
 """
 
 import json
+import logging
 import os
 import sys
+import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from abox_logging import setup as _setup_logging
 
+# CC captures hook stderr — also write to a file for container-level visibility
 log = _setup_logging("team-bridge", level="DEBUG")
+_file_handler = logging.FileHandler("/tmp/team-bridge.log")
+_file_handler.setFormatter(log.root.handlers[0].formatter if log.root.handlers else logging.Formatter())
+logging.root.addHandler(_file_handler)
 
 # Structure is the grouping — no per-tool "phase" attribute needed.
 PRE = {"TaskList", "TaskGet"}
@@ -53,6 +60,32 @@ def _format_result(tool_name, payload):
     return f"[agentobox] {tool_name} result: {json.dumps(payload)}"
 
 
+def _load_relay_env():
+    """Read config from .relay_env file.
+
+    CC hook subprocesses do NOT inherit the relay's environment variables —
+    the CLI sanitizes the env for child processes. So we read the values
+    directly from the provisioned .relay_env file instead.
+    # tech-debt: if CC ever exposes hook env passthrough, simplify to os.environ reads
+    """
+    env_file = "/home/agent/.relay_env"
+    result = {}
+    try:
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("export ") and "=" in line:
+                    # "export KEY=VALUE" or "export KEY='VALUE'"
+                    rest = line[len("export "):]
+                    key, _, val = rest.partition("=")
+                    # Strip surrounding quotes
+                    val = val.strip("'\"")
+                    result[key] = val
+    except FileNotFoundError:
+        log.warning("hook.env_file_missing", extra={"file": env_file})
+    return result
+
+
 def main():
     data = json.load(sys.stdin)
     tool_name = data.get("tool_name", "")
@@ -65,12 +98,14 @@ def main():
     log.debug("hook.invoked", extra={"tool": tool_name})
 
     tool_input = data.get("tool_input", {})
-    url = os.environ.get("ABOX_CALLBACK_URL", "")
-    token = os.environ.get("RELAY_AUTH_TOKEN", "")
+
+    # CC strips custom env vars from hook subprocesses — read from file
+    relay_env = _load_relay_env()
+    url = relay_env.get("ABOX_CALLBACK_URL", "") or os.environ.get("ABOX_CALLBACK_URL", "")
+    token = relay_env.get("RELAY_AUTH_TOKEN", "") or os.environ.get("RELAY_AUTH_TOKEN", "")
 
     if not url or not token:
-        # No backend config — let native tool run unimpeded
-        log.warning("hook.config_missing")
+        log.warning("hook.config_missing", extra={"has_url": bool(url), "has_token": bool(token)})
         json.dump({}, sys.stdout)
         return
 
@@ -88,14 +123,31 @@ def main():
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read())
             log.info("hook.backend_response", extra={"tool": tool_name, "status": resp.status})
+    except urllib.error.HTTPError as e:
+        log.error("hook.backend_http_error", extra={
+            "tool": tool_name, "status": e.code, "reason": e.reason,
+        })
+        error_msg = f"HTTP {e.code}: {e.reason}"
+    except urllib.error.URLError as e:
+        log.error("hook.backend_network_error", extra={
+            "tool": tool_name, "error": str(e.reason),
+        })
+        error_msg = f"network: {e.reason}"
     except Exception as e:
-        log.error("hook.backend_error", extra={"tool": tool_name, "error": str(e)})
+        log.error("hook.backend_error", extra={
+            "tool": tool_name, "error": str(e), "error_type": type(e).__name__,
+        })
+        error_msg = str(e)
+    else:
+        error_msg = None
+
+    if error_msg is not None:
         # PreToolUse: deny so CC doesnt write stale local files
         # PostToolUse: empty output is fine (native tool already ran)
         if tool_name in PRE:
             json.dump({
                 "hookSpecificOutput": {"permissionDecision": "deny"},
-                "systemMessage": f"[agentobox] Hook bridge error for {tool_name}: {e}",
+                "systemMessage": f"[agentobox] Hook bridge error for {tool_name}: {error_msg}",
             }, sys.stdout)
         else:
             json.dump({}, sys.stdout)
@@ -105,12 +157,14 @@ def main():
 
     if tool_name in PRE:
         # Deny native tool, return backend data via systemMessage
+        log.info("hook.pretooluse_denied", extra={"tool": tool_name})
         json.dump({
             "hookSpecificOutput": {"permissionDecision": "deny"},
             "systemMessage": _format_result(tool_name, payload),
         }, sys.stdout)
     else:
         # PostToolUse: native tool already ran, just confirm backend got it
+        log.info("hook.posttooluse_forwarded", extra={"tool": tool_name})
         json.dump({
             "systemMessage": f"[agentobox] {tool_name} synced to backend.",
         }, sys.stdout)

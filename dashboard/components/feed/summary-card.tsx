@@ -2,6 +2,7 @@
 
 import { cn, formatCost } from "@/lib/utils"
 import { AgentTag } from "@/components/agent/avatar"
+import { CopyButton } from "@/components/shared/copy-button"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
 
 export interface AgentSummaryCardProps {
@@ -29,7 +30,7 @@ export function AgentSummaryCard({
   onClickAgent,
 }: AgentSummaryCardProps) {
   return (
-    <div className="min-w-0">
+    <div className="group/msg relative min-w-0">
       <div className="flex items-center gap-2 mb-0.5">
         <AgentTag name={agent} onClick={onClickAgent} />
         <span className="text-[9px] text-muted/40">&middot;</span>
@@ -53,6 +54,11 @@ export function AgentSummaryCard({
           )}
         />
       </div>
+      {summary.length > 0 && (
+        <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+          <CopyButton text={summary} />
+        </div>
+      )}
     </div>
   )
 }
