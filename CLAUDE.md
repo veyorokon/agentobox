@@ -51,6 +51,7 @@ Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before
 - `make test` — Run backend tests in Docker.
 - `make test-local` — Run backend tests locally via uv.
 - `make lint` — Run ruff (backend) + next lint (dashboard).
+- `make seed` — Seed dev data (demo user, agents, feed items, secrets). Run once after fresh DB.
 - `make docs` — Regenerate `docs/REFERENCE.md` from codebase.
 
 ## Dogfooding vs Production

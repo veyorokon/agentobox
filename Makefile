@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude agent-image-opencode up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude agent-image-opencode up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard seed
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -65,3 +65,6 @@ test-e2e-agents:
 
 test-e2e-dashboard:
 	uv run --group e2e pytest tests/e2e/ -v -m "e2e and dashboard"
+
+seed:
+	docker compose exec backend uv run python manage.py seed_dev_data
