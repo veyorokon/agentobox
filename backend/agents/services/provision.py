@@ -126,11 +126,23 @@ async def provision_workspace(
             mcp_servers=mcp_servers, secret_envs=secret_envs,
             coord_server=coord_server,
         )
-        await runtime.write_file(
-            sandbox_id,
-            mcp_config.encode("utf-8"),
-            mcp_config_path,
-        )
+        if mcp_config_path == paths["settings_file"]:
+            # Adapter wants MCP merged into the settings file (e.g. OpenCode
+            # reads MCP servers from inside opencode.json, not a standalone file).
+            merged = json.loads(settings_content)
+            merged.update(json.loads(mcp_config))
+            merged_content = json.dumps(merged, indent=2)
+            await runtime.write_file(
+                sandbox_id,
+                merged_content.encode("utf-8"),
+                mcp_config_path,
+            )
+        else:
+            await runtime.write_file(
+                sandbox_id,
+                mcp_config.encode("utf-8"),
+                mcp_config_path,
+            )
 
     # Write project skills that match this agent's tags
     skills_dir = paths["skills_dir"]

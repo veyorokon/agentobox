@@ -383,30 +383,30 @@ class TestOpenCodeBuildMcpConfig:
     def test_empty_config(self, adapter):
         import json
         result = json.loads(adapter.build_mcp_config())
-        assert result["mcpServers"] == {}
+        assert result["mcp"] == {}
 
     def test_with_coord_server(self, adapter):
         import json
         coord = {"url": "http://localhost:8000/mcp", "headers": {"Authorization": "Bearer tok"}}
         result = json.loads(adapter.build_mcp_config(coord_server=coord))
-        assert "team" in result["mcpServers"]
-        assert result["mcpServers"]["team"]["type"] == "remote"
-        assert result["mcpServers"]["team"]["url"] == "http://localhost:8000/mcp"
+        assert "team" in result["mcp"]
+        assert result["mcp"]["team"]["type"] == "remote"
+        assert result["mcp"]["team"]["url"] == "http://localhost:8000/mcp"
 
     def test_with_local_server(self, adapter):
         import json
         servers = {"playwright": {"command": ["npx", "@playwright/mcp@latest"]}}
         result = json.loads(adapter.build_mcp_config(mcp_servers=servers))
-        assert "playwright" in result["mcpServers"]
-        assert result["mcpServers"]["playwright"]["type"] == "local"
-        assert result["mcpServers"]["playwright"]["command"] == ["npx", "@playwright/mcp@latest"]
+        assert "playwright" in result["mcp"]
+        assert result["mcp"]["playwright"]["type"] == "local"
+        assert result["mcp"]["playwright"]["command"] == ["npx", "@playwright/mcp@latest"]
 
     def test_secret_envs_injected(self, adapter):
         import json
         servers = {"test": {"command": ["echo"]}}
         secrets = {"API_KEY": "secret123"}
         result = json.loads(adapter.build_mcp_config(mcp_servers=servers, secret_envs=secrets))
-        assert result["mcpServers"]["test"]["environment"] == {"API_KEY": "secret123"}
+        assert result["mcp"]["test"]["environment"] == {"API_KEY": "secret123"}
 
 
 class TestOpenCodeBuildApiKeyFiles:
@@ -509,7 +509,9 @@ class TestOpenCodeProvisionPaths:
         paths = adapter.provision_paths("/home/agent")
         assert paths["instruction_file"] == "/home/agent/AGENTS.md"
         assert paths["settings_file"] == "/home/agent/opencode.json"
-        assert paths["mcp_config_file"] == "/home/agent/.mcp.json"
+        # OpenCode reads MCP from inside opencode.json, not a standalone file.
+        # Same path as settings_file tells provision to merge them.
+        assert paths["mcp_config_file"] == "/home/agent/opencode.json"
         assert paths["onboarding_file"] == ""
         assert paths["config_dir"] == "/home/agent/.opencode"
         assert paths["skills_dir"] == "/home/agent/.opencode/plugins"

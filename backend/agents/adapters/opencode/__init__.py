@@ -478,7 +478,11 @@ class OpenCodeAdapter:
         return {
             "instruction_file": f"{workspace}/AGENTS.md",
             "settings_file": f"{workspace}/opencode.json",
-            "mcp_config_file": f"{workspace}/.mcp.json",
+            # OpenCode reads MCP servers from inside opencode.json under the
+            # "mcp" key — NOT from a standalone .mcp.json. Setting this to the
+            # same path as settings_file tells provision_workspace() to merge
+            # the MCP config into the settings file instead of writing separately.
+            "mcp_config_file": f"{workspace}/opencode.json",
             "onboarding_file": "",  # OpenCode has no onboarding state
             "config_dir": f"{workspace}/.opencode",
             "skills_dir": f"{workspace}/.opencode/plugins",
@@ -687,13 +691,12 @@ class OpenCodeAdapter:
     ) -> str:
         """Build MCP config for embedding in opencode.json.
 
-        OpenCode puts MCP config inside the main config file under the "mcp"
-        key. Format: {name: {type, command, environment}} for local servers,
-        {type: "remote", url, headers} for HTTP servers.
+        OpenCode reads MCP servers from inside the main config file under the
+        "mcp" key — NOT from a standalone .mcp.json. provision_workspace()
+        merges this into opencode.json because mcp_config_file == settings_file.
 
-        Returns JSON string of the mcp section to merge into opencode.json.
-        This is written as a standalone .mcp.json for compatibility — OpenCode
-        also reads project-level .mcp.json files.
+        Format: {name: {type, command, environment}} for local servers,
+        {type: "remote", url, headers} for HTTP servers.
         """
         servers = {}
         if mcp_servers:
@@ -719,7 +722,7 @@ class OpenCodeAdapter:
                 "headers": coord_server.get("headers", {}),
             }
 
-        return json.dumps({"mcpServers": servers}, indent=2)
+        return json.dumps({"mcp": servers}, indent=2)
 
     def build_api_key_files(self, api_key: str) -> list[dict]:
         """File specs for API key delivery via the localhost proxy.
