@@ -1,136 +1,39 @@
-"""OpenCode CC event synthesis tests — state machine for turn tracking.
+"""OpenCode CC event synthesis tests — adapter.normalize() state machine.
 
-Tests the relay's _synthesize_cc_events() logic which translates OpenCode
-SSE events into CC-compatible events. This is a state machine with hidden
-invariants: turn start, text accumulation, turn completion, and reset.
+Tests the OpenCodeAdapter.normalize() method which translates OpenCode
+SSE events into CC-compatible events. This is a stateful state machine
+with hidden invariants: turn start, text accumulation, tool tracking,
+turn completion, and state reset.
 
-The relay code lives in agent/opencode/rootfs/opt/abox/relay.py but the
-logic is pure enough to test as a unit: given a sequence of (event_type,
-props) inputs, verify the synthesized CC events sent to the backend.
+normalize(event, state) -> list[dict]:
+    - event: raw OC SSE event {type, properties: {...}}
+    - state: mutable dict persisted across calls (turn tracking)
+    - returns: 0+ CC-format events (assistant, result, user)
 
-We don't import from the agent image (different Python env). Instead we
-replicate the state machine logic as a test double and verify the contract
-that the relay must satisfy. If the relay's synthesis drifts from these
-expectations, either the tests or the relay is wrong — investigate.
+Unlike the old relay-side synthesis, this tests the ACTUAL adapter code.
 """
 
 import pytest
+from unittest.mock import patch
+
+from agents.adapters.opencode import OpenCodeAdapter
 
 
-class FakeSender:
-    """Captures events sent by the synthesis state machine."""
-
-    def __init__(self):
-        self.events: list[dict] = []
-
-    async def send(self, event: dict):
-        self.events.append(event)
-
-    def by_type(self, event_type: str) -> list[dict]:
-        return [e for e in self.events if e.get("type") == event_type]
-
-    def reset(self):
-        self.events.clear()
+def oc_event(event_type: str, props: dict | None = None) -> dict:
+    """Build an OpenCode SSE event dict."""
+    return {"type": event_type, "properties": props or {}}
 
 
-class SynthesisStateMachine:
-    """Test double of relay.py's _synthesize_cc_events state machine.
-
-    Extracted from agent/opencode/rootfs/opt/abox/relay.py:294-377.
-    Kept in sync manually — if the relay changes, these tests must too.
-    """
-
-    def __init__(self, sender: FakeSender, session_id: str = "ses_test"):
-        self._sender = sender
-        self.session_id = session_id
-        self._turn_msg_id: str = ""
-        self._turn_text: str = ""
-        self._turn_started: bool = False
-        self._turn_start_time: float = 0.0
-        self._pending_permissions: dict[str, str] = {}
-        self._time_counter: float = 1000.0  # deterministic fake time
-
-    def _now(self) -> float:
-        return self._time_counter
-
-    async def synthesize(self, event_type: str, props: dict):
-        if event_type == "session.status":
-            status_type = props.get("status", {}).get("type", "")
-            if status_type == "busy" and not self._turn_started:
-                self._turn_started = True
-                self._turn_start_time = self._now()
-                self._turn_text = ""
-                cc_event = {
-                    "type": "assistant",
-                    "message": {
-                        "id": self._turn_msg_id or f"oc_turn_fallback",
-                        "role": "assistant",
-                        "content": [],
-                    },
-                    "session_id": self.session_id,
-                }
-                await self._sender.send(cc_event)
-
-        elif event_type == "message.updated":
-            info = props.get("info", {})
-            if isinstance(info, dict) and info.get("role") == "assistant":
-                msg_id = info.get("id", "")
-                if msg_id:
-                    self._turn_msg_id = msg_id
-
-        elif event_type == "message.part.delta":
-            if props.get("field") == "text":
-                delta = props.get("delta", "")
-                if delta:
-                    self._turn_text += delta
-
-        elif event_type == "session.idle":
-            if self._turn_started:
-                elapsed_ms = int((self._now() - self._turn_start_time) * 1000)
-
-                if self._turn_text:
-                    cc_assistant = {
-                        "type": "assistant",
-                        "message": {
-                            "id": self._turn_msg_id or "oc_turn_fallback",
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": self._turn_text}],
-                        },
-                        "session_id": self.session_id,
-                    }
-                    await self._sender.send(cc_assistant)
-
-                cc_result = {
-                    "type": "result",
-                    "session_id": self.session_id,
-                    "is_error": False,
-                    "total_cost_usd": 0,
-                    "duration_ms": elapsed_ms,
-                    "duration_api_ms": elapsed_ms,
-                    "num_turns": 1,
-                }
-                await self._sender.send(cc_result)
-
-                self._turn_started = False
-                self._turn_msg_id = ""
-                self._turn_text = ""
-                self._turn_start_time = 0.0
-
-        elif event_type == "permission.asked":
-            perm_id = props.get("id", "")
-            if perm_id:
-                self._pending_permissions[perm_id] = perm_id
-
-    def advance_time(self, seconds: float):
-        self._time_counter += seconds
+def by_type(events: list[dict], event_type: str) -> list[dict]:
+    return [e for e in events if e.get("type") == event_type]
 
 
-# ── Test helpers ──
-
-async def run_sequence(sm: SynthesisStateMachine, events: list[tuple[str, dict]]):
-    """Feed a sequence of (event_type, props) through the state machine."""
-    for event_type, props in events:
-        await sm.synthesize(event_type, props)
+def feed_sequence(adapter, state, events: list[dict]) -> list[dict]:
+    """Feed a sequence of OC events, return all emitted CC events."""
+    result = []
+    for event in events:
+        result.extend(adapter.normalize(event, state))
+    return result
 
 
 # ── Tests ──
@@ -140,28 +43,25 @@ class TestTurnLifecycle:
     """Core turn lifecycle: busy → deltas → idle → events emitted."""
 
     @pytest.fixture
-    def sender(self):
-        return FakeSender()
+    def adapter(self):
+        return OpenCodeAdapter()
 
     @pytest.fixture
-    def sm(self, sender):
-        return SynthesisStateMachine(sender)
+    def state(self):
+        return {}
 
-    @pytest.mark.asyncio
-    async def test_basic_turn(self, sm, sender):
+    def test_basic_turn(self, adapter, state):
         """busy → text deltas → idle produces assistant + result events."""
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.updated", {"info": {"role": "assistant", "id": "msg_001"}}),
-            ("message.part.delta", {"field": "text", "delta": "hello "}),
-            ("message.part.delta", {"field": "text", "delta": "world"}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.updated", {"info": {"role": "assistant", "id": "msg_001"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "hello "}),
+            oc_event("message.part.delta", {"field": "text", "delta": "world"}),
+            oc_event("session.idle"),
         ])
-        sm.advance_time(2.5)
-        await sm.synthesize("session.idle", {})
 
-        # Should have: initial assistant (empty), final assistant (with text), result
-        assistants = sender.by_type("assistant")
-        results = sender.by_type("result")
+        assistants = by_type(cc, "assistant")
+        results = by_type(cc, "result")
 
         assert len(assistants) == 2
         assert len(results) == 1
@@ -175,53 +75,48 @@ class TestTurnLifecycle:
         ]
         assert assistants[1]["message"]["id"] == "msg_001"
 
-        # Result has duration
+        # Result
         assert results[0]["is_error"] is False
         assert results[0]["num_turns"] == 1
-        assert results[0]["session_id"] == "ses_test"
 
-    @pytest.mark.asyncio
-    async def test_turn_without_text(self, sm, sender):
+    def test_turn_without_text(self, adapter, state):
         """busy → idle with no text deltas — result emitted, no final assistant."""
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("session.idle"),
         ])
-        sm.advance_time(1.0)
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
-        results = sender.by_type("result")
+        assistants = by_type(cc, "assistant")
+        results = by_type(cc, "result")
 
-        # Only initial assistant (no final one since no text)
+        # Only initial assistant (no final one since no text or tools)
         assert len(assistants) == 1
         assert assistants[0]["message"]["content"] == []
 
         # Result still emitted
         assert len(results) == 1
 
-    @pytest.mark.asyncio
-    async def test_multiple_turns(self, sm, sender):
+    def test_multiple_turns(self, adapter, state):
         """Two consecutive turns produce independent event sets."""
         # Turn 1
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.updated", {"info": {"role": "assistant", "id": "msg_001"}}),
-            ("message.part.delta", {"field": "text", "delta": "first"}),
+        cc1 = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.updated", {"info": {"role": "assistant", "id": "msg_001"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "first"}),
+            oc_event("session.idle"),
         ])
-        sm.advance_time(1.0)
-        await sm.synthesize("session.idle", {})
 
         # Turn 2
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.updated", {"info": {"role": "assistant", "id": "msg_002"}}),
-            ("message.part.delta", {"field": "text", "delta": "second"}),
+        cc2 = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.updated", {"info": {"role": "assistant", "id": "msg_002"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "second"}),
+            oc_event("session.idle"),
         ])
-        sm.advance_time(2.0)
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
-        results = sender.by_type("result")
+        all_cc = cc1 + cc2
+        assistants = by_type(all_cc, "assistant")
+        results = by_type(all_cc, "result")
 
         # 2 initial + 2 final = 4 assistant events
         assert len(assistants) == 4
@@ -236,193 +131,356 @@ class TestTurnLifecycle:
         assert assistants[3]["message"]["id"] == "msg_002"
 
 
+class TestToolSynthesis:
+    """Tool events (tool.started, tool.completed) → CC content blocks."""
+
+    @pytest.fixture
+    def adapter(self):
+        return OpenCodeAdapter()
+
+    @pytest.fixture
+    def state(self):
+        return {}
+
+    def test_tool_use_in_assistant(self, adapter, state):
+        """tool.started events become tool_use content blocks in the assistant event."""
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "Let me read that file."}),
+            oc_event("tool.started", {
+                "toolName": "Read",
+                "callID": "call_001",
+                "input": {"file_path": "/tmp/test.py"},
+            }),
+            oc_event("tool.completed", {
+                "callID": "call_001",
+                "result": "file contents here",
+            }),
+            oc_event("session.idle"),
+        ])
+
+        assistants = by_type(cc, "assistant")
+        # Final assistant should have text + tool_use
+        final = [a for a in assistants if a["message"]["content"]]
+        assert len(final) == 1
+        content = final[0]["message"]["content"]
+        assert len(content) == 2
+        assert content[0] == {"type": "text", "text": "Let me read that file."}
+        assert content[1]["type"] == "tool_use"
+        assert content[1]["id"] == "call_001"
+        assert content[1]["name"] == "Read"
+        assert content[1]["input"] == {"file_path": "/tmp/test.py"}
+
+    def test_tool_results_as_user_event(self, adapter, state):
+        """tool.completed events emit a user event with tool_result blocks."""
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("tool.started", {
+                "toolName": "Bash",
+                "callID": "call_002",
+                "input": {"command": "ls"},
+            }),
+            oc_event("tool.completed", {
+                "callID": "call_002",
+                "result": "file1.py\nfile2.py",
+            }),
+            oc_event("session.idle"),
+        ])
+
+        users = by_type(cc, "user")
+        assert len(users) == 1
+        content = users[0]["message"]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "tool_result"
+        assert content[0]["tool_use_id"] == "call_002"
+        assert "file1.py" in content[0]["content"]
+
+    def test_multiple_tools_in_turn(self, adapter, state):
+        """Multiple tool.started events accumulate in a single assistant event."""
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("tool.started", {"toolName": "Read", "callID": "c1", "input": {}}),
+            oc_event("tool.completed", {"callID": "c1", "result": "ok"}),
+            oc_event("tool.started", {"toolName": "Write", "callID": "c2", "input": {}}),
+            oc_event("tool.completed", {"callID": "c2", "result": "done"}),
+            oc_event("session.idle"),
+        ])
+
+        assistants = by_type(cc, "assistant")
+        final = [a for a in assistants if a["message"]["content"]]
+        assert len(final) == 1
+        tool_blocks = [b for b in final[0]["message"]["content"] if b["type"] == "tool_use"]
+        assert len(tool_blocks) == 2
+        assert tool_blocks[0]["name"] == "Read"
+        assert tool_blocks[1]["name"] == "Write"
+
+        users = by_type(cc, "user")
+        assert len(users) == 1
+        results = users[0]["message"]["content"]
+        assert len(results) == 2
+
+    def test_tool_error_tracked(self, adapter, state):
+        """tool.completed with error=True marks the tool_result as error."""
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("tool.started", {"toolName": "Bash", "callID": "c1", "input": {}}),
+            oc_event("tool.completed", {"callID": "c1", "result": "command not found", "error": True}),
+            oc_event("session.idle"),
+        ])
+
+        users = by_type(cc, "user")
+        assert users[0]["message"]["content"][0]["is_error"] is True
+
+    def test_tool_without_completed(self, adapter, state):
+        """tool.started without tool.completed still shows in assistant content."""
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("tool.started", {"toolName": "Read", "callID": "c1", "input": {}}),
+            oc_event("session.idle"),
+        ])
+
+        assistants = by_type(cc, "assistant")
+        final = [a for a in assistants if a["message"]["content"]]
+        assert len(final) == 1
+        assert final[0]["message"]["content"][0]["type"] == "tool_use"
+
+        # No user event since no tool.completed
+        users = by_type(cc, "user")
+        assert len(users) == 0
+
+
 class TestStateReset:
     """Verify state resets correctly between turns."""
 
     @pytest.fixture
-    def sender(self):
-        return FakeSender()
+    def adapter(self):
+        return OpenCodeAdapter()
 
     @pytest.fixture
-    def sm(self, sender):
-        return SynthesisStateMachine(sender)
+    def state(self):
+        return {}
 
-    @pytest.mark.asyncio
-    async def test_text_doesnt_leak_between_turns(self, sm, sender):
+    def test_text_doesnt_leak_between_turns(self, adapter, state):
         """Text from turn 1 must not appear in turn 2."""
-        # Turn 1
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "text", "delta": "leak_test"}),
+        feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "leak_test"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        # Turn 2 with different text
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "text", "delta": "clean"}),
+        cc2 = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "clean"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
-        # Last assistant event should be turn 2's final
-        final = assistants[-1]
-        assert final["message"]["content"][0]["text"] == "clean"
-        assert "leak_test" not in final["message"]["content"][0]["text"]
+        assistants = by_type(cc2, "assistant")
+        final = [a for a in assistants if a["message"]["content"]]
+        assert final[0]["message"]["content"][0]["text"] == "clean"
+        assert "leak_test" not in final[0]["message"]["content"][0]["text"]
 
-    @pytest.mark.asyncio
-    async def test_msg_id_doesnt_leak_between_turns(self, sm, sender):
+    def test_msg_id_doesnt_leak_between_turns(self, adapter, state):
         """Message ID from turn 1 must not appear in turn 2 if not set."""
-        # Turn 1 with explicit msg_id
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.updated", {"info": {"role": "assistant", "id": "msg_turn1"}}),
-            ("message.part.delta", {"field": "text", "delta": "t1"}),
+        feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.updated", {"info": {"role": "assistant", "id": "msg_turn1"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "t1"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        # Turn 2 without message.updated
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "text", "delta": "t2"}),
+        cc2 = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "t2"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
-        # Turn 2's final assistant should use fallback ID, not turn 1's
-        turn2_final = assistants[-1]
-        assert turn2_final["message"]["id"] != "msg_turn1"
+        assistants = by_type(cc2, "assistant")
+        final = [a for a in assistants if a["message"]["content"]]
+        assert final[0]["message"]["id"] != "msg_turn1"
+
+    def test_tools_dont_leak_between_turns(self, adapter, state):
+        """Tool blocks from turn 1 must not appear in turn 2."""
+        feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("tool.started", {"toolName": "Read", "callID": "c1", "input": {}}),
+            oc_event("session.idle"),
+        ])
+
+        cc2 = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "no tools"}),
+            oc_event("session.idle"),
+        ])
+
+        assistants = by_type(cc2, "assistant")
+        final = [a for a in assistants if a["message"]["content"]]
+        assert len(final[0]["message"]["content"]) == 1
+        assert final[0]["message"]["content"][0]["type"] == "text"
 
 
 class TestEdgeCases:
     """Edge cases and non-obvious behaviors."""
 
     @pytest.fixture
-    def sender(self):
-        return FakeSender()
+    def adapter(self):
+        return OpenCodeAdapter()
 
     @pytest.fixture
-    def sm(self, sender):
-        return SynthesisStateMachine(sender)
+    def state(self):
+        return {}
 
-    @pytest.mark.asyncio
-    async def test_duplicate_busy_ignored(self, sm, sender):
+    def test_duplicate_busy_ignored(self, adapter, state):
         """Multiple busy events without idle should not create multiple starts."""
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("session.status", {"status": {"type": "busy"}}),
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "text", "delta": "hi"}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "hi"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        # Only one initial assistant event despite 3 busy signals
-        assistants = sender.by_type("assistant")
+        assistants = by_type(cc, "assistant")
         initial = [a for a in assistants if a["message"]["content"] == []]
         assert len(initial) == 1
 
-    @pytest.mark.asyncio
-    async def test_idle_without_busy_is_noop(self, sm, sender):
+    def test_idle_without_busy_is_noop(self, adapter, state):
         """Idle event without preceding busy should not emit anything."""
-        await sm.synthesize("session.idle", {})
-        assert len(sender.events) == 0
+        cc = adapter.normalize(oc_event("session.idle"), state)
+        assert len(cc) == 0
 
-    @pytest.mark.asyncio
-    async def test_non_text_field_deltas_ignored(self, sm, sender):
+    def test_non_text_field_deltas_ignored(self, adapter, state):
         """Deltas for non-text fields (e.g. tool state) should not accumulate text."""
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "state", "delta": "some state"}),
-            ("message.part.delta", {"field": "tool", "delta": "write"}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "state", "delta": "some state"}),
+            oc_event("message.part.delta", {"field": "tool", "delta": "write"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
+        assistants = by_type(cc, "assistant")
         # No final assistant with text (only initial empty one)
         assert len(assistants) == 1
         assert assistants[0]["message"]["content"] == []
 
-    @pytest.mark.asyncio
-    async def test_empty_delta_ignored(self, sm, sender):
+    def test_empty_delta_ignored(self, adapter, state):
         """Empty string delta should not affect accumulated text."""
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "text", "delta": ""}),
-            ("message.part.delta", {"field": "text", "delta": "real"}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": ""}),
+            oc_event("message.part.delta", {"field": "text", "delta": "real"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
+        assistants = by_type(cc, "assistant")
         final = [a for a in assistants if a["message"]["content"]]
         assert len(final) == 1
         assert final[0]["message"]["content"][0]["text"] == "real"
 
-    @pytest.mark.asyncio
-    async def test_non_assistant_message_updated_ignored(self, sm, sender):
+    def test_non_assistant_message_updated_ignored(self, adapter, state):
         """message.updated for user role should not set msg_id."""
-        await run_sequence(sm, [
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.updated", {"info": {"role": "user", "id": "msg_user_001"}}),
-            ("message.part.delta", {"field": "text", "delta": "test"}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.updated", {"info": {"role": "user", "id": "msg_user_001"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "test"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
+        assistants = by_type(cc, "assistant")
         final = [a for a in assistants if a["message"]["content"]]
         assert final[0]["message"]["id"] != "msg_user_001"
 
-    @pytest.mark.asyncio
-    async def test_message_updated_before_busy(self, sm, sender):
+    def test_message_updated_before_busy(self, adapter, state):
         """message.updated arriving before session.status busy should still track id."""
-        await run_sequence(sm, [
-            ("message.updated", {"info": {"role": "assistant", "id": "msg_early"}}),
-            ("session.status", {"status": {"type": "busy"}}),
-            ("message.part.delta", {"field": "text", "delta": "early bird"}),
+        cc = feed_sequence(adapter, state, [
+            oc_event("message.updated", {"info": {"role": "assistant", "id": "msg_early"}}),
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "early bird"}),
+            oc_event("session.idle"),
         ])
-        await sm.synthesize("session.idle", {})
 
-        assistants = sender.by_type("assistant")
+        assistants = by_type(cc, "assistant")
         # Initial assistant should use the pre-set msg_id
         assert assistants[0]["message"]["id"] == "msg_early"
         # Final assistant should also use it
         final = [a for a in assistants if a["message"]["content"]]
         assert final[0]["message"]["id"] == "msg_early"
 
+    def test_unknown_event_type_returns_empty(self, adapter, state):
+        """Unknown event types should return empty list, not crash."""
+        cc = adapter.normalize(oc_event("file.watcher.updated", {"path": "/tmp"}), state)
+        assert cc == []
+
+    def test_missing_properties_handled(self, adapter, state):
+        """Events with no properties key should not crash."""
+        cc = adapter.normalize({"type": "session.status"}, state)
+        assert cc == []
+
 
 class TestPermissionTracking:
-    """Permission ID tracking for callback resolution."""
+    """Permission ID tracking in normalize state."""
 
     @pytest.fixture
-    def sender(self):
-        return FakeSender()
+    def adapter(self):
+        return OpenCodeAdapter()
 
     @pytest.fixture
-    def sm(self, sender):
-        return SynthesisStateMachine(sender)
+    def state(self):
+        return {}
 
-    @pytest.mark.asyncio
-    async def test_permission_tracked(self, sm, sender):
-        """permission.asked should store the permission ID."""
-        await sm.synthesize("permission.asked", {"id": "perm_001"})
-        assert "perm_001" in sm._pending_permissions
+    def test_permission_tracked(self, adapter, state):
+        """permission.asked should store the permission ID in state."""
+        adapter.normalize(oc_event("permission.asked", {"id": "perm_001"}), state)
+        assert "perm_001" in state.get("pending_permissions", {})
 
-    @pytest.mark.asyncio
-    async def test_multiple_permissions_tracked(self, sm, sender):
+    def test_multiple_permissions_tracked(self, adapter, state):
         """Multiple permissions should all be tracked independently."""
-        await sm.synthesize("permission.asked", {"id": "perm_001"})
-        await sm.synthesize("permission.asked", {"id": "perm_002"})
-        assert len(sm._pending_permissions) == 2
-        assert "perm_001" in sm._pending_permissions
-        assert "perm_002" in sm._pending_permissions
+        adapter.normalize(oc_event("permission.asked", {"id": "perm_001"}), state)
+        adapter.normalize(oc_event("permission.asked", {"id": "perm_002"}), state)
+        perms = state.get("pending_permissions", {})
+        assert len(perms) == 2
+        assert "perm_001" in perms
+        assert "perm_002" in perms
 
-    @pytest.mark.asyncio
-    async def test_empty_permission_id_ignored(self, sm, sender):
+    def test_empty_permission_id_ignored(self, adapter, state):
         """permission.asked with empty ID should not track."""
-        await sm.synthesize("permission.asked", {"id": ""})
-        assert len(sm._pending_permissions) == 0
+        adapter.normalize(oc_event("permission.asked", {"id": ""}), state)
+        assert len(state.get("pending_permissions", {})) == 0
 
-    @pytest.mark.asyncio
-    async def test_permission_no_id_key_ignored(self, sm, sender):
+    def test_permission_no_id_key_ignored(self, adapter, state):
         """permission.asked without id key should not track."""
-        await sm.synthesize("permission.asked", {})
-        assert len(sm._pending_permissions) == 0
+        adapter.normalize(oc_event("permission.asked", {}), state)
+        assert len(state.get("pending_permissions", {})) == 0
+
+
+class TestSessionIdTracking:
+    """Session ID extraction from various event shapes."""
+
+    @pytest.fixture
+    def adapter(self):
+        return OpenCodeAdapter()
+
+    @pytest.fixture
+    def state(self):
+        return {}
+
+    def test_session_id_from_sessionID_field(self, adapter, state):
+        """sessionID in properties should be tracked."""
+        adapter.normalize(
+            oc_event("session.created", {"sessionID": "ses_abc123"}), state
+        )
+        assert state["session_id"] == "ses_abc123"
+
+    def test_session_id_propagates_to_cc_events(self, adapter, state):
+        """Tracked session ID should appear in emitted CC events."""
+        cc = feed_sequence(adapter, state, [
+            oc_event("session.created", {"sessionID": "ses_xyz"}),
+            oc_event("session.status", {"status": {"type": "busy"}}),
+            oc_event("message.part.delta", {"field": "text", "delta": "hi"}),
+            oc_event("session.idle"),
+        ])
+
+        assistants = by_type(cc, "assistant")
+        assert assistants[0]["session_id"] == "ses_xyz"
+
+        results = by_type(cc, "result")
+        assert results[0]["session_id"] == "ses_xyz"

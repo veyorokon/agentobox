@@ -38,6 +38,8 @@ class TestRegistry:
 
     def test_register_custom_adapter(self):
         class FakeAdapter:
+            native_is_canonical = True
+            def normalize(self, event, state): return [event]
             def last_output(self, snapshot): return ""
             def live_action(self, snapshot): return ""
             def cost(self, snapshot): return 0.0

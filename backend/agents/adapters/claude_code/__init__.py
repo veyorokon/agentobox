@@ -133,6 +133,14 @@ def _normalize_model_id(model: str) -> str:
 class ClaudeCodeAdapter:
     """Adapter for Claude Code stream-json events and provisioning config."""
 
+    native_is_canonical = True
+
+    # ── Normalization ──
+
+    def normalize(self, event: dict, state: dict) -> list[dict]:
+        """Identity — CC events are already in CC format."""
+        return [event]
+
     # ── Read path (extract from snapshot/event) ──
 
     def last_output(self, snapshot: dict) -> str:

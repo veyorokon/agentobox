@@ -37,6 +37,32 @@ from typing import Protocol, runtime_checkable
 class AgentAdapter(Protocol):
     """Port: translate between our vocabulary and agent-specific formats."""
 
+    # ── Normalization (raw agent event -> CC format) ──
+
+    native_is_canonical: bool
+    """True if the agent's native events are already CC-format.
+
+    CC adapter: True — raw events ARE canonical, one store serves both roles.
+    OC adapter: False — raw events need projection, stored separately.
+    Controls whether process_stream_event stores raw + canonical or just one.
+    """
+
+    def normalize(self, event: dict, state: dict) -> list[dict]:
+        """Translate a raw agent event into 0+ CC-format events.
+
+        Called by process_stream_event for every inbound event. The adapter
+        may accumulate state across calls (turn tracking, text buffering)
+        via the mutable ``state`` dict, which is persisted per-agent.
+
+        CC adapter: identity — returns [event] since events are already CC.
+        Other adapters: stateful synthesis — accumulate deltas, emit CC
+        events at turn boundaries (assistant, result, system).
+
+        Returns empty list if the event is consumed but no CC event should
+        be emitted yet (e.g. intermediate text deltas).
+        """
+        ...
+
     # ── Read path (extract from snapshot/event) ──
 
     def last_output(self, snapshot: dict) -> str:

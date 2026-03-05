@@ -1,20 +1,17 @@
 """
-Process Claude Code stream-json events into the append-only StreamEvent log.
+Process agent events into the append-only StreamEvent log.
 
-This is the write path. It is deliberately simple:
+Write path: normalize → store → broadcast → side effects.
 
-    1. Store the raw event verbatim as a StreamEvent row (INSERT, never UPDATE)
-    2. Broadcast to dashboard subscribers
-    3. Update materialized fields on the Agent model (status, phase, cost, etc.)
+    1. Normalize: adapter.normalize(raw_event, state) → 0+ CC-format events
+       - CC adapter: identity (returns [event])
+       - OC adapter: stateful synthesis (accumulates deltas, emits at turn boundaries)
+    2. Store each CC event as a StreamEvent row (INSERT, never UPDATE)
+    3. Broadcast to dashboard subscribers
+    4. Update materialized fields on the Agent model (status, phase, cost, etc.)
 
 No upserts. No row locks. No content part accumulation. No dual-table routing.
-The old write path had select_for_update() to accumulate parts on a Message row —
-that complexity is gone. Each event from the relay is one INSERT.
-
-Why store raw: the relay forwards ALL stream-json events without filtering.
-Thinking content, tool progress, rate limits, content deltas — everything
-Anthropic adds to stream-json is automatically captured. The data field is
-the raw event dict, verbatim. We are an event log, not a relational model.
+Each CC event from normalize() is one INSERT.
 
 Intelligence lives in the read path (the frontend) which reconstructs
 logical messages by grouping StreamEvents by message_id.
@@ -29,6 +26,12 @@ from agents.services.feed import create_feed_item, recompute_attention
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("abox.stream")
+
+# Per-agent normalization state for adapter.normalize().
+# Keyed by agent ID string. State persists across events for the same agent,
+# accumulating turn data (text, tools) until turn boundaries emit CC events.
+# Safe in single-process Daphne — each agent's events arrive sequentially.
+_normalize_states: dict[str, dict] = {}
 
 
 def _externalize_media(parts: list[dict]) -> list[dict]:
@@ -61,11 +64,56 @@ def _extract_message_id(event: dict) -> str:
 
 
 async def process_stream_event(agent: Agent, event: dict) -> None:
-    """Every event from relay → INSERT StreamEvent + broadcast + side effects.
+    """Store raw event + project canonical CC events via adapter.normalize().
 
-    This is the entire write path. One function. No routing, no branching
-    by event type for storage — every event gets stored the same way.
-    Side effects (agent model updates) are the only type-specific logic.
+    Event Sourcing + Materialized Projection in one write path:
+
+        1. Store raw event verbatim (is_canonical depends on adapter)
+        2. Project to 0+ canonical CC events via adapter.normalize()
+        3. Each canonical event: store (is_canonical=True) + side effects
+
+    For CC agents (native_is_canonical=True): raw IS canonical — one store,
+    one side effect pass. normalize() returns [event] (identity).
+
+    For OC agents (native_is_canonical=False): raw event stored separately
+    (is_canonical=False), then normalize() projects CC events that are
+    stored with is_canonical=True and trigger side effects.
+
+    Consumers use the manager projections:
+        StreamEvent.canonical  — frontend rendering, side effects
+        StreamEvent.raw        — debugging, replay, telemetry
+        StreamEvent.objects    — everything
+    """
+    from agents.adapters import get_adapter
+
+    adapter = get_adapter(agent.agent_type)
+    state = _normalize_states.setdefault(str(agent.id), {})
+
+    if adapter.native_is_canonical:
+        # CC path: raw = canonical. One store, identity normalize.
+        cc_events = adapter.normalize(event, state)
+        for cc_event in cc_events:
+            await _process_cc_event(agent, cc_event)
+    else:
+        # Non-CC path: store raw verbatim, then project canonical.
+        await StreamEvent.objects.acreate(
+            agent=agent,
+            session_id=event.get("session_id", ""),
+            event_type=event.get("type", ""),
+            message_id=_extract_message_id(event),
+            data=event,
+            is_canonical=False,
+        )
+        cc_events = adapter.normalize(event, state)
+        for cc_event in cc_events:
+            await _process_cc_event(agent, cc_event)
+
+
+async def _process_cc_event(agent: Agent, event: dict) -> None:
+    """Store a single CC-format event + broadcast + fire side effects.
+
+    This is the core write path. Every CC event gets one INSERT into
+    StreamEvent. Side effects (agent model updates) are type-specific.
 
     The caller (RelayConsumer) caches the Agent instance for the lifetime
     of the WebSocket connection — no per-event DB fetch.

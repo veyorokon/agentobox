@@ -472,14 +472,14 @@ class TestOpenCodeBuildRelayEnv:
     def test_anthropic_proxy_env(self, adapter):
         env = adapter.build_relay_env(**self._base_kwargs(model="anthropic/claude-sonnet-4-5-20250929"))
         assert "ANTHROPIC_API_KEY='sk-ant-proxy00-placeholder-for-agentobox'" in env
-        assert "ANTHROPIC_BASE_URL='http://localhost:9999'" in env
+        assert "ANTHROPIC_BASE_URL='http://localhost:9999/v1'" in env
         # Real key must NOT appear
         assert "sk-ant-real-key" not in env
 
     def test_openai_proxy_env(self, adapter):
         env = adapter.build_relay_env(**self._base_kwargs(model="openai/gpt-4.1"))
         assert "OPENAI_API_KEY='sk-proxy-placeholder-for-agentobox'" in env
-        assert "OPENAI_BASE_URL='http://localhost:9999'" in env
+        assert "OPENAI_BASE_URL='http://localhost:9999/v1'" in env
 
     def test_google_proxy_env(self, adapter):
         env = adapter.build_relay_env(**self._base_kwargs(model="google/gemini-2.5-pro"))

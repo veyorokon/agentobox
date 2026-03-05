@@ -66,6 +66,8 @@ _FORWARD_TYPES = {
     "session.updated",
     "permission.asked",
     "permission.replied",
+    "tool.started",
+    "tool.completed",
 }
 
 # SSE connect retry
@@ -210,16 +212,7 @@ class SSERelay:
         self._redactor = Redactor(log=log)
         self._redactor.load()
         self._sender = EventSender(self.ws, self._redactor, log=log)
-        self._pending_permissions: dict[str, str] = {}  # callback_id -> permission_id
-
-        # Turn state for CC event synthesis.
-        # OpenCode emits fine-grained SSE events; the backend expects coarser
-        # CC-compatible events (assistant, result, system) for side effects
-        # (status transitions, feed items, phase tracking).
-        self._turn_msg_id: str = ""
-        self._turn_text: str = ""
-        self._turn_started: bool = False
-        self._turn_start_time: float = 0.0
+        self._pending_permissions: dict[str, str] = {}  # perm_id -> perm_id
 
     # ── SSE event forwarding ──
 
@@ -229,13 +222,9 @@ class SSERelay:
         Runs forever — only exits via CancelledError (task cancellation on shutdown).
         On stream end or error, reconnects with exponential backoff.
 
-        Translates OpenCode SSE events into CC-compatible events for the backend:
-            session.status busy  → CC "assistant" (triggers RUNNING)
-            message.part.delta   → accumulate text for result
-            message.updated      → track message IDs
-            session.idle         → CC "result" (triggers IDLE + feed item)
-            permission.asked     → CC "callback" (permission flow)
-        Raw OC events are stored in StreamEvent for telemetry regardless.
+        Forwards raw OC events to the backend. CC event synthesis (assistant,
+        result, user) is handled by the adapter's normalize() in stream.py.
+        The relay only tracks permission IDs for callback resolution.
         """
         sse_url = f"{OPENCODE_BASE}/event"
         delay = SSE_RECONNECT_DELAY_S
@@ -268,11 +257,15 @@ class SSERelay:
                         continue
 
                     forwarded_count += 1
-                    # Forward raw OC event for telemetry storage
+                    # Forward raw OC event — backend adapter.normalize() handles CC synthesis
                     await self._sender.send(event)
 
-                    # Synthesize CC-compatible events for backend side effects
-                    await self._synthesize_cc_events(event_type, props)
+                    # Track permission IDs locally for callback resolution via REST
+                    if event_type == "permission.asked":
+                        perm_id = props.get("id", "")
+                        if perm_id:
+                            self._pending_permissions[perm_id] = perm_id
+                            log.info("relay.permission_tracked", extra={"id": perm_id})
 
                 # Stream ended cleanly — reconnect after delay
                 elapsed = time.monotonic() - t0
@@ -290,91 +283,6 @@ class SSERelay:
 
             await asyncio.sleep(delay)
             delay = min(delay * 2, SSE_MAX_RECONNECT_DELAY_S)
-
-    async def _synthesize_cc_events(self, event_type: str, props: dict):
-        """Translate OpenCode SSE events into CC-compatible events.
-
-        The backend's process_stream_event fires side effects only for CC
-        event types (assistant, result, system). This method synthesizes
-        those events at the right moments so the backend updates agent
-        status (IDLE→RUNNING→IDLE) and creates feed items.
-        """
-        if event_type == "session.status":
-            status_type = props.get("status", {}).get("type", "")
-            if status_type == "busy" and not self._turn_started:
-                # New turn started — send assistant event to trigger RUNNING
-                self._turn_started = True
-                self._turn_start_time = time.monotonic()
-                self._turn_text = ""
-                cc_event = {
-                    "type": "assistant",
-                    "message": {
-                        "id": self._turn_msg_id or f"oc_turn_{int(time.time())}",
-                        "role": "assistant",
-                        "content": [],
-                    },
-                    "session_id": self.session_id,
-                }
-                await self._sender.send(cc_event)
-                log.info("relay.cc_assistant_sent", extra={"msg_id": cc_event["message"]["id"]})
-
-        elif event_type == "message.updated":
-            info = props.get("info", {})
-            if isinstance(info, dict) and info.get("role") == "assistant":
-                msg_id = info.get("id", "")
-                if msg_id:
-                    self._turn_msg_id = msg_id
-
-        elif event_type == "message.part.delta":
-            if props.get("field") == "text":
-                delta = props.get("delta", "")
-                if delta:
-                    self._turn_text += delta
-
-        elif event_type == "session.idle":
-            if self._turn_started:
-                # Turn complete — send final assistant event with content, then result
-                elapsed_ms = int((time.monotonic() - self._turn_start_time) * 1000)
-
-                # Final assistant event with accumulated text
-                if self._turn_text:
-                    cc_assistant = {
-                        "type": "assistant",
-                        "message": {
-                            "id": self._turn_msg_id or f"oc_turn_{int(time.time())}",
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": self._turn_text}],
-                        },
-                        "session_id": self.session_id,
-                    }
-                    await self._sender.send(cc_assistant)
-
-                # Result event — triggers IDLE + creates feed item
-                cc_result = {
-                    "type": "result",
-                    "session_id": self.session_id,
-                    "is_error": False,
-                    "total_cost_usd": 0,
-                    "duration_ms": elapsed_ms,
-                    "duration_api_ms": elapsed_ms,
-                    "num_turns": 1,
-                }
-                await self._sender.send(cc_result)
-                log.info("relay.cc_result_sent", extra={
-                    "text_len": len(self._turn_text), "duration_ms": elapsed_ms,
-                })
-
-                # Reset turn state
-                self._turn_started = False
-                self._turn_msg_id = ""
-                self._turn_text = ""
-                self._turn_start_time = 0.0
-
-        elif event_type == "permission.asked":
-            perm_id = props.get("id", "")
-            if perm_id:
-                self._pending_permissions[perm_id] = perm_id
-                log.info("relay.permission_tracked", extra={"id": perm_id})
 
     # ── WS downstream: receive commands from backend ──
 

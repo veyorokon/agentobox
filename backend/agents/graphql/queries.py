@@ -100,7 +100,7 @@ class AgentQuery:
 
         agent = await authorize_agent(info, agent_id)
 
-        qs = StreamEvent.objects.filter(
+        qs = StreamEvent.canonical.filter(
             agent=agent,
         ).exclude(
             event_type="stream_event",

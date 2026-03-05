@@ -47,6 +47,7 @@ import json
 import shlex
 import structlog
 import textwrap
+import time
 
 from agents.adapters.opencode.registries import (
     MCP_REGISTRY,
@@ -106,6 +107,176 @@ def _shell_escape(val: str) -> str:
 
 class OpenCodeAdapter:
     """Adapter for OpenCode SSE/REST events and provisioning config."""
+
+    native_is_canonical = False
+
+    # ── Normalization (OC SSE events -> CC format) ──
+
+    def normalize(self, event: dict, state: dict) -> list[dict]:
+        """Translate OpenCode SSE events into CC-format events.
+
+        Stateful: accumulates text and tool_use blocks across a turn,
+        emitting CC events at turn boundaries. State dict keys:
+
+            turn_started (bool): whether a turn is in progress
+            turn_start_time (float): monotonic time of turn start
+            turn_text (str): accumulated text deltas
+            turn_tools (list): accumulated tool_use content blocks
+            turn_msg_id (str): current message ID
+            session_id (str): tracked from events
+            pending_permissions (dict): callback_id -> permission info
+
+        Event mapping:
+            session.status busy   -> CC "assistant" (empty, triggers RUNNING)
+            message.updated       -> track message ID
+            message.part.delta    -> accumulate text
+            tool.started          -> accumulate tool_use block
+            tool.completed        -> update tool result
+            session.idle          -> CC "assistant" (full) + CC "result"
+            permission.asked      -> CC "callback" for permission flow
+        """
+        event_type = event.get("type", "")
+        props = event.get("properties", {})
+        if not isinstance(props, dict):
+            props = {}
+
+        # Track session ID from events
+        sid = props.get("sessionID", "")
+        if not sid:
+            info = props.get("info", {})
+            if isinstance(info, dict):
+                sid = info.get("id", "") if info.get("id", "").startswith("ses_") else ""
+        if sid:
+            state["session_id"] = sid
+
+        session_id = state.get("session_id", "")
+        result: list[dict] = []
+
+        if event_type == "session.status":
+            status_type = props.get("status", {}).get("type", "")
+            if status_type == "busy" and not state.get("turn_started"):
+                state["turn_started"] = True
+                state["turn_start_time"] = time.monotonic()
+                state["turn_text"] = ""
+                state["turn_tools"] = []
+                msg_id = state.get("turn_msg_id") or f"oc_turn_{int(time.time())}"
+                result.append({
+                    "type": "assistant",
+                    "message": {
+                        "id": msg_id,
+                        "role": "assistant",
+                        "content": [],
+                    },
+                    "session_id": session_id,
+                })
+
+        elif event_type == "message.updated":
+            info = props.get("info", {})
+            if isinstance(info, dict) and info.get("role") == "assistant":
+                msg_id = info.get("id", "")
+                if msg_id:
+                    state["turn_msg_id"] = msg_id
+
+        elif event_type == "message.part.delta":
+            if props.get("field") == "text":
+                delta = props.get("delta", "")
+                if delta:
+                    state["turn_text"] = state.get("turn_text", "") + delta
+
+        elif event_type == "tool.started":
+            tool_name = props.get("toolName", props.get("name", "tool"))
+            call_id = props.get("callID", props.get("id", f"tool_{int(time.time())}"))
+            tool_input = props.get("input", {})
+            state.setdefault("turn_tools", []).append({
+                "type": "tool_use",
+                "id": call_id,
+                "name": tool_name,
+                "input": tool_input if isinstance(tool_input, dict) else {},
+            })
+
+        elif event_type == "tool.completed":
+            call_id = props.get("callID", props.get("id", ""))
+            tool_result = props.get("result", props.get("output", ""))
+            is_error = props.get("error", False)
+            # Store tool result for pairing with tool_use in frontend
+            if call_id:
+                state.setdefault("turn_tool_results", {})[call_id] = {
+                    "content": str(tool_result)[:4000] if tool_result else "",
+                    "is_error": bool(is_error),
+                }
+
+        elif event_type == "session.idle":
+            if state.get("turn_started"):
+                t0 = state.get("turn_start_time", 0)
+                elapsed_ms = int((time.monotonic() - t0) * 1000) if t0 else 0
+                turn_text = state.get("turn_text", "")
+                turn_tools = state.get("turn_tools", [])
+                turn_tool_results = state.get("turn_tool_results", {})
+                msg_id = state.get("turn_msg_id") or f"oc_turn_{int(time.time())}"
+
+                # Build content blocks: text + tool_use interleaved
+                content: list[dict] = []
+                if turn_text:
+                    content.append({"type": "text", "text": turn_text})
+                content.extend(turn_tools)
+
+                if content:
+                    result.append({
+                        "type": "assistant",
+                        "message": {
+                            "id": msg_id,
+                            "role": "assistant",
+                            "content": content,
+                        },
+                        "session_id": session_id,
+                    })
+
+                # Emit tool_result user events so frontend can pair them
+                if turn_tool_results:
+                    tool_result_blocks = []
+                    for tid, tr in turn_tool_results.items():
+                        tool_result_blocks.append({
+                            "type": "tool_result",
+                            "tool_use_id": tid,
+                            "content": tr["content"],
+                            "is_error": tr["is_error"],
+                        })
+                    if tool_result_blocks:
+                        result.append({
+                            "type": "user",
+                            "message": {
+                                "id": f"{msg_id}_results",
+                                "role": "user",
+                                "content": tool_result_blocks,
+                            },
+                            "session_id": session_id,
+                        })
+
+                # Result event — triggers IDLE + creates feed item
+                result.append({
+                    "type": "result",
+                    "session_id": session_id,
+                    "is_error": False,
+                    "total_cost_usd": 0,
+                    "duration_ms": elapsed_ms,
+                    "duration_api_ms": elapsed_ms,
+                    "num_turns": 1,
+                })
+
+                # Reset turn state
+                state["turn_started"] = False
+                state["turn_msg_id"] = ""
+                state["turn_text"] = ""
+                state["turn_tools"] = []
+                state["turn_tool_results"] = {}
+                state["turn_start_time"] = 0
+
+        elif event_type == "permission.asked":
+            perm_id = props.get("id", "")
+            if perm_id:
+                state.setdefault("pending_permissions", {})[perm_id] = perm_id
+
+        return result
 
     # ── Read path (extract from snapshot/event) ──
 

@@ -22,6 +22,16 @@ _REPO_ROOT = PROJECT_ROOT.parent
 AGENT_ROOT = _REPO_ROOT / "agent" if (_REPO_ROOT / "agent").is_dir() else Path("/agent")
 DASHBOARD_ROOT = _REPO_ROOT / "dashboard" if (_REPO_ROOT / "dashboard").is_dir() else Path("/dashboard")
 
+# All agent rootfs dirs: shared (agent/rootfs) + per-type (agent/claude/rootfs, agent/opencode/rootfs)
+AGENT_ROOTFS_DIRS: list[Path] = []
+for _d in sorted(AGENT_ROOT.iterdir()) if AGENT_ROOT.is_dir() else []:
+    _rootfs = _d / "rootfs" if _d.is_dir() and (_d / "rootfs").is_dir() else None
+    if _rootfs:
+        AGENT_ROOTFS_DIRS.append(_rootfs)
+_shared_rootfs = AGENT_ROOT / "rootfs"
+if _shared_rootfs.is_dir():
+    AGENT_ROOTFS_DIRS.append(_shared_rootfs)
+
 
 def _read_source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -482,8 +492,13 @@ class TestCrossBoundaryContracts:
 
     def _extract_bridge_set(self) -> set[str]:
         """Extract BRIDGED tool names from team-bridge.py."""
-        bridge_path = AGENT_ROOT / "rootfs" / "opt" / "abox" / "hooks" / "team-bridge.py"
-        if not bridge_path.exists():
+        bridge_path = None
+        for rootfs in AGENT_ROOTFS_DIRS:
+            candidate = rootfs / "opt" / "abox" / "hooks" / "team-bridge.py"
+            if candidate.exists():
+                bridge_path = candidate
+                break
+        if bridge_path is None:
             pytest.skip("team-bridge.py not found")
         src = _read_source(bridge_path)
         tree = ast.parse(src)
@@ -572,8 +587,8 @@ _VAGUE_EVENT_TERMS = {
 # Directories to search for log calls (structlog on backend, stdlib logging on agent).
 # AGENTS_DIR.parent is the backend root (/app in Docker, backend/ on host).
 _BACKEND_ROOT = AGENTS_DIR.parent
-_AGENT_ABOX_DIR = AGENT_ROOT / "rootfs" / "opt" / "abox"
-_LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config", _AGENT_ABOX_DIR]
+_AGENT_ABOX_DIRS = [r / "opt" / "abox" for r in AGENT_ROOTFS_DIRS if (r / "opt" / "abox").is_dir()]
+_LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"] + _AGENT_ABOX_DIRS
 
 # Valid event name domains — first segment of every domain.action event name.
 # Adding a new domain is a deliberate architectural decision, not an accident.
@@ -812,7 +827,7 @@ class TestTechDebtAnnotations:
     """
 
     _SKIP = {"tests", "migrations", "__pycache__"}
-    _SEARCH_DIRS = [AGENTS_DIR, AGENT_ROOT / "rootfs"]
+    _SEARCH_DIRS = [AGENTS_DIR] + AGENT_ROOTFS_DIRS
 
     def _should_check(self, path: Path) -> bool:
         return not any(part in self._SKIP for part in path.parts)

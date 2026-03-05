@@ -224,23 +224,37 @@ class Agent(models.Model):
 
 
 
+class _CanonicalManager(models.Manager):
+    """Projection: only canonical (CC-format) events for frontend rendering."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_canonical=True)
+
+
+class _RawManager(models.Manager):
+    """Projection: only raw agent-native events for debugging/telemetry."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_canonical=False)
+
+
 class StreamEvent(models.Model):
-    """Append-only event log. Replaces Message + AgentEvent.
+    """Append-only event log — raw events + canonical projections.
 
-    Every stream-json event from the relay, every dashboard-initiated
-    message, every status transition = one row. No upserts, no row locks.
+    Two roles in one table (Event Sourcing + Materialized Projection):
 
-    This is deliberately a dumb append-only log. The relay forwards ALL
-    Claude Code stream-json events verbatim — no filtering, no batching,
-    no transformation. Intelligence lives in the read path (the frontend),
-    not the write path.
+        StreamEvent.objects    — all events (raw + canonical)
+        StreamEvent.canonical  — CC-format events for rendering + side effects
+        StreamEvent.raw        — agent-native events for debugging/replay
 
-    Why store everything:
-    - Thinking content, tool progress, rate limits, content deltas —
-      all captured automatically without code changes when Anthropic
-      adds new event types to stream-json.
-    - The data field is the RAW event dict. No normalization, no schema.
-      We are an event log, not a relational model.
+    Every event from a relay gets one raw INSERT (verbatim, never transformed).
+    The adapter's normalize() then projects 0+ canonical CC-format events that
+    are stored separately for the frontend and side effect processing.
+
+    For agents whose native format IS CC (Claude Code), raw = canonical — one
+    row with is_canonical=True serves both roles (no duplication). For agents
+    with non-CC formats (OpenCode), raw events have is_canonical=False and
+    canonical projections have is_canonical=True.
 
     message_id groups content parts of the same logical message
     (multiple assistant events share an Anthropic message ID).
@@ -251,7 +265,12 @@ class StreamEvent(models.Model):
     event_type = models.CharField(max_length=50)
     message_id = models.CharField(max_length=100, blank=True, db_index=True)
     data = models.JSONField(default=dict)
+    is_canonical = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = models.Manager()
+    canonical = _CanonicalManager()
+    raw = _RawManager()
 
     class Meta:
         ordering = ["created_at"]
