@@ -75,7 +75,8 @@ class Redactor:
                 path = os.path.join(secrets_dir, name)
                 if os.path.isfile(path):
                     try:
-                        val = open(path).read().strip()
+                        with open(path) as f:
+                            val = f.read().strip()
                         if len(val) >= 8:
                             self._secrets.append(val)
                     except PermissionError:
@@ -84,7 +85,9 @@ class Redactor:
         env_file = "/mnt/abox-state/secrets/env"
         if os.path.isfile(env_file):
             try:
-                for line in open(env_file):
+                with open(env_file) as f:
+                    env_lines = f.readlines()
+                for line in env_lines:
                     line = line.strip()
                     if "=" in line and not line.startswith("#"):
                         val = line.split("=", 1)[1].strip().strip("'\"")
@@ -231,7 +234,8 @@ class WSTransport:
         try:
             await self.ws.send(json.dumps(event))
             return True
-        except Exception:
+        except Exception as exc:
+            self._log.warning("relay.ws_send_error", extra={"error": str(exc), "type": type(exc).__name__})
             self._connected = False
             return False
 
@@ -362,27 +366,3 @@ def validate_config():
         raise SystemExit("FATAL: AGENT_ID not set")
     if not CALLBACK_URL:
         raise SystemExit("FATAL: ABOX_CALLBACK_URL not set")
-
-
-async def post_exit_event(sender: EventSender, exit_code: int, stderr: str,
-                          session_id: str = "", *, _posted: set | None = None):
-    """Post synthetic process_exit event to the backend.
-
-    The _posted set guards against double emission — pass a mutable set
-    that persists across calls to prevent duplicates.
-    """
-    if _posted is not None and "exit" in _posted:
-        return
-    if _posted is not None:
-        _posted.add("exit")
-    event = {
-        "type": "system",
-        "subtype": "process_exit",
-        "exit_code": exit_code,
-        "stderr": stderr[:4096],
-        "session_id": session_id,
-        "agent_id": AGENT_ID,
-    }
-    log = _setup_logging("abox-relay")
-    log.info("relay.process_exit", extra={"code": exit_code})
-    await sender.send(event)

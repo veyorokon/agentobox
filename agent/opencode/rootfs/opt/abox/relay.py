@@ -187,7 +187,8 @@ class OpenCodeClient:
             resp = await self._client.get("/session")
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPError:
+        except httpx.HTTPError as e:
+            log.warning("relay.oc_list_sessions_failed", extra={"error": str(e)})
             return []
 
 
