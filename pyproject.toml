@@ -11,6 +11,7 @@ e2e = [
     "docker>=7.1",
     "pytest-playwright>=0.7",
     "pytest-timeout>=2.3",
+    "websockets>=15.0",
 ]
 
 [tool.pytest.ini_options]
@@ -18,6 +19,7 @@ testpaths = ["tests/e2e"]
 asyncio_mode = "auto"
 markers = [
     "e2e: end-to-end tests requiring docker compose stack",
+    "integration: integration tests against live services (no mocks)",
     "agent: tests that spawn real Claude Code agents (costs money)",
     "dashboard: tests requiring Playwright browser",
     "slow: tests with >30s execution time",

@@ -1,59 +1,103 @@
-# E2E Testing
+# Tests
 
-System-level tests that exercise the full agentobox stack: backend, agents, dashboard.
-Separate from Django unit tests in `backend/agents/tests/`.
+System-level tests that exercise the full agentobox stack. Separate from
+Django unit tests in `backend/agents/tests/` and agent contract tests in
+`agent/tests/`.
+
+## Test Layers
+
+| Layer | Location | Runs on | What it tests |
+|-------|----------|---------|---------------|
+| Unit | `backend/agents/tests/` | Host (pytest-django) | Models, adapters, services, architecture |
+| Agent contract | `agent/tests/` | Inside agent container | Relay modules, event shapes, security |
+| **Integration** | `tests/integration/` | Host → live services | WS relay, message delivery, permissions |
+| **E2E** | `tests/e2e/` | Host → browser + services | Dashboard UX, agent lifecycle, Playwright |
 
 ## Quick Start
 
 ```bash
-# Install e2e deps
+# Install test deps
 uv sync --group e2e
 
 # Start the stack
-docker compose up -d
+docker compose up -d && make seed
 
-# Run cheap tests only (no agent spawning, no browser)
-make test-e2e
-
-# Run agent lifecycle tests (spawns real agents, costs money)
-make test-e2e-agents
-
-# Run Playwright dashboard tests
-make test-e2e-dashboard
-
-# Run everything
-make test-e2e-full
+# Run each layer
+make test                # Django unit tests (in container)
+make test-agent          # Agent contract tests (in agent image)
+make test-integration    # Integration tests (against live stack)
+make test-e2e            # E2E tests (cheap only, no agents/browser)
+make test-e2e-full       # E2E tests (everything)
 ```
 
 ## Directory Structure
 
-Tests are organized by domain, not flat. Each domain has its own `conftest.py`
-for domain-specific fixtures while inheriting root-level fixtures.
-
 ```
 tests/
+  README.md
+  integration/
+    conftest.py            # Auth, stack health check, project/agent fixtures
+    helpers.py             # DB access via docker exec (relay tokens, status)
+    test_relay_ws.py       # Relay WS auth, event delivery, downstream commands
   e2e/
-    conftest.py              # Root fixtures: auth, gql client, docker, project
+    conftest.py            # Root fixtures: auth, gql client, docker, project
     helpers/
-      graphql.py             # AboxGraphQL client (httpx, sync)
-      docker_ops.py          # Container find/kill/exec/logs helpers
-      polling.py             # poll_until, poll_agent_status, poll_feed_for
-    lifecycle/               # Agent creation, error capture, status transitions
-    messaging/               # Message delivery, routing, feed items
-    dashboard/               # Playwright browser tests
-    control/                 # Supervised mode, permissions, plans
+      graphql.py           # AboxGraphQL client (httpx, sync)
+      docker_ops.py        # Container find/kill/exec/logs helpers
+      polling.py           # poll_until, poll_agent_status, poll_feed_for
+    lifecycle/             # Agent creation, error capture, status transitions
+    messaging/             # Message delivery, routing, feed items
+    dashboard/             # Playwright browser tests
+    control/               # Supervised mode, permissions, plans
 ```
 
-New test files go in the matching domain directory. New domains get their own
-directory with `__init__.py` and `conftest.py`.
+---
 
-## Conventions
+## Integration Tests
 
-### Fixture Composition
+Real services, no mocks. Tests run on the host and connect to `localhost:8000`
+(backend) via httpx and websockets. The docker compose stack IS the system
+under test.
 
-Fixtures compose via dependencies, not base classes. A test that needs an agent
-declares `test_agent` as a parameter — it automatically gets `gql`, `test_project`,
-`docker_client`, and `auth_token` transitively.
+### Domains
+
+| Domain | File | Chain tested |
+|--------|------|-------------|
+| Relay WS | `test_relay_ws.py` | pytest → WS → RelayConsumer → auth/events/commands |
+| Message delivery | (planned) | sendMessage → Channels → relay WS → agent |
+| Permissions | (planned) | permission event → callback → dashboard → relay reply |
+| Provisioning | (planned) | createAgent → container boot → relay connect → status |
+
+### How it works
+
+Tests impersonate the relay by connecting directly to the backend's WS
+endpoint with a seeded relay token. No agent container needed for WS-level
+tests — the test IS the relay client.
+
+```
+pytest (host) ──ws──→ localhost:8000/ws/relay/{id}/ ──→ RelayConsumer
+                                                         ↓
+                                                    Redis Channels
+                                                         ↓
+pytest (host) ──gql──→ localhost:8000/graphql ──→ query feed/agent status
+```
+
+### Fixtures
+
+| Fixture | Scope | What it provides |
+|---------|-------|-----------------|
+| `_check_stack` | session | Skips all tests if backend is unreachable |
+| `auth_token` | session | Bearer token from demo login |
+| `gql` | function | Fresh GraphQL client |
+| `test_project` | module | Throwaway project, cleaned up after |
+| `agent_with_token` | function | Agent with known relay_token for WS testing |
+| `relay_ws_url` | function | Base WS URL for relay connections |
+
+---
+
+## E2E Tests
+
+Full stack tests including browser automation via Playwright.
 
 ### Fixture Scoping
 
@@ -69,69 +113,19 @@ Expensive tests are gated by markers. Default `addopts` excludes `agent` and
 `dashboard` markers so `pytest` alone runs only cheap tests.
 
 ```python
-# Module-level marker (applies to all tests in the file)
 pytestmark = [pytest.mark.e2e, pytest.mark.agent, pytest.mark.slow]
 ```
 
-Run specific categories:
-```bash
-pytest -m "e2e and agent"       # Agent tests only
-pytest -m "e2e and dashboard"   # Dashboard tests only
-pytest -m "e2e"                 # Everything
-```
-
-### Health Checks
-
-The `backend_health` session fixture hits the backend health endpoint before
-any tests run. If the backend is unreachable, all tests skip with a clear
-message instead of failing with connection errors.
-
 ### Polling Pattern
 
-Async state transitions (agent deploying → running, error propagation) use
-`poll_until`:
+Async state transitions use `poll_until`:
 
 ```python
 from helpers.polling import poll_agent_status, poll_feed_for
 
-# Wait for agent to reach a target status
 agent = poll_agent_status(gql, agent_id, ["idle", "running"], timeout_s=90)
-
-# Wait for a feed item matching a predicate
 item = poll_feed_for(gql, project_id, lambda i: i["type"] == "error", timeout_s=30)
 ```
-
-Always specify a timeout. Never `time.sleep()` in a loop manually.
-
-### Cleanup
-
-Yield fixtures handle cleanup in `finally` blocks. Cleanup is best-effort —
-if the agent is already gone, the cleanup silently succeeds.
-
-```python
-@pytest.fixture
-def test_agent(gql, test_project):
-    agent = gql.create_agent(test_project["id"], name="test-agent")
-    agent_id = agent["id"]
-    try:
-        yield agent
-    finally:
-        gql.kill_agent(agent_id)
-        gql.remove_agent(agent_id)
-```
-
-### Docker Container Fixtures
-
-Agent containers are found by label or naming convention. Before interacting
-with a container, verify it's running. On test failure, capture container logs
-for diagnostics.
-
-### Self-Documenting Tests
-
-Every test module has a docstring explaining:
-- What pipeline/chain is under test
-- How to run this specific file
-- What infrastructure is required
 
 ### One Code Path
 
@@ -143,6 +137,7 @@ containers, and verify actual state transitions. Test what you ship.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ABOX_API_URL` | `http://localhost:8000/graphql` | Backend GraphQL endpoint |
+| `ABOX_WS_URL` | `ws://localhost:8000` | Backend WebSocket base URL |
 | `ABOX_DASH_URL` | `http://localhost:5051` | Dashboard URL (Playwright tests) |
 | `ABOX_TEST_USER` | `demo` | Login username |
 | `ABOX_TEST_PASS` | `demo` | Login password |
