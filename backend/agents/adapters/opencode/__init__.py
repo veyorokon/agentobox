@@ -112,9 +112,25 @@ class OpenCodeAdapter:
     def last_output(self, snapshot: dict) -> str:
         """Last text from the assistant message parts.
 
-        Path: snapshot["parts"][-text-]["text"]
-        Falls back to snapshot["message"] text parts if present.
+        Checks multiple paths because the relay synthesizes CC-format
+        assistant events that are stored in snapshot["assistant"]:
+            1. snapshot["assistant"]["message"]["content"][-text-]["text"]
+            2. snapshot["parts"][-text-]["text"]  (native OC format)
+            3. snapshot["message"]["parts"][-text-]["text"]  (REST fallback)
         """
+        # Path 1: CC-format assistant event (from relay CC synthesis)
+        assistant = snapshot.get("assistant")
+        if isinstance(assistant, dict):
+            content = assistant.get("message", {}).get("content", [])
+            if isinstance(content, list):
+                text_parts = [
+                    p for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ]
+                if text_parts:
+                    return text_parts[-1].get("text", "") or ""
+
+        # Path 2: native OC parts format
         parts = snapshot.get("parts")
         if isinstance(parts, list):
             text_parts = [
@@ -124,7 +140,7 @@ class OpenCodeAdapter:
             if text_parts:
                 return text_parts[-1].get("text", "") or ""
 
-        # Fallback: check info-level parts (from REST response)
+        # Path 3: OC info-level parts (from REST response)
         info = snapshot.get("message") or snapshot.get("info")
         if isinstance(info, dict):
             info_parts = info.get("parts", [])
@@ -606,7 +622,10 @@ class OpenCodeAdapter:
             env_key, placeholder = _PLACEHOLDERS.get(provider, ("ANTHROPIC_API_KEY", "proxy-placeholder"))
             base_url_key = env_key.replace("_API_KEY", "_BASE_URL")
             lines.append(f"export {env_key}='{placeholder}'")
-            lines.append(f"export {base_url_key}='http://localhost:{_PROXY_PORT}'")
+            # OpenCode expects base_url to include the version prefix — it sends
+            # POST {base_url}/messages, not POST {base_url}/v1/messages.
+            version_prefix = "/v1" if provider in ("anthropic", "openai") else ""
+            lines.append(f"export {base_url_key}='http://localhost:{_PROXY_PORT}{version_prefix}'")
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID={_shell_escape(resume_session_id)}")
