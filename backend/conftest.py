@@ -11,6 +11,60 @@ from agents.models import Agent, AgentStatus
 from projects.models import Project
 
 
+@pytest.fixture(scope="session")
+def django_db_setup(
+    request,
+    django_test_environment,  # noqa: ARG001
+    django_db_blocker,
+    django_db_use_migrations,  # noqa: ARG001
+    django_db_keepdb,
+    django_db_createdb,  # noqa: ARG001
+    django_db_modify_db_settings,  # noqa: ARG001
+):
+    """Override pytest-django's django_db_setup to terminate leaked connections.
+
+    Async Django ORM calls (acreate, aget, etc.) run via sync_to_async in
+    background threads, each with its own thread-local DB connection. Django's
+    connection management cant reach these — they outlive tests and block
+    DROP DATABASE ("being accessed by other users").
+
+    This override terminates all other sessions on the test DB before calling
+    teardown_databases, preventing the OperationalError warning.
+    """
+    from django.test.utils import setup_databases, teardown_databases
+
+    setup_databases_args = {}
+    if django_db_keepdb and not django_db_createdb:
+        setup_databases_args["keepdb"] = True
+
+    with django_db_blocker.unblock():
+        db_cfg = setup_databases(
+            verbosity=request.config.option.verbose,
+            interactive=False,
+            **setup_databases_args,
+        )
+
+    yield
+
+    if not django_db_keepdb:
+        with django_db_blocker.unblock():
+            # Kill leaked async connections before DROP DATABASE
+            try:
+                from django.db import connection
+                db_name = connection.settings_dict.get("NAME", "")
+                if db_name:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT pg_terminate_backend(pid) "
+                            "FROM pg_stat_activity "
+                            "WHERE datname = %s AND pid != pg_backend_pid()",
+                            [db_name],
+                        )
+            except Exception:
+                pass  # intentional: best-effort cleanup before teardown
+            teardown_databases(db_cfg, verbosity=request.config.option.verbose)
+
+
 @pytest.fixture
 def user(db):
     """Create a test user."""
