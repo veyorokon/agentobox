@@ -299,7 +299,7 @@ class OpenCodeAdapter:
 
     # ── Provisioning config builders (pure data, no I/O) ──
 
-    def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:
+    def build_settings(self, *, api_key: str = "", mode: str = "auto", model: str = "") -> str:
         """Build opencode.json content.
 
         OpenCode-specific: permission config, MCP servers are embedded in
@@ -310,6 +310,8 @@ class OpenCodeAdapter:
             "$schema": "https://opencode.ai/config.json",
             "permission": perm_mode,
         }
+        if model:
+            settings["model"] = model
         return json.dumps(settings, indent=2)
 
     def build_instructions(

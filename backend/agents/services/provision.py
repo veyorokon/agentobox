@@ -48,6 +48,7 @@ async def provision_workspace(
     relay_token: str = "",
     callback_url: str = "",
     mode: str = "auto",
+    model: str = "",
     agent_tags: list[str] | None = None,
 ) -> None:
     """
@@ -106,7 +107,7 @@ async def provision_workspace(
     config_dir = paths["config_dir"]
     await runtime.exec(sandbox_id, ["mkdir", "-p", config_dir])
 
-    settings_content = adapter.build_settings(api_key=api_key, mode=mode)
+    settings_content = adapter.build_settings(api_key=api_key, mode=mode, model=model)
     await runtime.write_file(
         sandbox_id,
         settings_content.encode("utf-8"),

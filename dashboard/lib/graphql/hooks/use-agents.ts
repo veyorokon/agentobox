@@ -34,7 +34,7 @@ export function useAgents() {
 
   return useQuery<AgentsData>(GET_AGENTS, {
     fetchPolicy: "cache-and-network",
-    pollInterval: 10_000,
+    pollInterval: 3_000,
     variables: queryVars,
     skip: !projectId,
   })

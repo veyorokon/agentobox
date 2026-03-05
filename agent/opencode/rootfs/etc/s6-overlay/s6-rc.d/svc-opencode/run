@@ -21,4 +21,6 @@ export HOME=/home/agent
 
 PORT="${OPENCODE_PORT:-4096}"
 
+export OPENCODE_CONFIG=/home/agent/opencode.json
+
 exec s6-setuidgid agent opencode serve --port "$PORT" --hostname 127.0.0.1

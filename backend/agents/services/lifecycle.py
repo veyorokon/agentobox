@@ -321,6 +321,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         await provision_workspace(
             runtime, sandbox.id, project,
+            agent_type=agent.agent_type,
             api_key=api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
@@ -332,6 +333,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             team_name=team_name,
             relay_token=relay_token,
             callback_url=callback_url,
+            mode=agent.mode or "auto",
+            model=agent.model,
+            agent_tags=agent.tags or [],
         )
         # Write theme tokens if project has them
         if project.theme_tokens:

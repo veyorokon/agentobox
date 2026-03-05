@@ -344,7 +344,7 @@ class ClaudeCodeAdapter:
 
     # ── Provisioning config builders (pure data, no I/O) ──
 
-    def build_settings(self, *, api_key: str = "", mode: str = "auto") -> str:
+    def build_settings(self, *, api_key: str = "", mode: str = "auto", model: str = "") -> str:
         """Build .claude/settings.json content.
 
         CC-specific: permission modes, hooks for team tool interception,

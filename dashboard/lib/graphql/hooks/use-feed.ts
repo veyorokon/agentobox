@@ -28,7 +28,7 @@ export function useFeed() {
 
   return useQuery<FeedData>(GET_FEED, {
     fetchPolicy: "cache-and-network",
-    pollInterval: 5_000,
+    pollInterval: 2_000,
     variables: queryVars,
     skip: !projectId,
   })
@@ -44,7 +44,7 @@ export function useAgentFeed(agentId: string) {
     variables: { agentId },
     skip: !agentId,
     fetchPolicy: "cache-and-network",
-    pollInterval: 5_000,
+    pollInterval: 2_000,
   })
 }
 
