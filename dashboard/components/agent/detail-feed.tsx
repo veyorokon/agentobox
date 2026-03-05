@@ -15,6 +15,7 @@ import { SingleToolRow, MultiToolGroup, type ToolEntryData } from "@/components/
 import { ResultPill } from "@/components/feed/result-pill"
 import { SystemMessage } from "@/components/feed/system-message"
 import { TeamUserMessage } from "@/components/feed/user-message"
+import { AgentToAgentMessage } from "@/components/feed/agent-message"
 import { ErrorBubble } from "@/components/feed/error-bubble"
 
 /* ================================================================== */
@@ -216,13 +217,19 @@ function TimelineEntryRow({
     case "user": {
       const message = data?.message as Record<string, unknown> | undefined
       const content = (message?.content ?? []) as ContentBlock[]
-      const text = content
+      const teamFrom = data?.team_message_from as string | undefined
+      let text = content
         .filter(b => b.type === "text")
         .map(b => String(b.text ?? ""))
         .join("\n")
         .trim()
       // Skip tool_result-only messages (those are tool outputs, not user input)
       if (!text) return null
+      // Team messages have team_message_from metadata set by interagent.py
+      if (teamFrom) {
+        const body = text.replace(/^\[Team message from .+?\]:\s*/, "")
+        return <AgentToAgentMessage from={teamFrom} to={agentName} text={body} />
+      }
       return <TeamUserMessage text={text} />
     }
 

@@ -194,12 +194,12 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
 
 
 async def _maybe_create_message_item(agent: Agent, event: dict, source_event: StreamEvent) -> None:
-    """Detect SendMessage tool_use and create an agent-message feed item.
+    """Detect SendMessage tool_use — log only, feed item created by mcp_coord.
 
-    CC's native SendMessage doesn't trigger PostToolUse hooks, so the hook
-    bridge never fires. We intercept the tool_use block in the assistant
-    stream event instead — same pattern as _maybe_create_plan_item.
-    # tech-debt: remove if CC ever fires PostToolUse for native team tools
+    CC's native SendMessage doesn't trigger PostToolUse hooks, so we detect
+    it here for logging. The actual feed item is created in mcp_coord.py
+    when the MCP tool executes — creating one here too causes duplicates.
+    # tech-debt: remove entirely if CC ever fires PostToolUse for native team tools
     """
     from agents.adapters import get_adapter
 
@@ -210,25 +210,11 @@ async def _maybe_create_message_item(agent: Agent, event: dict, source_event: St
 
     msg_type = msg_info["type"]
     recipient = msg_info["recipient"]
-    content = msg_info["content"]
 
-    # Only create feed items for DMs and broadcasts — shutdown_request
-    # is an operational action, not a conversation message
     if msg_type == "shutdown_request":
         return
 
     to_value = recipient if msg_type == "message" else "all"
-
-    await create_feed_item(
-        project_id=str(agent.project_id),
-        source_event=source_event,
-        agent_record=agent,
-        type="agent-message",
-        agent_name=agent.name,
-        from_value=agent.name,
-        to_value=to_value,
-        text=content[:500],
-    )
     log.info("stream.message_intercepted", agent_name=agent.name, to=to_value)
 
 

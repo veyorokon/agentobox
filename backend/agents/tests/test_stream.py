@@ -210,8 +210,8 @@ class TestMessageInterception:
     """Principle: CC native SendMessage doesnt fire PostToolUse hooks.
 
     The stream processor intercepts SendMessage tool_use blocks in assistant
-    events and creates agent-message feed items — same data as MCP coord would
-    produce, but triggered from the stream instead of the hook bridge.
+    events for logging only. Feed items are created by mcp_coord.py when the
+    MCP tool executes — the stream interceptor must NOT create duplicate items.
     """
 
     @pytest.fixture
@@ -231,7 +231,8 @@ class TestMessageInterception:
         )
 
     @pytest.mark.asyncio
-    async def test_send_message_creates_feed_item(self, agent, mock_broadcast):
+    async def test_send_message_no_feed_item(self, agent, mock_broadcast):
+        """Stream interception logs but does NOT create feed items (mcp_coord does)."""
         from agents.services.stream import _maybe_create_message_item
         from agents.models import StreamEvent
 
@@ -259,15 +260,11 @@ class TestMessageInterception:
         }
         await _maybe_create_message_item(agent, event, source)
 
-        mock_broadcast["create_feed"].assert_called_once()
-        call_kwargs = mock_broadcast["create_feed"].call_args[1]
-        assert call_kwargs["type"] == "agent-message"
-        assert call_kwargs["from_value"] == "sender"
-        assert call_kwargs["to_value"] == "team-lead"
-        assert call_kwargs["text"] == "Hello from sender"
+        mock_broadcast["create_feed"].assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_creates_feed_item(self, agent, mock_broadcast):
+    async def test_broadcast_no_feed_item(self, agent, mock_broadcast):
+        """Broadcast interception logs but does NOT create feed items."""
         from agents.services.stream import _maybe_create_message_item
         from agents.models import StreamEvent
 
@@ -291,8 +288,7 @@ class TestMessageInterception:
         }
         await _maybe_create_message_item(agent, event, source)
 
-        call_kwargs = mock_broadcast["create_feed"].call_args[1]
-        assert call_kwargs["to_value"] == "all"
+        mock_broadcast["create_feed"].assert_not_called()
 
     @pytest.mark.asyncio
     async def test_shutdown_request_no_feed_item(self, agent, mock_broadcast):
