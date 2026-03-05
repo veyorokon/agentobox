@@ -103,7 +103,13 @@ def _mark_stopped(agent_id):
 
 @_db
 def _reap_orphans_sync():
-    """Remove containers labeled agentobox.managed=true with no matching active agent."""
+    """Remove containers labeled agentobox.managed=true with no matching active agent.
+
+    Matches by both sandbox_id (container.id) AND agent.id label. The label
+    check covers the window between container creation and sandbox_id being
+    saved to the DB — during provisioning, sandbox_id is empty until
+    _save_provisioned commits.
+    """
     from agents.runtimes import get_runtime
     client = get_runtime("docker")._client
     try:
@@ -114,21 +120,24 @@ def _reap_orphans_sync():
         log.exception("reconciler.docker_list_failed")
         return
 
-    active_sandbox_ids = set(
-        Agent.objects.filter(
-            runtime="docker",
-            status__in=[AgentStatus.DEPLOYING, AgentStatus.IDLE, AgentStatus.RUNNING],
-        ).values_list("sandbox_id", flat=True)
+    active_agents = Agent.objects.filter(
+        runtime="docker",
+        status__in=[AgentStatus.DEPLOYING, AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING],
     )
+    active_sandbox_ids = set(active_agents.values_list("sandbox_id", flat=True))
+    active_agent_ids = set(str(aid) for aid in active_agents.values_list("id", flat=True))
 
     for container in containers:
-        if container.id not in active_sandbox_ids:
-            try:
-                container.stop(timeout=5)
-                container.remove(force=True)
-                log.info("reconciler.orphan_reaped", container_id=container.id[:12])
-            except docker.errors.DockerException:
-                log.exception("reconciler.orphan_reap_failed", container_id=container.id[:12])
+        # Match by sandbox_id (normal case) or agent.id label (provisioning window)
+        agent_id_label = container.labels.get("agentobox.agent.id", "")
+        if container.id in active_sandbox_ids or agent_id_label in active_agent_ids:
+            continue
+        try:
+            container.stop(timeout=5)
+            container.remove(force=True)
+            log.info("reconciler.orphan_reaped", container_id=container.id[:12])
+        except docker.errors.DockerException:
+            log.exception("reconciler.orphan_reap_failed", container_id=container.id[:12])
 
 
 async def _reap_orphans():
