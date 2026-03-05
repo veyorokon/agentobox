@@ -48,6 +48,95 @@ class TestOpenCodeExtraction:
         snap = SAMPLE_SNAPSHOTS["opencode"]["none_values"]
         assert adapter.last_output(snap) == ""
 
+    # -- last_output CC-format (from relay CC synthesis) --
+
+    def test_last_output_cc_format_single_text(self, adapter):
+        """CC-format snapshot from relay synthesis — single text block."""
+        snap = {
+            "assistant": {
+                "message": {
+                    "id": "oc_turn_123",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "pong"}],
+                },
+            },
+        }
+        assert adapter.last_output(snap) == "pong"
+
+    def test_last_output_cc_format_multiple_text_blocks(self, adapter):
+        """CC-format with multiple text blocks — returns last one."""
+        snap = {
+            "assistant": {
+                "message": {
+                    "id": "oc_turn_123",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "first"},
+                        {"type": "text", "text": "second"},
+                    ],
+                },
+            },
+        }
+        assert adapter.last_output(snap) == "second"
+
+    def test_last_output_cc_format_empty_content(self, adapter):
+        """CC-format with empty content list — returns empty."""
+        snap = {
+            "assistant": {
+                "message": {
+                    "id": "oc_turn_123",
+                    "role": "assistant",
+                    "content": [],
+                },
+            },
+        }
+        assert adapter.last_output(snap) == ""
+
+    def test_last_output_cc_format_no_text_blocks(self, adapter):
+        """CC-format with non-text blocks only — returns empty."""
+        snap = {
+            "assistant": {
+                "message": {
+                    "id": "oc_turn_123",
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "toolu_1", "name": "Bash"}],
+                },
+            },
+        }
+        assert adapter.last_output(snap) == ""
+
+    def test_last_output_cc_format_takes_priority_over_native(self, adapter):
+        """CC-format path wins over native OC parts when both present."""
+        snap = {
+            "assistant": {
+                "message": {
+                    "id": "oc_turn_123",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "from cc synthesis"}],
+                },
+            },
+            "parts": [
+                {"type": "text", "text": "from native oc"},
+            ],
+        }
+        assert adapter.last_output(snap) == "from cc synthesis"
+
+    def test_last_output_falls_through_to_native_parts(self, adapter):
+        """When CC-format assistant has no text, falls through to native parts."""
+        snap = {
+            "assistant": {
+                "message": {
+                    "id": "oc_turn_123",
+                    "role": "assistant",
+                    "content": [],
+                },
+            },
+            "parts": [
+                {"type": "text", "text": "from native oc"},
+            ],
+        }
+        assert adapter.last_output(snap) == "from native oc"
+
     # -- live_action --
 
     def test_live_action_during_running_tool(self, adapter):
