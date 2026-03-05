@@ -17,6 +17,7 @@ Classes:
 import asyncio
 import json
 import os
+import time
 from collections import deque
 from urllib.parse import urlparse, urlunparse
 
@@ -156,6 +157,8 @@ class WSTransport:
         self._connected = False
         self._reconnect_delay = WS_RECONNECT_DELAY_S
         self._log = log or _setup_logging("abox-relay")
+        self._send_seq = 0
+        self._recv_seq = 0
 
     def _ws_url(self) -> str:
         """Build WS URL from HTTP callback URL.
@@ -232,7 +235,18 @@ class WSTransport:
         if not self._connected or not self.ws:
             return False
         try:
-            await self.ws.send(json.dumps(event))
+            wire = json.dumps(event)
+            t0 = time.monotonic()
+            await self.ws.send(wire)
+            self._send_seq += 1
+            self._log.debug("relay.ws_tx", extra={
+                "seq": self._send_seq,
+                "type": event.get("type", ""),
+                "subtype": event.get("subtype", ""),
+                "session_id": event.get("session_id", ""),
+                "bytes": len(wire),
+                "ms": round((time.monotonic() - t0) * 1000, 1),
+            })
             return True
         except Exception as exc:
             self._log.warning("relay.ws_send_error", extra={"error": str(exc), "type": type(exc).__name__})
@@ -263,10 +277,18 @@ class WSTransport:
             return None
 
         try:
-            return json.loads(data)
+            cmd = json.loads(data)
         except (json.JSONDecodeError, TypeError) as exc:
             self._log.warning("relay.ws_recv_malformed_json", extra={"error": str(exc)})
             return None
+
+        self._recv_seq += 1
+        self._log.debug("relay.ws_rx", extra={
+            "seq": self._recv_seq,
+            "type": cmd.get("type", ""),
+            "bytes": len(data) if isinstance(data, (str, bytes)) else 0,
+        })
+        return cmd
 
     @property
     def connected(self) -> bool:
@@ -299,6 +321,7 @@ class EventSender:
         self._redactor = redactor
         self._event_buffer: deque[dict] = deque(maxlen=20)
         self._log = log or _setup_logging("abox-relay")
+        self._send_seq = 0
 
     async def send(self, event: dict):
         """Send an event to the backend via WS.
@@ -309,12 +332,18 @@ class EventSender:
         """
         # Redact secrets before any WS send
         event = self._redactor.redact_event(event)
+        self._send_seq += 1
+        event_type = event.get("type", "")
 
         # Flush any previously buffered events first
         await self.flush_buffer()
 
         sent = await self.ws.send(event)
         if sent:
+            self._log.info("relay.event_sent", extra={
+                "seq": self._send_seq, "type": event_type,
+                "subtype": event.get("subtype", ""),
+            })
             return
 
         self._log.warning("relay.ws_send_failed")
