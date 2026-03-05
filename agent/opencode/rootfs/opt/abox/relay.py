@@ -166,9 +166,9 @@ class OpenCodeClient:
             return False
 
     async def reply_permission(self, session_id: str, permission_id: str, response: str) -> bool:
-        """Reply to a permission request.
+        """Reply to a permission request (deprecated endpoint, still functional).
 
-        response: "allow" | "allowAll" | "deny"
+        response: "once" | "always" | "reject"
         """
         try:
             resp = await self._client.post(
@@ -360,13 +360,14 @@ class SSERelay:
         behavior = result.get("behavior", "deny")
         callback_id = cmd.get("callback_id", "")
 
-        # Map backend behavior to OpenCode response
+        # Map backend behavior to OpenCode PermissionNext.Reply values.
+        # OC accepts: "once" (approve this), "always" (approve pattern), "reject" (deny).
         if behavior == "allow":
-            oc_response = "allow"
+            oc_response = "once"
         elif behavior == "alwaysAllow":
-            oc_response = "allowAll"
+            oc_response = "always"
         else:
-            oc_response = "deny"
+            oc_response = "reject"
 
         # Find matching permission
         permission_id = self._pending_permissions.pop(callback_id, "")
