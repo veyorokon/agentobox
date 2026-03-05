@@ -16,7 +16,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
-import { LIFECYCLE_CONFIG, ATTENTION_CONFIG, MODE_CONFIG } from "@/lib/config"
+import { LIFECYCLE_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAcknowledgeAgent, useSetAgentMode, useInterruptAgent, useRestartAgent, useHardRestartAgent, useRemoveAgent } from "@/lib/graphql/hooks/use-agents"
@@ -31,7 +31,7 @@ import { AgentSkillsView } from "@/components/agent/skills-view"
 import { AgentTasksView } from "@/components/agent/tasks-view"
 import { CardActionStrip } from "@/components/agent/card-action-strip"
 import { useClickOutside } from "@/lib/hooks/use-click-outside"
-import type { Agent, AttentionLevel, CardActionItem, ViewMode } from "@/lib/types"
+import type { Agent, CardActionItem, ViewMode } from "@/lib/types"
 
 export interface AgentCardRowProps {
   agent: Agent
@@ -109,9 +109,6 @@ export function AgentCardRow({
     setComposerText("")
   }
 
-  const hasAttention = agent.attentionLevel !== "none"
-  const attCfg = hasAttention ? ATTENTION_CONFIG[agent.attentionLevel as Exclude<AttentionLevel, "none">] : null
-
   // Build unified action items: permissions → plans → config-dirty
   const actionItems = useMemo(() => {
     const items: CardActionItem[] = []
@@ -179,19 +176,7 @@ export function AgentCardRow({
               {selected && <Check className="h-2.5 w-2.5 text-accent" strokeWidth={3} />}
             </div>
           )}
-          <div className="relative shrink-0">
-            <AgentTag name={agent.name} className={cn("text-[12px]", isStopped && "opacity-50")} />
-            {/* Attention dot */}
-            {hasAttention && attCfg && (
-              <span
-                className={cn(
-                  "absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-surface",
-                  attCfg.dot,
-                  attCfg.pulse && "animate-breathe",
-                )}
-              />
-            )}
-          </div>
+          <AgentTag name={agent.name} className={cn("text-[12px]", isStopped && "opacity-50")} />
           <ModePill mode={agent.mode} onChange={handleModeChange} />
           {/* Tag pills -- show 1 + overflow count, shrink before mode */}
           {agent.tags.length > 0 && (

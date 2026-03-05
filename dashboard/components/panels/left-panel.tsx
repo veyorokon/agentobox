@@ -16,8 +16,8 @@ import {
   RotateCcw,
 } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
-import type { AttentionLevel, ViewMode } from "@/lib/types"
-import { LIFECYCLE_CONFIG, ATTENTION_CONFIG } from "@/lib/config"
+import type { ViewMode } from "@/lib/types"
+import { LIFECYCLE_CONFIG } from "@/lib/config"
 import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
 import { useWindowWidth } from "@/lib/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
@@ -175,9 +175,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             const isSelected = expandedIds.has(agent.id)
             const isRunning = agent.lifecycleStatus === "running"
             const isStopped = agent.lifecycleStatus === "stopped"
-            const hasAttention = agent.attentionLevel !== "none"
-            const attCfg = hasAttention ? ATTENTION_CONFIG[agent.attentionLevel as Exclude<AttentionLevel, "none">] : null
-
             return (
               <button
                 key={agent.id}
@@ -193,24 +190,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
                 title={agent.name}
               >
                 <AgentAvatar name={agent.name} size="md" stopped={isStopped} />
-                {/* Attention dot takes precedence over lifecycle dot */}
-                {hasAttention && attCfg ? (
-                  <span
-                    className={cn(
-                      "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
-                      attCfg.dot,
-                      attCfg.pulse && "animate-breathe",
-                    )}
-                  />
-                ) : (
-                  <span
-                    className={cn(
-                      "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-surface-sunken",
-                      config.dot,
-                      isRunning && "animate-breathe text-success",
-                    )}
-                  />
-                )}
                 {isSelected && (
                   <span className="absolute inset-0 rounded-md ring-2 ring-accent/50" />
                 )}
