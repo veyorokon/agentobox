@@ -51,7 +51,7 @@ def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
     Priority:
       1. Project secret matching the provider's conventional key name
       2. Global ANTHROPIC_API_KEY from settings (Anthropic only)
-      3. Empty string (no key — provisioning continues, agent errors at runtime)
+      3. Empty string (caller must validate — see _provision_agent)
     """
     from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
 
@@ -328,6 +328,15 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         ])
 
         api_key = _resolve_api_key(agent.model, secret_envs)
+        if not api_key:
+            from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
+            provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
+            expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
+            raise ValueError(
+                f"No API key found for provider '{provider}'. "
+                f"Add a project secret named '{expected_key}' or set "
+                f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
+            )
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
@@ -577,6 +586,8 @@ def _atomic_reset_for_restart(agent_id):
         agent.relay_disconnected_at = None
         agent.latest_snapshot = {}
         agent.task = ""
+        agent.phase = ""
+        agent.attention_level = "none"
         agent.error_message = ""
         agent.runtime = runtime_name
         agent.model = model
@@ -588,7 +599,8 @@ def _atomic_reset_for_restart(agent_id):
         agent.mode = mode
         agent.save(update_fields=[
             "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-            "relay_connected", "relay_disconnected_at", "latest_snapshot", "task", "error_message",
+            "relay_connected", "relay_disconnected_at", "latest_snapshot",
+            "task", "phase", "attention_level", "error_message",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "mode", "updated_at",
         ])

@@ -37,6 +37,15 @@ async def process_callback(agent: Agent, event: dict) -> None:
 
     if not callback_type or not request_id:
         log.warning("callback.malformed", agent_id=str(agent.id))
+        # If we have a request_id, reject so the relay Future resolves
+        # instead of hanging for 300s. Without request_id we can't respond.
+        if request_id:
+            from agents.services.comms import push_to_relay
+            await push_to_relay(str(agent.id), {
+                "type": "callback_response",
+                "request_id": request_id,
+                "result": {"behavior": "deny", "message": "Malformed callback: missing callback_type"},
+            })
         return
 
     handler = _HANDLERS.get(callback_type)
@@ -44,6 +53,14 @@ async def process_callback(agent: Agent, event: dict) -> None:
         await handler(agent, request_id, payload)
     else:
         log.warning("callback.unknown_type", type=callback_type, agent_id=str(agent.id))
+        # Send a rejection so the relay's pending Future resolves immediately
+        # instead of hanging for the 300s timeout.
+        from agents.services.comms import push_to_relay
+        await push_to_relay(str(agent.id), {
+            "type": "callback_response",
+            "request_id": request_id,
+            "result": {"behavior": "deny", "message": f"Unknown callback type: {callback_type}"},
+        })
 
 
 # ---------------------------------------------------------------------------

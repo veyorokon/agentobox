@@ -8,6 +8,7 @@ TeamFeedItem = curated dashboard feed items created when feed-worthy events occu
 import structlog
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.db import transaction
 
 from agents.models import Agent, TeamFeedItem
 
@@ -180,9 +181,32 @@ async def resolve_permission(
     return item
 
 
+def _atomic_append_allowed_tool(agent_id, tool_name) -> Agent | None:
+    """Lock the agent row and append tool_name to allowed_tools.
+
+    Uses select_for_update() + transaction.atomic() to prevent two
+    concurrent "Always Allow" clicks from both reading allowed_tools=[],
+    each appending their tool, and the second save overwriting the first.
+
+    Returns the updated Agent if the tool was added, None if already present.
+    """
+    with transaction.atomic():
+        agent = Agent.objects.select_for_update().get(id=agent_id)
+        if tool_name in agent.allowed_tools:
+            return None
+        agent.allowed_tools = [*agent.allowed_tools, tool_name]
+        agent.save(update_fields=["allowed_tools"])
+    return agent
+
+
+_atomic_append_allowed_tool_async = sync_to_async(
+    _atomic_append_allowed_tool, thread_sensitive=False
+)
+
+
 async def _persist_allowed_tool(item: TeamFeedItem) -> None:
     """Extract tool_name from source event and add to Agent.allowed_tools."""
-    from agents.models import Agent, StreamEvent
+    from agents.models import StreamEvent
 
     try:
         event = await StreamEvent.objects.aget(id=item.source_event_id)
@@ -193,10 +217,10 @@ async def _persist_allowed_tool(item: TeamFeedItem) -> None:
     if not tool_name:
         return
 
-    agent = await Agent.objects.aget(id=item.agent_record_id)
-    if tool_name not in agent.allowed_tools:
-        agent.allowed_tools = [*agent.allowed_tools, tool_name]
-        await agent.asave(update_fields=["allowed_tools"])
+    agent = await _atomic_append_allowed_tool_async(
+        str(item.agent_record_id), tool_name
+    )
+    if agent is not None:
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
 

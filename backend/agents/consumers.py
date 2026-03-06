@@ -21,8 +21,6 @@ all stored without code changes. The cost is ~1KB/row in Postgres, which
 is negligible compared to the value of having complete agent telemetry.
 """
 
-from datetime import timedelta
-
 import structlog
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
@@ -101,12 +99,11 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         # already has these messages in context).
         from agents.models import Agent, AgentStatus
         if self.agent.status == AgentStatus.DEPLOYING:
-            backfill_cutoff = self.agent.updated_at - timedelta(seconds=30)
             pending = StreamEvent.objects.filter(
                 agent_id=self.agent_id,
                 event_type="user",
-                created_at__gte=backfill_cutoff,
-            ).order_by("created_at")
+                id__gt=self.agent.last_delivered_event_id,
+            ).order_by("id")
 
             async for event in pending:
                 data = event.data
@@ -144,12 +141,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         # Unlike the DEPLOYING backfill above (which handles fresh deploys),
         # this catches messages sent while the relay was briefly down
         # (network hiccup, container restart, etc).
-        elif self.agent.relay_disconnected_at:
+        # Uses cursor (last_delivered_event_id) instead of timestamps —
+        # monotonic auto-increment eliminates clock skew / race conditions.
+        elif self.agent.last_delivered_event_id > 0 or self.agent.relay_disconnected_at:
             pending = StreamEvent.objects.filter(
                 agent_id=self.agent_id,
                 event_type="user",
-                created_at__gte=self.agent.relay_disconnected_at,
-            ).order_by("created_at")
+                id__gt=self.agent.last_delivered_event_id,
+            ).order_by("id")
 
             async for event in pending:
                 data = event.data
@@ -182,14 +181,21 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
 
         # Track relay connection state — use filter().aupdate() because
         # self.agent may be stale or the agent row may have been deleted.
-        # Record disconnect timestamp so reconnect can backfill messages
-        # sent during the gap (fixes silent message loss on transient drops).
+        # Record disconnect timestamp AND snapshot the current max
+        # StreamEvent.id as the delivery cursor. On reconnect, backfill
+        # replays events with id > cursor — no timestamp race possible.
         try:
             from django.utils import timezone
             from agents.models import Agent
+
+            max_event_id = await StreamEvent.objects.filter(
+                agent_id=self.agent_id, event_type="user",
+            ).order_by("-id").values_list("id", flat=True).afirst() or 0
+
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 relay_connected=False,
                 relay_disconnected_at=timezone.now(),
+                last_delivered_event_id=max_event_id,
             )
         except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
             log.warning("relay.update_failed", agent_id=self.agent_id, exc_info=True)

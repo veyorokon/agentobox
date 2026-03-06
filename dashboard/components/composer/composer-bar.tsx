@@ -32,18 +32,27 @@ export function ComposerBar() {
     setSuggestions(s)
   }, [])
 
-  const canSend = text.trim().length > 0
+  const [sending, setSending] = useState(false)
+  const canSend = text.trim().length > 0 && !sending
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const msg = text.trim()
-    if (!msg) return
+    if (!msg || sending) return
 
-    sendMessage(msg, recipients)
+    const savedText = msg
     setText("")
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [text, recipients, sendMessage])
+    setSending(true)
+
+    const delivered = await sendMessage(msg, recipients)
+    setSending(false)
+
+    if (!delivered) {
+      setText(savedText)
+    }
+  }, [text, recipients, sendMessage, sending])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

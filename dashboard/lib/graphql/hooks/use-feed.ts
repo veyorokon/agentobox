@@ -130,20 +130,24 @@ export function useSendMessage() {
   const [mutate] = useMutation(SEND_MESSAGE)
 
   return useCallback(
-    (text: string, recipients: RecipientEntry[]) => {
-      if (!projectId) return
+    async (text: string, recipients: RecipientEntry[]): Promise<boolean> => {
+      if (!projectId) return false
 
       const recipientInputs = recipients.map(r => {
         if (r.type === "all") return { type: "all", value: "" }
         return { type: r.type, value: r.value }
       })
 
-      mutate({
-        variables: { projectId, text, recipients: recipientInputs },
-        refetchQueries: [{ query: GET_FEED, variables: { projectId } }],
-      }).catch(err => {
-        log("mutation.error", { mutation: "sendMessage", error: err.message })
-      })
+      try {
+        const { data } = await mutate({
+          variables: { projectId, text, recipients: recipientInputs },
+        })
+        return data?.sendMessage ?? false
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err)
+        log("mutation.error", { mutation: "sendMessage", error: message })
+        return false
+      }
     },
     [mutate, projectId],
   )

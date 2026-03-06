@@ -208,6 +208,12 @@ class Agent(models.Model):
     # sent while the relay was transiently disconnected.
     relay_disconnected_at = models.DateTimeField(null=True, blank=True)
 
+    # Cursor for delivery guarantee — highest StreamEvent.id confirmed
+    # delivered to the relay. On reconnect, backend replays all user
+    # events with id > last_delivered_event_id. Monotonic (auto-increment)
+    # so no clock skew risk unlike relay_disconnected_at timestamps.
+    last_delivered_event_id = models.BigIntegerField(default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
