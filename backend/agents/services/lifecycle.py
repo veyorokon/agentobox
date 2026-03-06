@@ -365,7 +365,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             model=agent.model,
             agent_tags=agent.tags or [],
         )
-        # Write theme tokens if project has them
+        # tech-debt: write_theme_files is replaced by WS-based theme push (relay.py handles "theme" command).
+        # Kept temporarily for agents that connect before WS is established.
+        # Remove once all theme delivery is confirmed via WS path.
         if project.theme_tokens:
             await write_theme_files(runtime, sandbox.id, project.theme_tokens)
 

@@ -1,29 +1,29 @@
--- agentobox AwesomeWM theme — Rose Pine Moon (adriankarlen rice)
+-- agentobox AwesomeWM theme — neutral defaults, overridden by WS-pushed tokens
 local theme = {}
 
 theme.font = "JetBrains Mono 10"
 
--- Rose Pine Moon palette
-theme.bg_normal     = "#232136"   -- base
-theme.bg_focus      = "#2a273f"   -- surface
-theme.bg_urgent     = "#eb6f92"   -- love
-theme.bg_minimize   = "#232136"
+-- Neutral dark grey defaults — visible but unobtrusive until WS theme arrives
+theme.bg_normal     = "#1e1e1e"
+theme.bg_focus      = "#2d2d2d"
+theme.bg_urgent     = "#cc3333"
+theme.bg_minimize   = "#1e1e1e"
 
-theme.fg_normal     = "#6e6a86"   -- muted
-theme.fg_focus      = "#e0def4"   -- text
-theme.fg_urgent     = "#e0def4"
-theme.fg_minimize   = "#6e6a86"
+theme.fg_normal     = "#888888"
+theme.fg_focus      = "#d4d4d4"
+theme.fg_urgent     = "#d4d4d4"
+theme.fg_minimize   = "#888888"
 
 -- Borders — neo-brutalism thick border
 theme.border_width  = 4
-theme.border_normal = "#232136"   -- invisible when unfocused (matches bg)
-theme.border_focus  = "#c4a7e7"   -- iris (purple accent)
-theme.border_marked = "#eb6f92"   -- love
+theme.border_normal = "#1e1e1e"
+theme.border_focus  = "#5a5a5a"
+theme.border_marked = "#cc3333"
 
 -- No gaps — maximized fills the screen
 theme.useless_gap = 0
 
 -- Wallpaper — solid, matches base
-theme.wallpaper = "#232136"
+theme.wallpaper = "#1e1e1e"
 
 return theme

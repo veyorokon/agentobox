@@ -27,6 +27,53 @@ from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("abox.stream")
 
+
+def recompute_cost(model: str, sdk_cost: float, model_usage: dict) -> float:
+    """Adjust SDK-reported cost for non-Anthropic providers.
+
+    The SDK always calculates cost using Anthropic pricing. For other
+    providers, we recalculate from token counts x actual provider rates.
+    Falls back to SDK cost if no pricing data or no token counts.
+    """
+    from agents.adapters.claude_code.registries import MODEL_PRICING
+
+    # Anthropic models: SDK cost is correct
+    if "/" not in model or model.startswith("anthropic/"):
+        return sdk_cost
+
+    # Check if any model in usage has known pricing
+    total = 0.0
+    has_pricing = False
+
+    for usage_model, usage in model_usage.items():
+        pricing = MODEL_PRICING.get(usage_model)
+        if not pricing:
+            # No pricing data for this model — cant correct
+            continue
+
+        input_tokens = usage.get("inputTokens", 0)
+        output_tokens = usage.get("outputTokens", 0)
+        cache_read = usage.get("cacheReadInputTokens", 0)
+        cache_write = usage.get("cacheCreationInputTokens", 0)
+
+        if not any([input_tokens, output_tokens, cache_read, cache_write]):
+            continue
+
+        has_pricing = True
+        total += (
+            input_tokens * pricing["input"] / 1_000_000
+            + output_tokens * pricing["output"] / 1_000_000
+            + cache_read * pricing["cache_read"] / 1_000_000
+            + cache_write * pricing["cache_write"] / 1_000_000
+        )
+
+    if has_pricing:
+        return total
+
+    # No pricing data — SDK cost is the best we have
+    return sdk_cost
+
+
 # Per-agent normalization state for adapter.normalize().
 # Keyed by agent ID string. State persists across events for the same agent,
 # accumulating turn data (text, tools) until turn boundaries emit CC events.
@@ -292,15 +339,20 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
 
     await agent.arefresh_from_db(fields=["latest_snapshot", "status", "phase"])
 
+    # Correct SDK-reported cost for non-Anthropic providers
+    sdk_cost = event.get("total_cost_usd", 0)
+    model_usage = event.get("modelUsage", {})
+    corrected_cost = recompute_cost(agent.model, sdk_cost, model_usage)
+
     await SessionResult.objects.acreate(
         agent=agent,
         session_id=session_id,
         is_error=event.get("is_error", False),
-        total_cost_usd=event.get("total_cost_usd", 0),
+        total_cost_usd=corrected_cost,
         duration_ms=event.get("duration_ms", 0),
         duration_api_ms=event.get("duration_api_ms", 0),
         num_turns=event.get("num_turns", 0),
-        model_usage=event.get("modelUsage", {}),
+        model_usage=model_usage,
         permission_denials=event.get("permission_denials", []),
     )
 
@@ -309,7 +361,7 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
     snapshot["result"] = event
     agent.latest_snapshot = snapshot
 
-    agent.session_cost_usd = event.get("total_cost_usd", 0)
+    agent.session_cost_usd = corrected_cost
     agent.status = AgentStatus.IDLE
     agent.phase = ""
     await agent.asave(update_fields=[
@@ -338,7 +390,7 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
             type="error",
             agent_name=agent.name,
             agent_record=agent,
-            cost=event.get("total_cost_usd", 0),
+            cost=corrected_cost,
             turns=event.get("num_turns", 0),
             duration=duration_str,
             is_error=True,
@@ -351,7 +403,7 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
             type="summary",
             agent_name=agent.name,
             agent_record=agent,
-            cost=event.get("total_cost_usd", 0),
+            cost=corrected_cost,
             turns=event.get("num_turns", 0),
             duration=duration_str,
             is_error=False,

@@ -6,42 +6,63 @@ const POLL_INTERVAL = 2000;
 let lastJson = null;
 let port = null;
 
-// Default theme (Rose Pine Moon) applied on startup before backend pushes tokens
+// Neutral dark grey defaults — visible but unobtrusive until WS theme arrives
 const DEFAULT_TOKENS = {
-  background: "#232136",
-  foreground: "#e0def4",
-  surface: "#2a273f",
-  accent: "#c4a7e7",
-  "muted-foreground": "#908caa",
-  destructive: "#eb6f92",
+  surface: "#1e1e1e",
+  "surface-raised": "#2d2d2d",
+  "surface-sunken": "#171717",
+  "surface-overlay": "#333333",
+  "text-default": "#d4d4d4",
+  "text-secondary": "#aaaaaa",
+  "text-muted": "#888888",
+  "text-disabled": "#555555",
+  "border-default": "#3a3a3a",
+  "border-subtle": "#2d2d2d",
+  accent: "#5a5a5a",
+  "accent-hover": "#6a6a6a",
+  "accent-subtle": "#333333",
+  danger: "#cc3333",
 };
 
 function mapTokens(t) {
+  // Resolve semantic tokens with cascading fallbacks
+  var surface       = t["surface"] || "#1e1e1e";
+  var surfaceRaised = t["surface-raised"] || "#2d2d2d";
+  var surfaceSunken = t["surface-sunken"] || surface;
+  var surfaceOverlay = t["surface-overlay"] || surfaceRaised;
+  var textDefault   = t["text-default"] || "#d4d4d4";
+  var textSecondary = t["text-secondary"] || textDefault;
+  var textMuted     = t["text-muted"] || "#888888";
+  var borderDefault = t["border-default"] || surfaceRaised;
+  var borderSubtle  = t["border-subtle"] || surfaceRaised;
+  var accent        = t["accent"] || "#5a5a5a";
+  var accentSubtle  = t["accent-subtle"] || surfaceRaised;
+
   return {
     colors: {
-      frame: t.background,
-      tab_background_text: t.foreground,
-      toolbar: t.surface,
-      toolbar_text: t["muted-foreground"],
-      toolbar_field: t.background,
-      toolbar_field_text: t.foreground,
-      toolbar_field_border: t.surface,
-      toolbar_field_focus: t.surface,
-      toolbar_field_text_focus: t.foreground,
-      popup: t.background,
-      popup_text: t.foreground,
-      popup_border: t.surface,
-      popup_highlight: t.accent,
-      popup_highlight_text: t.foreground,
-      tab_line: t.accent,
-      tab_loading: t.accent,
-      sidebar: t.background,
-      sidebar_text: t["muted-foreground"],
-      sidebar_border: t.surface,
-      sidebar_highlight: t.accent,
-      sidebar_highlight_text: t.foreground,
-      ntp_background: t.background,
-      ntp_text: t.foreground,
+      frame: surface,
+      tab_background_text: textDefault,
+      toolbar: surfaceRaised,
+      toolbar_text: textMuted,
+      toolbar_field: surface,
+      toolbar_field_text: textDefault,
+      toolbar_field_border: borderSubtle,
+      toolbar_field_focus: surfaceRaised,
+      toolbar_field_text_focus: textDefault,
+      popup: surface,
+      popup_text: textDefault,
+      popup_border: borderDefault,
+      popup_highlight: accent,
+      popup_highlight_text: textDefault,
+      tab_line: accent,
+      tab_loading: accent,
+      sidebar: surface,
+      sidebar_text: textMuted,
+      sidebar_border: borderSubtle,
+      sidebar_highlight: accentSubtle,
+      sidebar_highlight_text: textDefault,
+      ntp_background: surface,
+      ntp_text: textDefault,
     },
   };
 }

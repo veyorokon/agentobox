@@ -492,6 +492,19 @@ class SDKRelay:
         elif cmd_type == "callback_response":
             self._resolve_callback_response(cmd)
 
+        elif cmd_type == "theme":
+            tokens = cmd.get("tokens", {})
+            if tokens:
+                from pathlib import Path
+                import json as _json
+                # Write lua file for AwesomeWM
+                entries = ", ".join(f'["{k}"] = "{v}"' for k, v in sorted(tokens.items()))
+                lua_content = f"return {{ {entries} }}\n"
+                Path("/tmp/abox-theme.lua").write_text(lua_content)
+                # Write json file for Firefox
+                Path("/tmp/abox-theme.json").write_text(_json.dumps(tokens, indent=2) + "\n")
+                log.info("relay.theme_applied", extra={"token_count": len(tokens)})
+
         elif cmd_type == "mode":
             # Backend sends our vocabulary (auto/plan/supervised),
             # relay translates to SDK format (bypassPermissions/plan/default)
@@ -800,6 +813,10 @@ class SDKRelay:
                     # when user responds to a late permission prompt).
                     self._resolve_callback_response(cmd, "idle")
                     # Don't break — no need to respawn for a callback response.
+                elif cmd_type == "theme":
+                    # Theme can arrive while idle — write files immediately.
+                    await self._handle_command(cmd)
+                    # Don't break — no need to respawn for a theme push.
                 elif cmd_type == "mode":
                     our_mode = cmd.get("mode", "")
                     if our_mode:

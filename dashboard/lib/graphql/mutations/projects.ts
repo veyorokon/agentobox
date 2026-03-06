@@ -10,3 +10,9 @@ export const CREATE_PROJECT = gql`
     }
   }
 `
+
+export const SET_PROJECT_THEME = gql`
+  mutation SetProjectTheme($input: SetProjectThemeInput!) {
+    setProjectTheme(input: $input)
+  }
+`

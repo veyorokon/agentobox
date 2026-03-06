@@ -9,12 +9,12 @@ beautiful.init(gears.filesystem.get_configuration_dir() .. "theme.lua")
 
 -- Solid wallpaper
 screen.connect_signal("request::wallpaper", function(s)
-    gears.wallpaper.set(beautiful.wallpaper or "#232136")
+    gears.wallpaper.set(beautiful.wallpaper or beautiful.bg_normal)
 end)
 
 -- Set wallpaper on existing screens too
 for s in screen do
-    gears.wallpaper.set(beautiful.wallpaper or "#232136")
+    gears.wallpaper.set(beautiful.wallpaper or beautiful.bg_normal)
 end
 
 -- App launchers
@@ -25,7 +25,7 @@ local launcher_firefox = awful.widget.launcher({
 -- xterm icon is a black line drawing — recolor to fg so it's visible on any bg
 local XTERM_SVG = "/usr/share/icons/hicolor/scalable/apps/xterm.svg"
 local launcher_terminal = awful.widget.launcher({
-    image   = gears.color.recolor_image(XTERM_SVG, beautiful.fg_normal or "#908caa"),
+    image   = gears.color.recolor_image(XTERM_SVG, beautiful.fg_normal),
     command = "xterm",
 })
 
@@ -38,7 +38,7 @@ awful.screen.connect_for_each_screen(function(s)
         position = "bottom",
         screen   = s,
         height   = 48,
-        bg       = "#232136",
+        bg       = beautiful.bg_normal,
     })
     s.dock:setup({
         layout = wibox.layout.align.horizontal,
@@ -122,54 +122,80 @@ end
 function apply_theme(tokens)
     if not tokens then return end
 
-    local bg   = tokens["background"]
-    local fg   = tokens["foreground"]
-    local surf = tokens["surface"]
-    local acc  = tokens["accent"]
-    local mfg  = tokens["muted-foreground"]
-    local dest = tokens["destructive"]
+    -- Surface tokens → backgrounds and wallpaper
+    local surface         = tokens["surface"]
+    local surface_raised  = tokens["surface-raised"]
+    local surface_sunken  = tokens["surface-sunken"]
+    local surface_invert  = tokens["surface-invert"]
 
-    if bg then
-        beautiful.bg_normal   = bg
-        beautiful.bg_minimize = bg
-        beautiful.border_normal = bg
-        beautiful.wallpaper   = bg
+    -- Text tokens → foregrounds
+    local text_default    = tokens["text-default"]
+    local text_secondary  = tokens["text-secondary"]
+    local text_muted      = tokens["text-muted"]
+    local text_disabled   = tokens["text-disabled"]
+    local text_on_emph    = tokens["text-on-emphasis"]
+
+    -- Border tokens
+    local border_default  = tokens["border-default"]
+    local border_subtle   = tokens["border-subtle"]
+    local border_strong   = tokens["border-strong"]
+
+    -- Accent tokens
+    local accent          = tokens["accent"]
+    local accent_subtle   = tokens["accent-subtle"]
+
+    -- Status tokens
+    local danger          = tokens["danger"]
+    local warning         = tokens["warning"]
+
+    -- Interactive tokens
+    local interactive     = tokens["interactive"]
+
+    -- Map to AwesomeWM beautiful.* properties
+    if surface then
+        beautiful.bg_normal   = surface
+        beautiful.bg_minimize = surface
+        beautiful.wallpaper   = surface
         for s in screen do
-            gears.wallpaper.set(bg)
+            gears.wallpaper.set(surface)
         end
     end
 
-    if fg then
-        beautiful.fg_focus  = fg
-        beautiful.fg_urgent = fg
+    if surface_raised then
+        beautiful.bg_focus = surface_raised
     end
 
-    if surf then
-        beautiful.bg_focus = surf
+    if text_default then
+        beautiful.fg_focus  = text_default
+        beautiful.fg_urgent = text_default
     end
 
-    if acc then
-        beautiful.border_focus  = acc
-        beautiful.border_marked = acc
-    end
-
-    if mfg then
-        beautiful.fg_normal   = mfg
-        beautiful.fg_minimize = mfg
+    if text_muted then
+        beautiful.fg_normal   = text_muted
+        beautiful.fg_minimize = text_muted
         -- Recolor monochrome launcher icons to match
         if launcher_terminal then
-            launcher_terminal:set_image(gears.color.recolor_image(XTERM_SVG, mfg))
+            launcher_terminal:set_image(gears.color.recolor_image(XTERM_SVG, text_muted))
         end
     end
 
-    if dest then
-        beautiful.bg_urgent = dest
+    if border_default then
+        beautiful.border_normal = border_default
+    end
+
+    if accent then
+        beautiful.border_focus  = accent
+        beautiful.border_marked = accent
+    end
+
+    if danger then
+        beautiful.bg_urgent = danger
     end
 
     -- Update dock background on all screens
     for s in screen do
         if s.dock then
-            s.dock.bg = bg or beautiful.bg_normal
+            s.dock.bg = surface or beautiful.bg_normal
         end
     end
 

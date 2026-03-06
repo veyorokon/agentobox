@@ -174,6 +174,16 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.models import Agent
             await Agent.objects.filter(id=self.agent_id).aupdate(relay_disconnected_at=None)
 
+        # Push active theme tokens on connect so the agent desktop
+        # matches the dashboard theme immediately after boot/reconnect.
+        try:
+            from projects.models import Project
+            project = await Project.objects.aget(id=self.agent.project_id)
+            if project.theme_tokens:
+                await self.send_json({"type": "theme", "tokens": project.theme_tokens})
+        except Exception:  # intentional: theme push is best-effort — don't block relay connect
+            log.warning("relay.theme_push_failed", agent_id=self.agent_id, exc_info=True)
+
         log.info("relay.connected", agent_id=self.agent_id)
 
     async def disconnect(self, code):

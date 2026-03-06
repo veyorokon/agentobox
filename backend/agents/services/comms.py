@@ -319,6 +319,31 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     return agent
 
 
+async def push_theme_to_agents(project) -> None:
+    """Push theme tokens to all running agents in a project via relay WS.
+
+    Best-effort — one agent failure does not block others.
+    Called from project mutations when theme_tokens are updated.
+    """
+    from agents.models import Agent, AgentStatus
+
+    running_agents = [
+        a async for a in Agent.objects.filter(
+            project=project,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        ).exclude(sandbox_id="")
+    ]
+
+    for agent in running_agents:
+        try:
+            await push_to_relay(str(agent.id), {
+                "type": "theme",
+                "tokens": project.theme_tokens,
+            })
+        except Exception:  # intentional: theme push is best-effort — one agent failure must not block others
+            log.exception("comms.theme_push_failed", agent_name=agent.name)
+
+
 async def interrupt_agent(agent_id: str) -> bool:
     """Send SIGINT to an agent's Claude Code session."""
     op_log = log.bind(agent_id=agent_id)

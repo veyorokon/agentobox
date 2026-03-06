@@ -185,6 +185,7 @@ function TimelineEntryRow({
       const durationMs = Number(data?.duration_ms ?? 0)
       const turns = Number(data?.num_turns ?? 0)
       const isError = Boolean(data?.is_error)
+      const modelUsage = (data?.modelUsage ?? undefined) as Record<string, Record<string, number>> | undefined
 
       if (isError) {
         const errorText = String(data?.error ?? "Agent encountered an error")
@@ -197,6 +198,7 @@ function TimelineEntryRow({
           duration={formatDuration(durationMs)}
           turns={turns}
           model={friendlyModelName(String(data?.model ?? ""))}
+          modelUsage={modelUsage}
           isError={false}
         />
       )

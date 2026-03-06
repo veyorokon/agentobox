@@ -352,6 +352,10 @@ async def write_theme_files(runtime: Runtime, sandbox_id: str, tokens: dict[str,
 
     Token keys use the same names as CSS variables (minus --), e.g.
     "muted-foreground". Lua accesses them via bracket notation.
+
+    # tech-debt: write_theme_files is replaced by WS-based theme push (relay.py handles "theme" command).
+    # Kept temporarily for agents that connect before WS is established.
+    # Remove once all theme delivery is confirmed via WS path.
     """
     # Lua format for AwesomeWM
     entries = ", ".join(

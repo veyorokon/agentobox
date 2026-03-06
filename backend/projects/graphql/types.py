@@ -11,5 +11,6 @@ class ProjectType:
     name: auto
     description: auto
     settings: JSON
+    theme_tokens: JSON
     created_at: auto
     archived_at: auto

@@ -94,6 +94,32 @@ MODELS_REGISTRY = [
     {"value": "openrouter/deepseek/deepseek-r1", "label": "DeepSeek R1 (OpenRouter)"},
 ]
 
+# Per-million-token pricing (USD) for cost correction.
+# The Claude Code SDK always calculates total_cost_usd using Anthropic pricing.
+# For Anthropic models this is correct. For non-Anthropic models routed through
+# svc-apiproxy, we recalculate from token counts × actual provider rates.
+#
+# Keys match the model IDs in MODELS_REGISTRY (and modelUsage keys from the SDK).
+# Missing entries → fall back to SDK-reported cost (best we have).
+# OpenRouter pricing varies per model and changes frequently — omitted intentionally.
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    # Anthropic (native — SDK reports these correctly)
+    "claude-sonnet-4-5-20250514": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
+    "claude-sonnet-4-5-20250929": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
+    "claude-opus-4-20250514": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
+    "claude-opus-4-6-20250610": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
+    "claude-opus-4-6": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 18.75},
+    # Z.ai / GLM
+    "glm/glm-5": {"input": 0.5, "output": 2.0, "cache_read": 0.05, "cache_write": 0.5},
+    # Moonshot / Kimi
+    "kimi/kimi-k2.5": {"input": 2.0, "output": 8.0, "cache_read": 0.2, "cache_write": 2.0},
+    # MiniMax
+    "minimax/MiniMax-M1-80k": {"input": 1.1, "output": 4.4, "cache_read": 0.11, "cache_write": 1.1},
+    # Qwen
+    "qwen/qwen3-coder-plus": {"input": 1.6, "output": 6.4, "cache_read": 0.16, "cache_write": 1.6},
+    # OpenRouter models — pricing varies, omitted. SDK cost used as-is.
+}
+
 # Known MCP servers bundled into the agent image.
 # Keys match checkbox values in the deploy modal.
 # Each entry has:

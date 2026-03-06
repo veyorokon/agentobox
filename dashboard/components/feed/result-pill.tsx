@@ -5,12 +5,57 @@ import { Check, X, ChevronRight } from "lucide-react"
 import { cn, formatCost } from "@/lib/utils"
 import { Collapsible } from "@/components/ui/collapsible"
 
+/** Per-model token usage from the SDK's modelUsage dict */
+type ModelUsageEntry = {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
+}
+
+/** modelUsage is keyed by model ID, e.g. {"claude-sonnet-4-6": {...}} */
+export type ModelUsage = Record<string, ModelUsageEntry>
+
 export interface ResultPillProps {
   isError?: boolean
   cost: number
   duration: string
   turns: number
   model: string
+  modelUsage?: ModelUsage
+}
+
+/** Format a token count: 12400 → "12.4k", 350 → "350" */
+function formatTokens(n: number): string {
+  if (n >= 1000) {
+    const k = n / 1000
+    return k >= 100 ? `${Math.round(k)}k` : `${k.toFixed(1).replace(/\.0$/, "")}k`
+  }
+  return String(n)
+}
+
+/** Aggregate token counts across all models in modelUsage */
+function aggregateTokens(usage: ModelUsage): {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  hasData: boolean
+} {
+  let input = 0
+  let output = 0
+  let cacheRead = 0
+  let cacheWrite = 0
+
+  for (const entry of Object.values(usage)) {
+    input += entry.inputTokens ?? 0
+    output += entry.outputTokens ?? 0
+    cacheRead += entry.cacheReadInputTokens ?? 0
+    cacheWrite += entry.cacheCreationInputTokens ?? 0
+  }
+
+  const hasData = input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+  return { input, output, cacheRead, cacheWrite, hasData }
 }
 
 /** Compact inline status pill with expandable details */
@@ -20,8 +65,12 @@ export function ResultPill({
   duration,
   turns,
   model,
+  modelUsage,
 }: ResultPillProps) {
   const [expanded, setExpanded] = useState(false)
+
+  const tokens = modelUsage ? aggregateTokens(modelUsage) : null
+  const totalCache = tokens ? tokens.cacheRead + tokens.cacheWrite : 0
 
   return (
     <div className="ml-8">
@@ -58,12 +107,18 @@ export function ResultPill({
             <span className="text-secondary truncate min-w-0 max-w-[140px]">
               {model}
             </span>
-            <span className="text-muted">
-              12.4k in / 3.2k out
-            </span>
-            <span className="text-muted">
-              (cache: 8.1kr)
-            </span>
+            {tokens?.hasData && (
+              <>
+                <span className="text-muted">
+                  {formatTokens(tokens.input)} in / {formatTokens(tokens.output)} out
+                </span>
+                {totalCache > 0 && (
+                  <span className="text-muted">
+                    (cache: {formatTokens(tokens.cacheRead)}r / {formatTokens(tokens.cacheWrite)}w)
+                  </span>
+                )}
+              </>
+            )}
           </div>
         </div>
       </Collapsible>

@@ -11,9 +11,23 @@ from projects.graphql.types import ProjectType
 log = structlog.get_logger("projects.mutations")
 
 VALID_THEME_KEYS = frozenset({
-    "background", "foreground", "surface", "accent", "muted-foreground", "destructive",
+    "surface", "surface-raised", "surface-sunken", "surface-overlay",
+    "surface-backdrop", "surface-invert",
+    "text-default", "text-secondary", "text-muted", "text-disabled", "text-on-emphasis",
+    "border-default", "border-subtle", "border-strong",
+    "accent", "accent-hover", "accent-subtle", "text-accent",
+    "info", "text-info", "text-info-hover",
+    "pro", "text-pro",
+    "success", "text-success", "success-subtle",
+    "danger", "text-danger", "danger-subtle",
+    "warning", "text-warning", "warning-subtle",
+    "avatar-saturation", "avatar-lightness",
+    "interactive", "interactive-active", "ring-focus",
 })
-_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+# Accept #RRGGBB hex, rgba(...), hsl(...), and bare values (e.g. "35%" for avatar tokens)
+_TOKEN_VALUE_RE = re.compile(
+    r"^(#[0-9a-fA-F]{6}|rgba?\(.+\)|hsla?\(.+\)|\d+%?)$"
+)
 
 
 from agents.utils import sanitize_name as _sanitize_name
@@ -184,8 +198,8 @@ class ProjectMutation:
             raise ValueError(f"Invalid token keys: {invalid_keys}")
 
         for key, value in tokens.items():
-            if not isinstance(value, str) or not _HEX_RE.match(value):
-                raise ValueError(f"Token '{key}' must be a #RRGGBB hex string")
+            if not isinstance(value, str) or not _TOKEN_VALUE_RE.match(value):
+                raise ValueError(f"Token '{key}' must be a valid CSS value (#RRGGBB, rgba(), hsl(), or percentage)")
 
         project = await Project.objects.aget(id=input.project_id, owner=user)
         project.theme_tokens = tokens
@@ -196,21 +210,25 @@ class ProjectMutation:
 
 
 async def _push_theme_for_project(project) -> None:
-    """Push theme tokens to all running agents in a project. Best-effort."""
+    """Push theme tokens to all running agents in a project via WebSocket.
+
+    Uses push_to_relay() instead of runtime file writes — the relay
+    receives {"type": "theme", "tokens": {...}} and writes the files locally.
+    This works regardless of runtime (Docker, Modal) and doesn't need
+    sandbox_id or runtime API access.
+    """
     from agents.models import Agent, AgentStatus
-    from agents.runtimes import get_runtime
-    from agents.services.provision import write_theme_files
+    from agents.services.comms import push_to_relay
 
     running_agents = [
         a async for a in Agent.objects.filter(
             project=project,
             status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
-        ).exclude(sandbox_id="")
+        )
     ]
 
     for agent in running_agents:
         try:
-            runtime = get_runtime(agent.runtime)
-            await write_theme_files(runtime, agent.sandbox_id, project.theme_tokens)
+            await push_to_relay(str(agent.id), {"type": "theme", "tokens": project.theme_tokens})
         except Exception:
-            log.exception("theme_push_failed", agent_name=agent.name, sandbox_id=agent.sandbox_id)
+            log.exception("theme_push_failed", agent_name=agent.name, agent_id=str(agent.id))
