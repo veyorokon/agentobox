@@ -168,6 +168,7 @@ class SDKRelay:
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
+        self._firefox_restart_task: asyncio.Task | None = None  # debounced restart
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
         self._redactor.load()
@@ -610,8 +611,21 @@ class SDKRelay:
             except Exception as e:
                 log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e)})
 
-        # Restart Firefox so it re-reads userChrome.css @import.
-        # s6 auto-restarts the service after pkill.
+        # Debounce Firefox restart — rapid theme pushes (dashboard fires multiple
+        # SetProjectTheme mutations on connect) would kill Firefox repeatedly before
+        # it finishes booting. Cancel any pending restart, wait 3s for pushes to settle.
+        if self._firefox_restart_task and not self._firefox_restart_task.done():
+            self._firefox_restart_task.cancel()
+        self._firefox_restart_task = asyncio.create_task(self._debounced_firefox_restart())
+
+    async def _debounced_firefox_restart(self):
+        """Wait for theme pushes to settle, then restart Firefox once.
+
+        s6 auto-restarts the service after pkill. The 3s delay lets rapid
+        theme mutations coalesce — CSS/Lua files are already written and
+        idempotent, only the restart needs debouncing.
+        """
+        await asyncio.sleep(3)
         try:
             subprocess.run(["pkill", "firefox-esr"], timeout=5, capture_output=True)
             log.info("relay.theme_firefox_restarted")
