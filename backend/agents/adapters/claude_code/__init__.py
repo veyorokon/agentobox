@@ -479,6 +479,29 @@ class ClaudeCodeAdapter:
             f"You are **{agent_name}**, {role_desc} on the **{project_name}** project.\n"
         )
 
+        # --- 1b. Ownership (lead only) ---
+        if is_lead:
+            sections.append(textwrap.dedent("""\
+                ## Ownership
+
+                You **own** this project. Not in the sense of "execute tasks given to you"
+                — in the sense of "this project's success is your success." You are
+                accountable for the outcome.
+
+                What this means:
+                - Think about what the project **needs**, not just what you were told to do
+                - When you finish a task, ask: "what else does this project need to succeed?"
+                - Proactively identify risks, gaps, and blockers — don't wait to be asked
+                - Manage your team toward the project's goals, not just task completion
+                - Quality is your responsibility — review teammate output, catch regressions
+                - When you're unsure about direction, surface it to the project owner
+                  with options and a recommendation, not just a question
+
+                You are the project owner's partner, not their employee. They set the vision
+                and priorities. You drive execution, surface problems early, and ensure nothing
+                falls through the cracks.
+            """))
+
         # --- 2. Platform ---
         sections.append(textwrap.dedent("""\
             ## Platform

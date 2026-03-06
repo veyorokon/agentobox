@@ -46,8 +46,17 @@ CHUNK_SIZE = 8192
 # "host" must be stripped because the CLI sends "host: localhost:9999"
 # which would create a duplicate when we set the real upstream Host.
 # Auth headers are stripped because we inject the real key ourselves.
-# Cloudflare returns 403 on conflicting host headers.
-_STRIP_HEADERS = frozenset({"x-api-key", "authorization", "host"})
+# "connection" is a hop-by-hop header (RFC 7230 §6.1) — MUST NOT be
+# forwarded by proxies. Forwarding it is harmless for HTTP/1.1 but
+# wrong per spec.
+# "content-length" is stripped because we re-add it with the correct
+# value after reading the body. Without stripping, clients that send
+# "content-length" (lowercase, e.g. Node.js undici) create a duplicate
+# with our title-case "Content-Length" — Cloudflare returns 400 on
+# duplicate Content-Length headers.
+_STRIP_HEADERS = frozenset({
+    "x-api-key", "authorization", "host", "connection", "content-length",
+})
 
 
 def _load_key() -> str:
@@ -188,7 +197,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         # Override host header for upstream
         upstream_headers["Host"] = UPSTREAM_HOST
 
-        # Update Content-Length if body was rewritten
+        # Set Content-Length from actual body size. The original header was
+        # stripped (see _STRIP_HEADERS) to avoid case-mismatch duplicates —
+        # Node.js sends "content-length" (lowercase) while http.client expects
+        # "Content-Length" (title case). We always re-add it from the real body.
         if body is not None:
             upstream_headers["Content-Length"] = str(len(body))
 

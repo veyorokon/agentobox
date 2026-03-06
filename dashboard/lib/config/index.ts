@@ -36,7 +36,7 @@ export type ThemeConfig = { theme: string; mode: string }
 
 /** Available themes for the picker UI. */
 export const BUILT_IN_THEMES: { id: string; label: string; mode: string }[] = [
-  { id: "claude", label: "Claude Dark", mode: "dark" },
+  { id: "claude", label: "Dark", mode: "dark" },
   { id: "blyss", label: "Blyss Dark", mode: "dark" },
 ]
 

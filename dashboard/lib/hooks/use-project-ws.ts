@@ -184,8 +184,8 @@ export function useProjectWebSocket(projectId: string | undefined) {
         updatedFeed = [...currentFeed]
         updatedFeed[idx] = feedData
       } else {
-        // Prepend new feed item
-        updatedFeed = [feedData, ...currentFeed]
+        // Append new feed item (feed is chronological — oldest first)
+        updatedFeed = [...currentFeed, feedData]
       }
 
       client.writeQuery({

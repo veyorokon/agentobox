@@ -26,6 +26,8 @@ import asyncio
 import json
 import os
 import signal
+import socket
+import subprocess
 import sys
 import time
 
@@ -142,6 +144,85 @@ def _translate_mode(our_mode: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Marionette client — hot-reload Firefox CSS without restarting
+# ---------------------------------------------------------------------------
+
+
+class _MarionetteClient:
+    """Minimal Marionette client -- length-prefixed JSON over TCP.
+
+    Firefox Marionette listens on port 2828 when launched with --marionette.
+    The protocol is simple: each message is ``len(json):json`` in both
+    directions. We use it to execute privileged chrome JS that swaps
+    userChrome stylesheets at runtime via nsIStyleSheetService.
+    """
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 2828):
+        self.host = host
+        self.port = port
+        self.sock: socket.socket | None = None
+        self._msg_id = 0
+
+    def connect(self):
+        self.sock = socket.create_connection((self.host, self.port), timeout=5)
+        self._recv()  # consume hello message
+
+    def _send(self, data: list):
+        body = json.dumps(data)
+        msg = f"{len(body)}:{body}"
+        self.sock.sendall(msg.encode("utf-8"))
+
+    def _recv(self) -> dict:
+        buf = b""
+        while True:
+            c = self.sock.recv(1)
+            if not c:
+                raise ConnectionError("Marionette socket closed mid-read")
+            if c == b":":
+                break
+            buf += c
+        length = int(buf)
+        body = b""
+        while len(body) < length:
+            chunk = self.sock.recv(length - len(body))
+            if not chunk:
+                raise ConnectionError("Marionette socket closed mid-body")
+            body += chunk
+        return json.loads(body)
+
+    def new_session(self):
+        self._msg_id += 1
+        self._send([0, self._msg_id, "WebDriver:NewSession", {"capabilities": {}}])
+        return self._recv()
+
+    def execute_chrome_script(self, script: str):
+        self._msg_id += 1
+        self._send([0, self._msg_id, "Marionette:SetContext", {"value": "chrome"}])
+        self._recv()
+        self._msg_id += 1
+        self._send([0, self._msg_id, "WebDriver:ExecuteScript", {"script": script, "sandbox": "system"}])
+        return self._recv()
+
+    def close(self):
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass  # intentional: best-effort cleanup on a TCP socket
+
+
+_RELOAD_THEME_JS = """
+var ss = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
+var io = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
+var uri = io.newURI("file:///tmp/abox-theme.css", null, null);
+if (ss.sheetRegistered(uri, ss.USER_SHEET)) {
+    ss.unregisterSheet(uri, ss.USER_SHEET);
+}
+ss.loadAndRegisterSheet(uri, ss.USER_SHEET);
+"""
+
+
+# ---------------------------------------------------------------------------
 # Main relay
 # ---------------------------------------------------------------------------
 
@@ -168,7 +249,7 @@ class SDKRelay:
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
-        self._firefox_restart_task: asyncio.Task | None = None  # debounced restart
+        self._theme_reload_task: asyncio.Task | None = None  # debounced CSS reload
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
         self._redactor.load()
@@ -526,11 +607,10 @@ class SDKRelay:
         2. /tmp/abox-theme.css — Textfox @imports this for Firefox chrome colors
         3. /tmp/abox-theme.json — reference copy (debugging, future use)
 
-        Firefox requires restart to re-read userChrome.css @imports.
+        Firefox hot-reloads CSS via Marionette + nsIStyleSheetService.
         AwesomeWM can live-reload via awesome-client Lua eval.
         """
         import json as _json
-        import subprocess
         from pathlib import Path
 
         # 1. AwesomeWM lua table
@@ -611,26 +691,36 @@ class SDKRelay:
             except Exception as e:
                 log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e)})
 
-        # Debounce Firefox restart — rapid theme pushes (dashboard fires multiple
-        # SetProjectTheme mutations on connect) would kill Firefox repeatedly before
-        # it finishes booting. Cancel any pending restart, wait 3s for pushes to settle.
-        if self._firefox_restart_task and not self._firefox_restart_task.done():
-            self._firefox_restart_task.cancel()
-        self._firefox_restart_task = asyncio.create_task(self._debounced_firefox_restart())
+        # Debounce Firefox CSS reload — dashboard fires multiple theme mutations
+        # on connect. Cancel any pending reload, wait 3s for pushes to settle.
+        if self._theme_reload_task and not self._theme_reload_task.done():
+            self._theme_reload_task.cancel()
+        self._theme_reload_task = asyncio.create_task(self._debounced_firefox_css_reload())
 
-    async def _debounced_firefox_restart(self):
-        """Wait for theme pushes to settle, then restart Firefox once.
+    async def _debounced_firefox_css_reload(self):
+        """Wait for theme pushes to settle, then hot-reload CSS via Marionette.
 
-        s6 auto-restarts the service after pkill. The 3s delay lets rapid
-        theme mutations coalesce — CSS/Lua files are already written and
-        idempotent, only the restart needs debouncing.
+        Dashboard fires multiple theme mutations on connect, so we debounce
+        with a 3-second delay. Marionette uses nsIStyleSheetService to swap
+        the USER_SHEET without restarting Firefox. Falls back to pkill if
+        Marionette is unavailable (Firefox not yet started, port not open).
         """
         await asyncio.sleep(3)
         try:
-            subprocess.run(["pkill", "firefox-esr"], timeout=5, capture_output=True)
-            log.info("relay.theme_firefox_restarted")
-        except Exception as e:
-            log.warning("relay.theme_firefox_restart_failed", extra={"error": str(e)})
+            client = _MarionetteClient()
+            client.connect()
+            client.new_session()
+            client.execute_chrome_script(_RELOAD_THEME_JS)
+            client.close()
+            log.info("relay.theme_css_reloaded")
+        except Exception as exc:
+            log.warning("relay.theme_css_reload_failed", extra={"error": str(exc)})
+            # Fallback: restart Firefox (s6 auto-restarts the service)
+            try:
+                subprocess.run(["pkill", "firefox-esr"], timeout=5, capture_output=True)
+                log.info("relay.theme_firefox_restarted_fallback")
+            except Exception:
+                pass  # intentional: best-effort fallback when both Marionette and pkill fail
 
     # ── Synthetic events ──
 
