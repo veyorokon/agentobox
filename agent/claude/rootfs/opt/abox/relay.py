@@ -641,7 +641,19 @@ class SDKRelay:
                 log.error("relay.sdk_process_error", extra={
                     "code": e.exit_code, "stderr": real_stderr,
                     "captured_lines": len(self._stderr_lines),
+                    "was_resume": bool(resume_session_id),
                 })
+                # If we were resuming and the process failed, the session may
+                # be poisoned (e.g. API error HTML embedded in conversation
+                # history). Fall back to a fresh session instead of dying.
+                if resume_session_id:
+                    log.warning("relay.resume_failed_fallback", extra={
+                        "poisoned_session": resume_session_id,
+                    })
+                    resume_session_id = ""
+                    self.session_id = ""
+                    self._stderr_lines.clear()
+                    continue
                 await self._post_exit_event(e.exit_code or 1, real_stderr)
                 break
             except Exception as e:

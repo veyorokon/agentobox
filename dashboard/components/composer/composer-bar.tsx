@@ -75,7 +75,7 @@ export function ComposerBar() {
   const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
 
   return (
-    <div className="px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
+    <div className="px-3 @[640px]/main:px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
       {/* Composer box */}
       <div className="relative rounded-2xl border-[0.5px] border-border-default bg-surface-raised/60 focus-within:bg-surface-raised focus-within:border-border-default">
         {/* Text input — auto-grows up to ~6 rows then scrolls */}

@@ -19,7 +19,7 @@ docker compose up -d          # postgres, redis, backend, dashboard
 - Agent image workflow: `.github/workflows/agent-image.yml`
 - Dev builds: push to `main` with `agent/` changes -> `:main` + `:sha-xxx`
 - Release builds: push `v*` tag -> `:latest` + `:v1.2.3`
-- Image: `ghcr.io/deleganceai/agentobox-agent-claude` (private, Modal pulls via `ghcr-secret`)
+- Image: `ghcr.io/veyorokon/agentobox-agent-claude` (private, Modal pulls via `ghcr-secret`)
 
 ## Documentation
 

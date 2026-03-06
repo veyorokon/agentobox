@@ -2,9 +2,24 @@
 
 ## System Overview
 
-Agentobox is a platform for running teams of Claude Code agents in managed containers. The dashboard (Next.js) talks to the backend (Django + Strawberry GraphQL + Django Channels) over GraphQL queries/mutations/subscriptions. Each agent runs in a container with a relay process that bridges the Claude Code SDK to the backend over a persistent WebSocket. Agents coordinate via an MCP server mounted at `/mcp` on the backend.
+Agentobox is a managed agent workflow platform with real desktop environments. The system has two execution loops and a web dashboard for observability and control.
 
 ```
+                         ┌─────────────────────────────────────────────┐
+                         │              Two-Loop Architecture          │
+                         │                                             │
+                         │  MECHANICAL LOOP (cheap, fast, reliable)    │
+                         │    cron/webhook → poll source → diff state  │
+                         │    → evaluate triggers → fire effects       │
+                         │    (code, not LLM — handles the 90%)        │
+                         │                                             │
+                         │  AGENT LOOP (expensive, slow, smart)        │
+                         │    trigger → boot agent → read context      │
+                         │    → do work (browse, research, draft)      │
+                         │    → write results as StreamEvents → stop   │
+                         │    (containerized desktop — handles the 10%)│
+                         └─────────────────────────────────────────────┘
+
  Dashboard (Next.js)                 Backend (Django/Daphne)
  ┌──────────────────┐               ┌────────────────────────────────┐
  │  Apollo Client   │──── GraphQL ──│  Strawberry schema             │
@@ -12,9 +27,12 @@ Agentobox is a platform for running teams of Claude Code agents in managed conta
  │                  │               │  Django Channels (Redis)       │
  │  Zustand         │               │    ├─ /graphql (subscriptions) │
  │  (UI state)      │               │    ├─ /ws/relay/<id>/ (relay)  │
- └──────────────────┘               │    └─ /ws/vnc/<id>/   (VNC)   │
-                                    │                                │
+ │                  │               │    └─ /ws/vnc/<id>/   (VNC)    │
+ └──────────────────┘               │                                │
                                     │  /mcp (FastMCP HTTP)           │
+                                    │                                │
+                                    │  Mechanical Loop               │
+                                    │    (Modal cron / mgmt command) │
                                     │                                │
                                     │  Postgres ◄── models/ORM       │
                                     │  Redis    ◄── Channels pub/sub │
@@ -31,6 +49,71 @@ Agentobox is a platform for running teams of Claude Code agents in managed conta
                         │  s6-overlay (process supervision)           │
                         └─────────────────────────────────────────────┘
 ```
+
+## Three Primitives
+
+The whole platform reduces to three primitives:
+
+| Primitive | What it is | Storage |
+|-----------|-----------|---------|
+| **State** | Latest agent output (JSON). Previous output kept for diffing/triggers. | `StreamEvent.data` (latest `agent_output` event type) |
+| **Trigger** | Condition evaluated by the mechanical loop. Cron schedule, webhook, or state diff condition. | Workflow config (per-workflow template) |
+| **Agent** | Containerized desktop environment with instructions. Reads context, does work, writes results. | `Agent` model + container |
+
+## Two-Loop Architecture
+
+### Mechanical Loop (cheap, fast, reliable)
+
+Code, not LLM. Handles the 90% thats boring — checking if prices changed, if new emails arrived, if conditions are met.
+
+```
+cron tick / webhook arrives
+  → poll source (fetch URL, check inbox, query API)
+    → diff against previous state
+      → evaluate trigger conditions
+        → fire effects: notify, wake_agent, update_state
+```
+
+Runs as Modal cron functions in prod, management command locally. No LLM inference. The trigger evaluation is deterministic code.
+
+### Agent Loop (expensive, slow, smart)
+
+Handles the 10% that needs a brain. A trigger effect = "wake agent."
+
+```
+trigger fires "wake_agent" effect
+  → agent container boots
+    → relay.py connects WS to backend
+      → Claude reads instructions + context (previous state, trigger data)
+        → does work: browse in real Firefox, research, draft, analyze
+          → writes structured output as StreamEvents
+            → shuts down
+```
+
+The agent produces StreamEvents. The latest `agent_output` event becomes the new state. The mechanical loop can diff this state against previous state for the next trigger evaluation.
+
+### Events as Universal Primitive
+
+No separate "effects system" or "state system." Everything maps to StreamEvents (which already exist):
+
+- Trigger fired → StreamEvent
+- Agent woke → StreamEvent
+- Agent output/results → StreamEvent
+- Notification sent → StreamEvent (with side effect: post to webhook)
+
+The dashboard feed already renders StreamEvents by type. "State" is just the latest agent_output event. Run history is events filtered by time range.
+
+## Workflow Templates
+
+A workflow is a pre-configured template targeting a specific audience. It populates:
+
+- Agent configs (model, MCP servers, instructions)
+- Trigger conditions (cron schedule, webhook, state diff rules)
+- Effect set (notify channels, output format)
+
+Workflows are a UX concept — same infra underneath, different front door per audience. User picks a workflow, it generates the configs, agents execute.
+
+The AI coding team use case is one workflow template among many. Dogfooding (using agentobox to build agentobox) is still the dev workflow.
 
 ## Agent Lifecycle
 
@@ -61,7 +144,6 @@ Agents communicate via the **team** MCP server — a FastMCP HTTP app mounted at
 | `task_add(subject, description)` | Create a team task |
 | `task_claim(task_id)` | Claim and start a task |
 | `task_complete(task_id)` | Mark a task done |
-| `task_list()` | List all project tasks |
 | `team_status()` | List all active agents with status/cost |
 
 **Message delivery flow:**
@@ -94,6 +176,8 @@ All events flow through `services/stream.py` `process_stream_event()`. The write
 **latest_snapshot** is a JSON field on Agent: `{"assistant": <event>, "result": <event>}`. New assistant events pop the result key; result events add it. Adapters read this at query time to extract display fields.
 
 Raw events are stored verbatim — no filtering, no transformation. The relay forwards everything Claude Code outputs. New event types Anthropic adds are captured automatically.
+
+StreamEvents are the universal primitive for both the agent loop output and the mechanical loop's trigger/effect audit trail. No separate WorkflowRun model needed — a "run" is a time-bounded window of StreamEvents.
 
 ## Structured Logging (Event Taxonomy)
 
@@ -132,7 +216,7 @@ All in `backend/agents/models.py`:
 | Model | Purpose |
 |-------|---------|
 | `Agent` | Container instance — status, config, latest_snapshot, materialized cost/phase/attention |
-| `StreamEvent` | Append-only event log. One row per stream-json event. Source of truth. |
+| `StreamEvent` | Append-only event log. One row per stream-json event. Source of truth. Universal primitive for both agent output and mechanical loop audit trail. |
 | `SessionResult` | Cost/usage snapshot per turn (from `result` events). One row per turn, not upserted. |
 | `TeamFeedItem` | Curated dashboard feed entries. Flat union — every field on every row, null where N/A. |
 | `AgentTask` | Team tasks created via MCP `task_add`. Synced from MCP calls, visible in dashboard. |

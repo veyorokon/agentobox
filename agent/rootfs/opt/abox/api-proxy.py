@@ -207,10 +207,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"Bad Gateway: upstream connection failed")
             return
 
-        # Log non-2xx upstream responses
+        # Log non-2xx upstream responses with body preview for debugging
         if resp.status >= 400:
+            peek = resp.peek(500) if hasattr(resp, "peek") else b""
             _log.warning("proxy.upstream_error", extra={
-                         "status": resp.status, "method": self.command, "path": self.path})
+                         "status": resp.status, "method": self.command, "path": self.path,
+                         "body_preview": peek[:500].decode("utf-8", errors="replace")})
 
         # Send response status
         self.send_response(resp.status)

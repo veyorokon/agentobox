@@ -25,6 +25,10 @@ if [ -n "$FF_ACTIVE" ]; then
     cp "$UHOME/.firefox-config/config.css" "$FF_TARGET/chrome/config.css"
     cat "$UHOME/.firefox-config/user-overrides.js" >> "$FF_TARGET/user.js"
 
+    # Install theme bridge extension — filename must match extension ID
+    mkdir -p "$FF_TARGET/extensions"
+    cp /opt/abox/firefox-theme.xpi "$FF_TARGET/extensions/abox-theme@agentobox.com.xpi"
+
     chown -R agent:agent "$FF_TARGET"
     echo "[agentobox] textfox + theme bridge injected into $(basename "$FF_TARGET")"
 else

@@ -151,6 +151,9 @@ class DockerRuntime:
             with tarfile.open(fileobj=buf, mode="w") as tar:
                 info = tarfile.TarInfo(name=file_name)
                 info.size = len(content)
+                info.uid = 1000  # agent user
+                info.gid = 1000
+                info.mode = 0o644
                 tar.addfile(info, io.BytesIO(content))
             buf.seek(0)
             container.put_archive(parent_dir, buf)

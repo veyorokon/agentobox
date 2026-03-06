@@ -79,7 +79,7 @@ export function AttentionBar() {
   // Expanded view — the card IS the attention bar
   if (expandedPlan && expandedPlan.item.type === "plan") {
     return (
-      <div className="px-6 mb-2 max-w-3xl mx-auto w-full">
+      <div className="px-3 @[640px]/main:px-6 mb-2 max-w-3xl mx-auto w-full">
         <div className="rounded-lg border border-warning/20 bg-warning-subtle/10 overflow-hidden flex flex-col">
           {/* Header: agent label + stepper + close */}
           <div className="px-3.5 pt-3 pb-2 flex items-center gap-2">
@@ -130,7 +130,7 @@ export function AttentionBar() {
 
   // Collapsed compact bar
   return (
-    <div className="px-6 mb-2 max-w-3xl mx-auto w-full"><div className="rounded-lg border border-warning/20 bg-warning-subtle/10 p-3">
+    <div className="px-3 @[640px]/main:px-6 mb-2 max-w-3xl mx-auto w-full"><div className="rounded-lg border border-warning/20 bg-warning-subtle/10 p-3">
       {/* Header: icon + count + stepper nav */}
       <div className="flex items-center gap-2 mb-2">
         <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />

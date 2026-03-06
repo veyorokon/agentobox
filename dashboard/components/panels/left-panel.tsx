@@ -63,6 +63,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const screenWidth = useWindowWidth()
   const collapseThreshold = Math.round(screenWidth * 0.2)
   const minPanelWidth = collapseThreshold + 20
+  const maxPanelWidth = Math.round(screenWidth * 0.5)
   const defaultWidth = bp === "S" ? Math.max(minPanelWidth, 320) : bp === "M" ? Math.max(minPanelWidth, 340) : 480
   const width = sidebarWidth ?? defaultWidth
 
@@ -88,8 +89,8 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
       setSidebarWidth(null)
       return
     }
-    setSidebarWidth(Math.max(minPanelWidth, Math.min(720, next)))
-  }, [defaultWidth, collapseThreshold, minPanelWidth, setSidebarOpen, setSidebarWidth])
+    setSidebarWidth(Math.max(minPanelWidth, Math.min(maxPanelWidth, next)))
+  }, [defaultWidth, collapseThreshold, minPanelWidth, maxPanelWidth, setSidebarOpen, setSidebarWidth])
 
   const handleToggleOpen = useCallback(() => {
     const currentOpen = useSidebarStore.getState().sidebarOpen

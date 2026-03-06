@@ -92,7 +92,7 @@ export default function ProjectPage() {
         />
       )}
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+      <div className="@container/main flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         {/* Mobile header: project + secrets + user */}
         {bp === "mobile" && (
           <div className="h-10 px-3 flex items-center border-b border-border-default bg-surface shrink-0">

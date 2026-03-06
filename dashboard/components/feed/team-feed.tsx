@@ -67,7 +67,7 @@ export function TeamFeed() {
 
   return (
     <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
-      <div className="max-w-3xl mx-auto w-full px-6 py-4 space-y-3">
+      <div className="max-w-3xl mx-auto w-full px-3 @[640px]/main:px-6 py-4 space-y-3">
         {filtered.map((item) => {
           switch (item.type) {
             case "system":
