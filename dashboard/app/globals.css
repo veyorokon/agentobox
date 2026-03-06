@@ -43,6 +43,7 @@
 
   /* Info */
   --color-info: var(--p-info);
+  --color-text-info: var(--p-text-info);
   --color-info-hover: var(--p-text-info-hover);
 
   /* Pro */
@@ -51,10 +52,13 @@
 
   /* Status */
   --color-success: var(--p-success);
+  --color-text-success: var(--p-text-success);
   --color-success-subtle: var(--p-success-subtle);
   --color-danger: var(--p-danger);
+  --color-text-danger: var(--p-text-danger);
   --color-danger-subtle: var(--p-danger-subtle);
   --color-warning: var(--p-warning);
+  --color-text-warning: var(--p-text-warning);
   --color-warning-subtle: var(--p-warning-subtle);
 
   /* Avatar color parameters (hue computed per-agent in JS) */

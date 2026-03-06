@@ -23,6 +23,7 @@ Synthetic events (not from Claude):
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import signal
@@ -211,15 +212,34 @@ class _MarionetteClient:
                 pass  # intentional: best-effort cleanup on a TCP socket
 
 
-_RELOAD_THEME_JS = """
-var ss = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
-var io = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
-var uri = io.newURI("file:///tmp/abox-theme.css", null, null);
-if (ss.sheetRegistered(uri, ss.USER_SHEET)) {
-    ss.unregisterSheet(uri, ss.USER_SHEET);
-}
-ss.loadAndRegisterSheet(uri, ss.USER_SHEET);
-"""
+def _build_theme_swap_js(old_uri: str, new_uri: str) -> str:
+    """Build JS for atomic CSS sheet replacement via nsIStyleSheetService.
+
+    Registers the NEW sheet first (so CSS variables are never missing),
+    then unregisters the OLD sheet. This eliminates the flash of Firefox's
+    built-in hazard pattern (red diagonal stripes) that appears when no
+    user sheet is registered.
+    """
+    js = (
+        'var ss = Cc["@mozilla.org/content/style-sheet-service;1"]'
+        ".getService(Ci.nsIStyleSheetService);\n"
+        'var io = Cc["@mozilla.org/network/io-service;1"]'
+        ".getService(Ci.nsIIOService);\n"
+    )
+    # Always register the new sheet first — variables are never absent
+    js += (
+        f'var newUri = io.newURI("{new_uri}", null, null);\n'
+        "ss.loadAndRegisterSheet(newUri, ss.USER_SHEET);\n"
+    )
+    # Then unregister the old sheet if one was active
+    if old_uri and old_uri != new_uri:
+        js += (
+            f'var oldUri = io.newURI("{old_uri}", null, null);\n'
+            "if (ss.sheetRegistered(oldUri, ss.USER_SHEET)) {\n"
+            "    ss.unregisterSheet(oldUri, ss.USER_SHEET);\n"
+            "}\n"
+        )
+    return js
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +270,7 @@ class SDKRelay:
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
         self._theme_reload_task: asyncio.Task | None = None  # debounced CSS reload
+        self._current_theme_uri: str = ""  # file URI of active Firefox CSS sheet
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
         self._redactor.load()
@@ -655,6 +676,14 @@ class SDKRelay:
         )
         Path("/tmp/abox-theme.css").write_text(css)
 
+        # 2b. Versioned CSS for atomic Firefox sheet swap — unique URI per
+        # content hash so the new sheet can be registered before the old one
+        # is removed, avoiding the flash of red diagonal stripes.
+        css_hash = hashlib.md5(css.encode()).hexdigest()[:8]
+        versioned_css_path = f"/tmp/abox-theme-{css_hash}.css"
+        Path(versioned_css_path).write_text(css)
+        new_theme_uri = f"file://{versioned_css_path}"
+
         # 3. JSON reference
         Path("/tmp/abox-theme.json").write_text(_json.dumps(tokens, indent=2) + "\n")
 
@@ -695,27 +724,52 @@ class SDKRelay:
         # on connect. Cancel any pending reload, wait 3s for pushes to settle.
         if self._theme_reload_task and not self._theme_reload_task.done():
             self._theme_reload_task.cancel()
-        self._theme_reload_task = asyncio.create_task(self._debounced_firefox_css_reload())
+        self._theme_reload_task = asyncio.create_task(
+            self._debounced_firefox_css_reload(new_theme_uri)
+        )
 
-    async def _debounced_firefox_css_reload(self):
+    async def _debounced_firefox_css_reload(self, new_uri: str):
         """Wait for theme pushes to settle, then hot-reload CSS via Marionette.
 
         Dashboard fires multiple theme mutations on connect, so we debounce
-        with a 3-second delay. Marionette uses nsIStyleSheetService to swap
-        the USER_SHEET without restarting Firefox. Falls back to pkill if
-        Marionette is unavailable (Firefox not yet started, port not open).
+        with a 3-second delay. Uses atomic sheet replacement: register the
+        NEW sheet first (CSS variables never absent), then unregister the OLD
+        sheet. This eliminates the red diagonal stripe flash.
+
+        Falls back to pkill if Marionette is unavailable (Firefox not yet
+        started, port not open).
         """
-        await asyncio.sleep(3)
+        from pathlib import Path
+
+        try:
+            await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            log.info("relay.theme_reload_cancelled")
+            raise
+
+        old_uri = self._current_theme_uri
+        swap_js = _build_theme_swap_js(old_uri, new_uri)
+
         try:
             client = _MarionetteClient()
             client.connect()
             client.new_session()
-            client.execute_chrome_script(_RELOAD_THEME_JS)
+            client.execute_chrome_script(swap_js)
             client.close()
-            log.info("relay.theme_css_reloaded")
+            self._current_theme_uri = new_uri
+            log.info("relay.theme_css_reloaded", extra={"old": old_uri, "new": new_uri})
+
+            # Clean up the old versioned CSS file
+            if old_uri and old_uri != new_uri:
+                old_path = old_uri.removeprefix("file://")
+                try:
+                    Path(old_path).unlink(missing_ok=True)
+                except OSError:
+                    pass  # intentional: best-effort cleanup of stale theme file
         except Exception as exc:
             log.warning("relay.theme_css_reload_failed", extra={"error": str(exc)})
             # Fallback: restart Firefox (s6 auto-restarts the service)
+            # On restart, mozilla.cfg loads /tmp/abox-theme.css (the fixed path)
             try:
                 subprocess.run(["pkill", "firefox-esr"], timeout=5, capture_output=True)
                 log.info("relay.theme_firefox_restarted_fallback")
