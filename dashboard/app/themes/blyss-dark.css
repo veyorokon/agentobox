@@ -17,15 +17,15 @@
   --p-surface-backdrop: rgba(43, 48, 59, 0.85);
   --p-surface-invert: #EFF1F5;
 
-  --p-text-default: #C0C5CE;
-  --p-text-secondary: #DFE1E8;
-  --p-text-muted: #65737E;
-  --p-text-disabled: #4F5B66;
+  --p-text-default: #DFE1E8;
+  --p-text-secondary: #A7ADBA;
+  --p-text-muted: #808B96;
+  --p-text-disabled: #5C6773;
   --p-text-on-emphasis: #EFF1F5;
 
-  --p-border-default: rgba(79, 91, 102, 0.2);
-  --p-border-subtle: rgba(52, 61, 70, 0.3);
-  --p-border-strong: #65737E;
+  --p-border-default: rgba(168, 178, 191, 0.18);
+  --p-border-subtle: rgba(168, 178, 191, 0.10);
+  --p-border-strong: rgba(168, 178, 191, 0.35);
 
   --p-accent: #8FA1B3;
   --p-accent-hover: #A3B5C7;
