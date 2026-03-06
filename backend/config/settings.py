@@ -87,8 +87,11 @@ ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {
     "default": {
         **env.db("DATABASE_URL", default="sqlite:///db.sqlite3"),
-        "CONN_MAX_AGE": 600,  # 10 minutes — reuse connections
-        "CONN_HEALTH_CHECKS": True,  # Validate before reuse
+        "CONN_MAX_AGE": 0,  # Close after each request — ASGI/Daphne dispatches ORM
+        # calls to threads; CONN_MAX_AGE > 0 keeps each thread's connection alive,
+        # causing unbounded idle connection growth under polling load.
+        # Real fix: replace polling with project-level WS subscription (task #14).
+        "CONN_HEALTH_CHECKS": True,
     }
 }
 

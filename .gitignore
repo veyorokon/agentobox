@@ -27,6 +27,14 @@ dist/
 .mcp.json
 .playwright-mcp/
 
+# OpenClaw (written to workspace by agent)
+.openclaw/
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+
 # OS
 .DS_Store
 Thumbs.db
