@@ -979,3 +979,104 @@ class TestSyncToAsyncExplicit:
             + "\n\nAlways specify thread_sensitive=True or thread_sensitive=False "
             "to prevent accidental single-thread serialization."
         )
+
+
+# ── WS serializer / GraphQL drift detection ──
+
+
+class TestWsSerializerMatchesGraphQL:
+    """The WS agent serializer must mirror the GraphQL AgentType exactly.
+
+    When a field is added to AgentType but not _serialize_agent_for_ws,
+    Apollo throws cache miss errors because the WS push is missing keys
+    that the cache schema expects. This test catches that drift at CI time
+    instead of waiting for a runtime console error.
+
+    Extracts camelCase field keys from both sources via AST and string
+    analysis, then asserts they match.
+    """
+
+    # Fields that appear in serializer but not as standalone GraphQL fields
+    # (internal WS protocol fields, not part of the schema).
+    _WS_ONLY = {"__typename", "_t"}
+
+    def _extract_ws_keys(self) -> set[str]:
+        """Extract string keys from _serialize_agent_for_ws return dict via AST."""
+        consumers_path = AGENTS_DIR / "consumers.py"
+        src = _read_source(consumers_path)
+        tree = ast.parse(src)
+
+        keys = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            if node.name != "_serialize_agent_for_ws":
+                continue
+            # Find the top-level return statement with a Dict value
+            for child in ast.walk(node):
+                if isinstance(child, ast.Return) and isinstance(child.value, ast.Dict):
+                    for key in child.value.keys:
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                            keys.add(key.value)
+                    break
+            break
+
+        return keys
+
+    def _extract_graphql_fields(self) -> set[str]:
+        """Extract camelCase field names from AgentType in types.py."""
+        types_path = GRAPHQL_DIR / "types.py"
+        src = _read_source(types_path)
+        tree = ast.parse(src)
+
+        fields = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name != "AgentType":
+                continue
+
+            for item in node.body:
+                # Plain annotations: `name: auto`
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    # Convert snake_case to camelCase
+                    fields.add(self._to_camel(item.target.id))
+
+                # @strawberry.field or @strawberry_django.field decorated methods
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for dec in item.decorator_list:
+                        dec_name = ""
+                        if isinstance(dec, ast.Attribute):
+                            dec_name = dec.attr
+                        elif isinstance(dec, ast.Name):
+                            dec_name = dec.id
+                        if dec_name == "field":
+                            fields.add(self._to_camel(item.name))
+                            break
+
+        return fields
+
+    @staticmethod
+    def _to_camel(snake: str) -> str:
+        parts = snake.split("_")
+        return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+    def test_ws_serializer_keys_match_graphql_agent_type(self):
+        """WS serializer dict keys must exactly match GraphQL AgentType fields.
+
+        This is the canary for the feed/card desync gap — if a field is added
+        to the GraphQL type but not the WS serializer (or vice versa), Apollo
+        cache throws errors because the shapes don't match.
+        """
+        ws_keys = self._extract_ws_keys() - self._WS_ONLY
+        gql_fields = self._extract_graphql_fields()
+
+        only_in_ws = ws_keys - gql_fields
+        only_in_gql = gql_fields - ws_keys
+
+        assert not only_in_ws, (
+            f"WS serializer has keys not in GraphQL AgentType: {only_in_ws}. "
+            "Remove from _serialize_agent_for_ws or add to AgentType."
+        )
+        assert not only_in_gql, (
+            f"GraphQL AgentType has fields not in WS serializer: {only_in_gql}. "
+            "Add to _serialize_agent_for_ws in consumers.py."
+        )

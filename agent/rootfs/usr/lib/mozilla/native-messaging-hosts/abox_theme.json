@@ -1,7 +1,0 @@
-{
-  "name": "abox_theme",
-  "description": "Agentobox theme bridge — reads theme tokens for Firefox",
-  "path": "/opt/abox/theme-bridge.py",
-  "type": "stdio",
-  "allowed_extensions": ["abox-theme@agentobox.com"]
-}
