@@ -214,6 +214,25 @@ class Agent(models.Model):
     # so no clock skew risk unlike relay_disconnected_at timestamps.
     last_delivered_event_id = models.BigIntegerField(default=0)
 
+    # ── Trigger configuration ─────────────────────────────────────────
+    # Array of trigger objects that control what wakes this agent.
+    # Each element: {"type": "cron"|"webhook"|"manual", "schedule": "0 9 * * *",
+    #   "message": "run daily check", "last_triggered_at": "2026-03-06T..."}
+    # Types: "cron" (schedule field, cron expression), "webhook" (external HTTP POST),
+    #   "manual" (default, wake on user message)
+    # Empty list = manual only (current behavior, backward compatible).
+    triggers = models.JSONField(default=list, blank=True)
+
+    # ── Compute tracking ──────────────────────────────────────────────
+    # Accumulated container runtime in seconds. Updated when agent stops/terminates.
+    # For running agents, compute total as: compute_seconds + (now - deployed_at).seconds
+    compute_seconds = models.BigIntegerField(default=0)
+
+    # When the agent's relay connected and it became operational (IDLE).
+    # Used to calculate elapsed compute time on status transitions.
+    # Cleared on stop/error, set on relay connect (consumers.py).
+    deployed_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -227,6 +246,53 @@ class Agent(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.status})"
+
+    @property
+    def compute_seconds_live(self):
+        """compute_seconds + current segment if container is still running.
+
+        compute_seconds is a materialized cache updated on stop/error.
+        For running agents, add the elapsed time since deployed_at.
+        """
+        from django.utils import timezone
+
+        base = self.compute_seconds or 0
+        if self.deployed_at and self.status not in (
+            AgentStatus.STOPPED, AgentStatus.ERROR,
+        ):
+            base += int((timezone.now() - self.deployed_at).total_seconds())
+        return base
+
+    async def get_runtime_history(self):
+        """Full runtime segments derived from status transition StreamEvents.
+
+        Returns list of {"start": datetime, "end": datetime, "seconds": int}
+        dicts. This is the source of truth — compute_seconds is just a
+        materialized cache of sum(segment.seconds for all segments).
+        """
+        events = (
+            StreamEvent.objects.filter(
+                agent_id=self.id,
+                event_type="status",
+            )
+            .order_by("created_at")
+            .values_list("data", "created_at")
+        )
+        segments = []
+        deploy_start = None
+        async for data, created_at in events:
+            to_status = data.get("to", "") if isinstance(data, dict) else ""
+            if to_status in (AgentStatus.DEPLOYING, AgentStatus.IDLE) and deploy_start is None:
+                deploy_start = created_at
+            elif to_status in (AgentStatus.STOPPED, AgentStatus.ERROR) and deploy_start:
+                seconds = int((created_at - deploy_start).total_seconds())
+                segments.append({
+                    "start": deploy_start,
+                    "end": created_at,
+                    "seconds": seconds,
+                })
+                deploy_start = None
+        return segments
 
 
 

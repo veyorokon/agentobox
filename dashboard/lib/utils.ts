@@ -68,6 +68,80 @@ export function friendlyModelName(raw: string): string {
   return raw.replace(/^claude-/, "").replace(/-\d{8}$/, "")
 }
 
+/* ── Compute time formatting ──────────────────────────────────────── */
+
+/** Format seconds into human-readable compact duration: "0s", "45s", "2m", "1h 23m", "2d 5h" */
+export function formatComputeTime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  const hours = Math.floor(seconds / 3600)
+  if (seconds < 86400) {
+    const mins = Math.floor((seconds % 3600) / 60)
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
+  }
+  const days = Math.floor(seconds / 86400)
+  const remainHours = Math.floor((seconds % 86400) / 3600)
+  return remainHours > 0 ? `${days}d ${remainHours}h` : `${days}d`
+}
+
+/* ── Trigger formatting ──────────────────────────────────────────── */
+
+/** Convert a cron expression to a short human-readable string.
+ *  Handles common patterns; falls back to raw expression for exotic schedules. */
+export function friendlyCron(cron: string): string {
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) return cron
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+
+  // "every Nm" — */N * * * *
+  if (minute!.startsWith("*/") && hour === "*" && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    const n = parseInt(minute!.slice(2), 10)
+    if (n === 1) return "every min"
+    return `every ${n}m`
+  }
+
+  // "hourly" — 0 * * * * or 0 */1 * * *
+  if ((minute === "0" || minute === "00") && (hour === "*" || hour === "*/1") && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    return "hourly"
+  }
+
+  // "every Nh" — 0 */N * * *
+  if ((minute === "0" || minute === "00") && hour!.startsWith("*/") && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    const n = parseInt(hour!.slice(2), 10)
+    return `every ${n}h`
+  }
+
+  // "daily Xam/pm" — M H * * *
+  if (dayOfMonth === "*" && month === "*" && dayOfWeek === "*" && !minute!.includes("*") && !hour!.includes("*")) {
+    const h = parseInt(hour!, 10)
+    const suffix = h >= 12 ? "pm" : "am"
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+    return `daily ${h12}${suffix}`
+  }
+
+  return cron
+}
+
+/** Format trigger array into a single-line subtitle string.
+ *  Returns null if no triggers (manual-only agent). */
+export function formatTriggerSubtitle(
+  triggers: Array<{ type: string; schedule?: string; message?: string }> | null | undefined,
+): string | null {
+  if (!triggers || triggers.length === 0) return null
+
+  const first = triggers[0]!
+  let label = first.type
+  if (first.type === "cron" && first.schedule) {
+    label = `cron \u00b7 ${friendlyCron(first.schedule)}`
+  }
+
+  if (triggers.length > 1) {
+    return `${label} +${triggers.length - 1} more`
+  }
+  return label
+}
+
 /* ── Tool row helpers ──────────────────────────────────────────────── */
 
 const TOOL_CATEGORIES: Record<string, string> = {

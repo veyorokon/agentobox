@@ -100,9 +100,18 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
     return True
 
 
-async def send_message(agent_id: str, message: str, content: list | None = None) -> bool:
-    """Send a message to an agent's Claude Code session."""
-    op_log = log.bind(agent_id=agent_id)
+async def send_message(
+    agent_id: str, message: str, content: list | None = None,
+    source: str = "user",
+) -> bool:
+    """Send a message to an agent's Claude Code session.
+
+    Args:
+        source: Origin of the message — "user" (default) or "trigger".
+            Stored in the StreamEvent data dict so the feed can filter
+            automated trigger messages from human messages.
+    """
+    op_log = log.bind(agent_id=agent_id, source=source)
 
     try:
         agent = await Agent.objects.aget(id=agent_id)
@@ -120,14 +129,18 @@ async def send_message(agent_id: str, message: str, content: list | None = None)
 
     # Store as StreamEvent BEFORE restart so the message is persisted
     # regardless of whether the relay is connected yet.
+    event_data = {
+        "type": "user",
+        "message": {"role": "user", "content": parts},
+        "session_id": agent.session_id or "",
+    }
+    if source != "user":
+        event_data["source"] = source
+
     stream_event = await create_stream_event(
         agent,
         event_type="user",
-        data={
-            "type": "user",
-            "message": {"role": "user", "content": parts},
-            "session_id": agent.session_id or "",
-        },
+        data=event_data,
         message_id=f"user_{uuid.uuid4().hex[:16]}",
     )
 

@@ -201,6 +201,48 @@ class TestNamingConventions:
             f"Mutation names not following verb_entity pattern: {violations}"
         )
 
+    def test_model_methods_follow_naming_conventions(self):
+        """Public model methods use get_* for queries, *_live for computed properties.
+
+        get_* — returns data derived from related queries (e.g. get_runtime_history)
+        *_live — computed property including in-progress state (e.g. compute_seconds_live)
+        Standard Django overrides (save, clean, __str__, etc.) are exempt.
+        """
+        django_builtins = {
+            "save", "delete", "clean", "full_clean", "validate_unique",
+            "get_absolute_url", "get_queryset", "natural_key", "from_db",
+        }
+        allowed_prefixes = (
+            "get_", "set_", "has_", "is_", "can_",  # accessors / predicates
+        )
+        allowed_suffixes = (
+            "_live",  # computed properties including in-progress state
+        )
+        models_path = AGENTS_DIR / "models.py"
+        tree = ast.parse(_read_source(models_path))
+
+        violations = []
+        for cls_node in ast.walk(tree):
+            if not isinstance(cls_node, ast.ClassDef):
+                continue
+            for node in cls_node.body:
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                name = node.name
+                if name.startswith("_"):
+                    continue
+                if name in django_builtins:
+                    continue
+                if any(name.startswith(p) for p in allowed_prefixes):
+                    continue
+                if any(name.endswith(s) for s in allowed_suffixes):
+                    continue
+                violations.append(f"{cls_node.name}::{name}")
+
+        assert not violations, (
+            f"Model methods not following naming conventions "
+            f"(get_*, set_*, has_*, is_*, can_*, *_live): {violations}"
+        )
 
 
 # ── Model field discipline ──
@@ -594,7 +636,8 @@ _LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"] + _AGENT_ABOX_DIRS
 # Adding a new domain is a deliberate architectural decision, not an accident.
 _VALID_DOMAINS = {
     "adapter", "auth", "broadcast", "callback", "comms", "dashboard", "feed", "graphql",
-    "hook", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime", "stream", "vnc",
+    "hook", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime", "stream",
+    "triggers", "vnc",
 }
 
 # Full regex: domain.action or domain.sub_action (1-2 dot-separated segments).

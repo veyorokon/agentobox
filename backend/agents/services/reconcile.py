@@ -19,6 +19,7 @@ from datetime import timedelta
 import docker
 import structlog
 from asgiref.sync import sync_to_async
+from django.db.models import F
 from django.utils import timezone
 
 from agents.models import Agent, AgentStatus
@@ -79,8 +80,17 @@ def _get_agents(**filters):
 @_db
 def _mark_error(agent_id, error_message=""):
     agent = Agent.objects.get(id=agent_id)
+
+    # Accumulate compute time atomically before status change
+    if agent.deployed_at:
+        elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+        Agent.objects.filter(id=agent_id).update(
+            compute_seconds=F("compute_seconds") + elapsed,
+        )
+
     agent.status = AgentStatus.ERROR
-    update_fields = ["status", "updated_at"]
+    agent.deployed_at = None
+    update_fields = ["status", "deployed_at", "updated_at"]
     # Only write error_message if not already set (stream.py may have set it first)
     if error_message and not agent.error_message:
         agent.error_message = error_message[:2000]
@@ -92,8 +102,17 @@ def _mark_error(agent_id, error_message=""):
 @_db
 def _mark_stopped(agent_id):
     agent = Agent.objects.get(id=agent_id)
+
+    # Accumulate compute time atomically before status change
+    if agent.deployed_at:
+        elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+        Agent.objects.filter(id=agent_id).update(
+            compute_seconds=F("compute_seconds") + elapsed,
+        )
+
     agent.status = AgentStatus.STOPPED
-    agent.save(update_fields=["status", "updated_at"])
+    agent.deployed_at = None
+    agent.save(update_fields=["status", "deployed_at", "updated_at"])
     return agent
 
 

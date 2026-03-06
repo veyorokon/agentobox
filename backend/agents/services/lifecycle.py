@@ -30,6 +30,8 @@ import structlog
 from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
 
 from agents.models import Agent, AgentStatus, StreamEvent
 from agents.runtimes import get_runtime
@@ -78,6 +80,7 @@ async def create_agent(
     mode: str = "auto",
     tags: list[str] | None = None,
     agent_type: str = "claude-code",
+    triggers: list | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
     from config.telemetry import bind_agent_context
@@ -138,6 +141,7 @@ async def create_agent(
         role=role,
         mode=mode,
         tags=tags or [],
+        triggers=triggers or [],
         config_snapshot=config_snapshot,
     )
 
@@ -486,8 +490,16 @@ async def kill_agent(agent_id: str) -> bool:
 
     await terminate_sandbox(agent, op_log)
 
-    agent.status = AgentStatus.STOPPED
-    await agent.asave(update_fields=["status"])
+    # Accumulate compute time atomically (F-expression avoids races)
+    # then set terminal status in a single update.
+    update_kwargs = {"status": AgentStatus.STOPPED, "deployed_at": None}
+    if agent.deployed_at:
+        elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+        update_kwargs["compute_seconds"] = F("compute_seconds") + elapsed
+    await Agent.objects.filter(id=agent_id).aupdate(**update_kwargs)
+
+    # Refresh local instance for broadcast
+    agent = await Agent.objects.aget(id=agent_id)
 
     await broadcast_agent_update(agent)
     await create_stream_event(agent, event_type="stopped", data={})
@@ -575,6 +587,13 @@ def _atomic_reset_for_restart(agent_id):
         role = agent.role or config.get("role", "")
         mode = agent.mode or config.get("mode", "auto")
 
+        # Accumulate compute time before resetting deployed_at
+        if agent.deployed_at:
+            elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+            Agent.objects.filter(id=agent_id).update(
+                compute_seconds=F("compute_seconds") + elapsed,
+            )
+
         # Reset agent state to DEPLOYING — clear stale session data.
         # latest_snapshot must be cleared so derived fields (liveAction,
         # lastOutput, cost, duration) don't show stale values from the
@@ -586,6 +605,7 @@ def _atomic_reset_for_restart(agent_id):
         agent.relay_token = ""
         agent.relay_connected = False
         agent.relay_disconnected_at = None
+        agent.deployed_at = None
         agent.latest_snapshot = {}
         agent.task = ""
         agent.phase = ""
@@ -601,7 +621,8 @@ def _atomic_reset_for_restart(agent_id):
         agent.mode = mode
         agent.save(update_fields=[
             "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-            "relay_connected", "relay_disconnected_at", "latest_snapshot",
+            "relay_connected", "relay_disconnected_at", "deployed_at",
+            "latest_snapshot",
             "task", "phase", "attention_level", "error_message",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "mode", "updated_at",

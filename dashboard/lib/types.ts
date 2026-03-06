@@ -26,6 +26,8 @@ export type Agent = {
   errorMessage?: string
   /** Compact task progress for live status bar */
   taskProgress?: { done: number; total: number }
+  triggers: Array<{ type: string; schedule?: string; message?: string }> | null
+  computeSeconds: number
   instructions: string
   mcpServers: string[]
   runtime: "docker" | "modal"

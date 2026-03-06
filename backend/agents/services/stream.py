@@ -19,6 +19,8 @@ logical messages by grouping StreamEvents by message_id.
 
 import structlog
 from asgiref.sync import sync_to_async
+from django.db.models import F
+from django.utils import timezone
 
 from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
 from agents.services.broadcast import broadcast_agent_update
@@ -457,17 +459,22 @@ async def _handle_system(agent: Agent, event: dict) -> None:
     elif subtype == "process_exit":
         exit_code = event.get("exit_code", -1)
         is_error = exit_code != 0
-        agent.status = AgentStatus.STOPPED if not is_error else AgentStatus.ERROR
-        agent.phase = ""
-        update_fields = ["status", "phase"]
+        new_status = AgentStatus.STOPPED if not is_error else AgentStatus.ERROR
+
+        # Accumulate compute time atomically (F-expression avoids races)
+        f_update = {"status": new_status, "phase": "", "deployed_at": None}
+        if agent.deployed_at:
+            elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+            f_update["compute_seconds"] = F("compute_seconds") + elapsed
 
         # Persist error context from relay stderr so it survives container reap
         stderr = event.get("stderr", "").strip()
         if is_error and stderr:
-            agent.error_message = stderr[:2000]  # cap at 2000 chars for DB
-            update_fields.append("error_message")
+            f_update["error_message"] = stderr[:2000]  # cap at 2000 chars for DB
 
-        await agent.asave(update_fields=update_fields)
+        await Agent.objects.filter(id=agent.id).aupdate(**f_update)
+        # Refresh local instance so broadcast/downstream sees current state
+        await agent.arefresh_from_db()
         await broadcast_agent_update(agent)
         log.info(
             "stream.process_exit",

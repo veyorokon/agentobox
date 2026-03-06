@@ -61,6 +61,7 @@ class CreateAgentInput:
     mode: str = "auto"
     tags: list[str] | None = None
     agent_type: str = "claude-code"
+    triggers: JSON | None = None
 
 
 @strawberry.input
@@ -98,6 +99,7 @@ class UpdateAgentConfigInput:
     tags: list[str] | None = None
     mcp_registry_names: list[str] | None = None
     mcp_custom_servers: JSON | None = None
+    triggers: JSON | None = None
 
 
 @strawberry.input
@@ -178,6 +180,7 @@ class AgentMutation:
             mode=input.mode,
             tags=input.tags,
             agent_type=input.agent_type,
+            triggers=input.triggers,
         )
 
     @strawberry.mutation
@@ -442,6 +445,8 @@ class AgentMutation:
             agent.role = input.role
         if input.tags is not None:
             agent.tags = input.tags
+        if input.triggers is not None:
+            agent.triggers = input.triggers
 
         # Merge registry MCPs + custom MCPs
         adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
@@ -465,6 +470,8 @@ class AgentMutation:
         update_fields = ["model", "role", "mcp_servers", "config_snapshot"]
         if input.tags is not None:
             update_fields.append("tags")
+        if input.triggers is not None:
+            update_fields.append("triggers")
         await agent.asave(update_fields=update_fields)
 
         from agents.services.broadcast import broadcast_agent_update

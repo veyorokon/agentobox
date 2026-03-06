@@ -58,6 +58,8 @@ export const GET_AGENTS = gql`
       mcpServers
       runtime
       workspacePath
+      triggers
+      computeSeconds
       taskProgress {
         done
         total

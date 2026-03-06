@@ -25,6 +25,7 @@ import structlog
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
+from django.utils import timezone
 
 from agents.models import StreamEvent
 
@@ -130,10 +131,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             # pending messages have been delivered. This is the only place
             # status becomes IDLE — lifecycle.py saves sandbox details but
             # deliberately leaves status as DEPLOYING until this point.
+            # deployed_at marks the start of billable compute time.
+            now = timezone.now()
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 status=AgentStatus.IDLE,
+                deployed_at=now,
             )
             self.agent.status = AgentStatus.IDLE
+            self.agent.deployed_at = now
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(self.agent)
 

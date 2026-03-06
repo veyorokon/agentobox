@@ -32,6 +32,8 @@ type AgentType {
   attentionLevel: String!
   relayConnected: Boolean!
   task: String!
+  triggers: JSON!
+  computeSeconds: Int!
   errorMessage: String!
   lifecycleStatus: String!
   lastOutput: String!
@@ -70,6 +72,7 @@ input CreateAgentInput {
   mode: String! = "auto"
   tags: [String!] = null
   agentType: String! = "claude-code"
+  triggers: JSON = null
 }
 
 input CreateProjectInput {
@@ -311,6 +314,7 @@ input UpdateAgentConfigInput {
   tags: [String!] = null
   mcpRegistryNames: [String!] = null
   mcpCustomServers: JSON = null
+  triggers: JSON = null
 }
 
 input UpdateAgentInstructionsInput {

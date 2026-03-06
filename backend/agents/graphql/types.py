@@ -217,6 +217,16 @@ class AgentType:
     task: auto
 
     @strawberry.field
+    def triggers(self) -> JSON:
+        """Trigger configuration — what wakes this agent up."""
+        return self.triggers if isinstance(self.triggers, list) else []
+
+    @strawberry.field
+    def compute_seconds(self) -> int:
+        """Accumulated container runtime in seconds."""
+        return self.compute_seconds or 0
+
+    @strawberry.field
     def error_message(self) -> str:
         """Last error context — stderr excerpt or crash diagnostics."""
         return self.error_message or ""

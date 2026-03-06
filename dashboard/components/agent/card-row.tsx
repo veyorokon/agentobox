@@ -15,7 +15,7 @@ import {
   RotateCcw,
   Trash2,
 } from "lucide-react"
-import { cn, formatCost } from "@/lib/utils"
+import { cn, formatCost, formatComputeTime, formatTriggerSubtitle } from "@/lib/utils"
 import { LIFECYCLE_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
@@ -75,6 +75,7 @@ export function AgentCardRow({
   const hardRestartAgent = useHardRestartAgent()
   const removeAgent = useRemoveAgent()
   const handleModeChange = (mode: Agent["mode"]) => setAgentMode(agent.id, mode)
+  const triggerSubtitle = formatTriggerSubtitle(agent.triggers)
 
   // Kebab menu state
   const [kebabOpen, setKebabOpen] = useState(false)
@@ -223,7 +224,7 @@ export function AgentCardRow({
 
           {/* Right: cost · time + kebab + chevron */}
           <span className="text-[9px] text-muted/60 font-mono tabular-nums shrink-0">
-            {formatCost(agent.cost)} · {agent.duration}
+            {formatCost(agent.cost)} · {formatComputeTime(agent.computeSeconds ?? 0)}
           </span>
 
           {/* Kebab menu — interrupt / restart / remove */}
@@ -290,6 +291,13 @@ export function AgentCardRow({
             )}
           />
         </div>
+        {triggerSubtitle && (
+          <div className="flex items-center gap-1 mt-0.5 pl-1">
+            <span className="text-[9px] text-muted/50 font-mono truncate">
+              &#x26A1; {triggerSubtitle}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Open content -- animated reveal */}
