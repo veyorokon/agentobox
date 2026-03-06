@@ -16,7 +16,7 @@ env = environ.Env(
     DOCKER_NETWORK=(str, "agentobox_default"),
     AGENT_ROOTFS_PATH=(str, ""),
     MODAL_APP_NAME=(str, "agentobox"),
-    MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent-claude:latest"),
+    MODAL_AGENT_IMAGE=(str, "ghcr.io/deleganceai/agentobox-agent-claude:latest"),
 )
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 
@@ -149,7 +149,7 @@ AGENT_IMAGE_MAP = {
     "claude-code": "agentobox-agent-claude:latest",
 }
 MODAL_AGENT_IMAGE_MAP = {
-    "claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest",
+    "claude-code": "ghcr.io/deleganceai/agentobox-agent-claude:latest",
 }
 
 # --- Media / S3 ---

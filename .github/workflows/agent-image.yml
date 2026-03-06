@@ -9,8 +9,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BASE_IMAGE: ghcr.io/veyorokon/agentobox-agent-base
-  CLAUDE_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude
+  BASE_IMAGE: ghcr.io/deleganceai/agentobox-agent-base
+  CLAUDE_IMAGE: ghcr.io/deleganceai/agentobox-agent-claude
 
 jobs:
   build-base:
