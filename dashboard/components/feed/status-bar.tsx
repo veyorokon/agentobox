@@ -33,7 +33,7 @@ export function StatusBar({ items, onClickAgent }: StatusBarProps) {
 
   return (
     <div className="w-full px-3 @[640px]/main:px-6 py-1.5 shrink-0">
-      <div className="max-w-3xl mx-auto flex items-center gap-x-4 gap-y-1 flex-wrap">
+      <div className="max-w-3xl mx-auto flex items-center justify-center gap-x-4 gap-y-1 flex-wrap">
         {latestPerAgent.map((item) => {
           const toConfig = LIFECYCLE_CONFIG[item.to as LifecycleStatus] ?? LIFECYCLE_CONFIG.stopped
 
