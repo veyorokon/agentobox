@@ -10,7 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { SystemMessage } from "@/components/feed/system-message"
 import { TeamUserMessage } from "@/components/feed/user-message"
 import { AgentSummaryCard } from "@/components/feed/summary-card"
-import { AgentStatusLine } from "@/components/feed/status-line"
+import { StatusBar } from "@/components/feed/status-bar"
 import { AgentToAgentMessage } from "@/components/feed/agent-message"
 import { TeamErrorAlert } from "@/components/feed/error-alert"
 import { QuestionCard, MultiQuestionCard } from "@/components/feed/question-card"
@@ -50,7 +50,7 @@ export function TeamFeed() {
   }, [reviewAgent, setMainTab])
 
   // ── Filtered items ────────────────────────────────────────────────
-  const filtered = useMemo(() => {
+  const { statusItems, nonStatusItems } = useMemo(() => {
     let items = feedItems
     if (agentFilter.size > 0) {
       items = items.filter(item => {
@@ -62,52 +62,59 @@ export function TeamFeed() {
         return agent !== null && agentFilter.has(agent)
       })
     }
-    return items
+    const status: Extract<typeof items[number], { type: "status" }>[] = []
+    const rest: typeof items = []
+    for (const item of items) {
+      if (item.type === "status") status.push(item)
+      else rest.push(item)
+    }
+    return { statusItems: status, nonStatusItems: rest }
   }, [feedItems, agentFilter])
 
   return (
-    <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
-      <div className="max-w-3xl mx-auto w-full px-3 @[640px]/main:px-6 py-4 space-y-3">
-        {filtered.map((item) => {
-          switch (item.type) {
-            case "system":
-              return <SystemMessage key={item.id} text={item.text} />
-            case "user":
-              return <TeamUserMessage key={item.id} text={item.text} target={item.target} />
-            case "summary":
-              return (
-                <AgentSummaryCard
-                  key={item.id}
-                  agent={item.agent}
-                  summary={item.summary}
-                  cost={item.cost}
-                  turns={item.turns}
-                  duration={item.duration}
-                  isError={item.isError}
-                  onClickAgent={handleClickAgent}
-                />
-              )
-            case "status":
-              return <AgentStatusLine key={item.id} agent={item.agent} from={item.from} to={item.to} onClickAgent={handleClickAgent} />
-            case "error":
-              return <TeamErrorAlert key={item.id} agent={item.agent} text={item.text} onClickAgent={handleClickAgent} />
-            case "question":
-              return <QuestionCard key={item.id} agent={item.agent} question={item.question} options={item.options} />
-            case "plan":
-              return <PlanCard key={item.id} agent={item.agent} title={item.title} planStatus={item.planStatus} />
-            case "permission":
-              return <PermissionCard key={item.id} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} feedItemId={item.id} />
-            case "multi-question":
-              return <MultiQuestionCard key={item.id} agent={item.agent} questions={item.questions} />
-            case "task":
-              return <TaskFeedCard key={item.id} agent={item.agent} text={item.text} from={item.from} to={item.to} target={item.target} />
-            case "agent-message":
-              return <AgentToAgentMessage key={item.id} from={item.from} to={item.to} text={item.text} onClickAgent={handleClickAgent} />
-            default:
-              return null
-          }
-        })}
-      </div>
-    </ScrollArea>
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <StatusBar items={statusItems} onClickAgent={handleClickAgent} />
+      <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
+        <div className="max-w-3xl mx-auto w-full px-3 @[640px]/main:px-6 py-4 space-y-3">
+          {nonStatusItems.map((item) => {
+            switch (item.type) {
+              case "system":
+                return <SystemMessage key={item.id} text={item.text} />
+              case "user":
+                return <TeamUserMessage key={item.id} text={item.text} target={item.target} />
+              case "summary":
+                return (
+                  <AgentSummaryCard
+                    key={item.id}
+                    agent={item.agent}
+                    summary={item.summary}
+                    cost={item.cost}
+                    turns={item.turns}
+                    duration={item.duration}
+                    isError={item.isError}
+                    onClickAgent={handleClickAgent}
+                  />
+                )
+              case "error":
+                return <TeamErrorAlert key={item.id} agent={item.agent} text={item.text} onClickAgent={handleClickAgent} />
+              case "question":
+                return <QuestionCard key={item.id} agent={item.agent} question={item.question} options={item.options} />
+              case "plan":
+                return <PlanCard key={item.id} agent={item.agent} title={item.title} planStatus={item.planStatus} />
+              case "permission":
+                return <PermissionCard key={item.id} agent={item.agent} command={item.command} risk={item.risk} permStatus={item.permStatus} feedItemId={item.id} />
+              case "multi-question":
+                return <MultiQuestionCard key={item.id} agent={item.agent} questions={item.questions} />
+              case "task":
+                return <TaskFeedCard key={item.id} agent={item.agent} text={item.text} from={item.from} to={item.to} target={item.target} />
+              case "agent-message":
+                return <AgentToAgentMessage key={item.id} from={item.from} to={item.to} text={item.text} onClickAgent={handleClickAgent} />
+              default:
+                return null
+            }
+          })}
+        </div>
+      </ScrollArea>
+    </div>
   )
 }
