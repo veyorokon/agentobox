@@ -12,8 +12,8 @@ events to the Agentobox backend over WebSocket.
 
 OpenCode runs as `opencode serve --port 4096 --hostname 127.0.0.1` (managed
 by s6 svc-opencode or started inline). The relay connects via:
-    - SSE: GET http://localhost:4096/event (downstream events)
-    - REST: POST /session/:id/prompt, /session/:id/abort, etc. (upstream commands)
+    - SSE: GET http://localhost:4096/global/event (downstream events)
+    - REST: POST /session/:id/prompt_async, /session/:id/abort, etc. (upstream commands)
 
 Synthetic events (not from OpenCode):
     process_exit: {type: "system", subtype: "process_exit", exit_code, stderr}
@@ -56,8 +56,16 @@ _MODE_MAP = {
 
 # SSE event types to forward to the backend. Other event types (file.watcher.updated,
 # session.diff, etc.) are noise for the dashboard — drop them at the relay.
+#
+# OpenCode has changed event naming across versions. We accept both old and
+# current names to avoid silent event loss:
+#   - part.created / part.updated  (current: tool invocations)
+#   - tool.started / tool.completed (older captures, may still fire)
+#   - permission.requested (current) / permission.asked (older)
 _FORWARD_TYPES = {
+    "message.created",
     "message.updated",
+    "message.completed",
     "message.part.updated",
     "message.part.delta",
     "session.status",
@@ -65,7 +73,10 @@ _FORWARD_TYPES = {
     "session.created",
     "session.updated",
     "permission.asked",
+    "permission.requested",
     "permission.replied",
+    "part.created",
+    "part.updated",
     "tool.started",
     "tool.completed",
 }
@@ -165,15 +176,21 @@ class OpenCodeClient:
             log.warning("relay.oc_abort_failed", extra={"error": str(e)})
             return False
 
-    async def reply_permission(self, session_id: str, permission_id: str, response: str) -> bool:
-        """Reply to a permission request (deprecated endpoint, still functional).
+    async def reply_permission(
+        self, session_id: str, permission_id: str, response: str, remember: bool = False,
+    ) -> bool:
+        """Reply to a permission request.
 
-        response: "once" | "always" | "reject"
+        response: "accept" | "deny"
+        remember: if True, remember this decision for future identical requests
         """
         try:
+            body: dict = {"response": response}
+            if remember:
+                body["remember"] = True
             resp = await self._client.post(
                 f"/session/{session_id}/permissions/{permission_id}",
-                json={"response": response},
+                json=body,
             )
             resp.raise_for_status()
             return True
@@ -227,7 +244,9 @@ class SSERelay:
         result, user) is handled by the adapter's normalize() in stream.py.
         The relay only tracks permission IDs for callback resolution.
         """
-        sse_url = f"{OPENCODE_BASE}/event"
+        # OpenCode docs show both /event and /global/event. The /global/event
+        # endpoint is the documented one for global SSE subscriptions.
+        sse_url = f"{OPENCODE_BASE}/global/event"
         delay = SSE_RECONNECT_DELAY_S
 
         while True:
@@ -241,29 +260,45 @@ class SSERelay:
                     event_count += 1
                     event_type = event.get("type", "")
 
-                    # Track session ID from events
+                    # Track session ID from events — check multiple locations
+                    # since event structure varies across OC versions
                     props = event.get("properties", {})
-                    if isinstance(props, dict):
-                        sid = props.get("sessionID", "")
-                        if not sid:
-                            info = props.get("info", {})
-                            if isinstance(info, dict):
-                                sid = info.get("id", "") if info.get("id", "").startswith("ses_") else ""
-                        if sid:
-                            self.session_id = sid
-                            self.oc.session_id = sid
+                    if not isinstance(props, dict):
+                        props = {}
+                    sid = (
+                        props.get("sessionID", "")
+                        or event.get("sessionID", "")
+                    )
+                    if not sid:
+                        info = props.get("info", {})
+                        if isinstance(info, dict):
+                            sid = info.get("id", "") if info.get("id", "").startswith("ses_") else ""
+                    if sid:
+                        self.session_id = sid
+                        self.oc.session_id = sid
 
                     # Filter: only forward relevant event types
                     if event_type not in _FORWARD_TYPES:
+                        # Log dropped events at debug so we can diagnose missing events
+                        if event_type and event_type != "server.connected":
+                            log.debug("relay.sse_dropped", extra={
+                                "type": event_type,
+                                "keys": list(event.keys())[:10],
+                            })
                         continue
 
                     forwarded_count += 1
+                    log.info("relay.sse_forwarding", extra={
+                        "type": event_type,
+                        "seq": forwarded_count,
+                    })
                     # Forward raw OC event — backend adapter.normalize() handles CC synthesis
                     await self._sender.send(event)
 
-                    # Track permission IDs locally for callback resolution via REST
-                    if event_type == "permission.asked":
-                        perm_id = props.get("id", "")
+                    # Track permission IDs locally for callback resolution via REST.
+                    # Accept both old (permission.asked) and current (permission.requested) names.
+                    if event_type in ("permission.asked", "permission.requested"):
+                        perm_id = props.get("id", "") or event.get("permissionID", "")
                         if perm_id:
                             self._pending_permissions[perm_id] = perm_id
                             log.info("relay.permission_tracked", extra={"id": perm_id})
@@ -355,19 +390,23 @@ class SSERelay:
         The backend sends callback_response when a user approves/denies a
         permission request in the dashboard. We translate this to an
         OpenCode permission reply via REST.
+
+        Backend behaviors → OpenCode values:
+            allow      → response="accept", remember=False
+            alwaysAllow → response="accept", remember=True
+            deny       → response="deny",   remember=False
         """
         result = cmd.get("result", {})
         behavior = result.get("behavior", "deny")
         callback_id = cmd.get("callback_id", "")
 
-        # Map backend behavior to OpenCode PermissionNext.Reply values.
-        # OC accepts: "once" (approve this), "always" (approve pattern), "reject" (deny).
-        if behavior == "allow":
-            oc_response = "once"
-        elif behavior == "alwaysAllow":
-            oc_response = "always"
+        # Map backend behavior to OpenCode permission reply values
+        if behavior in ("allow", "alwaysAllow"):
+            oc_response = "accept"
+            oc_remember = behavior == "alwaysAllow"
         else:
-            oc_response = "reject"
+            oc_response = "deny"
+            oc_remember = False
 
         # Find matching permission
         permission_id = self._pending_permissions.pop(callback_id, "")
@@ -379,14 +418,18 @@ class SSERelay:
             log.warning("relay.callback_no_permission_id", extra={"callback_id": callback_id})
             return
 
-        asyncio.create_task(self._send_permission_reply(permission_id, oc_response))
+        asyncio.create_task(self._send_permission_reply(permission_id, oc_response, oc_remember))
 
-    async def _send_permission_reply(self, permission_id: str, response: str):
+    async def _send_permission_reply(self, permission_id: str, response: str, remember: bool = False):
         """Send permission reply to OpenCode via REST."""
         if self.session_id:
-            success = await self.oc.reply_permission(self.session_id, permission_id, response)
+            success = await self.oc.reply_permission(
+                self.session_id, permission_id, response, remember=remember,
+            )
             if success:
-                log.info("relay.permission_replied", extra={"id": permission_id, "response": response})
+                log.info("relay.permission_replied", extra={
+                    "id": permission_id, "response": response, "remember": remember,
+                })
 
     # ── Synthetic events ──
 
