@@ -7,6 +7,9 @@ export default defineConfig({
       "@": path.resolve(__dirname),
     },
   },
+  esbuild: {
+    jsx: "automatic",
+  },
   test: {
     include: ["__tests__/**/*.test.ts"],
   },
