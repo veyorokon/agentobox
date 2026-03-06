@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useApolloClient } from "@apollo/client"
+import { useQuery, useMutation, useApolloClient } from "@apollo/client/react"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
 import type { DocumentNode } from "graphql"
@@ -127,7 +127,7 @@ export function useResolvePlan() {
 
 export function useSendMessage() {
   const { projectId } = useParams<{ projectId: string }>()
-  const [mutate] = useMutation(SEND_MESSAGE)
+  const [mutate] = useMutation<{ sendMessage: boolean }>(SEND_MESSAGE)
 
   return useCallback(
     async (text: string, recipients: RecipientEntry[]): Promise<boolean> => {

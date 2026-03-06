@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, type ReactNode } from "react"
 import { LogOut, FolderOpen, Palette, Check } from "lucide-react"
-import { useMutation } from "@apollo/client"
+import { useMutation } from "@apollo/client/react"
 import { useParams } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { useThemeStore, BUILT_IN_THEMES } from "@/lib/stores/theme"
+import { useThemeStore } from "@/lib/stores/theme"
+import { BUILT_IN_THEMES } from "@/lib/config"
 import { SET_PROJECT_THEME } from "@/lib/graphql/mutations/projects"
 
 interface UserMenuProps {
@@ -17,7 +18,8 @@ export function UserMenu({ children, className }: UserMenuProps) {
   const [open, setOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const { config, setTheme } = useThemeStore()
+  const config = useThemeStore(s => s.config)
+  const setTheme = useThemeStore(s => s.setTheme)
   const params = useParams()
   const projectId = params?.projectId as string | undefined
   const [setProjectTheme] = useMutation(SET_PROJECT_THEME)

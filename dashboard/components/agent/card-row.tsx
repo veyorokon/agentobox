@@ -122,6 +122,7 @@ export function AgentCardRow({
     return items
   }, [pendingItems, viewMode, settingsDirty])
 
+
   const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
     { id: "terminal", icon: Monitor, label: "Screen" },
     { id: "feed", icon: List, label: "Feed" },
@@ -294,35 +295,35 @@ export function AgentCardRow({
       {/* Open content -- animated reveal */}
       <Collapsible open={isOpen}>
         {/* Content area -- VNC sets height, other views absolute-overlay and scroll within */}
-        <div className="px-3 pb-2">
+        <div>
           <div className="relative">
             <div className={cn(viewMode !== "terminal" && "invisible")}>
               <VncThumbnail key={`vnc-${agent.id}-${agent.lifecycleStatus}`} agent={agent} />
             </div>
             {viewMode === "feed" && (
-              <div className="absolute inset-0 overflow-y-auto">
+              <div className="absolute inset-0 overflow-y-auto px-3 pb-2">
                 <AgentDetailFeed agent={agent} />
               </div>
             )}
             {viewMode === "skills" && (
-              <div className="absolute inset-0 overflow-y-auto">
+              <div className="absolute inset-0 overflow-y-auto px-3 pb-2">
                 <AgentSkillsView agent={agent} />
               </div>
             )}
             {viewMode === "tasks" && (
-              <div className="absolute inset-0 overflow-y-auto">
+              <div className="absolute inset-0 overflow-y-auto px-3 pb-2">
                 <AgentTasksView agent={agent} />
               </div>
             )}
             {viewMode === "settings" && (
-              <div className="absolute inset-0 overflow-y-auto">
+              <div className="absolute inset-0 overflow-y-auto px-3 pb-2">
                 <AgentSettingsPanel ref={settingsRef} agent={agent} onDirtyChange={setSettingsDirty} />
               </div>
             )}
           </div>
         </div>
 
-        {/* Unified action strip -- permissions, plans, config-dirty in one stepper */}
+        {/* Attention bar — actionable items only: permissions, plans, config-dirty */}
         <CardActionStrip
           items={actionItems}
           onResolvePermission={resolvePermission}

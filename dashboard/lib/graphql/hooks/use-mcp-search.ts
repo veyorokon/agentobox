@@ -1,4 +1,4 @@
-import { useLazyQuery } from "@apollo/client"
+import { useLazyQuery } from "@apollo/client/react"
 import { useState, useEffect, useRef } from "react"
 import { SEARCH_MCP_REGISTRY } from "@/lib/graphql/queries/agents"
 import { createLogger } from "@/lib/logger"

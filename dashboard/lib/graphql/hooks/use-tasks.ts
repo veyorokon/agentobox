@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from "@apollo/client"
+import { useQuery, useMutation } from "@apollo/client/react"
 import { useCallback, useEffect, useRef } from "react"
 import { GET_AGENT_TASKS } from "@/lib/graphql/queries/tasks"
 import { UPDATE_TASK, CREATE_TASK } from "@/lib/graphql/mutations/tasks"

@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { zustandLog } from "@/lib/stores/log-middleware"
+import type { ThemeConfig } from "@/lib/config"
 
 /* ================================================================== */
 /*  THEME STORE                                                         */
@@ -16,18 +17,10 @@ const STORAGE_KEY = "abox-theme"
 
 const DEFAULT_CONFIG: ThemeConfig = { theme: "claude", mode: "dark" }
 
-export type ThemeConfig = { theme: string; mode: string }
-
 export interface ThemeState {
   config: ThemeConfig
   setTheme: (theme: string, mode?: string) => void
 }
-
-/** Available themes for the picker UI. */
-export const BUILT_IN_THEMES: { id: string; label: string; mode: string }[] = [
-  { id: "claude", label: "Claude Dark", mode: "dark" },
-  { id: "blyss", label: "Blyss Dark", mode: "dark" },
-]
 
 function readPersistedConfig(): ThemeConfig {
   if (typeof window === "undefined") return DEFAULT_CONFIG

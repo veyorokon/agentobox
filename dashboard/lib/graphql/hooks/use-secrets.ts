@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from "@apollo/client"
+import { useQuery, useMutation } from "@apollo/client/react"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
 import { GET_PROJECT_SECRETS } from "@/lib/graphql/queries/secrets"

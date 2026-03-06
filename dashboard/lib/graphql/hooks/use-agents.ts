@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useApolloClient, gql } from "@apollo/client"
+import { useQuery, useMutation, useApolloClient } from "@apollo/client/react"
+import { gql } from "@apollo/client"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
@@ -135,18 +136,16 @@ export function useHardRestartAgent() {
 }
 
 export function useRestartAgent() {
-  const client = useApolloClient()
   const [mutate] = useMutation(RESTART_AGENT)
   return useCallback((agentId: string) => {
-    log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
-    client.cache.modify({
-      id: client.cache.identify({ __typename: "AgentType", id: agentId }),
-      fields: { lifecycleStatus: () => "deploying" },
-    })
+    log("mutation.restartAgent", { agentId })
+    // No optimistic cache update — soft restart sends a signal to the relay,
+    // the backend does NOT change lifecycleStatus or relayConnected.
+    // Setting "deploying" here would desync the cache and kill VNC.
     mutate({ variables: { agentId } }).catch(err => {
       log("mutation.error", { mutation: "restartAgent", agentId, error: err.message })
     })
-  }, [client, mutate])
+  }, [mutate])
 }
 
 export function useInterruptAgent() {

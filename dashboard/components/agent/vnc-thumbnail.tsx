@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, Component, type ReactNode } from "react"
-import { useMutation } from "@apollo/client"
+import { useMutation } from "@apollo/client/react"
 import { cn } from "@/lib/utils"
 import { CREATE_VNC_TOKEN } from "@/lib/graphql/mutations/vnc"
 import { createLogger } from "@/lib/logger"
@@ -49,7 +49,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
   const [connState, setConnState] = useState<ConnectionState>("idle")
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [createVncToken] = useMutation(CREATE_VNC_TOKEN)
+  const [createVncToken] = useMutation<{ createVncToken: { token: string } }>(CREATE_VNC_TOKEN)
 
   const [VncScreen, setVncScreen] = useState<React.ComponentType<any> | null>(null)
   const [wsUrl, setWsUrl] = useState<string | null>(null)
@@ -219,13 +219,12 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   return (
     <div
       className={cn(
-        "rounded-lg border overflow-hidden bg-surface-sunken/40 flex flex-col",
-        hasContainer ? "border-border-default" : "border-border-subtle",
+        "overflow-hidden bg-surface flex flex-col",
         isStopped && "opacity-50",
       )}
     >
-      {/* VNC viewport -- 16:10 aspect ratio */}
-      <div className="relative w-full" style={{ aspectRatio: "16 / 10" }}>
+      {/* VNC viewport -- 16:9 matches agent desktop (1920×1080) */}
+      <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
         {showVnc ? (
           <VncErrorBoundary key={wsUrl}>
             <VncScreen
@@ -234,7 +233,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
               autoConnect={false}
               scaleViewport
               resizeSession
-              background="#0a0a0a"
+              background="var(--p-surface, #1e1e1e)"
               style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
@@ -259,7 +258,18 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                   <span className="text-[7px] font-mono text-muted/40">connecting...</span>
                 </div>
               ) : connState === "error" && errorMsg ? (
-                <span className="text-[7px] font-mono text-danger/60">{errorMsg}</span>
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-[7px] font-mono text-danger/60">{errorMsg}</span>
+                  {hasContainer && (
+                    <button
+                      type="button"
+                      onClick={() => { retryCountRef.current = 0; setConnState("idle"); setErrorMsg(null); fetchTokenAndConnect() }}
+                      className="text-[7px] font-mono text-accent hover:text-accent-hover transition-colors"
+                    >
+                      reconnect
+                    </button>
+                  )}
+                </div>
               ) : isStopped ? (
                 <span className="text-[7px] font-mono text-muted/20">session ended</span>
               ) : agent.lifecycleStatus === "error" ? (
@@ -275,13 +285,6 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
           </div>
         )}
 
-        {/* Live indicator overlay */}
-        {connState === "connected" && (
-          <div className="absolute top-1 right-1 inline-flex items-center gap-1 rounded bg-black/50 px-1 py-px">
-            <span className="h-1 w-1 rounded-full bg-success animate-breathe text-success" />
-            <span className="text-[6px] text-success font-mono">live</span>
-          </div>
-        )}
       </div>
     </div>
   )

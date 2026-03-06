@@ -2,7 +2,7 @@
 
 import { useState, useEffect, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { useQuery, useMutation } from "@apollo/client"
+import { useQuery, useMutation } from "@apollo/client/react"
 import { Plus, FolderOpen, ChevronRight } from "lucide-react"
 import { GET_PROJECTS } from "@/lib/graphql/queries/projects"
 import { CREATE_PROJECT } from "@/lib/graphql/mutations/projects"
@@ -45,7 +45,7 @@ export default function HomePage() {
     fetchPolicy: "network-only",
   })
 
-  const [createProject, { loading: creating }] = useMutation(CREATE_PROJECT)
+  const [createProject, { loading: creating }] = useMutation<{ createProject: { id: string } }>(CREATE_PROJECT)
 
   const projects = data?.projects ?? []
 
@@ -57,8 +57,10 @@ export default function HomePage() {
       const { data: result } = await createProject({
         variables: { input: { name: name.trim(), description: description.trim() } },
       })
-      setNavigatingTo(result.createProject.id)
-      router.push(`/p/${result.createProject.id}`)
+      const projectId = result?.createProject?.id
+      if (!projectId) throw new Error("No project ID returned")
+      setNavigatingTo(projectId)
+      router.push(`/p/${projectId}`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to create project"
       setError(msg)

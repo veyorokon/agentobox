@@ -39,16 +39,23 @@ const loggingLink = new ApolloLink((operation, forward) => {
   const { operationName } = operation
   log("operation.start", { name: operationName, variables: operation.variables })
 
-  if (!forward) return Observable.of()
+  if (!forward) return new Observable(subscriber => subscriber.complete())
 
-  return forward(operation).map((result) => {
-    if (result.errors?.length) {
-      log("operation.error", { name: operationName, errors: result.errors }, "error")
-    } else {
-      const data = REDACTED_OPS.has(operationName) ? "[redacted]" : result.data
-      log("operation.complete", { name: operationName, data })
-    }
-    return result
+  return new Observable(subscriber => {
+    const sub = forward(operation).subscribe({
+      next(result) {
+        if (result.errors?.length) {
+          log("operation.error", { name: operationName, errors: result.errors }, "error")
+        } else {
+          const data = REDACTED_OPS.has(operationName ?? "") ? "[redacted]" : result.data
+          log("operation.complete", { name: operationName, data })
+        }
+        subscriber.next(result)
+      },
+      error(err) { subscriber.error(err) },
+      complete() { subscriber.complete() },
+    })
+    return () => sub.unsubscribe()
   })
 })
 

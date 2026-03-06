@@ -10,6 +10,7 @@ import {
   shortenFilePath,
 } from "@/lib/utils"
 import { useAgentFeed } from "@/lib/graphql/hooks/use-feed"
+import { useHardRestartAgent } from "@/lib/graphql/hooks/use-agents"
 import { AssistantMessage } from "@/components/feed/assistant-message"
 import { SingleToolRow, MultiToolGroup, type ToolEntryData } from "@/components/feed/tool-row"
 import { ResultPill } from "@/components/feed/result-pill"
@@ -119,10 +120,12 @@ function TimelineEntryRow({
   entry,
   agentName,
   toolResultMap,
+  onRestart,
 }: {
   entry: TimelineEntry
   agentName: string
   toolResultMap: Map<string, { content: string; isError: boolean }>
+  onRestart?: () => void
 }) {
   const data = entry.data as Record<string, unknown>
 
@@ -189,7 +192,7 @@ function TimelineEntryRow({
 
       if (isError) {
         const errorText = String(data?.error ?? "Agent encountered an error")
-        return <ErrorBubble agent={agentName} text={errorText} showAgent={false} />
+        return <ErrorBubble agent={agentName} text={errorText} showAgent={false} onRestart={onRestart} />
       }
 
       return (
@@ -252,6 +255,7 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
   const { data, loading } = useAgentFeed(agent.id)
   const entries = data?.agentFeed ?? []
   const scrollRef = useRef<HTMLDivElement>(null)
+  const hardRestart = useHardRestartAgent()
 
   // Build tool_use_id → result map once per entry set
   const toolResultMap = useMemo(() => buildToolResultMap(entries), [entries])
@@ -293,6 +297,7 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
             entry={entry}
             agentName={agent.name}
             toolResultMap={toolResultMap}
+            onRestart={() => hardRestart(agent.id)}
           />
         ))}
       </div>

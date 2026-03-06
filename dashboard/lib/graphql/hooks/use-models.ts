@@ -1,6 +1,7 @@
-import { useQuery } from "@apollo/client"
+import { useQuery } from "@apollo/client/react"
 import { useMemo } from "react"
 import { GET_AVAILABLE_MODELS, GET_PROVIDER_STATUS } from "@/lib/graphql/queries/models"
+import { createLogger } from "@/lib/logger"
 
 /* ================================================================== */
 /*  MODEL + PROVIDER HOOKS                                              */
@@ -8,6 +9,8 @@ import { GET_AVAILABLE_MODELS, GET_PROVIDER_STATUS } from "@/lib/graphql/queries
 /*  availableModels is static registry data — no variables needed.     */
 /*  providerStatus is project-scoped (checks which keys are set).      */
 /* ================================================================== */
+
+const log = createLogger("apollo")
 
 type ModelEntry = {
   value: string

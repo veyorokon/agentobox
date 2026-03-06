@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { useApolloClient } from "@apollo/client"
+import { useApolloClient } from "@apollo/client/react"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_AGENT_FEED, GET_FEED } from "@/lib/graphql/queries/feed"
 import { createLogger } from "@/lib/logger"

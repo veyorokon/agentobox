@@ -16,7 +16,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, cleanup } from "@testing-library/react"
-import { MockedProvider, type MockedResponse } from "@apollo/client/testing"
+import { MockedProvider } from "@apollo/client/testing/react"
+import type { MockedResponse } from "@apollo/client/testing"
 import { InMemoryCache } from "@apollo/client"
 import React, { type ReactNode } from "react"
 
@@ -310,7 +311,7 @@ describe("state consistency: feed items visible across UI components", () => {
     })
   })
 
-  /* ── Summary items (THE GAP) ────────────────────────────────────── */
+  /* ── Summary items — feed only, NOT in card ───────────────────── */
 
   describe("summary items", () => {
     const summary = makeSummaryItem()
@@ -326,11 +327,7 @@ describe("state consistency: feed items visible across UI components", () => {
       })
     })
 
-    it("renders in AgentCardRow when expanded", async () => {
-      // THIS TEST SHOULD FAIL.
-      // The card only surfaces permissions and plans via CardActionStrip.
-      // Summary items exist in the shared feed cache but the card ignores them.
-      // This is the exact bug class: state updated, one component shows it, the other doesn't.
+    it("does NOT render in AgentCardRow — summaries live in the feed tab only", async () => {
       useSidebarStore.setState({ expandedAgentIds: new Set(["agent-1"]) })
 
       render(
@@ -338,18 +335,17 @@ describe("state consistency: feed items visible across UI components", () => {
         { wrapper: makeWrapper([feedMock([summary])]) },
       )
 
-      // Wait for Apollo to resolve
+      // Wait for card to settle (composer @-mention is always present)
       await waitFor(() => {
-        expect(screen.getByText(/@backend/)).toBeTruthy()
+        expect(screen.getAllByText(/@backend/).length).toBeGreaterThan(0)
       })
 
-      // Assert: the summary text should be visible SOMEWHERE in the card
-      const summaryEl = screen.queryByText(/Vahid Eyorokon completed the refactoring/)
-      expect(summaryEl).not.toBeNull()
+      // Summary text must NOT appear — the attention bar is for actionable items only
+      expect(screen.queryByText(/Vahid Eyorokon completed the refactoring/)).toBeNull()
     })
   })
 
-  /* ── Error items (THE GAP) ──────────────────────────────────────── */
+  /* ── Error items — feed only, NOT in card ────────────────────── */
 
   describe("error items", () => {
     const errorItem = makeErrorItem()
@@ -365,9 +361,7 @@ describe("state consistency: feed items visible across UI components", () => {
       })
     })
 
-    it("renders in AgentCardRow when expanded", async () => {
-      // THIS TEST SHOULD FAIL.
-      // Error feed items are visible in TeamFeed but invisible in the agent card.
+    it("does NOT render in AgentCardRow — errors live in the feed tab only", async () => {
       useSidebarStore.setState({ expandedAgentIds: new Set(["agent-1"]) })
 
       render(
@@ -375,14 +369,13 @@ describe("state consistency: feed items visible across UI components", () => {
         { wrapper: makeWrapper([feedMock([errorItem])]) },
       )
 
-      // Wait for component to settle
+      // Wait for card to settle
       await waitFor(() => {
-        expect(screen.getByText(/@backend/)).toBeTruthy()
+        expect(screen.getAllByText(/@backend/).length).toBeGreaterThan(0)
       })
 
-      // Assert: error text should be visible in the card
-      const errorEl = screen.queryByText(/Agent crashed: out of memory/)
-      expect(errorEl).not.toBeNull()
+      // Error text must NOT appear — the attention bar is for actionable items only
+      expect(screen.queryByText(/Agent crashed: out of memory/)).toBeNull()
     })
   })
 })

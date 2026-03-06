@@ -10,13 +10,14 @@
 
 import { describe, it, expect, vi } from "vitest"
 import { renderHook, waitFor, act } from "@testing-library/react"
-import { MockedProvider, type MockedResponse } from "@apollo/client/testing"
+import { MockedProvider } from "@apollo/client/testing/react"
+import type { MockedResponse } from "@apollo/client/testing"
 import { InMemoryCache } from "@apollo/client"
 import React, { type ReactNode } from "react"
 
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
-import { RESOLVE_PERMISSION, RESOLVE_PLAN } from "@/lib/graphql/mutations/agents"
+import { RESOLVE_PERMISSION, RESOLVE_PLAN, RESTART_AGENT, HARD_RESTART_AGENT } from "@/lib/graphql/mutations/agents"
 
 /* ── Mock next/navigation ────────────────────────────────────────── */
 
@@ -29,7 +30,7 @@ vi.mock("next/navigation", () => ({
 
 /* ── Import hooks after mocks are in place ───────────────────────── */
 
-const { useAgents } = await import("@/lib/graphql/hooks/use-agents")
+const { useAgents, useRestartAgent, useHardRestartAgent } = await import("@/lib/graphql/hooks/use-agents")
 const { useFeed, useResolvePermission, useResolvePlan } = await import("@/lib/graphql/hooks/use-feed")
 
 /* ── Fixtures ────────────────────────────────────────────────────── */
@@ -527,5 +528,159 @@ describe("useResolvePlan", () => {
       fragment: (await import("@apollo/client")).gql`fragment PlanAtt2 on AgentType { attentionLevel }`,
     })
     expect(agentData?.attentionLevel).toBe("permission")
+  })
+})
+
+/* ================================================================== */
+/*  Optimistic update contracts                                         */
+/*                                                                      */
+/*  Lifecycle hooks that optimistically modify the Apollo cache MUST    */
+/*  match what the backend actually does. A mismatch means the cache   */
+/*  lies about agent state, causing UI glitches (e.g. VNC drops).      */
+/*                                                                      */
+/*  Contract: soft restart (useRestartAgent) sends a signal — backend   */
+/*  does NOT change lifecycleStatus. The cache must not change it       */
+/*  either. Hard restart (useHardRestartAgent) does a full redeploy —  */
+/*  backend sets status=DEPLOYING, so the optimistic update is valid.  */
+/* ================================================================== */
+
+describe("optimistic update contracts: lifecycle hooks", () => {
+  function makeAgent(overrides: Record<string, unknown> = {}) {
+    return {
+      __typename: "AgentType",
+      id: "agent-1",
+      name: "backend",
+      lifecycleStatus: "running",
+      attentionLevel: "none",
+      relayConnected: true,
+      mode: "auto",
+      task: "Vahid Eyorokon requested this feature",
+      cost: 0.42,
+      duration: "5m",
+      model: "claude-opus-4-6",
+      turns: 12,
+      phase: "coding",
+      liveAction: "EditTool",
+      lastOutput: "Done",
+      errorMessage: null,
+      tags: ["backend"],
+      instructions: "Handle Django models",
+      mcpServers: [],
+      runtime: "docker",
+      workspacePath: "/home/vahid-eyorokon/projects/agentobox",
+      taskProgress: { __typename: "TaskProgressType", done: 3, total: 5 },
+      ...overrides,
+    }
+  }
+
+  it("useRestartAgent does NOT change lifecycleStatus (soft restart = signal only)", async () => {
+    const cache = makeCache()
+    const agent = makeAgent()
+
+    // Seed cache with a running agent
+    cache.writeQuery({
+      query: GET_AGENTS,
+      variables: { projectId: MOCK_PROJECT_ID },
+      data: { agents: [agent] },
+    })
+
+    // Mock the mutation (fire-and-forget, returns bool)
+    const restartMock: MockedResponse = {
+      request: { query: RESTART_AGENT, variables: { agentId: "agent-1" } },
+      result: { data: { restartAgent: true } },
+    }
+
+    const { result } = renderHook(() => useRestartAgent(), {
+      wrapper: makeWrapper([restartMock], cache),
+    })
+
+    // Fire the restart
+    act(() => {
+      result.current("agent-1")
+    })
+
+    // Read the agent from cache — lifecycleStatus MUST still be "running"
+    // because soft restart sends a signal to the relay, the backend does
+    // not change agent.status or relay_connected.
+    const agentRef = cache.identify({ __typename: "AgentType", id: "agent-1" })
+    const cached = cache.readFragment<{ lifecycleStatus: string }>({
+      id: agentRef,
+      fragment: (await import("@apollo/client")).gql`
+        fragment RestartStatus on AgentType { lifecycleStatus }
+      `,
+    })
+    expect(cached?.lifecycleStatus).toBe("running")
+  })
+
+  it("useHardRestartAgent DOES set lifecycleStatus to deploying (full redeploy)", async () => {
+    const cache = makeCache()
+    const agent = makeAgent()
+
+    cache.writeQuery({
+      query: GET_AGENTS,
+      variables: { projectId: MOCK_PROJECT_ID },
+      data: { agents: [agent] },
+    })
+
+    const hardRestartMock: MockedResponse = {
+      request: { query: HARD_RESTART_AGENT, variables: { agentId: "agent-1" } },
+      result: {
+        data: {
+          hardRestartAgent: { __typename: "AgentType", id: "agent-1", lifecycleStatus: "deploying" },
+        },
+      },
+    }
+
+    const { result } = renderHook(() => useHardRestartAgent(), {
+      wrapper: makeWrapper([hardRestartMock], cache),
+    })
+
+    act(() => {
+      result.current("agent-1")
+    })
+
+    // Hard restart does a full atomic reset — backend sets DEPLOYING,
+    // so the optimistic cache update is correct here.
+    const agentRef = cache.identify({ __typename: "AgentType", id: "agent-1" })
+    const cached = cache.readFragment<{ lifecycleStatus: string }>({
+      id: agentRef,
+      fragment: (await import("@apollo/client")).gql`
+        fragment HardRestartStatus on AgentType { lifecycleStatus }
+      `,
+    })
+    expect(cached?.lifecycleStatus).toBe("deploying")
+  })
+
+  it("useRestartAgent preserves relayConnected (soft restart does not disconnect)", async () => {
+    const cache = makeCache()
+    const agent = makeAgent({ relayConnected: true })
+
+    cache.writeQuery({
+      query: GET_AGENTS,
+      variables: { projectId: MOCK_PROJECT_ID },
+      data: { agents: [agent] },
+    })
+
+    const restartMock: MockedResponse = {
+      request: { query: RESTART_AGENT, variables: { agentId: "agent-1" } },
+      result: { data: { restartAgent: true } },
+    }
+
+    const { result } = renderHook(() => useRestartAgent(), {
+      wrapper: makeWrapper([restartMock], cache),
+    })
+
+    act(() => {
+      result.current("agent-1")
+    })
+
+    const agentRef = cache.identify({ __typename: "AgentType", id: "agent-1" })
+    const cached = cache.readFragment<{ relayConnected: boolean }>({
+      id: agentRef,
+      fragment: (await import("@apollo/client")).gql`
+        fragment RestartRelay on AgentType { relayConnected }
+      `,
+    })
+    expect(cached?.relayConnected).toBe(true)
   })
 })

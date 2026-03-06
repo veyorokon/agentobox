@@ -14,8 +14,8 @@ import { describe, it, expect, beforeAll } from "vitest"
 /* ── Config ──────────────────────────────────────────────────────── */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/graphql"
-const TEST_USER = "vahid"
-const TEST_PASS = "test1234"
+const TEST_USER = "demo"
+const TEST_PASS = "demo"
 const SKIP = process.env.SKIP_E2E === "1"
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

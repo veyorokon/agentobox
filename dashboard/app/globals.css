@@ -118,6 +118,20 @@
   --duration-slow: 200ms;
 }
 
+/* Tailwind v4 preflight does not set cursor:pointer on interactive elements.
+   Restore expected behavior globally. */
+button,
+a,
+[role="button"] {
+  cursor: pointer;
+}
+
+button:disabled,
+button[aria-disabled="true"],
+[role="button"][aria-disabled="true"] {
+  cursor: default;
+}
+
 /* Force default cursor during resize drag — overrides all hover styles (Safari fix) */
 html.dragging-resize,
 html.dragging-resize * {

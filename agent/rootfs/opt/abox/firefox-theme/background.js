@@ -6,10 +6,11 @@ const POLL_INTERVAL = 2000;
 let lastJson = null;
 let port = null;
 
-// Neutral dark grey defaults — visible but unobtrusive until WS theme arrives
+// Neutral dark grey defaults — visible but unobtrusive until WS theme arrives.
+// surface-raised intentionally equals surface for seamless VNC embedding.
 const DEFAULT_TOKENS = {
   surface: "#1e1e1e",
-  "surface-raised": "#2d2d2d",
+  "surface-raised": "#1e1e1e",
   "surface-sunken": "#171717",
   "surface-overlay": "#333333",
   "text-default": "#d4d4d4",
@@ -38,16 +39,19 @@ function mapTokens(t) {
   var accent        = t["accent"] || "#5a5a5a";
   var accentSubtle  = t["accent-subtle"] || surfaceRaised;
 
+  // All backgrounds use `surface` for seamless VNC embedding — the agent
+  // desktop should look like a native dashboard component, not a remote
+  // desktop in a box.  No surface-raised differentiation.
   return {
     colors: {
       frame: surface,
       tab_background_text: textDefault,
-      toolbar: surfaceRaised,
+      toolbar: surface,
       toolbar_text: textMuted,
       toolbar_field: surface,
       toolbar_field_text: textDefault,
       toolbar_field_border: borderSubtle,
-      toolbar_field_focus: surfaceRaised,
+      toolbar_field_focus: surface,
       toolbar_field_text_focus: textDefault,
       popup: surface,
       popup_text: textDefault,
