@@ -61,7 +61,7 @@ class TestClaudeCodeExtraction:
 
     def test_live_action_during_tool_use(self, adapter):
         snap = SAMPLE_SNAPSHOTS["claude-code"]["assistant_only"]
-        assert adapter.live_action(snap) == "Edit"
+        assert adapter.live_action(snap) == "Edit auth.py"
 
     def test_live_action_clears_after_result(self, adapter):
         snap = SAMPLE_SNAPSHOTS["claude-code"]["with_result"]
@@ -259,8 +259,8 @@ class TestRealEventParity:
 
         output = adapter.last_output(snapshot)
         action = adapter.live_action(snapshot)
-        # First assistant in tool_use fixture has a tool_use content block
-        assert action == "Read"  # the tool used in our captured fixture
+        # First assistant in tool_use fixture has a Read tool_use with file_path
+        assert action == "Read base.py"  # tool name + basename from input
 
     def test_tool_use_completed(self, adapter):
         """Completed tool_use session — last assistant + result."""

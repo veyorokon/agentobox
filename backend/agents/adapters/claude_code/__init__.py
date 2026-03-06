@@ -111,6 +111,45 @@ def _shell_escape(val: str) -> str:
     return shlex.quote(val)
 
 
+def _basename(path: str) -> str:
+    """Extract filename from a path, handling both / and \\ separators."""
+    return path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+
+def _tool_input_summary(tool_name: str, tool_input: object) -> str:
+    """Extract a brief context string from a tool_use input dict.
+
+    Returns a short human-readable suffix like "base.py" or "npm test".
+    Empty string if no useful context can be extracted.
+    """
+    if not isinstance(tool_input, dict):
+        return ""
+
+    # File-oriented tools: show basename
+    file_path = tool_input.get("file_path") or tool_input.get("path") or ""
+    if file_path and isinstance(file_path, str):
+        return _basename(file_path)
+
+    # Bash/command tools: show first ~60 chars of command
+    command = tool_input.get("command") or ""
+    if command and isinstance(command, str):
+        # Trim to first line and cap length
+        first_line = command.split("\n", 1)[0].strip()
+        return first_line[:60]
+
+    # Search tools (Grep, Glob): show pattern
+    pattern = tool_input.get("pattern") or ""
+    if pattern and isinstance(pattern, str):
+        return pattern[:60]
+
+    # MCP tools: show query if present
+    query = tool_input.get("query") or ""
+    if query and isinstance(query, str):
+        return query[:60]
+
+    return ""
+
+
 # Display name → CC model ID. Catches bad data from seed scripts or manual DB edits.
 _MODEL_DISPLAY_TO_ID = {
     "opus 4.6": "claude-opus-4-6",
@@ -171,9 +210,11 @@ class ClaudeCodeAdapter:
         return text_blocks[-1].get("text", "") or ""
 
     def live_action(self, snapshot: dict) -> str:
-        """Last tool_use name, empty if turn is complete.
+        """Tool name + brief context from input, empty if turn is complete.
 
-        Path: snapshot["assistant"]["message"]["content"][-tool_use-]["name"]
+        Examples: "Read base.py", "Edit auth.ts", "Bash npm test", "Grep pattern"
+
+        Path: snapshot["assistant"]["message"]["content"][-tool_use-]
         Clears implicitly: if snapshot["result"] exists, turn is done.
         """
         if not snapshot or "result" in snapshot:
@@ -191,7 +232,14 @@ class ClaudeCodeAdapter:
         ]
         if not tool_blocks:
             return ""
-        return (tool_blocks[-1].get("name", "") or "")[:500]
+        block = tool_blocks[-1]
+        name = (block.get("name", "") or "")[:100]
+        if not name:
+            return ""
+        summary = _tool_input_summary(name, block.get("input"))
+        if summary:
+            return f"{name} {summary}"[:500]
+        return name
 
     def cost(self, snapshot: dict) -> float:
         """Session cost from the result event.

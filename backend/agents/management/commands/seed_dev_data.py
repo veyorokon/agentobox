@@ -16,7 +16,7 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
-def _snapshot(last_text: str, tool_name: str = "", result: dict | None = None) -> dict:
+def _snapshot(last_text: str, tool_name: str = "", tool_input: dict | None = None, result: dict | None = None) -> dict:
     """Build a latest_snapshot dict matching the adapter's expected structure."""
     content = []
     if last_text:
@@ -26,7 +26,7 @@ def _snapshot(last_text: str, tool_name: str = "", result: dict | None = None) -
             "type": "tool_use",
             "id": f"toolu_{tool_name.lower()}",
             "name": tool_name,
-            "input": {},
+            "input": tool_input or {},
         })
 
     snap = {}
@@ -109,6 +109,7 @@ class Command(BaseCommand):
                 "latest_snapshot": _snapshot(
                     "Applied fix to validateToken()...",
                     tool_name="Edit",
+                    tool_input={"file_path": "/workspace/agentobox/backend/middleware/auth.ts"},
                 ),
             },
             {
@@ -128,6 +129,7 @@ class Command(BaseCommand):
                 "latest_snapshot": _snapshot(
                     "Scanning tailwind classes in Button...",
                     tool_name="Read",
+                    tool_input={"file_path": "/workspace/agentobox/dashboard/components/ui/Button.tsx"},
                 ),
             },
             {
@@ -147,6 +149,7 @@ class Command(BaseCommand):
                 "latest_snapshot": _snapshot(
                     "FAIL src/auth.test.ts\nExpected 200, received 401",
                     tool_name="Bash",
+                    tool_input={"command": "npm test -- --filter auth"},
                 ),
             },
             {

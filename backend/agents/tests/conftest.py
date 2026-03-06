@@ -127,7 +127,7 @@ SAMPLE_EVENTS = {
 }
 
 
-def _snapshot(last_text: str, tool_name: str = "", result: dict | None = None) -> dict:
+def _snapshot(last_text: str, tool_name: str = "", tool_input: dict | None = None, result: dict | None = None) -> dict:
     """Mirror of seed_dev_data._snapshot — kept in sync manually."""
     content = []
     if last_text:
@@ -137,7 +137,7 @@ def _snapshot(last_text: str, tool_name: str = "", result: dict | None = None) -
             "type": "tool_use",
             "id": f"toolu_{tool_name.lower()}",
             "name": tool_name,
-            "input": {},
+            "input": tool_input or {},
         })
     snap = {}
     if content:
@@ -169,10 +169,14 @@ SEED_AGENTS = [
     },
     {
         "name": "backend",
-        "snapshot": _snapshot("Applied fix to validateToken()...", tool_name="Edit"),
+        "snapshot": _snapshot(
+            "Applied fix to validateToken()...",
+            tool_name="Edit",
+            tool_input={"file_path": "/workspace/agentobox/backend/middleware/auth.ts"},
+        ),
         "expected": {
             "last_output": "Applied fix to validateToken()...",
-            "live_action": "Edit",
+            "live_action": "Edit auth.ts",
             "duration": "0s",
             "turns": 0,
             "cost": 0.0,
@@ -180,10 +184,14 @@ SEED_AGENTS = [
     },
     {
         "name": "frontend",
-        "snapshot": _snapshot("Scanning tailwind classes in Button...", tool_name="Read"),
+        "snapshot": _snapshot(
+            "Scanning tailwind classes in Button...",
+            tool_name="Read",
+            tool_input={"file_path": "/workspace/agentobox/dashboard/components/ui/Button.tsx"},
+        ),
         "expected": {
             "last_output": "Scanning tailwind classes in Button...",
-            "live_action": "Read",
+            "live_action": "Read Button.tsx",
             "duration": "0s",
             "turns": 0,
             "cost": 0.0,
@@ -194,10 +202,11 @@ SEED_AGENTS = [
         "snapshot": _snapshot(
             "FAIL src/auth.test.ts\nExpected 200, received 401",
             tool_name="Bash",
+            tool_input={"command": "npm test -- --filter auth"},
         ),
         "expected": {
             "last_output": "FAIL src/auth.test.ts\nExpected 200, received 401",
-            "live_action": "Bash",
+            "live_action": "Bash npm test -- --filter auth",
             "duration": "0s",
             "turns": 0,
             "cost": 0.0,
