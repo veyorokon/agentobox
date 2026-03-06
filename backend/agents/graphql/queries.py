@@ -7,6 +7,7 @@ Two feed layers:
 """
 
 import strawberry
+from asgiref.sync import sync_to_async
 from strawberry import ID
 
 from agents.graphql.auth import authorize_agent, authorize_project
@@ -24,6 +25,14 @@ from agents.graphql.types import (
     TimelineEntryType,
     model_to_feed_item_type,
 )
+
+
+@strawberry.type
+class ProviderStatusType:
+    slug: str
+    name: str
+    key_name: str
+    configured: bool
 
 
 async def _collect_qs(qs):
@@ -149,7 +158,11 @@ class AgentQuery:
 
         adapter = get_adapter("claude-code")
         return [
-            ModelEntryType(value=m["value"], label=m["label"])
+            ModelEntryType(
+                value=m["value"],
+                label=m["label"],
+                provider=m["value"].split("/", 1)[0] if "/" in m["value"] else "anthropic",
+            )
             for m in adapter.available_models()
         ]
 
@@ -254,3 +267,40 @@ class AgentQuery:
                 project_id=project_id
             ).order_by("key")
         ]
+
+    @strawberry.field
+    async def provider_status(self, project_id: ID, info: strawberry.types.Info) -> list[ProviderStatusType]:
+        """Check which provider API keys are configured for a project."""
+        from agents.adapters.claude_code.registries import PROVIDER_CONFIGS, PROVIDER_SECRET_KEYS
+        from agents.models import ProjectSecret
+
+        await authorize_project(info, project_id)
+
+        # Fetch all secret keys for this project (just the key names, no values)
+        existing_keys = await sync_to_async(
+            lambda: set(
+                ProjectSecret.objects.filter(project_id=project_id).values_list("key", flat=True)
+            ),
+            thread_sensitive=False,
+        )()
+
+        # Human-readable names for each provider slug
+        provider_names = {
+            "anthropic": "Anthropic",
+            "glm": "GLM (Z.ai)",
+            "kimi": "Kimi (Moonshot)",
+            "minimax": "MiniMax",
+            "qwen": "Qwen (Alibaba)",
+            "openrouter": "OpenRouter",
+        }
+
+        result = []
+        for slug in PROVIDER_CONFIGS:
+            key_name = PROVIDER_SECRET_KEYS.get(slug, "")
+            result.append(ProviderStatusType(
+                slug=slug,
+                name=provider_names.get(slug, slug),
+                key_name=key_name,
+                configured=key_name in existing_keys,
+            ))
+        return result

@@ -132,6 +132,7 @@ type McpRegistryServerType {
 type ModelEntryType {
   value: String!
   label: String!
+  provider: String!
 }
 
 type Mutation {
@@ -189,6 +190,13 @@ type ProjectType {
   archivedAt: DateTime
 }
 
+type ProviderStatusType {
+  slug: String!
+  name: String!
+  keyName: String!
+  configured: Boolean!
+}
+
 type Query {
   me: UserType
   projects(includeArchived: Boolean! = false): [ProjectType!]!
@@ -203,6 +211,7 @@ type Query {
   searchMcpRegistry(query: String! = "", limit: Int! = 30, cursor: String = null): McpRegistrySearchResult!
   skills(projectId: ID!): [SkillType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!
+  providerStatus(projectId: ID!): [ProviderStatusType!]!
 }
 
 input RateFeedbackInput {

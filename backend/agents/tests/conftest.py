@@ -32,16 +32,6 @@ REAL_CC_FIXTURES = {
     "team_mode": _load_fixture("cc_team_mode.json"),
 }
 
-# Real OpenCode event fixtures — captured from OpenCode v1.2.15 SSE/REST output.
-# Sanitized (IDs replaced) but structurally identical to actual OC output.
-REAL_OC_FIXTURES = {
-    "text_only": _load_fixture("oc_text_only.json"),       # REST response (dict)
-    "tool_use": _load_fixture("oc_tool_use.json"),         # REST response (dict)
-    "permission": _load_fixture("oc_permission.json"),      # SSE events (list)
-    "session_idle": _load_fixture("oc_session_idle.json"),  # SSE events (list)
-    "sse_stream": _load_fixture("oc_sse_stream.json"),      # Full SSE stream (list)
-}
-
 # Sample snapshot data keyed by agent type — used by contract tests
 SAMPLE_SNAPSHOTS = {
     "claude-code": {
@@ -90,54 +80,6 @@ SAMPLE_SNAPSHOTS = {
     },
 }
 
-# OpenCode sample snapshots — mirrors the OC adapter's expected snapshot structure.
-# OpenCode snapshots use {message, parts, idle} instead of CC's {assistant, result}.
-SAMPLE_SNAPSHOTS["opencode"] = {
-    "assistant_only": {
-        "message": {
-            "role": "assistant",
-            "time": {"created": 1772565724233},
-            "cost": 0,
-            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-            "id": "msg_test_001",
-            "sessionID": "ses_test_001",
-        },
-        "parts": [
-            {"type": "step-start", "id": "prt_001"},
-            {"type": "text", "text": "I'll fix the bug in the login flow.", "id": "prt_002"},
-            {
-                "type": "tool",
-                "tool": "edit",
-                "callID": "tooluse_001",
-                "state": {"status": "running", "input": {"filePath": "/src/auth.py"}},
-                "id": "prt_003",
-            },
-        ],
-    },
-    "with_idle": {
-        "message": {
-            "role": "assistant",
-            "time": {"created": 1772565724233, "completed": 1772565849233},
-            "cost": 0.045,
-            "tokens": {"total": 21006, "input": 3, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 20998}},
-            "finish": "stop",
-            "id": "msg_test_002",
-            "sessionID": "ses_test_002",
-        },
-        "parts": [
-            {"type": "step-start", "id": "prt_010"},
-            {"type": "text", "text": "Fixed the authentication bug.", "id": "prt_011"},
-            {"type": "step-finish", "cost": 0.045, "tokens": {"total": 21006}, "id": "prt_012"},
-        ],
-        "idle": {"type": "session.idle", "properties": {"sessionID": "ses_test_002"}},
-    },
-    "empty": {},
-    "none_values": {
-        "message": None,
-        "parts": None,
-    },
-}
-
 # Sample full events for is_permission_request / is_plan_proposal
 SAMPLE_EVENTS = {
     "claude-code": {
@@ -179,48 +121,6 @@ SAMPLE_EVENTS = {
                 "content": [
                     {"type": "text", "text": "Here is the fix."},
                 ],
-            },
-        },
-    },
-    "opencode": {
-        "permission_request": {
-            "type": "permission.asked",
-            "properties": {
-                "id": "per_test_perm_01",
-                "sessionID": "ses_test_001",
-                "permission": "edit",
-                "patterns": ["test.txt"],
-                "metadata": {
-                    "filepath": "/home/agent/workspace/test.txt",
-                    "diff": "Index: test.txt\n+testing permissions",
-                },
-                "always": ["*"],
-                "tool": {
-                    "messageID": "msg_test_001",
-                    "callID": "tooluse_test_001",
-                },
-            },
-        },
-        "plan_proposal": {
-            # OpenCode does not have plan proposals — this event is a normal
-            # message that should return None from is_plan_proposal.
-            "type": "message.updated",
-            "properties": {
-                "info": {
-                    "role": "assistant",
-                    "id": "msg_test_001",
-                    "sessionID": "ses_test_001",
-                },
-            },
-        },
-        "normal_assistant": {
-            "type": "message.updated",
-            "properties": {
-                "info": {
-                    "role": "assistant",
-                    "id": "msg_test_001",
-                    "sessionID": "ses_test_001",
-                },
             },
         },
     },

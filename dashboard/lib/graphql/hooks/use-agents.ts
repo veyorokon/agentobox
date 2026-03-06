@@ -20,7 +20,7 @@ import type { Agent, AttentionLevel } from "@/lib/types"
 /*  AGENT HOOKS                                                         */
 /*                                                                      */
 /*  Query hook (useAgents) is safe to call from multiple components —   */
-/*  Apollo deduplicates queries. Poll-based updates via pollInterval.   */
+/*  Apollo deduplicates queries. Real-time via useProjectWebSocket.     */
 /* ================================================================== */
 
 const log = createLogger("apollo")
@@ -34,7 +34,6 @@ export function useAgents() {
 
   return useQuery<AgentsData>(GET_AGENTS, {
     fetchPolicy: "cache-and-network",
-    pollInterval: 3_000,
     variables: queryVars,
     skip: !projectId,
   })

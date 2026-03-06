@@ -10,7 +10,7 @@ import { createLogger } from "@/lib/logger"
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
 /*                                                                     */
-/*  HTTP link, cache-and-network, poll-based updates.                  */
+/*  HTTP link, cache-and-network. Real-time via useProjectWebSocket.    */
 /* ================================================================== */
 
 const log = createLogger("apollo")

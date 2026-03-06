@@ -4,7 +4,7 @@
 # AwesomeWM, Node.js, GitHub CLI, Firefox, fonts, Python websockets,
 # user setup, shared rootfs overlay, env vars.
 #
-# Agent-type-specific images (claude/, opencode/) build FROM this image
+# Agent-type-specific images (claude/) build FROM this image
 # and add their CLI tools, SDKs, relay processes, and MCP servers.
 
 FROM debian:bookworm-slim

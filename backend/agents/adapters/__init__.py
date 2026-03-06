@@ -13,7 +13,6 @@ To add a new agent type:
 
 from agents.adapters.base import AgentAdapter
 from agents.adapters.claude_code import ClaudeCodeAdapter
-from agents.adapters.opencode import OpenCodeAdapter
 
 _REGISTRY: dict[str, AgentAdapter] = {}
 
@@ -33,4 +32,3 @@ def get_adapter(agent_type: str) -> AgentAdapter:
 
 # Auto-register built-in adapters
 register_adapter("claude-code", ClaudeCodeAdapter())
-register_adapter("opencode", OpenCodeAdapter())

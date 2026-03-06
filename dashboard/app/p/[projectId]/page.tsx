@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
+import { useParams } from "next/navigation"
 import {
   ChevronRight,
   KeyRound,
@@ -11,6 +12,7 @@ import {
 import { formatCost } from "@/lib/utils"
 import { getAllPendingItems } from "@/lib/attention"
 import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
+import { useProjectWebSocket } from "@/lib/hooks/use-project-ws"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useFeed } from "@/lib/graphql/hooks/use-feed"
@@ -35,6 +37,9 @@ import { UserMenu } from "@/components/layout/user-menu"
 /* ================================================================== */
 
 export default function ProjectPage() {
+  const { projectId } = useParams<{ projectId: string }>()
+  useProjectWebSocket(projectId)
+
   const bp = useBreakpoint()
 
   // ── Sidebar store (mobile tab) ──────────────────────────────────

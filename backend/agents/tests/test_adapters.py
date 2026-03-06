@@ -1,7 +1,7 @@
 """Shared adapter contract tests — registry, protocol compliance, graceful handling.
 
 Tests that apply to ALL registered adapters live here. Agent-type-specific
-tests live in test_adapter_cc.py (Claude Code) and test_adapter_oc.py (OpenCode).
+tests live in test_adapter_cc.py (Claude Code).
 """
 
 import pytest
@@ -9,7 +9,6 @@ import pytest
 from agents.adapters import get_adapter, register_adapter, _REGISTRY
 from agents.adapters.base import AgentAdapter
 from agents.adapters.claude_code import ClaudeCodeAdapter
-from agents.adapters.opencode import OpenCodeAdapter
 
 
 # ── Registry tests ──
@@ -26,11 +25,6 @@ class TestRegistry:
         adapter = get_adapter("claude-code")
         assert adapter is not None
         assert isinstance(adapter, ClaudeCodeAdapter)
-
-    def test_get_opencode_adapter(self):
-        adapter = get_adapter("opencode")
-        assert adapter is not None
-        assert isinstance(adapter, OpenCodeAdapter)
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="No adapter registered"):

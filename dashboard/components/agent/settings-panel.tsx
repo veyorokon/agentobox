@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react"
+import { useParams } from "next/navigation"
 import {
   Trash2,
   X,
@@ -11,7 +12,6 @@ import {
 import { cn } from "@/lib/utils"
 import type { Agent } from "@/lib/types"
 import { TagInput } from "@/components/shared/tag-input"
-import { MODEL_OPTIONS } from "@/lib/config"
 import { Collapsible } from "@/components/ui/collapsible"
 import {
   useRestartAgent,
@@ -20,6 +20,7 @@ import {
   useUpdateAgentInstructions,
   useUpdateAgentConfig,
 } from "@/lib/graphql/hooks/use-agents"
+import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-models"
 import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
 
 export interface SettingsPanelHandle {
@@ -33,6 +34,10 @@ export interface AgentSettingsPanelProps {
 }
 
 export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsPanelProps>(function AgentSettingsPanel({ agent, onDirtyChange }, ref) {
+  const { projectId } = useParams<{ projectId: string }>()
+  const { models } = useAvailableModels()
+  const { providers } = useProviderStatus(projectId ?? "")
+
   const [model, setModel] = useState(agent.model)
   const [instructions, setInstructions] = useState(agent.instructions)
   const [agentTags, setAgentTags] = useState(agent.tags)
@@ -148,10 +153,31 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
           onChange={(e) => setModel(e.target.value)}
           className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs text-default outline-none focus:border-accent/50 transition-colors"
         >
-          {MODEL_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          {Object.entries(
+            models.reduce<Record<string, typeof models>>((acc, m) => {
+              ;(acc[m.provider] ??= []).push(m)
+              return acc
+            }, {})
+          ).map(([provider, group]) => (
+            <optgroup key={provider} label={provider}>
+              {group.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </optgroup>
           ))}
         </select>
+        {(() => {
+          const selected = models.find((m) => m.value === model)
+          const provider = selected && providers.find((p) => p.slug === selected.provider)
+          if (provider && !provider.configured) {
+            return (
+              <p className="text-[10px] text-warning mt-1">
+                Requires {provider.keyName} — add in Secrets
+              </p>
+            )
+          }
+          return null
+        })()}
       </div>
 
       {/* Instructions textarea */}

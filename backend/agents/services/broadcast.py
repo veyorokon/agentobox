@@ -1,14 +1,16 @@
-"""Broadcast agent updates via status events and feed items.
+"""Broadcast agent updates via status events, feed items, and dashboard WebSocket.
 
     broadcast_agent_update(agent) — detects status changes, creates StreamEvents
-    and feed items. No longer pushes to Channels groups (subscriptions removed).
+    and feed items, and pushes full agent state to the dashboard WebSocket group.
 
-Status change detection still works via Agent.from_db() setting _original_status.
-When a status change is detected, we create a StreamEvent for it.
+Status change detection works via Agent.from_db() setting _original_status.
+Dashboard WS push runs on every call (not just status changes) to cover
+phase, attention, snapshot, and other state updates.
 """
 
 import structlog
 from asgiref.sync import sync_to_async
+from channels.layers import get_channel_layer
 
 from agents.models import Agent, StreamEvent
 
@@ -68,3 +70,16 @@ async def broadcast_agent_update(agent: Agent) -> None:
                 from_value=old_status,
                 to_value=agent.status,
             )
+
+    # Push agent state to dashboard WebSocket group (runs on every call,
+    # not just status changes — phase, attention, snapshot updates too).
+    try:
+        from agents.consumers import _serialize_agent_for_ws
+        channel_layer = get_channel_layer()
+        payload = await _serialize_agent_for_ws(agent)
+        await channel_layer.group_send(
+            f"dashboard_{agent.project_id}",
+            {"type": "dashboard.agent_update", "payload": payload},
+        )
+    except Exception:  # intentional: dashboard push failure must not break agent lifecycle
+        log.warning("broadcast.dashboard_push_failed", agent_id=str(agent.id), exc_info=True)

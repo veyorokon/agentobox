@@ -1,10 +1,11 @@
 "use client"
 
 import { useState, useEffect, type FormEvent } from "react"
+import { useParams } from "next/navigation"
 import { X } from "lucide-react"
 import { useCreateAgent } from "@/lib/graphql/hooks/use-agents"
+import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-models"
 import { TagInput } from "@/components/shared/tag-input"
-import { MODEL_OPTIONS } from "@/lib/config"
 
 const ROLE_OPTIONS = [
   { value: "worker", label: "Worker" },
@@ -24,14 +25,25 @@ export function CreateAgentModal({
   open: boolean
   onClose: () => void
 }) {
+  const { projectId } = useParams<{ projectId: string }>()
+  const { models } = useAvailableModels()
+  const { providers } = useProviderStatus(projectId ?? "")
+
   const [name, setName] = useState("")
-  const [model, setModel] = useState<string>(MODEL_OPTIONS[0].value)
+  const [model, setModel] = useState<string>("")
   const [role, setRole] = useState<string>(ROLE_OPTIONS[0].value)
   const [mode, setMode] = useState<string>(MODE_OPTIONS[0].value)
   const [instructions, setInstructions] = useState("")
   const [tags, setTags] = useState<string[]>([])
 
   const { create: createAgent, loading, error } = useCreateAgent()
+
+  // Set default model once loaded
+  useEffect(() => {
+    if (models.length > 0 && !model) {
+      setModel(models[0].value)
+    }
+  }, [models, model])
 
   // Escape to close
   useEffect(() => {
@@ -47,13 +59,13 @@ export function CreateAgentModal({
   useEffect(() => {
     if (open) {
       setName("")
-      setModel(MODEL_OPTIONS[0].value)
+      setModel(models.length > 0 ? models[0].value : "")
       setRole(ROLE_OPTIONS[0].value)
       setMode(MODE_OPTIONS[0].value)
       setInstructions("")
       setTags([])
     }
-  }, [open])
+  }, [open, models])
 
   if (!open) return null
 
@@ -125,10 +137,31 @@ export function CreateAgentModal({
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {MODEL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                {Object.entries(
+                  models.reduce<Record<string, typeof models>>((acc, m) => {
+                    ;(acc[m.provider] ??= []).push(m)
+                    return acc
+                  }, {})
+                ).map(([provider, group]) => (
+                  <optgroup key={provider} label={provider}>
+                    {group.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
+              {(() => {
+                const selected = models.find((m) => m.value === model)
+                const provider = selected && providers.find((p) => p.slug === selected.provider)
+                if (provider && !provider.configured) {
+                  return (
+                    <p className="text-[11px] text-warning mt-1">
+                      Requires {provider.keyName} — add in Secrets
+                    </p>
+                  )
+                }
+                return null
+              })()}
             </div>
             <div>
               <label htmlFor="agent-role" className="block text-xs font-medium text-secondary mb-1.5">

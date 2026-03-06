@@ -59,7 +59,7 @@ async def provision_workspace(
     file paths) to the adapter registered for `agent_type`.
 
     Args:
-        agent_type: Adapter key (e.g. "claude-code", "opencode"). Determines
+        agent_type: Adapter key (e.g. "claude-code"). Determines
             settings format, instruction file content, and file paths.
         secret_envs: Flat {key: value} dict of decrypted secrets from
             ProjectSecret. Injected into every MCP server env block.
@@ -127,8 +127,8 @@ async def provision_workspace(
             coord_server=coord_server,
         )
         if mcp_config_path == paths["settings_file"]:
-            # Adapter wants MCP merged into the settings file (e.g. OpenCode
-            # reads MCP servers from inside opencode.json, not a standalone file).
+            # Adapter wants MCP merged into the settings file (e.g. if an adapter
+            # reads MCP servers from inside its settings file, not a standalone file).
             merged = json.loads(settings_content)
             merged.update(json.loads(mcp_config))
             merged_content = json.dumps(merged, indent=2)

@@ -12,7 +12,7 @@ import type { TeamFeedItem, TimelineEntry, RecipientEntry } from "@/lib/types"
 /* ================================================================== */
 /*  FEED HOOKS                                                          */
 /*                                                                      */
-/*  cache-and-network + poll-based updates.                             */
+/*  cache-and-network. Real-time updates via useProjectWebSocket.       */
 /* ================================================================== */
 
 const log = createLogger("apollo")
@@ -28,7 +28,6 @@ export function useFeed() {
 
   return useQuery<FeedData>(GET_FEED, {
     fetchPolicy: "cache-and-network",
-    pollInterval: 2_000,
     variables: queryVars,
     skip: !projectId,
   })
@@ -38,13 +37,12 @@ export function useFeed() {
 
 type AgentFeedData = { agentFeed: TimelineEntry[] }
 
-/** Fetches agent-specific timeline entries with poll-based updates. */
+/** Fetches agent-specific timeline entries. */
 export function useAgentFeed(agentId: string) {
   return useQuery<AgentFeedData>(GET_AGENT_FEED, {
     variables: { agentId },
     skip: !agentId,
     fetchPolicy: "cache-and-network",
-    pollInterval: 2_000,
   })
 }
 

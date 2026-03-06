@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useSecrets, useSetSecret, useDeleteSecret } from "@/lib/graphql/hooks/use-secrets"
+import { useProviderStatus } from "@/lib/graphql/hooks/use-models"
 
 type SecretEntry = {
   id: string
@@ -42,6 +43,7 @@ export function SecretsModal({
   const { projectId } = useParams<{ projectId: string }>()
   const { data: agentsData } = useAgents()
   const agents = agentsData?.agents ?? []
+  const { providers } = useProviderStatus(projectId ?? "")
 
   const { data } = useSecrets(projectId ?? "", !open || !projectId)
   const secrets = data?.projectSecrets ?? []
@@ -136,6 +138,36 @@ export function SecretsModal({
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Provider keys */}
+        {providers.length > 0 && (
+          <div className="px-5 pb-3 border-b border-border-subtle">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
+              Provider Keys
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {providers.map((p) => (
+                <button
+                  key={p.slug}
+                  type="button"
+                  disabled={p.configured}
+                  onClick={() => {
+                    if (!p.configured) setNewKey(p.keyName)
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+                    p.configured
+                      ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
+                      : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
+                  )}
+                >
+                  {p.configured && <Check className="h-2.5 w-2.5" />}
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Secrets list */}
         <div className="px-5 max-h-[320px] overflow-y-auto">

@@ -147,11 +147,9 @@ MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
 # if missing, they fall back to AGENT_IMAGE / MODAL_AGENT_IMAGE.
 AGENT_IMAGE_MAP = {
     "claude-code": "agentobox-agent-claude:latest",
-    "opencode": "agentobox-agent-opencode:latest",
 }
 MODAL_AGENT_IMAGE_MAP = {
     "claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest",
-    "opencode": "ghcr.io/veyorokon/agentobox-agent-opencode:latest",
 }
 
 # --- Media / S3 ---

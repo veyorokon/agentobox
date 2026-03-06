@@ -28,6 +28,7 @@ OPS: If the proxy enters a restart loop (visible in s6 logs), check:
 
 import http.client
 import http.server
+import json
 import os
 import ssl
 import sys
@@ -35,6 +36,8 @@ import sys
 UPSTREAM_HOST = os.environ.get("PROXY_UPSTREAM_HOST", "api.anthropic.com")
 UPSTREAM_PORT = int(os.environ.get("PROXY_UPSTREAM_PORT", "443"))
 AUTH_HEADER = os.environ.get("PROXY_AUTH_HEADER", "x-api-key")
+THINKING_MODE = os.environ.get("PROXY_THINKING_MODE", "passthrough")
+PATH_PREFIX = os.environ.get("PROXY_PATH_PREFIX", "")
 LISTEN_PORT = 9999
 KEY_PATH = "/run/secrets/proxy_key"
 CHUNK_SIZE = 8192
@@ -73,6 +76,52 @@ _SSL_CTX = ssl.create_default_context()
 from abox_logging import setup as _setup_logging
 
 _log = _setup_logging("abox-apiproxy")
+
+
+def _rewrite_request_body(body: bytes) -> bytes:
+    """Rewrite JSON request body for non-Anthropic providers.
+
+    Strips fields that non-Anthropic providers dont support:
+    - "thinking" top-level key (extended thinking config)
+    - "cache_control" from message content blocks (prompt caching)
+
+    Returns the modified body as bytes. If parsing fails, returns
+    the original body unchanged (let the upstream handle the error).
+    """
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return body
+
+    modified = False
+
+    # Strip thinking config
+    if "thinking" in data:
+        del data["thinking"]
+        modified = True
+
+    # Strip cache_control from message content blocks
+    messages = data.get("messages")
+    if isinstance(messages, list):
+        for msg in messages:
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and "cache_control" in block:
+                        del block["cache_control"]
+                        modified = True
+
+    # Strip cache_control from system message blocks
+    system = data.get("system")
+    if isinstance(system, list):
+        for block in system:
+            if isinstance(block, dict) and "cache_control" in block:
+                del block["cache_control"]
+                modified = True
+
+    if modified:
+        return json.dumps(data, separators=(",", ":")).encode("utf-8")
+    return body
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -116,6 +165,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else None
 
+        # Provider-aware request rewriting (POST with JSON body only)
+        is_non_anthropic = THINKING_MODE != "passthrough"
+        if body and self.command == "POST" and is_non_anthropic:
+            body = _rewrite_request_body(body)
+
+        # Path prefix rewriting for providers with non-root API paths
+        upstream_path = PATH_PREFIX + self.path if PATH_PREFIX else self.path
+
         # Build upstream headers: strip auth headers, inject real key
         upstream_headers = {}
         for key, value in self.headers.items():
@@ -131,11 +188,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         # Override host header for upstream
         upstream_headers["Host"] = UPSTREAM_HOST
 
+        # Update Content-Length if body was rewritten
+        if body is not None:
+            upstream_headers["Content-Length"] = str(len(body))
+
         try:
             conn = http.client.HTTPSConnection(
                 UPSTREAM_HOST, UPSTREAM_PORT, context=_SSL_CTX, timeout=300
             )
-            conn.request(self.command, self.path, body=body, headers=upstream_headers)
+            conn.request(self.command, upstream_path, body=body, headers=upstream_headers)
             resp = conn.getresponse()
         except Exception as exc:
             _log.error("proxy.upstream_connect_failed", extra={

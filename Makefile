@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude agent-image-opencode up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -26,10 +26,7 @@ agent-image-base:
 agent-image-claude: agent-image-base
 	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent/claude
 
-agent-image-opencode: agent-image-base
-	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/opencode/Dockerfile -t agentobox-agent-opencode:latest ./agent/opencode
-
-agent-image: agent-image-claude agent-image-opencode
+agent-image: agent-image-claude
 
 up:
 	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build

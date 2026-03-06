@@ -7,6 +7,7 @@ TeamFeedItem = curated dashboard feed items created when feed-worthy events occu
 
 import structlog
 from asgiref.sync import sync_to_async
+from channels.layers import get_channel_layer
 
 from agents.models import Agent, TeamFeedItem
 
@@ -35,24 +36,50 @@ _create_feed_item_db = sync_to_async(_create_feed_item_sync, thread_sensitive=Fa
 
 
 async def create_feed_item(project_id, source_event=None, agent_record=None, **kwargs) -> TeamFeedItem:
-    """Create a TeamFeedItem. Dashboard picks up new items via polling."""
+    """Create a TeamFeedItem and push to dashboard WebSocket."""
     item = await _create_feed_item_db(
         project_id,
         source_event,
         agent_record,
         **kwargs,
     )
+
+    # Push to dashboard WebSocket group
+    try:
+        from agents.consumers import _serialize_feed_item_for_ws
+        channel_layer = get_channel_layer()
+        payload = _serialize_feed_item_for_ws(item)
+        await channel_layer.group_send(
+            f"dashboard_{item.project_id}",
+            {"type": "dashboard.feed_item", "payload": payload},
+        )
+    except Exception:  # intentional: dashboard push failure must not break feed creation
+        log.warning("feed.dashboard_push_failed", item_id=str(item.id), exc_info=True)
+
     return item
 
 
 async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
-    """Update a TeamFeedItem's fields."""
+    """Update a TeamFeedItem's fields and push to dashboard WebSocket."""
     update_fields = []
     for field, value in kwargs.items():
         setattr(item, field, value)
         update_fields.append(field)
     if update_fields:
         await item.asave(update_fields=update_fields)
+
+    # Push updated item to dashboard WebSocket group
+    try:
+        from agents.consumers import _serialize_feed_item_for_ws
+        channel_layer = get_channel_layer()
+        payload = _serialize_feed_item_for_ws(item)
+        await channel_layer.group_send(
+            f"dashboard_{item.project_id}",
+            {"type": "dashboard.feed_item", "payload": payload},
+        )
+    except Exception:  # intentional: dashboard push failure must not break feed update
+        log.warning("feed.dashboard_push_failed", item_id=str(item.id), exc_info=True)
+
     return item
 
 

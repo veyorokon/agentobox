@@ -1,17 +1,97 @@
-"""Claude Code-specific registries — models, MCP servers, team templates.
+"""Claude Code-specific registries — models, MCP servers, team templates, providers.
 
-These are agent-type-specific data that other adapters (Codex, Gemini) would
-replace with their own equivalents. Kept separate from the adapter class
-so the data is easy to find and modify.
+These are agent-type-specific data that other adapters would replace with
+their own equivalents. Kept separate from the adapter class so the data
+is easy to find and modify.
 """
 
+# Provider configurations for svc-apiproxy.
+# Key = provider slug used in model value prefix.
+# proxy_host/proxy_port = upstream target for the proxy.
+# auth_header = how to send the API key upstream.
+# thinking_mode = how the proxy handles thinking blocks:
+#   "passthrough" — provider returns Anthropic-compatible thinking blocks, no rewriting
+#   "strip" — remove thinking params from request (provider cant handle them)
+# path_prefix = prepended to request path before forwarding
+PROVIDER_CONFIGS = {
+    "anthropic": {
+        "proxy_host": "api.anthropic.com",
+        "proxy_port": 443,
+        "auth_header": "x-api-key",
+        "thinking_mode": "passthrough",
+        "path_prefix": "",
+    },
+    "glm": {
+        "proxy_host": "open.bigmodel.cn",
+        "proxy_port": 443,
+        "auth_header": "authorization",
+        "thinking_mode": "passthrough",
+        "path_prefix": "/api/paas",
+    },
+    "kimi": {
+        "proxy_host": "api.moonshot.cn",
+        "proxy_port": 443,
+        "auth_header": "authorization",
+        "thinking_mode": "strip",
+        "path_prefix": "",
+    },
+    "minimax": {
+        "proxy_host": "api.minimax.chat",
+        "proxy_port": 443,
+        "auth_header": "authorization",
+        "thinking_mode": "passthrough",
+        "path_prefix": "",
+    },
+    "qwen": {
+        "proxy_host": "dashscope-intl.aliyuncs.com",
+        "proxy_port": 443,
+        "auth_header": "authorization",
+        "thinking_mode": "strip",
+        "path_prefix": "",
+    },
+    "openrouter": {
+        "proxy_host": "openrouter.ai",
+        "proxy_port": 443,
+        "auth_header": "authorization",
+        "thinking_mode": "passthrough",
+        "path_prefix": "/api",
+    },
+}
+
+# Maps provider slug to the conventional ProjectSecret key name
+# used to store that provider's API key. Dashboard uses these names
+# when creating secrets; _resolve_api_key() looks them up at provision time.
+PROVIDER_SECRET_KEYS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "glm": "PROVIDER_KEY_GLM",
+    "kimi": "PROVIDER_KEY_KIMI",
+    "minimax": "PROVIDER_KEY_MINIMAX",
+    "qwen": "PROVIDER_KEY_QWEN",
+    "openrouter": "PROVIDER_KEY_OPENROUTER",
+}
+
 # Available models for agent provisioning.
-# value = Anthropic model ID passed to Claude Code via --model
+# value = model ID passed to Claude Code via CLAUDE_MODEL.
+# For non-Anthropic models, value uses "provider/model-id" format —
+# the provider prefix maps to PROVIDER_CONFIGS for proxy routing.
 # label = human-friendly name shown in the dashboard
 MODELS_REGISTRY = [
+    # Anthropic (native — no proxy rewriting needed)
     {"value": "claude-sonnet-4-5-20250929", "label": "Sonnet 4.5"},
     {"value": "claude-opus-4-20250514", "label": "Opus 4"},
     {"value": "claude-opus-4-6", "label": "Opus 4.6"},
+    # Z.ai / GLM (native Anthropic endpoint)
+    {"value": "glm/glm-5", "label": "GLM-5 (Z.ai)"},
+    # Moonshot / Kimi
+    {"value": "kimi/kimi-k2.5", "label": "Kimi K2.5 (Moonshot)"},
+    # MiniMax
+    {"value": "minimax/MiniMax-M1-80k", "label": "MiniMax M1 (MiniMax)"},
+    # Qwen
+    {"value": "qwen/qwen3-coder-plus", "label": "Qwen3 Coder Plus"},
+    # OpenRouter (aggregator — Anthropic Skin translates to any provider)
+    {"value": "openrouter/openai/gpt-4.1", "label": "GPT-4.1 (OpenRouter)"},
+    {"value": "openrouter/google/gemini-2.5-pro", "label": "Gemini 2.5 Pro (OpenRouter)"},
+    {"value": "openrouter/deepseek/deepseek-r1", "label": "DeepSeek R1 (OpenRouter)"},
 ]
 
 # Known MCP servers bundled into the agent image.

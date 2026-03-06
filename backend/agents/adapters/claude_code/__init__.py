@@ -42,6 +42,7 @@ import textwrap
 from agents.adapters.claude_code.registries import (
     MCP_REGISTRY,
     MODELS_REGISTRY,
+    PROVIDER_CONFIGS,
     TEAM_CONFIGS,
 )
 
@@ -122,9 +123,16 @@ _MODEL_DISPLAY_TO_ID = {
 def _normalize_model_id(model: str) -> str:
     """Normalize a model string to a CC-compatible model ID.
 
-    Accepts both proper IDs (``claude-opus-4-6``) and display names
-    (``Opus 4.6``). Returns the proper ID in either case.
+    Accepts:
+    - Proper Anthropic IDs: ``claude-opus-4-6`` → pass through
+    - Display names: ``Opus 4.6`` → lookup in _MODEL_DISPLAY_TO_ID
+    - Provider-prefixed: ``glm/glm-5`` → strip prefix, return ``glm-5``
+
+    For provider-prefixed models, the prefix is only used for proxy routing
+    (see build_relay_env). CC receives just the model ID portion.
     """
+    if "/" in model:
+        return model.split("/", 1)[1]
     if model.startswith("claude-"):
         return model
     return _MODEL_DISPLAY_TO_ID.get(model.lower(), model)
@@ -707,6 +715,20 @@ class ClaudeCodeAdapter:
             lines.append(
                 f"export ANTHROPIC_BASE_URL='http://localhost:{_PROXY_PORT}'"
             )
+
+        # Provider-prefixed models: emit proxy env vars for svc-apiproxy.
+        # The proxy uses these to route to the correct upstream and handle
+        # thinking block translation.
+        if "/" in model:
+            provider = model.split("/", 1)[0]
+            pconfig = PROVIDER_CONFIGS.get(provider)
+            if pconfig:
+                lines.append(f"export PROXY_UPSTREAM_HOST={_shell_escape(pconfig['proxy_host'])}")
+                lines.append(f"export PROXY_UPSTREAM_PORT={_shell_escape(str(pconfig['proxy_port']))}")
+                lines.append(f"export PROXY_AUTH_HEADER={_shell_escape(pconfig['auth_header'])}")
+                lines.append(f"export PROXY_THINKING_MODE={_shell_escape(pconfig['thinking_mode'])}")
+                if pconfig.get("path_prefix"):
+                    lines.append(f"export PROXY_PATH_PREFIX={_shell_escape(pconfig['path_prefix'])}")
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID={_shell_escape(resume_session_id)}")

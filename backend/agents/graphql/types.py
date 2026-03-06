@@ -142,6 +142,7 @@ class AgentFeedbackType:
 class ModelEntryType:
     value: str
     label: str
+    provider: str
 
 
 @strawberry.type

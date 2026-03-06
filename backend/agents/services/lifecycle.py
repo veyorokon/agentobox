@@ -45,6 +45,25 @@ CONTAINER_WORKSPACE = "/home/agent/workspace"
 log = structlog.get_logger("abox.lifecycle")
 
 
+def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
+    """Resolve API key for the model's provider.
+
+    Priority:
+      1. Project secret matching the provider's conventional key name
+      2. Global ANTHROPIC_API_KEY from settings (Anthropic only)
+      3. Empty string (no key — provisioning continues, agent errors at runtime)
+    """
+    from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
+
+    provider = model.split("/", 1)[0] if "/" in model else "anthropic"
+    key_name = PROVIDER_SECRET_KEYS.get(provider, "")
+    if secret_envs and key_name and key_name in secret_envs:
+        return secret_envs[key_name]
+    if provider == "anthropic":
+        return getattr(settings, "ANTHROPIC_API_KEY", "")
+    return ""
+
+
 
 async def create_agent(
     project_id: str,
@@ -308,7 +327,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             " || echo 'source /mnt/abox-state/secrets/env 2>/dev/null' >> /home/agent/.bashrc",
         ])
 
-        api_key = getattr(settings, "ANTHROPIC_API_KEY", "")
+        api_key = _resolve_api_key(agent.model, secret_envs)
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
