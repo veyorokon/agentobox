@@ -38,12 +38,12 @@ export function StatusBar({ items, onClickAgent }: StatusBarProps) {
           const toConfig = LIFECYCLE_CONFIG[item.to as LifecycleStatus] ?? LIFECYCLE_CONFIG.stopped
 
           return (
-            <div key={item.agent} className="flex items-center gap-1.5">
+            <div key={item.agent} className="flex items-baseline gap-1.5">
               <AgentTag name={item.agent} onClick={onClickAgent} className="text-[10px]" />
               <span className="text-[10px] text-muted/40 font-mono">{item.from}</span>
               <span className="text-[10px] text-muted/30 select-none">{"\u2192"}</span>
-              <span className={cn("inline-flex items-center gap-1 text-[10px] font-mono font-medium", toConfig.text)}>
-                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", toConfig.dot)} />
+              <span className={cn("inline-flex items-baseline gap-1 text-[10px] font-mono font-medium", toConfig.text)}>
+                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0 self-center", toConfig.dot)} />
                 {item.to}
               </span>
             </div>
