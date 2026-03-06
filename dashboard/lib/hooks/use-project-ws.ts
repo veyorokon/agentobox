@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useApolloClient } from "@apollo/client"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
-import { GET_FEED } from "@/lib/graphql/queries/feed"
+import { GET_AGENT_FEED, GET_FEED } from "@/lib/graphql/queries/feed"
 import { createLogger } from "@/lib/logger"
 
 /* ================================================================== */
@@ -158,6 +158,11 @@ export function useProjectWebSocket(projectId: string | undefined) {
         variables: { projectId },
         data: { agents: updatedAgents },
       })
+
+      // Trigger refetch of agent-specific timeline. Apollo only sends
+      // the network request if there are active observers for this query
+      // (i.e., the agent detail view is open for this agent).
+      client.refetchQueries({ include: ["GetAgentFeed"] })
     }
 
     function handleFeedUpdate(feedData: Record<string, unknown>) {
