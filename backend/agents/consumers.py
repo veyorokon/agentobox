@@ -485,6 +485,8 @@ async def _serialize_agent_for_ws(agent) -> dict:
         "allowedTools": agent.allowed_tools if isinstance(agent.allowed_tools, list) else [],
         "workspacePath": agent.workspace_path,
         "mcpServers": mcp_list,
+        "triggers": agent.triggers if isinstance(agent.triggers, list) else [],
+        "computeSeconds": agent.compute_seconds or 0,
         "taskProgress": task_progress,
         "tasks": tasks,
     }
