@@ -11,6 +11,7 @@ import {
   BookOpen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { toast } from "@/lib/toast"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useSkills, useCreateSkill, useDeleteSkill } from "@/lib/graphql/hooks/use-skills"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -47,12 +48,14 @@ export function SkillsPanel() {
 
   const handleCreateSkill = () => {
     if (!newName.trim()) return
-    createSkill(newName.trim(), newContent, "", newTags, newAssignAll)
+    const skillName = newName.trim()
+    createSkill(skillName, newContent, "", newTags, newAssignAll)
     setNewName("")
     setNewContent("")
     setNewTags([])
     setNewAssignAll(false)
     setShowCreate(false)
+    toast.success(`Skill "${skillName}" created successfully`)
   }
 
   const handleBulkDelete = () => {
@@ -121,7 +124,7 @@ export function SkillsPanel() {
 
       {/* Create form */}
       <Collapsible open={showCreate}>
-        <div className="px-3 py-2 border-b border-border-subtle space-y-2 bg-surface-sunken/20">
+        <div className="relative z-10 px-3 py-2 border-b border-border-subtle space-y-2 bg-surface-sunken/20 shrink-0">
           <input
             type="text"
             value={newName}

@@ -64,6 +64,17 @@ export const GET_AGENTS = gql`
         done
         total
       }
+      tasks {
+        taskId
+        title
+        description
+        status
+        assignee
+        activeForm
+        blockedBy
+        createdAt
+        updatedAt
+      }
     }
   }
 `

@@ -43,17 +43,17 @@ class TestSchemaParity:
         assert params == {"type", "content", "recipient", "summary"}
 
     def test_task_create_params(self):
-        """task_create has CC TaskCreate params: subject, description, active_form, metadata."""
+        """task_create has CC TaskCreate params: title, description, active_form, metadata."""
         sig = inspect.signature(task_create)
         params = set(sig.parameters.keys())
-        assert params == {"subject", "description", "active_form", "metadata"}
+        assert params == {"title", "description", "active_form", "metadata"}
 
     def test_task_update_params(self):
         """task_update has CC TaskUpdate params."""
         sig = inspect.signature(task_update)
         params = set(sig.parameters.keys())
         expected = {
-            "task_id", "status", "subject", "description", "owner",
+            "task_id", "status", "title", "description", "assignee",
             "active_form", "add_blocks", "add_blocked_by", "metadata",
         }
         assert params == expected
@@ -223,11 +223,11 @@ class TestTaskCreate:
 
     @pytest.mark.asyncio
     async def test_basic_create(self):
-        """Creates task and returns task_id + subject."""
+        """Creates task and returns task_id + title."""
         agent = _mock_agent()
         mock_task = MagicMock()
         mock_task.task_id = "mcp_abc123"
-        mock_task.subject = "Fix the bug"
+        mock_task.title = "Fix the bug"
 
         with (
             _patch_auth(agent),
@@ -237,10 +237,10 @@ class TestTaskCreate:
         ):
             MockTask.objects.acreate = AsyncMock(return_value=mock_task)
 
-            result = await task_create(subject="Fix the bug", description="Details here")
+            result = await task_create(title="Fix the bug", description="Details here")
 
         assert result["task_id"] == "mcp_abc123"
-        assert result["subject"] == "Fix the bug"
+        assert result["title"] == "Fix the bug"
 
     @pytest.mark.asyncio
     async def test_create_with_active_form_and_metadata(self):
@@ -248,7 +248,7 @@ class TestTaskCreate:
         agent = _mock_agent()
         mock_task = MagicMock()
         mock_task.task_id = "mcp_def456"
-        mock_task.subject = "Run tests"
+        mock_task.title = "Run tests"
 
         with (
             _patch_auth(agent),
@@ -259,7 +259,7 @@ class TestTaskCreate:
             MockTask.objects.acreate = AsyncMock(return_value=mock_task)
 
             await task_create(
-                subject="Run tests",
+                title="Run tests",
                 active_form="Running tests",
                 metadata={"priority": "high"},
             )
@@ -277,7 +277,7 @@ class TestTaskCreate:
 class TestTaskUpdate:
     """Principle: task updates are idempotent and broadcast-complete.
 
-    Every field update (status, owner, dependencies) persists to DB and
+    Every field update (status, assignee, dependencies) persists to DB and
     triggers a broadcast so the dashboard reflects the change. Deleting
     a task sets status=deleted and removes it from active views.
     """
@@ -317,7 +317,7 @@ class TestTaskUpdate:
 
     @pytest.mark.asyncio
     async def test_owner_claim(self):
-        """Sets owner field."""
+        """Sets assignee field."""
         agent = _mock_agent()
         mock_task = self._make_task()
 
@@ -329,10 +329,10 @@ class TestTaskUpdate:
             MockTask.objects.aget = AsyncMock(return_value=mock_task)
             MockTask.DoesNotExist = Exception
 
-            result = await task_update(task_id="mcp_001", owner="backend")
+            result = await task_update(task_id="mcp_001", assignee="backend")
 
         assert result["ok"] is True
-        assert mock_task.owner == "backend"
+        assert mock_task.assignee == "backend"
 
     @pytest.mark.asyncio
     async def test_add_dependencies(self):
@@ -423,8 +423,8 @@ class TestTaskUpdate:
 class TestTaskGet:
     """Principle: task reads return the full task state including dependencies.
 
-    task_get returns the complete task dict (subject, description, status,
-    owner, blocks, blockedBy) so the agent has full context to act on it.
+    task_get returns the complete task dict (title, description, status,
+    assignee, blocks, blockedBy) so the agent has full context to act on it.
     """
 
     @pytest.mark.asyncio
@@ -433,10 +433,10 @@ class TestTaskGet:
         agent = _mock_agent()
         mock_task = MagicMock()
         mock_task.task_id = "mcp_001"
-        mock_task.subject = "Fix bug"
+        mock_task.title = "Fix bug"
         mock_task.description = "Details"
         mock_task.status = "in_progress"
-        mock_task.owner = "backend"
+        mock_task.assignee = "backend"
         mock_task.active_form = "Fixing bug"
         mock_task.metadata = {"priority": "high"}
         mock_task.blocks = ["mcp_002"]
@@ -452,10 +452,10 @@ class TestTaskGet:
             result = await task_get(task_id="mcp_001")
 
         assert result["task_id"] == "mcp_001"
-        assert result["subject"] == "Fix bug"
+        assert result["title"] == "Fix bug"
         assert result["description"] == "Details"
         assert result["status"] == "in_progress"
-        assert result["owner"] == "backend"
+        assert result["assignee"] == "backend"
         assert result["active_form"] == "Fixing bug"
         assert result["metadata"] == {"priority": "high"}
         assert result["blocks"] == ["mcp_002"]
@@ -487,8 +487,8 @@ class TestTaskGet:
 class TestTaskList:
     """Principle: task list returns a summary view scoped to the project.
 
-    Returns all non-deleted tasks with enough fields for triage (id, subject,
-    status, owner, blockedBy) but not full descriptions — use task_get for that.
+    Returns all non-deleted tasks with enough fields for triage (id, title,
+    status, assignee, blockedBy) but not full descriptions — use task_get for that.
     """
 
     @pytest.mark.asyncio
@@ -497,9 +497,9 @@ class TestTaskList:
         agent = _mock_agent()
         mock_task = MagicMock()
         mock_task.task_id = "mcp_001"
-        mock_task.subject = "Fix bug"
+        mock_task.title = "Fix bug"
         mock_task.status = "pending"
-        mock_task.owner = ""
+        mock_task.assignee = ""
         mock_task.active_form = "Fixing bug"
         mock_task.blocked_by = ["mcp_000"]
 

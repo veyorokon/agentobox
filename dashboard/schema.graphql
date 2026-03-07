@@ -9,10 +9,10 @@ type AgentFeedbackType {
 
 type AgentTaskType {
   taskId: String!
-  subject: String!
+  title: String!
   description: String!
   status: String!
-  owner: String!
+  assignee: String!
   activeForm: String!
   blockedBy: [String!]!
   createdAt: DateTime!
@@ -166,7 +166,7 @@ type Mutation {
   rateAgent(input: RateFeedbackInput!): AgentFeedbackType
   updateAgentConfig(input: UpdateAgentConfigInput!): AgentType!
   updateTask(agentId: ID!, taskId: String!, status: String!): AgentTaskType!
-  createTask(agentId: ID!, subject: String!): AgentTaskType!
+  createTask(agentId: ID!, title: String!, description: String! = ""): AgentTaskType!
   createSkill(input: CreateSkillInput!): SkillType!
   updateSkill(input: UpdateSkillInput!): SkillType!
   deleteSkill(skillId: ID!): Boolean!

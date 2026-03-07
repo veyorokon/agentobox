@@ -6,10 +6,10 @@ export const GET_AGENT_TASKS = gql`
       id
       tasks {
         taskId
-        subject
+        title
         description
         status
-        owner
+        assignee
         activeForm
         blockedBy
         createdAt

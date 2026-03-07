@@ -38,10 +38,10 @@ class TaskProgressType:
 @strawberry.type
 class AgentTaskType:
     task_id: str
-    subject: str
+    title: str
     description: str
     status: str
-    owner: str
+    assignee: str
     active_form: str
     blocked_by: list[str]
     created_at: datetime
@@ -304,8 +304,8 @@ class AgentType:
                 .exclude(status="deleted")
                 .order_by("created_at")
                 .values(
-                    "task_id", "subject", "description", "status",
-                    "owner", "active_form", "blocked_by", "created_at", "updated_at",
+                    "task_id", "title", "description", "status",
+                    "assignee", "active_form", "blocked_by", "created_at", "updated_at",
                 )
             )
         rows = await sync_to_async(_fetch, thread_sensitive=False)()

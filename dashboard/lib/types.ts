@@ -97,10 +97,10 @@ export type ViewMode = "terminal" | "feed" | "settings" | "skills" | "tasks"
 
 export type AgentTask = {
   taskId: string
-  subject: string
+  title: string
   description: string
   status: "pending" | "in_progress" | "completed"
-  owner: string
+  assignee: string
   activeForm: string
   blockedBy: string[]
   createdAt: string
@@ -111,3 +111,4 @@ export type CardActionItem =
   | { kind: "permission"; feedItem: Extract<TeamFeedItem, { type: "permission" }> }
   | { kind: "plan"; feedItem: Extract<TeamFeedItem, { type: "plan" }> }
   | { kind: "config-dirty" }
+  | { kind: "new-skill"; skillId: string; skillName: string }

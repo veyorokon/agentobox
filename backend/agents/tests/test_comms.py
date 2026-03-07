@@ -1,8 +1,10 @@
 """Tests for agents.services.comms — content normalization and SSRF prevention."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from agents.services.comms import _normalize_content
+import pytest
+
+from agents.services.comms import _normalize_content, send_message
 
 
 def _image_block(url, media_type=None):
@@ -94,3 +96,49 @@ def test_normalize_content_ignores_non_url_blocks():
     result = _normalize_content(blocks)
     assert result[0] == {"type": "text", "text": "hello"}
     assert result[1]["source"]["type"] == "base64"
+
+
+# ---------------------------------------------------------------------------
+# WebSocket push on send_message
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_message_pushes_to_dashboard_ws():
+    """send_message() triggers a WebSocket push for the agent timeline update."""
+    # Mock agent
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-123"
+    fake_agent.project_id = "proj-456"
+    fake_agent.session_id = "session-789"
+    fake_agent.status = "running"
+
+    # Mock stream event
+    fake_stream_event = MagicMock()
+    fake_stream_event.id = "event-abc"
+
+    # Mock channel layer
+    mock_channel_layer = MagicMock()
+    mock_channel_layer.group_send = AsyncMock()
+
+    # Mock serialized agent
+    fake_serialized_agent = {"_t": "agent", "id": "agent-123", "name": "test-agent"}
+
+    with (
+        patch("agents.services.comms.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
+        patch("agents.services.comms.create_stream_event", new_callable=AsyncMock, return_value=fake_stream_event),
+        patch("agents.services.comms.push_to_relay", new_callable=AsyncMock),
+        patch("agents.services.comms.get_channel_layer", return_value=mock_channel_layer),
+        patch("agents.services.comms._serialize_agent_for_ws", new_callable=AsyncMock, return_value=fake_serialized_agent),
+    ):
+        result = await send_message("agent-123", "Hello agent!")
+
+    # Assert send_message succeeded
+    assert result is True
+
+    # Assert WebSocket push was triggered
+    mock_channel_layer.group_send.assert_called_once()
+    call_args = mock_channel_layer.group_send.call_args
+    assert call_args[0][0] == "dashboard_proj-456"  # group name
+    assert call_args[0][1]["type"] == "dashboard.agent_update"
+    assert call_args[0][1]["payload"] == fake_serialized_agent

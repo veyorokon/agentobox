@@ -14,6 +14,11 @@ import {
   Square,
   RotateCcw,
   Trash2,
+  Pause,
+  Play,
+  Plus,
+  Bell,
+  BellOff,
 } from "lucide-react"
 import { cn, formatCost, formatComputeTime, formatTriggerSubtitle } from "@/lib/utils"
 import { LIFECYCLE_CONFIG, MODE_CONFIG } from "@/lib/config"
@@ -21,6 +26,9 @@ import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAcknowledgeAgent, useSetAgentMode, useInterruptAgent, useRestartAgent, useHardRestartAgent, useRemoveAgent } from "@/lib/graphql/hooks/use-agents"
 import { useFeed, useResolvePermission, useResolvePlan, useSendMessage } from "@/lib/graphql/hooks/use-feed"
+import { useAgentTasks, useCreateTask } from "@/lib/graphql/hooks/use-tasks"
+import { useSkills } from "@/lib/graphql/hooks/use-skills"
+import { dismissSkillForAgent, getUndismissedSkills } from "@/lib/skill-notifications"
 import { Collapsible } from "@/components/ui/collapsible"
 import { AgentTag } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
@@ -62,7 +70,10 @@ export function AgentCardRow({
 
   // Store state — card subscribes to exactly the slices it needs
   const isExpanded = useSidebarStore(s => s.expandedAgentIds.has(agent.id))
+  const isMuted = useSidebarStore(s => s.mutedAgentIds.has(agent.id))
   const toggleAgent = useSidebarStore(s => s.toggleAgent)
+  const expandAgent = useSidebarStore(s => s.expandAgent)
+  const toggleMuteAgent = useSidebarStore(s => s.toggleMuteAgent)
   const acknowledgeAgent = useAcknowledgeAgent()
   const setAgentMode = useSetAgentMode()
   const { data: feedData } = useFeed()
@@ -76,6 +87,34 @@ export function AgentCardRow({
   const removeAgent = useRemoveAgent()
   const handleModeChange = (mode: Agent["mode"]) => setAgentMode(agent.id, mode)
   const triggerSubtitle = formatTriggerSubtitle(agent.triggers)
+
+  // Tasks data and counts
+  const { tasks } = useAgentTasks(agent.id, agent.taskProgress)
+  const createTask = useCreateTask()
+  const taskCounts = useMemo(() => ({
+    pending: tasks.filter(t => t.status === "pending").length,
+    inProgress: tasks.filter(t => t.status === "in_progress").length,
+    completed: tasks.filter(t => t.status === "completed").length,
+  }), [tasks])
+
+  // Skills data — check for new skills matching this agent
+  const { data: skillsData } = useSkills()
+  const skills = skillsData?.skills ?? []
+  const [dismissedSkillIds, setDismissedSkillIds] = useState<string[]>([])
+
+  const newSkills = useMemo(() => {
+    const matchingSkills = skills.filter(
+      s => s.assignedToAll || agent.tags.some(t => s.assignedTags.includes(t))
+    )
+    const undismissed = getUndismissedSkills(agent.id, matchingSkills.map(s => s.id))
+    return matchingSkills.filter(s => undismissed.includes(s.id) && !dismissedSkillIds.includes(s.id))
+  }, [skills, agent.tags, agent.id, dismissedSkillIds])
+
+  // Quick add task state
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
+  const [quickAddText, setQuickAddText] = useState("")
+  const [quickAddDescription, setQuickAddDescription] = useState("")
+  const quickAddRef = useRef<HTMLDivElement>(null)
 
   // Kebab menu state
   const [kebabOpen, setKebabOpen] = useState(false)
@@ -103,6 +142,10 @@ export function AgentCardRow({
   const closeKebab = useCallback(() => setKebabOpen(false), [])
   useClickOutside(kebabRef, closeKebab, kebabOpen)
 
+  // Close quick add on outside click
+  const closeQuickAdd = useCallback(() => setQuickAddOpen(false), [])
+  useClickOutside(quickAddRef, closeQuickAdd, quickAddOpen)
+
   const handleSendMessage = () => {
     const text = composerText.trim()
     if (!text) return
@@ -110,18 +153,55 @@ export function AgentCardRow({
     setComposerText("")
   }
 
-  // Build unified action items: permissions → plans → config-dirty
+  const handleQuickAdd = () => {
+    const text = quickAddText.trim()
+    if (!text) return
+    createTask(agent.id, text, quickAddDescription.trim())
+    setQuickAddText("")
+    setQuickAddDescription("")
+    setQuickAddOpen(false)
+  }
+
+  const handleDismissSkill = useCallback((skillId: string) => {
+    dismissSkillForAgent(agent.id, skillId)
+    setDismissedSkillIds(prev => [...prev, skillId])
+  }, [agent.id])
+
+  const handleViewSkill = useCallback(() => {
+    setViewMode("skills")
+  }, [])
+
+  // Build unified action items: permissions → plans → new skills → config-dirty
   const actionItems = useMemo(() => {
     const items: CardActionItem[] = []
     for (const p of pendingItems) {
       if (p.type === "permission") items.push({ kind: "permission", feedItem: p })
       else if (p.type === "plan") items.push({ kind: "plan", feedItem: p })
     }
+    // Add new skill notifications
+    for (const skill of newSkills) {
+      items.push({ kind: "new-skill", skillId: skill.id, skillName: skill.name })
+    }
     if (viewMode === "settings" && settingsDirty) {
       items.push({ kind: "config-dirty" })
     }
     return items
-  }, [pendingItems, viewMode, settingsDirty])
+  }, [pendingItems, newSkills, viewMode, settingsDirty])
+
+  // Auto-expand on new activity (unless muted)
+  const prevActivityCount = useRef(0)
+  useEffect(() => {
+    const currentActivityCount = pendingItems.length + newSkills.length
+    const hadPreviousActivity = prevActivityCount.current > 0
+    const hasNewActivity = currentActivityCount > prevActivityCount.current
+
+    prevActivityCount.current = currentActivityCount
+
+    // Auto-expand if: not muted, not already expanded, has new activity, and not the first render
+    if (!isMuted && !isExpanded && hasNewActivity && hadPreviousActivity) {
+      expandAgent(agent.id)
+    }
+  }, [pendingItems.length, newSkills.length, isMuted, isExpanded, expandAgent, agent.id])
 
 
   const VIEW_MODES: { id: ViewMode; icon: typeof Monitor; label: string }[] = [
@@ -222,10 +302,29 @@ export function AgentCardRow({
             </span>
           )}
 
-          {/* Right: cost · time + kebab + chevron */}
+          {/* Right: cost · time + mute + kebab + chevron */}
           <span className="text-[9px] text-muted/60 font-mono tabular-nums shrink-0">
             {formatCost(agent.cost)} · {formatComputeTime(agent.computeSeconds ?? 0)}
           </span>
+
+          {/* Mute auto-expand button */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggleMuteAgent(agent.id) }}
+            className={cn(
+              "p-0.5 rounded transition-colors",
+              isMuted
+                ? "text-muted/40 hover:text-secondary hover:bg-surface-raised/40"
+                : "text-accent/60 hover:text-accent hover:bg-accent/10",
+            )}
+            title={isMuted ? "Enable auto-expand on activity" : "Disable auto-expand on activity"}
+          >
+            {isMuted ? (
+              <BellOff className="h-3 w-3" />
+            ) : (
+              <Bell className="h-3 w-3" />
+            )}
+          </button>
 
           {/* Kebab menu — interrupt / restart / remove */}
           <div ref={kebabRef} className="relative shrink-0">
@@ -331,13 +430,15 @@ export function AgentCardRow({
           </div>
         </div>
 
-        {/* Attention bar — actionable items only: permissions, plans, config-dirty */}
+        {/* Attention bar — actionable items only: permissions, plans, new skills, config-dirty */}
         <CardActionStrip
           items={actionItems}
           onResolvePermission={resolvePermission}
           onResolvePlan={resolvePlan}
           onRestart={() => settingsRef.current?.restart()}
           onRedeploy={() => settingsRef.current?.redeploy()}
+          onDismissSkill={handleDismissSkill}
+          onViewSkill={handleViewSkill}
         />
 
         {/* Bottom toolbar -- always present: view icons + composer + tasks */}
@@ -387,23 +488,150 @@ export function AgentCardRow({
             </button>
           </div>
 
-          {/* Todo progress — click to switch to tasks view */}
-          <button
-            type="button"
-            onClick={() => setViewMode("tasks")}
-            className={cn(
-              "flex items-center gap-1 shrink-0 px-1 py-0.5 rounded transition-colors",
-              viewMode === "tasks"
-                ? "bg-accent/15 text-accent"
-                : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
-            )}
-            title="View tasks"
-          >
-            <CheckSquare className="h-3 w-3" />
-            <span className="text-[9px] font-mono tabular-nums">
-              {agent.taskProgress ? `${agent.taskProgress.done}/${agent.taskProgress.total}` : "0/0"}
-            </span>
-          </button>
+          {/* Task status segments — compact inline display */}
+          <div className="flex items-center gap-0.5 shrink-0">
+            {/* Pending tasks segment */}
+            <button
+              type="button"
+              onClick={() => setViewMode("tasks")}
+              className={cn(
+                "flex items-center gap-0.5 px-1 py-0.5 rounded-l transition-colors",
+                viewMode === "tasks"
+                  ? "bg-accent/15 text-accent"
+                  : taskCounts.pending > 0
+                    ? "text-muted/70 hover:text-secondary hover:bg-surface-raised/40"
+                    : "text-muted/30 hover:text-muted/50 hover:bg-surface-raised/20",
+              )}
+              title={taskCounts.pending > 0
+                ? `${taskCounts.pending} pending: ${tasks.filter(t => t.status === "pending").map(t => t.title).slice(0, 3).join(", ")}${tasks.filter(t => t.status === "pending").length > 3 ? "..." : ""}`
+                : "No pending tasks"}
+            >
+              <Pause className="h-2.5 w-2.5" />
+              <span className="text-[8px] font-mono tabular-nums">{taskCounts.pending}</span>
+            </button>
+
+            {/* In-progress tasks segment */}
+            <button
+              type="button"
+              onClick={() => setViewMode("tasks")}
+              className={cn(
+                "flex items-center gap-0.5 px-1 py-0.5 transition-colors border-x border-border-subtle",
+                viewMode === "tasks"
+                  ? "bg-accent/15 text-accent"
+                  : taskCounts.inProgress > 0
+                    ? "text-accent hover:text-accent/80 hover:bg-accent/10"
+                    : "text-muted/30 hover:text-muted/50 hover:bg-surface-raised/20",
+              )}
+              title={taskCounts.inProgress > 0
+                ? `${taskCounts.inProgress} in progress: ${tasks.filter(t => t.status === "in_progress").map(t => t.title).slice(0, 3).join(", ")}${tasks.filter(t => t.status === "in_progress").length > 3 ? "..." : ""}`
+                : "No tasks in progress"}
+            >
+              <Play className={cn("h-2.5 w-2.5", taskCounts.inProgress > 0 && "animate-breathe")} />
+              <span className="text-[8px] font-mono tabular-nums">{taskCounts.inProgress}</span>
+            </button>
+
+            {/* Completed tasks segment */}
+            <button
+              type="button"
+              onClick={() => setViewMode("tasks")}
+              className={cn(
+                "flex items-center gap-0.5 px-1 py-0.5 rounded-r transition-colors",
+                viewMode === "tasks"
+                  ? "bg-accent/15 text-accent"
+                  : taskCounts.completed > 0
+                    ? "text-success/60 hover:text-success/80 hover:bg-success-subtle/20"
+                    : "text-muted/30 hover:text-muted/50 hover:bg-surface-raised/20",
+              )}
+              title={taskCounts.completed > 0
+                ? `${taskCounts.completed} completed: ${tasks.filter(t => t.status === "completed").map(t => t.title).slice(0, 3).join(", ")}${tasks.filter(t => t.status === "completed").length > 3 ? "..." : ""}`
+                : "No completed tasks"}
+            >
+              <Check className="h-2.5 w-2.5" />
+              <span className="text-[8px] font-mono tabular-nums">{taskCounts.completed}</span>
+            </button>
+
+            {/* Quick add button */}
+            <div ref={quickAddRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setQuickAddOpen(v => !v)}
+                className={cn(
+                  "ml-0.5 p-0.5 rounded transition-colors",
+                  quickAddOpen
+                    ? "bg-accent/15 text-accent"
+                    : "text-muted/40 hover:text-secondary hover:bg-surface-raised/40",
+                )}
+                title="Add task"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+
+              {/* Quick add popover */}
+              {quickAddOpen && (
+                <div className="absolute right-0 bottom-full mb-1 z-50 min-w-[240px] rounded-md border border-border-default bg-surface-raised shadow-lg p-2">
+                  <input
+                    type="text"
+                    value={quickAddText}
+                    onChange={(e) => setQuickAddText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault()
+                        handleQuickAdd()
+                      }
+                      if (e.key === "Escape") {
+                        setQuickAddOpen(false)
+                        setQuickAddText("")
+                        setQuickAddDescription("")
+                      }
+                    }}
+                    placeholder="Task title..."
+                    autoFocus
+                    className="w-full bg-surface-sunken/40 border border-border-subtle rounded px-2 py-1 text-[10px] text-default placeholder:text-muted/40 outline-none focus:border-accent/40"
+                  />
+                  <textarea
+                    value={quickAddDescription}
+                    onChange={(e) => setQuickAddDescription(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && e.metaKey) {
+                        e.preventDefault()
+                        handleQuickAdd()
+                      }
+                      if (e.key === "Escape") {
+                        setQuickAddOpen(false)
+                        setQuickAddText("")
+                        setQuickAddDescription("")
+                      }
+                    }}
+                    placeholder="Description (optional)..."
+                    rows={2}
+                    className="w-full mt-1.5 bg-surface-sunken/40 border border-border-subtle rounded px-2 py-1 text-[10px] text-default placeholder:text-muted/40 outline-none focus:border-accent/40 resize-none"
+                  />
+                  <div className="flex items-center justify-end gap-1 mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => { setQuickAddOpen(false); setQuickAddText(""); setQuickAddDescription("") }}
+                      className="px-2 py-0.5 rounded text-[9px] text-muted hover:text-default hover:bg-surface-sunken/40"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleQuickAdd}
+                      disabled={!quickAddText.trim()}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[9px] font-medium transition-colors",
+                        quickAddText.trim()
+                          ? "bg-accent text-on-emphasis hover:bg-accent/90"
+                          : "bg-surface-sunken text-muted/40 cursor-not-allowed",
+                      )}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </Collapsible>
     </div>

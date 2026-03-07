@@ -144,6 +144,20 @@ async def send_message(
         message_id=f"user_{uuid.uuid4().hex[:16]}",
     )
 
+    # Push agent update to dashboard WebSocket group so the agent card feed
+    # shows the new message immediately (without refresh)
+    try:
+        from agents.consumers import _serialize_agent_for_ws
+        from channels.layers import get_channel_layer
+        channel_layer = get_channel_layer()
+        payload = await _serialize_agent_for_ws(agent)
+        await channel_layer.group_send(
+            f"dashboard_{agent.project_id}",
+            {"type": "dashboard.agent_update", "payload": payload},
+        )
+    except Exception:  # intentional: dashboard push failure must not break message delivery
+        op_log.warning("comms.dashboard_push_failed", exc_info=True)
+
     # Auto-restart dead agents — relay will backfill the message on connect
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
@@ -405,6 +419,53 @@ async def restart_agent(agent_id: str) -> bool:
 
     op_log.info("comms.restart_sent")
     return True
+
+
+async def push_skill_to_agents(skill, operation: str = "write") -> None:
+    """Push a skill write/delete to all matching running agents.
+
+    Finds agents with tags overlapping skill.assigned_tags (or all agents if
+    assigned_to_all=True) and pushes via WebSocket. The relay writes/removes
+    .claude/skills/<name>/SKILL.md.
+    """
+    all_agents = [
+        a async for a in Agent.objects.filter(
+            project_id=skill.project_id,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        )
+    ]
+
+    matching_agents = [
+        a for a in all_agents
+        if skill.assigned_to_all or any(tag in (a.tags or []) for tag in (skill.assigned_tags or []))
+    ]
+
+    command = {
+        "type": "skill",
+        "operation": operation,
+        "name": skill.name,
+    }
+    if operation == "write":
+        command["content"] = skill.content
+
+    for agent in matching_agents:
+        try:
+            await push_to_relay(str(agent.id), command)
+        except Exception:
+            log.exception("comms.skill_push_failed", agent_name=agent.name, agent_id=str(agent.id))
+
+
+async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[str]) -> None:
+    """Push skill deletion to specific agents by ID."""
+    for agent_id in agent_ids:
+        try:
+            await push_to_relay(agent_id, {
+                "type": "skill",
+                "operation": "delete",
+                "name": skill_name,
+            })
+        except Exception:
+            log.exception("comms.skill_cleanup_failed", agent_id=agent_id)
 
 
 async def clear_agent_session(agent_id: str) -> bool:

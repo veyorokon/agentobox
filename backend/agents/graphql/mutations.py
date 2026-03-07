@@ -136,6 +136,42 @@ class UpdateSkillInput:
     assigned_to_all: bool | None = None
 
 
+# --- Skill push helpers (hot-reload without restart) ---
+
+async def _get_matching_agents(project_id, assigned_to_all: bool, assigned_tags: list[str] | None):
+    """Get running/idle agents matching the given assignment criteria.
+
+    Returns a set of agent IDs.
+    """
+    from agents.models import Agent, AgentStatus
+
+    all_agents = [
+        a async for a in Agent.objects.filter(
+            project_id=project_id,
+            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+        )
+    ]
+
+    matching_agents = [
+        a for a in all_agents
+        if assigned_to_all or any(tag in (a.tags or []) for tag in (assigned_tags or []))
+    ]
+
+    return {str(a.id) for a in matching_agents}
+
+
+async def _push_skill_to_agents(skill) -> None:
+    """Push skill content to all matching running agents via comms service."""
+    from agents.services.comms import push_skill_to_agents
+    await push_skill_to_agents(skill, operation="write")
+
+
+async def _push_skill_delete_to_agents(skill) -> None:
+    """Push skill deletion to all matching running agents via comms service."""
+    from agents.services.comms import push_skill_to_agents
+    await push_skill_to_agents(skill, operation="delete")
+
+
 @strawberry.type
 class AgentMutation:
     @strawberry.mutation
@@ -506,10 +542,10 @@ class AgentMutation:
             now = datetime.now(timezone.utc)
             return AgentTaskType(
                 task_id=task_id,
-                subject="",
+                title="",
                 description="",
                 status="deleted",
-                owner="",
+                assignee="",
                 active_form="",
                 blocked_by=[],
                 created_at=now,
@@ -521,10 +557,10 @@ class AgentMutation:
         )
         return AgentTaskType(
             task_id=task.task_id,
-            subject=task.subject,
+            title=task.title,
             description=task.description,
             status=task.status,
-            owner=task.owner,
+            assignee=task.assignee,
             active_form=task.active_form,
             blocked_by=task.blocked_by,
             created_at=task.created_at,
@@ -535,24 +571,25 @@ class AgentMutation:
     async def create_task(
         self,
         agent_id: ID,
-        subject: str,
-        info: strawberry.types.Info,
+        title: str,
+        description: str = "",
+        info: strawberry.types.Info = None,
     ) -> AgentTaskType:
         from agents.models import AgentTask
         from agents.services.mcp_coord import create_task as _create_task
 
         agent = await authorize_agent(info, agent_id)
-        result = await _create_task(agent, subject=subject)
+        result = await _create_task(agent, title=title, description=description)
 
         task = await AgentTask.objects.aget(
             project_id=agent.project_id, task_id=result["task_id"],
         )
         return AgentTaskType(
             task_id=task.task_id,
-            subject=task.subject,
+            title=task.title,
             description=task.description,
             status=task.status,
-            owner=task.owner,
+            assignee=task.assignee,
             active_form=task.active_form,
             blocked_by=task.blocked_by,
             created_at=task.created_at,
@@ -570,7 +607,7 @@ class AgentMutation:
         from django.db import IntegrityError
 
         try:
-            return await Skill.objects.acreate(
+            skill = await Skill.objects.acreate(
                 project_id=input.project_id,
                 name=input.name,
                 description=input.description,
@@ -581,12 +618,27 @@ class AgentMutation:
         except IntegrityError:
             raise ValueError(f"A skill named '{input.name}' already exists in this project")
 
+        # Push skill to matching running agents (hot-reload without restart)
+        await _push_skill_to_agents(skill)
+
+        return skill
+
     @strawberry.mutation
     async def update_skill(self, input: UpdateSkillInput, info: strawberry.types.Info) -> SkillType:
         from agents.models import Skill
 
         skill = await Skill.objects.select_related("project").aget(id=input.skill_id)
         await authorize_project(info, str(skill.project_id))
+
+        # Capture old assignment state before updating, to detect agents that need cleanup
+        tags_changing = input.assigned_tags is not None or input.assigned_to_all is not None
+        old_matching_agents = set()
+        if tags_changing:
+            old_matching_agents = await _get_matching_agents(
+                skill.project_id,
+                skill.assigned_to_all,
+                skill.assigned_tags,
+            )
 
         update_fields = []
         if input.name is not None:
@@ -613,6 +665,22 @@ class AgentMutation:
             except IntegrityError:
                 raise ValueError(f"A skill named '{skill.name}' already exists in this project")
 
+            # If assignment changed, cleanup agents that no longer match
+            if tags_changing:
+                new_matching_agents = await _get_matching_agents(
+                    skill.project_id,
+                    skill.assigned_to_all,
+                    skill.assigned_tags,
+                )
+                agents_to_cleanup = old_matching_agents - new_matching_agents
+
+                if agents_to_cleanup:
+                    from agents.services.comms import push_skill_delete_to_specific_agents
+                    await push_skill_delete_to_specific_agents(skill.name, agents_to_cleanup)
+
+            # Push updated skill to matching running agents (hot-reload without restart)
+            await _push_skill_to_agents(skill)
+
         return skill
 
     @strawberry.mutation
@@ -625,6 +693,11 @@ class AgentMutation:
             return False
 
         await authorize_project(info, str(skill.project_id))
+
+        # Push delete command to matching running agents BEFORE deleting from DB
+        # (need skill properties to determine which agents to notify)
+        await _push_skill_delete_to_agents(skill)
+
         await skill.adelete()
         return True
 

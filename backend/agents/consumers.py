@@ -184,8 +184,15 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         try:
             from projects.models import Project
             project = await Project.objects.aget(id=self.agent.project_id)
-            if project.theme_tokens:
-                await self.send_json({"type": "theme", "tokens": project.theme_tokens})
+
+            # If theme_tokens is empty (new project), use default theme (claude-dark)
+            tokens = project.theme_tokens
+            if not tokens:
+                from agents.services.themes import BUILTIN_THEMES
+                tokens = BUILTIN_THEMES.get("claude-dark", {})
+
+            if tokens:
+                await self.send_json({"type": "theme", "tokens": tokens})
         except Exception:  # intentional: theme push is best-effort — don't block relay connect
             log.warning("relay.theme_push_failed", agent_id=self.agent_id, exc_info=True)
 
@@ -429,8 +436,8 @@ async def _serialize_agent_for_ws(agent) -> dict:
             .exclude(status="deleted")
             .order_by("created_at")
             .values(
-                "task_id", "subject", "description", "status",
-                "owner", "active_form", "blocked_by", "created_at", "updated_at",
+                "task_id", "title", "description", "status",
+                "assignee", "active_form", "blocked_by", "created_at", "updated_at",
             )
         )
 
@@ -439,10 +446,10 @@ async def _serialize_agent_for_ws(agent) -> dict:
         {
             "__typename": "AgentTaskType",
             "taskId": t["task_id"],
-            "subject": t["subject"],
+            "title": t["title"],
             "description": t["description"],
             "status": t["status"],
-            "owner": t["owner"],
+            "assignee": t["assignee"],
             "activeForm": t["active_form"],
             "blockedBy": t["blocked_by"],
             "createdAt": t["created_at"].isoformat(),

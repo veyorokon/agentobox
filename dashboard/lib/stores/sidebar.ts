@@ -26,8 +26,8 @@ import type { ViewMode } from "@/lib/types"
 /*  └─────────────────────────────────────────────────────────────────┘ */
 /* ================================================================== */
 
-type SidebarTab = "agents" | "skills"
-type MainTab = "chat" | "agents" | "skills"
+type SidebarTab = "agents" | "skills" | "tasks"
+type MainTab = "chat" | "agents" | "skills" | "tasks"
 
 interface SidebarState {
   /* Panel visibility & sizing */
@@ -41,6 +41,7 @@ interface SidebarState {
   /* Agent card state */
   expandedAgentIds: Set<string>
   focusedAgentId: string | null
+  mutedAgentIds: Set<string> // agents with auto-expand disabled
 
   /* Search & filter — shared across desktop left-panel and mobile cards panel */
   agentSearch: string
@@ -48,6 +49,7 @@ interface SidebarState {
   skillSearch: string
   skillTagFilter: string | null
   skillsAllExpanded: boolean
+  taskSearch: string
 
   /* Global view mode — broadcast to all expanded cards */
   globalViewMode: ViewMode | null
@@ -66,14 +68,18 @@ interface SidebarActions {
   setMainTab: (tab: MainTab) => void
 
   toggleAgent: (id: string) => void
+  expandAgent: (id: string) => void
+  collapseAgent: (id: string) => void
   toggleExpandAll: (allAgentIds: string[]) => void
   setFocusedAgent: (id: string | null) => void
+  toggleMuteAgent: (id: string) => void
 
   setAgentSearch: (query: string) => void
   setAgentTagFilter: (tag: string | null) => void
   setSkillSearch: (query: string) => void
   setSkillTagFilter: (tag: string | null) => void
   toggleSkillsExpandAll: () => void
+  setTaskSearch: (query: string) => void
 
   setGlobalViewMode: (mode: ViewMode | null) => void
 
@@ -88,11 +94,13 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
   mainTab: "chat",
   expandedAgentIds: new Set(),
   focusedAgentId: null,
+  mutedAgentIds: new Set(),
   agentSearch: "",
   agentTagFilter: null,
   skillSearch: "",
   skillTagFilter: null,
   skillsAllExpanded: false,
+  taskSearch: "",
   globalViewMode: "terminal" as ViewMode,
   attentionStepIdx: 0,
   attentionExpandedFeedItemId: null,
@@ -112,6 +120,22 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
       return { expandedAgentIds: next, focusedAgentId: id }
     }),
 
+  expandAgent: (id) =>
+    set((s) => {
+      if (s.expandedAgentIds.has(id)) return {}
+      const next = new Set(s.expandedAgentIds)
+      next.add(id)
+      return { expandedAgentIds: next, focusedAgentId: id }
+    }),
+
+  collapseAgent: (id) =>
+    set((s) => {
+      if (!s.expandedAgentIds.has(id)) return {}
+      const next = new Set(s.expandedAgentIds)
+      next.delete(id)
+      return { expandedAgentIds: next }
+    }),
+
   toggleExpandAll: (allAgentIds) =>
     set((s) => {
       const allOpen = allAgentIds.every((id) => s.expandedAgentIds.has(id))
@@ -120,11 +144,20 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
 
   setFocusedAgent: (id) => set({ focusedAgentId: id }),
 
+  toggleMuteAgent: (id) =>
+    set((s) => {
+      const next = new Set(s.mutedAgentIds)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return { mutedAgentIds: next }
+    }),
+
   setAgentSearch: (query) => set({ agentSearch: query }),
   setAgentTagFilter: (tag) => set({ agentTagFilter: tag }),
   setSkillSearch: (query) => set({ skillSearch: query }),
   setSkillTagFilter: (tag) => set({ skillTagFilter: tag }),
   toggleSkillsExpandAll: () => set((s) => ({ skillsAllExpanded: !s.skillsAllExpanded })),
+  setTaskSearch: (query) => set({ taskSearch: query }),
 
   setGlobalViewMode: (mode) => set({ globalViewMode: mode }),
 

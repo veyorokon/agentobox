@@ -28,8 +28,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# --- CC-specific filesystem overlay (relay, hooks, api-key-helper) ---
+# --- Chromium for Playwright MCP ---
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+
+# --- CC-specific filesystem overlay (relay, hooks, api-key-helper, mcp-gateway) ---
 COPY rootfs/ /
 RUN chmod +x /opt/abox/relay.py \
     && chmod +x /opt/abox/hooks/*.py \
-    && chmod +x /opt/abox/api-key-helper.sh
+    && chmod +x /opt/abox/api-key-helper.sh \
+    && chmod +x /opt/abox/mcp-gateway.py

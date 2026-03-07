@@ -28,6 +28,7 @@ import { AgentCardRow } from "@/components/agent/card-row"
 import { ResizeHandle } from "@/components/layout/resize-handle"
 import { UserMenu } from "@/components/layout/user-menu"
 import { SkillsPanel } from "@/components/panels/skills-panel"
+import { TasksPanel } from "@/components/panels/tasks-panel"
 import { AgentFilterToolbar } from "@/components/shared/agent-filter-toolbar"
 import { useSelectMode } from "@/lib/hooks/use-select-mode"
 
@@ -253,7 +254,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         </button>
       </div>
 
-      {/* Panel tabs: Agents | Skills */}
+      {/* Panel tabs: Agents | Skills | Tasks */}
       <div className="h-7 px-3 flex items-center gap-1 border-b border-border-default shrink-0">
         <button
           type="button"
@@ -281,8 +282,21 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           <BookOpen className="h-3 w-3" />
           Skills
         </button>
+        <button
+          type="button"
+          onClick={() => setPanelTab("tasks")}
+          className={cn(
+            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors",
+            panelTab === "tasks"
+              ? "bg-surface-raised text-default"
+              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
+          )}
+        >
+          <CheckSquare className="h-3 w-3" />
+          Tasks
+        </button>
         <span className="flex-1" />
-        {panelTab === "agents" ? (
+        {panelTab === "agents" && (
           <>
             {/* Global view mode — switches all expanded cards at once */}
             <div className="flex items-center gap-0.5 mr-1">
@@ -322,7 +336,8 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
               )}
             </button>
           </>
-        ) : (
+        )}
+        {panelTab === "skills" && (
           <button
             type="button"
             onClick={toggleSkillsExpandAll}
@@ -339,7 +354,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
       </div>
 
       {/* Tab content */}
-      {panelTab === "agents" ? (
+      {panelTab === "agents" && (
         <>
           {/* Agent filter bar */}
           <AgentFilterToolbar
@@ -419,12 +434,12 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
               )}
             </div>
           </ScrollArea>
-
-
         </>
-      ) : (
-        <SkillsPanel />
       )}
+
+      {panelTab === "skills" && <SkillsPanel />}
+
+      {panelTab === "tasks" && <TasksPanel />}
 
     </aside>
   )

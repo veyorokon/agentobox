@@ -130,6 +130,8 @@ MCP_REGISTRY = {
     "playwright": {
         "command": "npx",
         "args": ["@playwright/mcp@latest"],
+        "port": 7001,
+        "secrets": [],
         "compat": ["debian"],
         "instructions": """
             ## Playwright
@@ -155,6 +157,8 @@ MCP_REGISTRY = {
     "computer-use": {
         "command": "node",
         "args": ["/opt/mcp-servers/computer-use/dist/main.js"],
+        "port": 7002,
+        "secrets": [],
         "compat": ["debian"],
         "instructions": """
             ## Computer Use

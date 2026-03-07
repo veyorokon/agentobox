@@ -101,11 +101,15 @@ async def upload_media(request):
 # ---------------------------------------------------------------------------
 
 # CC camelCase param names → Python snake_case
+# Also includes backward-compatible mappings for renamed fields
 _PARAM_MAP = {
     "taskId": "task_id",
     "activeForm": "active_form",
     "addBlocks": "add_blocks",
     "addBlockedBy": "add_blocked_by",
+    # Backward compatibility for field rename (subject→title, owner→assignee)
+    "subject": "title",
+    "owner": "assignee",
 }
 
 

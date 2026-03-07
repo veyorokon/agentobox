@@ -42,12 +42,12 @@ def _format_result(tool_name, payload):
         for t in payload:
             status = t.get("status", "")
             tid = t.get("id", "")
-            subject = t.get("subject", "")
-            owner = t.get("owner", "")
+            title = t.get("title", "")
+            assignee = t.get("assignee", "")
             blocked = t.get("blocked_by", [])
-            parts = [f"[{status}] {tid}: {subject}"]
-            if owner:
-                parts.append(f"owner={owner}")
+            parts = [f"[{status}] {tid}: {title}"]
+            if assignee:
+                parts.append(f"assignee={assignee}")
             if blocked:
                 parts.append(f"blockedBy={blocked}")
             lines.append(" | ".join(parts))

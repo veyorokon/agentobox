@@ -144,6 +144,43 @@ async def provision_workspace(
                 mcp_config_path,
             )
 
+    # --- MCP Gateway config (commands + ports, no secrets) ---
+    if mcp_servers and hasattr(adapter, "build_gateway_config"):
+        gateway_config = adapter.build_gateway_config(mcp_servers=mcp_servers)
+        await runtime.exec(sandbox_id, ["mkdir", "-p", "/run/mcp-gateway"], user="root")
+        await runtime.write_file(
+            sandbox_id,
+            gateway_config.encode("utf-8"),
+            "/run/mcp-gateway/config.json",
+        )
+
+        # Write per-MCP scoped secrets
+        if secret_envs:
+            for name, config in mcp_servers.items():
+                needed = config.get("secrets", [])
+                if not needed:
+                    continue
+                secret_dir = f"/run/secrets/mcp-{name}"
+                await runtime.exec(sandbox_id, ["mkdir", "-p", secret_dir], user="root")
+                for key in needed:
+                    if key in secret_envs:
+                        await runtime.write_file(
+                            sandbox_id,
+                            secret_envs[key].encode("utf-8"),
+                            f"{secret_dir}/{key}",
+                        )
+                await runtime.exec(
+                    sandbox_id, ["chmod", "-R", "0600", secret_dir], user="root",
+                )
+
+    # Prevent host .mcp.json from bleeding through bind mount
+    if workspace_path:
+        await runtime.write_file(
+            sandbox_id,
+            b'{"mcpServers": {}}',
+            "/home/agent/workspace/.mcp.json",
+        )
+
     # Write project skills that match this agent's tags
     skills_dir = paths["skills_dir"]
     await _provision_skills(runtime, sandbox_id, project, agent_tags or [], skills_dir, op_log)
@@ -405,6 +442,32 @@ async def push_secrets_to_agent(runtime: Runtime, sandbox_id: str, agent, secret
 
     # Write secrets env file for shell access (zero-restart path)
     await write_secrets_env(runtime, sandbox_id, secret_envs)
+
+    # Rewrite per-MCP scoped secrets and signal gateway to reload
+    mcp_servers = agent.mcp_servers
+    if mcp_servers and secret_envs:
+        for name, config in mcp_servers.items():
+            needed = config.get("secrets", [])
+            if not needed:
+                continue
+            secret_dir = f"/run/secrets/mcp-{name}"
+            await runtime.exec(sandbox_id, ["mkdir", "-p", secret_dir], user="root")
+            for key in needed:
+                if key in secret_envs:
+                    await runtime.write_file(
+                        sandbox_id,
+                        secret_envs[key].encode("utf-8"),
+                        f"{secret_dir}/{key}",
+                    )
+            await runtime.exec(
+                sandbox_id, ["chmod", "-R", "0600", secret_dir], user="root",
+            )
+        # Signal gateway to reload secrets
+        await runtime.exec(
+            sandbox_id,
+            ["pkill", "-HUP", "-f", "mcp-gateway.py"],
+            user="root",
+        )
 
     log.info(
         "lifecycle.secrets_pushed",

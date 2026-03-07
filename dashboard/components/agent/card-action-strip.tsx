@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Shield, FileText, AlertTriangle, RotateCcw, RefreshCw } from "lucide-react"
+import { Shield, FileText, AlertTriangle, RotateCcw, RefreshCw, BookOpen, X } from "lucide-react"
 import type { CardActionItem } from "@/lib/types"
 import { ActionButtonPair } from "@/components/feed/action-button-pair"
 import { StepperNav } from "@/components/shared/stepper-nav"
@@ -12,6 +12,8 @@ interface CardActionStripProps {
   onResolvePlan: (id: string, verdict: string) => void
   onRestart?: () => void
   onRedeploy?: () => void
+  onDismissSkill?: (skillId: string) => void
+  onViewSkill?: (skillId: string) => void
 }
 
 export function CardActionStrip({
@@ -20,6 +22,8 @@ export function CardActionStrip({
   onResolvePlan,
   onRestart,
   onRedeploy,
+  onDismissSkill,
+  onViewSkill,
 }: CardActionStripProps) {
   const [stepIdx, setStepIdx] = useState(0)
 
@@ -94,6 +98,37 @@ export function CardActionStrip({
                 >
                   <RefreshCw className="h-2.5 w-2.5" />
                   Redeploy
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {current.kind === "new-skill" && (
+          <>
+            <BookOpen className="h-3 w-3 text-accent shrink-0" />
+            <span className="text-[11px] text-accent font-medium truncate flex-1 min-w-0">
+              New skill available: {current.skillName}
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onViewSkill && (
+                <button
+                  type="button"
+                  onClick={() => onViewSkill(current.skillId)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-accent border border-accent/30 hover:bg-accent/10 transition-colors"
+                >
+                  <BookOpen className="h-2.5 w-2.5" />
+                  View
+                </button>
+              )}
+              {onDismissSkill && (
+                <button
+                  type="button"
+                  onClick={() => onDismissSkill(current.skillId)}
+                  className="inline-flex items-center justify-center p-0.5 rounded text-accent/60 hover:text-accent hover:bg-accent/10 transition-colors"
+                  title="Dismiss"
+                >
+                  <X className="h-3 w-3" />
                 </button>
               )}
             </div>

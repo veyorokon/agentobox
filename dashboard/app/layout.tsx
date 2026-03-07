@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { GraphQLProvider } from "@/lib/graphql/provider"
 import { ThemeProvider } from "@/components/theme-provider"
+import { ToastContainer } from "@/components/ui/toast-container"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -36,7 +37,10 @@ export default function RootLayout({
       </head>
       <body className="font-ui">
         <ThemeProvider>
-          <GraphQLProvider>{children}</GraphQLProvider>
+          <GraphQLProvider>
+            {children}
+            <ToastContainer />
+          </GraphQLProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -683,27 +683,44 @@ class ClaudeCodeAdapter:
         secret_envs: dict[str, str] | None = None,
         coord_server: dict | None = None,
     ) -> str:
-        """Build .mcp.json content with secrets injected into every server's env block.
+        """Build .mcp.json content with HTTP-only entries (no secrets, no commands).
 
         CC-specific: Claude Code reads .mcp.json for MCP server configs.
-        The format is {"mcpServers": {name: {command, args, env}}}.
+        MCP servers are managed by the mcp-gateway service, which bridges
+        stdio<>HTTP on localhost ports. CC connects via HTTP — never sees
+        secrets or subprocess commands.
 
-        All project secrets are merged flat and injected into every MCP server's
-        env block. MCP servers ignore keys they don't recognize, so extra keys
-        are harmless. This avoids needing per-server secret routing.
+        secret_envs is accepted for signature compatibility but ignored —
+        secrets are delivered to per-MCP dirs by provisioning, read by the gateway.
         """
         servers = {}
         if mcp_servers:
             for name, config in mcp_servers.items():
-                entry = {"command": config["command"], "args": config.get("args", [])}
-                if secret_envs:
-                    entry["env"] = dict(secret_envs)
-                servers[name] = entry
+                servers[name] = {
+                    "type": "http",
+                    "url": f"http://localhost:{config['port']}",
+                }
 
         if coord_server:
             servers["team"] = coord_server
 
         return json.dumps({"mcpServers": servers}, indent=2)
+
+    def build_gateway_config(self, *, mcp_servers: dict | None = None) -> str:
+        """Build /run/mcp-gateway/config.json — commands + ports, no secrets.
+
+        The gateway reads this to know which MCP subprocesses to manage.
+        Secrets are delivered separately to /run/secrets/mcp-<name>/ dirs.
+        """
+        servers = {}
+        if mcp_servers:
+            for name, config in mcp_servers.items():
+                servers[name] = {
+                    "command": config["command"],
+                    "args": config.get("args", []),
+                    "port": config["port"],
+                }
+        return json.dumps({"servers": servers}, indent=2)
 
     def build_api_key_files(self, api_key: str) -> list[dict]:
         """File specs for API key delivery via the localhost proxy.
@@ -843,6 +860,8 @@ class ClaudeCodeAdapter:
             resolved[name] = {
                 "command": entry["command"],
                 "args": entry["args"],
+                "port": entry["port"],
+                "secrets": entry.get("secrets", []),
             }
         return resolved
 

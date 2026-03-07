@@ -60,10 +60,10 @@ export function useCreateTask() {
   const [mutate] = useMutation(CREATE_TASK)
 
   return useCallback(
-    (agentId: string, subject: string) => {
-      log("mutation.createTask", { agentId, subject })
+    (agentId: string, title: string, description: string = "") => {
+      log("mutation.createTask", { agentId, title, description })
       return mutate({
-        variables: { agentId, subject },
+        variables: { agentId, title, description },
         refetchQueries: [{ query: GET_AGENT_TASKS, variables: { agentId } }],
       }).catch((err) => {
         log("mutation.error", { mutation: "createTask", agentId, error: err.message })

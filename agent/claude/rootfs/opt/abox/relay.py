@@ -618,6 +618,13 @@ class SDKRelay:
                     log.info("relay.mode_changed", extra={"from": our_mode, "to": sdk_mode, "applied": "deferred"})
                     self.next_permission_mode = sdk_mode
 
+        elif cmd_type == "skill":
+            # Hot-push skill content to .claude/skills/<name>/SKILL.md
+            operation = cmd.get("operation", "")
+            name = cmd.get("name", "")
+            if operation and name:
+                await self._apply_skill(operation, name, cmd.get("content", ""))
+
     # ── Theme application ──
 
     async def _apply_theme(self, tokens: dict):
@@ -727,6 +734,46 @@ class SDKRelay:
         self._theme_reload_task = asyncio.create_task(
             self._debounced_firefox_css_reload(new_theme_uri)
         )
+
+    # ── Skill hot-push ──
+
+    async def _apply_skill(self, operation: str, name: str, content: str):
+        """Write or delete skill files in .claude/skills/<name>/SKILL.md.
+
+        Hot-pushes skills to running agents without restart. Mirrors the
+        provisioning pattern in provision.py _provision_skills().
+
+        Args:
+            operation: "write" or "delete"
+            name: Skill name (sanitized on backend, but we sanitize again for safety)
+            content: Skill markdown content (empty for delete operations)
+        """
+        from pathlib import Path
+        import shutil
+
+        # Sanitize skill name to prevent path traversal
+        safe_name = name.replace("/", "_").replace("..", "_").strip(".")
+        if not safe_name:
+            log.warning("relay.skill_invalid_name", extra={"name": name})
+            return
+
+        skills_base = Path("/home/agent/workspace/.claude/skills")
+        skill_dir = skills_base / safe_name
+
+        if operation == "write":
+            # Create skill directory and write SKILL.md
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            skill_file = skill_dir / "SKILL.md"
+            skill_file.write_text(content, encoding="utf-8")
+            log.info("relay.skill_written", extra={"name": safe_name, "path": str(skill_file)})
+
+        elif operation == "delete":
+            # Remove skill directory if it exists
+            if skill_dir.exists():
+                shutil.rmtree(skill_dir)
+                log.info("relay.skill_deleted", extra={"name": safe_name, "path": str(skill_dir)})
+            else:
+                log.info("relay.skill_delete_noop", extra={"name": safe_name, "reason": "not_found"})
 
     async def _debounced_firefox_css_reload(self, new_uri: str):
         """Wait for theme pushes to settle, then hot-reload CSS via Marionette.

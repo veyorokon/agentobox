@@ -35,7 +35,10 @@ async def _authenticate():
     """
     from agents.services.auth_relay import get_relay_agent
 
-    headers = get_http_headers() or {}
+    # IMPORTANT: include={"authorization"} is required because get_http_headers()
+    # excludes the authorization header by default to prevent accidental forwarding.
+    # We explicitly need it for agent authentication.
+    headers = get_http_headers(include={"authorization"}) or {}
     auth_header = headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         raise ToolError("Missing or invalid Authorization header")
@@ -192,11 +195,11 @@ async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
 # Task tools — matches CC's TaskCreate/TaskUpdate/TaskGet/TaskList
 # ---------------------------------------------------------------------------
 
-async def create_task(agent, *, subject: str, description: str = "", active_form: str = "", metadata: dict | None = None, owner: str | None = None) -> dict:
+async def create_task(agent, *, title: str, description: str = "", active_form: str = "", metadata: dict | None = None, assignee: str | None = None) -> dict:
     """Core task_create logic. Called by MCP tool and hook bridge.
 
     Args:
-        owner: Agent name to assign. None = auto-assign to creator.
+        assignee: Agent name to assign. None = auto-assign to creator.
                Empty string = leave unassigned.
     """
     from agents.models import AgentTask
@@ -205,11 +208,11 @@ async def create_task(agent, *, subject: str, description: str = "", active_form
         agent=agent,
         project_id=agent.project_id,
         task_id=uuid.uuid4().hex[:16],
-        subject=subject[:500],
+        title=title[:500],
         description=description,
         active_form=active_form,
         metadata=metadata or {},
-        owner=agent.name if owner is None else owner,
+        assignee=agent.name if assignee is None else assignee,
         status="pending",
     )
 
@@ -221,7 +224,7 @@ async def create_task(agent, *, subject: str, description: str = "", active_form
             agent_record=agent,
             type="task",
             agent_name=agent.name,
-            text=subject[:200],
+            text=title[:200],
             from_value="",
             to_value="pending",
         )
@@ -230,13 +233,13 @@ async def create_task(agent, *, subject: str, description: str = "", active_form
     except Exception:  # intentional: feed/broadcast is secondary — task creation already succeeded
         log.warning("mcp.task_create_broadcast_failed", agent_name=agent.name, exc_info=True)
 
-    log.info("mcp.task_created", agent_name=agent.name, subject=subject[:80])
-    return {"task_id": task.task_id, "subject": task.subject}
+    log.info("mcp.task_created", agent_name=agent.name, title=title[:80])
+    return {"task_id": task.task_id, "title": task.title}
 
 
 @mcp.tool
 async def task_create(
-    subject: str,
+    title: str,
     description: str = "",
     active_form: str = "",
     metadata: dict | None = None,
@@ -244,14 +247,14 @@ async def task_create(
     """Create a new task for the team.
 
     Args:
-        subject: Brief task title in imperative form (e.g. "Fix auth bug").
+        title: Brief task title in imperative form (e.g. "Fix auth bug").
         description: Detailed description of what needs to be done.
         active_form: Present continuous form shown in spinner when in_progress
                      (e.g. "Fixing auth bug").
         metadata: Arbitrary metadata to attach to the task.
     """
     agent = await _authenticate()
-    return await create_task(agent, subject=subject, description=description, active_form=active_form, metadata=metadata)
+    return await create_task(agent, title=title, description=description, active_form=active_form, metadata=metadata)
 
 
 async def update_task(
@@ -259,9 +262,9 @@ async def update_task(
     *,
     task_id: str,
     status: str = "",
-    subject: str = "",
+    title: str = "",
     description: str = "",
-    owner: str = "",
+    assignee: str = "",
     active_form: str = "",
     add_blocks: list[str] | None = None,
     add_blocked_by: list[str] | None = None,
@@ -293,17 +296,17 @@ async def update_task(
         task.status = status
         update_fields.append("status")
 
-    if subject:
-        task.subject = subject[:500]
-        update_fields.append("subject")
+    if title:
+        task.title = title[:500]
+        update_fields.append("title")
 
     if description:
         task.description = description
         update_fields.append("description")
 
-    if owner:
-        task.owner = owner
-        update_fields.append("owner")
+    if assignee:
+        task.assignee = assignee
+        update_fields.append("assignee")
 
     if active_form:
         task.active_form = active_form
@@ -341,13 +344,13 @@ async def update_task(
                 agent_record=agent,
                 type="task",
                 agent_name=agent.name,
-                text=task.subject[:200],
+                text=task.title[:200],
                 from_value=old_status,
                 to_value=task.status,
-                target=task.owner or "",
+                target=task.assignee or "",
             )
 
-        if "status" in update_fields or "owner" in update_fields:
+        if "status" in update_fields or "assignee" in update_fields:
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(agent)
     except Exception:  # intentional: feed/broadcast is secondary — task update already committed
@@ -361,9 +364,9 @@ async def update_task(
 async def task_update(
     task_id: str,
     status: str = "",
-    subject: str = "",
+    title: str = "",
     description: str = "",
-    owner: str = "",
+    assignee: str = "",
     active_form: str = "",
     add_blocks: list[str] | None = None,
     add_blocked_by: list[str] | None = None,
@@ -374,9 +377,9 @@ async def task_update(
     Args:
         task_id: The ID of the task to update.
         status: New status — "pending", "in_progress", "completed", or "deleted".
-        subject: New task title.
+        title: New task title.
         description: New description.
-        owner: New owner (agent name).
+        assignee: New assignee (agent name).
         active_form: Present continuous form for spinner.
         add_blocks: Task IDs that this task blocks (appended).
         add_blocked_by: Task IDs that block this task (appended).
@@ -384,8 +387,8 @@ async def task_update(
     """
     agent = await _authenticate()
     return await update_task(
-        agent, task_id=task_id, status=status, subject=subject,
-        description=description, owner=owner, active_form=active_form,
+        agent, task_id=task_id, status=status, title=title,
+        description=description, assignee=assignee, active_form=active_form,
         add_blocks=add_blocks, add_blocked_by=add_blocked_by, metadata=metadata,
     )
 
@@ -403,10 +406,10 @@ async def get_task(agent, *, task_id: str) -> dict:
 
     return {
         "task_id": task.task_id,
-        "subject": task.subject,
+        "title": task.title,
         "description": task.description,
         "status": task.status,
-        "owner": task.owner,
+        "assignee": task.assignee,
         "active_form": task.active_form,
         "metadata": task.metadata,
         "blocks": task.blocks,
@@ -432,9 +435,9 @@ async def list_tasks(agent) -> list[dict]:
     tasks = [
         {
             "id": t.task_id,
-            "subject": t.subject,
+            "title": t.title,
             "status": t.status,
-            "owner": t.owner,
+            "assignee": t.assignee,
             "active_form": t.active_form,
             "blocked_by": t.blocked_by,
         }

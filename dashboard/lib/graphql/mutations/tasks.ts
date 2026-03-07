@@ -11,13 +11,13 @@ export const UPDATE_TASK = gql`
 `
 
 export const CREATE_TASK = gql`
-  mutation CreateTask($agentId: ID!, $subject: String!) {
-    createTask(agentId: $agentId, subject: $subject) {
+  mutation CreateTask($agentId: ID!, $title: String!, $description: String!) {
+    createTask(agentId: $agentId, title: $title, description: $description) {
       taskId
-      subject
+      title
       description
       status
-      owner
+      assignee
       activeForm
       blockedBy
       createdAt

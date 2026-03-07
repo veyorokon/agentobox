@@ -410,10 +410,10 @@ class AgentTask(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="tasks")
     project = models.ForeignKey("projects.Project", on_delete=models.CASCADE)
     task_id = models.CharField(max_length=64)  # Claude's internal task ID
-    subject = models.CharField(max_length=500)
+    title = models.CharField(max_length=500)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=32, default="pending")
-    owner = models.CharField(max_length=255, blank=True)
+    assignee = models.CharField(max_length=255, blank=True)
     active_form = models.TextField(blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
     blocks = models.JSONField(default=list, blank=True)       # task_ids this blocks
@@ -430,7 +430,7 @@ class AgentTask(models.Model):
         ordering = ["created_at"]
 
     def __str__(self):
-        return f"{self.subject[:50]} ({self.status}) -> {self.agent.name}"
+        return f"{self.title[:50]} ({self.status}) -> {self.agent.name}"
 
 
 class TeamFeedItem(models.Model):

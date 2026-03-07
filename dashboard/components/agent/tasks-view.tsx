@@ -18,6 +18,8 @@ export function AgentTasksView({ agent }: AgentTasksViewProps) {
   const createTask = useCreateTask()
   const [filter, setFilter] = useState<Filter>("all")
   const [newTaskText, setNewTaskText] = useState("")
+  const [newTaskDescription, setNewTaskDescription] = useState("")
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
 
   const filteredTasks = useMemo(() => {
     switch (filter) {
@@ -41,8 +43,9 @@ export function AgentTasksView({ agent }: AgentTasksViewProps) {
   const handleCreate = () => {
     const text = newTaskText.trim()
     if (!text) return
-    createTask(agent.id, text)
+    createTask(agent.id, text, newTaskDescription.trim())
     setNewTaskText("")
+    setNewTaskDescription("")
   }
 
   const FILTERS: { id: Filter; label: string }[] = [
@@ -90,11 +93,12 @@ export function AgentTasksView({ agent }: AgentTasksViewProps) {
             task={task}
             agentName={agent.name}
             onToggle={() => handleToggle(task)}
+            isExpanded={expandedTaskId === task.taskId}
+            onToggleExpand={() => setExpandedTaskId(expandedTaskId === task.taskId ? null : task.taskId)}
           />
         ))}
         {filteredTasks.length === 0 && !loading && (
-          <div className="py-6 text-center">
-            <CheckSquare className="h-4 w-4 text-muted/20 mx-auto mb-1" />
+          <div className="py-4 text-center">
             <p className="text-[10px] text-muted/50">
               {filter === "all" ? "No tasks yet" : `No ${filter} tasks`}
             </p>
@@ -102,8 +106,8 @@ export function AgentTasksView({ agent }: AgentTasksViewProps) {
         )}
       </div>
 
-      {/* Add input */}
-      <div className="px-2.5 py-1 border-t border-border-subtle shrink-0">
+      {/* Add task form */}
+      <div className="px-2.5 py-1.5 border-t border-border-subtle shrink-0 space-y-1">
         <input
           type="text"
           value={newTaskText}
@@ -117,6 +121,19 @@ export function AgentTasksView({ agent }: AgentTasksViewProps) {
           placeholder="+ Add task..."
           className="w-full bg-transparent border-none outline-none text-[10px] text-default placeholder:text-muted/30 font-mono py-0.5"
         />
+        <textarea
+          value={newTaskDescription}
+          onChange={(e) => setNewTaskDescription(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.metaKey) {
+              e.preventDefault()
+              handleCreate()
+            }
+          }}
+          placeholder="Description (optional)..."
+          rows={2}
+          className="w-full bg-surface-sunken/40 border border-border-subtle rounded px-2 py-1 text-[10px] text-default placeholder:text-muted/40 outline-none focus:border-accent/40 resize-none"
+        />
       </div>
     </div>
   )
@@ -126,65 +143,92 @@ function TaskRow({
   task,
   agentName,
   onToggle,
+  isExpanded,
+  onToggleExpand,
 }: {
   task: AgentTask
   agentName: string
   onToggle: () => void
+  isExpanded: boolean
+  onToggleExpand: () => void
 }) {
   const isBlocked = task.blockedBy.length > 0
   const isCompleted = task.status === "completed"
   const isInProgress = task.status === "in_progress"
+  const hasDescription = task.description && task.description.trim().length > 0
 
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      disabled={isBlocked}
-      className={cn(
-        "w-full flex items-center gap-1.5 px-2.5 py-1 text-left transition-colors hover:bg-surface-raised/30",
-        isInProgress && "border-l-2 border-accent",
-        isCompleted && "opacity-50",
-        isBlocked && "opacity-40 cursor-not-allowed",
-      )}
-      style={{ height: 22 }}
-    >
-      {/* Checkbox / lock */}
-      {isBlocked ? (
-        <Lock size={10} className="text-muted/30 shrink-0" />
-      ) : isCompleted ? (
-        <CheckSquare size={10} className="text-success/60 shrink-0" />
-      ) : (
-        <Square size={10} className="text-muted/50 shrink-0" />
-      )}
-
-      {/* Subject */}
-      <span
+    <div className={cn(
+      "w-full transition-colors",
+      isInProgress && "border-l-2 border-accent",
+      isCompleted && "opacity-50",
+    )}>
+      <div
         className={cn(
-          "text-[10px] font-mono truncate flex-1 min-w-0",
-          isCompleted && "line-through text-muted",
-          !isCompleted && "text-default",
+          "w-full flex items-center gap-1.5 px-2.5 py-1 transition-colors",
+          hasDescription && "cursor-pointer hover:bg-surface-raised/30",
+          isBlocked && "opacity-40",
         )}
+        onClick={hasDescription ? onToggleExpand : undefined}
+        style={{ height: 22 }}
       >
-        {task.subject}
-      </span>
+        {/* Checkbox / lock */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (!isBlocked) onToggle()
+          }}
+          disabled={isBlocked}
+          className="shrink-0"
+        >
+          {isBlocked ? (
+            <Lock size={10} className="text-muted/30" />
+          ) : isCompleted ? (
+            <CheckSquare size={10} className="text-success/60 hover:text-success/80 transition-colors" />
+          ) : (
+            <Square size={10} className="text-muted/50 hover:text-muted/70 transition-colors" />
+          )}
+        </button>
 
-      {/* Owner pill — only if different from this agent */}
-      {task.owner && task.owner !== agentName && (
-        <span className="text-[8px] px-1 rounded bg-surface-sunken/60 text-muted font-mono shrink-0">
-          {task.owner}
+        {/* Title */}
+        <span
+          className={cn(
+            "text-[10px] font-mono truncate flex-1 min-w-0",
+            isCompleted && "line-through text-muted",
+            !isCompleted && "text-default",
+          )}
+        >
+          {task.title}
         </span>
-      )}
 
-      {/* Status dot */}
-      <Circle
-        size={5}
-        className={cn(
-          "shrink-0 fill-current",
-          isInProgress && "text-accent animate-breathe",
-          task.status === "pending" && "text-muted/30",
-          isCompleted && "text-success/40",
+        {/* Assignee pill — only if different from this agent */}
+        {task.assignee && task.assignee !== agentName && (
+          <span className="text-[8px] px-1 rounded bg-surface-sunken/60 text-muted font-mono shrink-0">
+            {task.assignee}
+          </span>
         )}
-      />
-    </button>
+
+        {/* Status dot */}
+        <Circle
+          size={5}
+          className={cn(
+            "shrink-0 fill-current",
+            isInProgress && "text-accent animate-breathe",
+            task.status === "pending" && "text-muted/30",
+            isCompleted && "text-success/40",
+          )}
+        />
+      </div>
+
+      {/* Description — shown when expanded */}
+      {isExpanded && hasDescription && (
+        <div className="px-2.5 pb-1.5 pt-0">
+          <p className="text-[9px] text-muted/70 leading-relaxed whitespace-pre-wrap">
+            {task.description}
+          </p>
+        </div>
+      )}
+    </div>
   )
 }
