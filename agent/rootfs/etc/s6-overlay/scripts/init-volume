@@ -16,14 +16,24 @@ AGENT_VOL="/vol/agents/${AGENT_ID}"
 # All s6 services depend on init-volume, so nothing starts until this gate passes.
 while [ ! -d "${AGENT_VOL}/_abox" ]; do sleep 0.5; done
 
-# Create symlinks: agent volume subdir → container filesystem paths
-ln -sfn "${AGENT_VOL}/home/agent/.claude"       /home/agent/.claude
-ln -sfn "${AGENT_VOL}/home/agent/.relay_env"    /home/agent/.relay_env
-ln -sfn "${AGENT_VOL}/home/agent/workspace"     /home/agent/workspace
-ln -sfn "${AGENT_VOL}/tmp/abox-theme"           /tmp/abox-theme
-ln -sfn "${AGENT_VOL}/run/secrets"              /run/secrets
-ln -sfn "${AGENT_VOL}/run/mcp-gateway"          /run/mcp-gateway
-ln -sfn "${AGENT_VOL}/mnt/abox-state"           /mnt/abox-state
+# Create symlinks: mirror volume structure into container filesystem.
+# Top-level directories that map 1:1 to container paths:
+for dir in tmp/abox-theme run/secrets run/mcp-gateway mnt/abox-state; do
+    [ -e "${AGENT_VOL}/${dir}" ] && ln -sfn "${AGENT_VOL}/${dir}" "/${dir}"
+done
+
+# Everything in /home/agent/ — files and dirs (workspace, .claude, .mcp.json, etc.)
+for entry in "${AGENT_VOL}"/home/agent/*  "${AGENT_VOL}"/home/agent/.*; do
+    name="$(basename "$entry")"
+    [ "$name" = "." ] || [ "$name" = ".." ] && continue
+    [ -e "$entry" ] && ln -sfn "$entry" "/home/agent/${name}"
+done
+
+# /opt/abox/ files (api-key-helper.sh, etc.)
+for entry in "${AGENT_VOL}"/opt/abox/*; do
+    name="$(basename "$entry")"
+    [ -e "$entry" ] && ln -sfn "$entry" "/opt/abox/${name}"
+done
 
 # Run theme converter on initial tokens if present
 if [ -f "${AGENT_VOL}/tmp/abox-theme/tokens.json" ]; then

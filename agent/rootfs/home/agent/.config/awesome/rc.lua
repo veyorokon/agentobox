@@ -108,7 +108,7 @@ if awesome.startup_errors then
 end
 
 -- ---------------------------------------------------------------------------
--- Dynamic theme: poll /tmp/abox-theme.lua for dashboard-pushed colors
+-- Dynamic theme: poll /tmp/abox-theme/awesome.lua for dashboard-pushed colors
 -- ---------------------------------------------------------------------------
 
 function read_file(path)
@@ -212,10 +212,10 @@ end
 _abox_last_theme = nil
 
 function _abox_check_theme()
-    local content = read_file("/tmp/abox-theme.lua")
+    local content = read_file("/tmp/abox-theme/awesome.lua")
     if not content or content == _abox_last_theme then return end
     _abox_last_theme = content
-    local ok, tokens = pcall(dofile, "/tmp/abox-theme.lua")
+    local ok, tokens = pcall(dofile, "/tmp/abox-theme/awesome.lua")
     if ok and type(tokens) == "table" then
         apply_theme(tokens)
     end

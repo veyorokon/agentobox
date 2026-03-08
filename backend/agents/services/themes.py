@@ -5,7 +5,7 @@ Each theme maps CSS custom property names (without --p- prefix) to hex values.
 Used by:
   - Backend: push theme tokens to agents on connect / theme change
   - Dashboard: VALID_THEME_KEYS validation derives from these keys
-  - Agents: AwesomeWM + Firefox theming via /tmp/abox-theme.{lua,json}
+  - Agents: AwesomeWM + Firefox theming via /tmp/abox-theme/ (volume-backed)
 
 To add a new theme:
   1. Create dashboard/app/themes/<name>.css with [data-theme][data-mode] selector

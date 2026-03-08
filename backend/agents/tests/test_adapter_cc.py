@@ -555,7 +555,7 @@ class TestBuildApiKeyFiles:
 
         # Second file: helper script (echoes placeholder, NOT real key)
         helper = files[1]
-        assert helper["path"] == "/opt/abox/api-key-helper.sh"
+        assert helper["path"] == "/run/secrets/api-key-helper.sh"
         assert "echo" in helper["content"]
         assert "sk-ant-proxy00-placeholder" in helper["content"]
         # Must NOT contain the real key

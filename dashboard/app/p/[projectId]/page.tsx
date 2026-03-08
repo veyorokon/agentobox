@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react"
 import { useParams } from "next/navigation"
 import {
+  CheckSquare,
   ChevronRight,
   KeyRound,
   MessageSquare,
@@ -22,11 +23,13 @@ import { CreateAgentModal } from "@/components/agent/create-agent-modal"
 import { AgentLeftPanel } from "@/components/panels/left-panel"
 import { AgentCardsPanel } from "@/components/panels/agent-cards-panel"
 import { SkillsPanel } from "@/components/panels/skills-panel"
+import { TasksPanel } from "@/components/panels/tasks-panel"
 import { TabBar } from "@/components/layout/tab-bar"
 import { AttentionBar } from "@/components/attention/attention-bar"
 import { TeamFeed } from "@/components/feed/team-feed"
 import { ComposerBar } from "@/components/composer/composer-bar"
 import { UserMenu } from "@/components/layout/user-menu"
+import { ThemePicker } from "@/components/layout/theme-picker"
 
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
@@ -67,6 +70,7 @@ export default function ProjectPage() {
     { id: "chat", label: "Chat", icon: <MessageSquare className="h-3.5 w-3.5" /> },
     { id: "agents", label: "Agents", icon: <Users className="h-3.5 w-3.5" /> },
     { id: "skills", label: "Skills", icon: <BookOpen className="h-3.5 w-3.5" /> },
+    { id: "tasks", label: "Tasks", icon: <CheckSquare className="h-3.5 w-3.5" /> },
   ]
 
   // ── Render ──────────────────────────────────────────────────────
@@ -118,6 +122,7 @@ export default function ProjectPage() {
             <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1.5">
               {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
             </span>
+            <ThemePicker className="shrink-0" />
             <UserMenu>
               <div
                 className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
@@ -134,7 +139,7 @@ export default function ProjectPage() {
           <TabBar
             tabs={topTabs}
             activeTab={mainTab}
-            onTabChange={(id) => setMainTab(id as "chat" | "agents" | "skills")}
+            onTabChange={(id) => setMainTab(id as "chat" | "agents" | "skills" | "tasks")}
             badges={pendingCount > 0 ? { chat: pendingCount } : undefined}
           />
         )}
@@ -160,6 +165,14 @@ export default function ProjectPage() {
         {showTopTabs && mainTab === "skills" && (
           <div className="flex-1 min-w-0 bg-surface overflow-hidden flex flex-col">
             <SkillsPanel />
+            <AttentionBar />
+          </div>
+        )}
+
+        {/* Top-tab content: tasks (mobile) */}
+        {showTopTabs && mainTab === "tasks" && (
+          <div className="flex-1 min-w-0 bg-surface overflow-hidden flex flex-col">
+            <TasksPanel />
             <AttentionBar />
           </div>
         )}

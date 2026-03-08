@@ -27,6 +27,7 @@ import { AgentAvatar } from "@/components/agent/avatar"
 import { AgentCardRow } from "@/components/agent/card-row"
 import { ResizeHandle } from "@/components/layout/resize-handle"
 import { UserMenu } from "@/components/layout/user-menu"
+import { ThemePicker } from "@/components/layout/theme-picker"
 import { SkillsPanel } from "@/components/panels/skills-panel"
 import { TasksPanel } from "@/components/panels/tasks-panel"
 import { AgentFilterToolbar } from "@/components/shared/agent-filter-toolbar"
@@ -236,6 +237,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         >
           <KeyRound className="h-3.5 w-3.5" />
         </button>
+        <ThemePicker className="shrink-0" />
         <UserMenu className="shrink-0">
           <div
             className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
@@ -255,47 +257,30 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
       </div>
 
       {/* Panel tabs: Agents | Skills | Tasks */}
-      <div className="h-7 px-3 flex items-center gap-1 border-b border-border-default shrink-0">
-        <button
-          type="button"
-          onClick={() => setPanelTab("agents")}
-          className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors",
-            panelTab === "agents"
-              ? "bg-surface-raised text-default"
-              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
-          )}
-        >
-          <Users className="h-3 w-3" />
-          Agents
-        </button>
-        <button
-          type="button"
-          onClick={() => setPanelTab("skills")}
-          className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors",
-            panelTab === "skills"
-              ? "bg-surface-raised text-default"
-              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
-          )}
-        >
-          <BookOpen className="h-3 w-3" />
-          Skills
-        </button>
-        <button
-          type="button"
-          onClick={() => setPanelTab("tasks")}
-          className={cn(
-            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors",
-            panelTab === "tasks"
-              ? "bg-surface-raised text-default"
-              : "text-muted hover:text-secondary hover:bg-surface-raised/30",
-          )}
-        >
-          <CheckSquare className="h-3 w-3" />
-          Tasks
-        </button>
-        <span className="flex-1" />
+      <div className="h-7 px-3 flex items-center gap-1 border-b border-border-default shrink-0 min-w-0">
+        <div className="flex items-center gap-0.5 shrink-0">
+          {([
+            { id: "agents" as const, icon: Users, label: "Agents" },
+            { id: "skills" as const, icon: BookOpen, label: "Skills" },
+            { id: "tasks" as const, icon: CheckSquare, label: "Tasks" },
+          ]).map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setPanelTab(id)}
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0",
+                panelTab === id
+                  ? "bg-surface-raised text-default"
+                  : "text-muted hover:text-secondary hover:bg-surface-raised/30",
+              )}
+            >
+              <Icon className="h-3 w-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="flex-1 min-w-0" />
         {panelTab === "agents" && (
           <>
             {/* Global view mode — switches all expanded cards at once */}
@@ -400,7 +385,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           )}
 
           {/* Agent cards */}
-          <ScrollArea className="flex-1 overflow-y-auto">
+          <ScrollArea className="flex-1 min-h-0 overflow-y-auto">
             <div className="p-3 space-y-2">
               {loading && agents.length === 0 && (
                 <div className="space-y-2">

@@ -115,6 +115,7 @@ from abox_logging import setup as _setup_logging  # noqa: E402
 from relay_common import (  # noqa: E402
     AGENT_ID,
     CALLBACK_URL,
+    VOL_ROOT,
     EventSender,
     FatalWSClose,
     Redactor,
@@ -620,7 +621,7 @@ class SDKRelay:
         import subprocess as _sp
         from pathlib import Path
 
-        tokens_path = Path("/vol/tmp/abox-theme/tokens.json")
+        tokens_path = Path(f"{VOL_ROOT}/tmp/abox-theme/tokens.json")
         if not tokens_path.exists():
             return
         tokens = json.loads(tokens_path.read_text())
@@ -659,7 +660,7 @@ class SDKRelay:
                 log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e)})
 
         # Debounced Firefox CSS reload
-        css_content = Path("/vol/tmp/abox-theme/userChrome.css").read_text()
+        css_content = Path(f"{VOL_ROOT}/tmp/abox-theme/userChrome.css").read_text()
         css_hash = hashlib.md5(css_content.encode()).hexdigest()[:8]
         versioned_css_path = f"/tmp/abox-theme-{css_hash}.css"
         Path(versioned_css_path).write_text(css_content)
@@ -674,7 +675,7 @@ class SDKRelay:
     async def _on_state_changed(self):
         """state.json changed — apply mode changes."""
         from pathlib import Path
-        state = json.loads(Path("/vol/_abox/state.json").read_text())
+        state = json.loads(Path(f"{VOL_ROOT}/_abox/state.json").read_text())
         mode = state.get("mode", "")
         if mode:
             sdk_mode = _translate_mode(mode)
@@ -707,10 +708,17 @@ class SDKRelay:
             log.warning("relay.gateway_reload_failed", extra={"error": str(e)})
 
     async def _on_inbox_changed(self):
-        """New messages in inbox — read and send to SDK."""
+        """New messages in inbox — read and send to SDK.
+
+        When the SDK client is active, messages are sent immediately via
+        _handle_command. When idle (client is None), the first message is
+        stored as _pending_input so the idle loop breaks and respawns the
+        SDK. Remaining messages stay in the inbox (pos not advanced past
+        them) and will be consumed on the next poke or session start.
+        """
         from pathlib import Path
-        pos_path = Path("/vol/_abox/inbox.pos")
-        inbox_path = Path("/vol/_abox/inbox.jsonl")
+        pos_path = Path(f"{VOL_ROOT}/_abox/inbox.pos")
+        inbox_path = Path(f"{VOL_ROOT}/_abox/inbox.jsonl")
         pos = int(pos_path.read_text()) if pos_path.exists() else 0
         with open(inbox_path) as f:
             f.seek(pos)
@@ -722,15 +730,24 @@ class SDKRelay:
                 if msg.get("type") == "input":
                     payload = msg.get("payload")
                     if payload:
-                        await self._handle_command({"type": "input", "payload": payload})
+                        if self.client:
+                            await self._handle_command({"type": "input", "payload": payload})
+                        else:
+                            # Idle — store for SDK respawn. Advance pos past
+                            # this message only, then return so the idle loop
+                            # can break and reconnect the SDK.
+                            self._pending_input = payload
+                            pos_path.write_text(str(f.tell()))
+                            log.info("relay.inbox_pending_for_respawn")
+                            return
             pos_path.write_text(str(f.tell()))
 
     def _update_status(self, filename: str):
         """Update status.json with the hash of the file just applied."""
         from pathlib import Path
-        status_path = Path("/vol/_abox/status.json")
+        status_path = Path(f"{VOL_ROOT}/_abox/status.json")
         status = json.loads(status_path.read_text()) if status_path.exists() else {}
-        file_path = Path("/vol") / filename
+        file_path = Path(VOL_ROOT) / filename
         if file_path.exists():
             status[filename] = hashlib.sha256(file_path.read_bytes()).hexdigest()[:16]
         status_path.write_text(json.dumps(status))
@@ -776,7 +793,7 @@ class SDKRelay:
         except Exception as exc:
             log.warning("relay.theme_css_reload_failed", extra={"error": str(exc)})
             # Fallback: restart Firefox (s6 auto-restarts the service)
-            # On restart, mozilla.cfg loads /tmp/abox-theme.css (the fixed path)
+            # On restart, mozilla.cfg loads /tmp/abox-theme/userChrome.css
             try:
                 subprocess.run(["pkill", "firefox-esr"], timeout=5, capture_output=True)
                 log.info("relay.theme_firefox_restarted_fallback")
@@ -1087,7 +1104,9 @@ class SDKRelay:
                     # Don't break — no need to respawn for a callback response.
                 elif cmd_type == "poke":
                     await self._handle_command(cmd)
-                    # Don't break — poke doesn't require respawn
+                    # Inbox poke sets _pending_input when idle → need respawn
+                    if self._pending_input:
+                        break
 
             if idle_fatal:
                 break

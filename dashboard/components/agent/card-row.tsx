@@ -52,7 +52,7 @@ export interface AgentCardRowProps {
  * Agent card -- two states:
  *
  * COLLAPSED -- compact single row:
- *   avatar | name | status dot | live action | cost . time | chevron
+ *   status dot | avatar | name | mode | tags | live action | cost . time | chevron
  *
  * OPEN -- content area + bottom toolbar:
  *   header row -> content (VNC / feed / settings) -> toolbar (view icons + composer + tasks)
@@ -258,20 +258,7 @@ export function AgentCardRow({
               {selected && <Check className="h-2.5 w-2.5 text-accent" strokeWidth={3} />}
             </div>
           )}
-          <AgentTag name={agent.name} className={cn("text-[12px]", isStopped && "opacity-50")} />
-          <ModePill mode={agent.mode} onChange={handleModeChange} />
-          {/* Tag pills -- show 1 + overflow count, shrink before mode */}
-          {agent.tags.length > 0 && (
-            <span className="inline-flex items-center gap-1 shrink min-w-0 overflow-hidden">
-              <span className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle truncate">
-                {agent.tags[0]}
-              </span>
-              {agent.tags.length > 1 && (
-                <span className="text-[9px] text-muted/40 font-mono shrink-0">+{agent.tags.length - 1}</span>
-              )}
-            </span>
-          )}
-          {/* Status dot — morphs to stop button on hover when running */}
+          {/* Status dot — first visual element, morphs to stop button on hover when running */}
           {isRunning ? (
             <button
               type="button"
@@ -289,6 +276,19 @@ export function AgentCardRow({
                 config.dot,
               )}
             />
+          )}
+          <AgentTag name={agent.name} className={cn("text-[12px]", isStopped && "opacity-50")} />
+          <ModePill mode={agent.mode} onChange={handleModeChange} />
+          {/* Tag pills -- show 1 + overflow count, shrink before mode */}
+          {agent.tags.length > 0 && (
+            <span className="inline-flex items-center gap-1 shrink min-w-0 overflow-hidden">
+              <span className="px-1.5 py-px rounded text-[9px] font-mono text-muted bg-surface-sunken/60 border border-border-subtle truncate">
+                {agent.tags[0]}
+              </span>
+              {agent.tags.length > 1 && (
+                <span className="text-[9px] text-muted/40 font-mono shrink-0">+{agent.tags.length - 1}</span>
+              )}
+            </span>
           )}
 
           {/* Live action one-liner */}

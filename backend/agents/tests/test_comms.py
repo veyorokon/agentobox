@@ -124,12 +124,16 @@ async def test_send_message_pushes_to_dashboard_ws():
     # Mock serialized agent
     fake_serialized_agent = {"_t": "agent", "id": "agent-123", "name": "test-agent"}
 
+    # Mock volume for _send_via_inbox
+    fake_volume = MagicMock()
+    fake_agent.volume = fake_volume
+
     with (
         patch("agents.services.comms.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
         patch("agents.services.comms.create_stream_event", new_callable=AsyncMock, return_value=fake_stream_event),
         patch("agents.services.comms.push_to_relay", new_callable=AsyncMock),
         patch("agents.services.comms.get_channel_layer", return_value=mock_channel_layer),
-        patch("agents.services.comms._serialize_agent_for_ws", new_callable=AsyncMock, return_value=fake_serialized_agent),
+        patch("agents.consumers._serialize_agent_for_ws", new_callable=AsyncMock, return_value=fake_serialized_agent),
     ):
         result = await send_message("agent-123", "Hello agent!")
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
 import {
   Search,
   ChevronRight,
@@ -11,8 +11,9 @@ import {
   Pause,
   Play,
   Check,
-  Plus,
   Inbox,
+  CheckCircle,
+  RotateCcw,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useSidebarStore } from "@/lib/stores/sidebar"
@@ -43,6 +44,23 @@ export function TasksPanel() {
   // Ephemeral state
   const [filter, setFilter] = useState<Filter>("active")
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["unassigned"]))
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
+
+  // Select mode handlers
+  const toggleTaskSelect = useCallback((taskId: string) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) next.delete(taskId)
+      else next.add(taskId)
+      return next
+    })
+  }, [])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedTaskIds(new Set())
+  }, [])
 
   // Aggregate all tasks across agents
   const allTasks = useMemo<TaskWithAgent[]>(() => {
@@ -114,6 +132,10 @@ export function TasksPanel() {
   }, [filteredTasks])
 
   const handleToggle = (task: TaskWithAgent) => {
+    if (selectMode) {
+      toggleTaskSelect(task.taskId)
+      return
+    }
     if (task.blockedBy.length > 0) return
     const next = task.status === "completed" ? "pending" : "completed"
     updateTask(task.agentId, task.taskId, next)
@@ -128,6 +150,33 @@ export function TasksPanel() {
     })
   }
 
+  const handleToggleAll = useCallback(() => {
+    setSelectedTaskIds(prev => {
+      if (prev.size === filteredTasks.length) return new Set()
+      return new Set(filteredTasks.map(t => t.taskId))
+    })
+  }, [filteredTasks])
+
+  const handleBulkComplete = useCallback(() => {
+    for (const taskId of selectedTaskIds) {
+      const task = allTasks.find(t => t.taskId === taskId)
+      if (task && task.status !== "completed" && task.blockedBy.length === 0) {
+        updateTask(task.agentId, task.taskId, "completed")
+      }
+    }
+    exitSelectMode()
+  }, [selectedTaskIds, allTasks, updateTask, exitSelectMode])
+
+  const handleBulkReset = useCallback(() => {
+    for (const taskId of selectedTaskIds) {
+      const task = allTasks.find(t => t.taskId === taskId)
+      if (task && task.status === "completed") {
+        updateTask(task.agentId, task.taskId, "pending")
+      }
+    }
+    exitSelectMode()
+  }, [selectedTaskIds, allTasks, updateTask, exitSelectMode])
+
   const FILTERS: { id: Filter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "active", label: "Active" },
@@ -138,8 +187,8 @@ export function TasksPanel() {
   ]
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Search + filter */}
+    <div className="flex flex-col h-full min-h-0">
+      {/* Search + toolbar actions */}
       <div className="px-3 py-2 flex items-center gap-2 border-b border-border-subtle shrink-0">
         <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded-md border border-border-default bg-surface-sunken/40 px-2 py-1">
           <Search className="h-3 w-3 text-muted/50 shrink-0" />
@@ -151,6 +200,19 @@ export function TasksPanel() {
             className="flex-1 bg-transparent border-none outline-none text-[11px] text-default placeholder:text-muted/30 min-w-0"
           />
         </div>
+        <button
+          type="button"
+          onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+          className={cn(
+            "inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors shrink-0",
+            selectMode
+              ? "border-accent/30 bg-accent/10 text-accent"
+              : "border-border-default text-muted hover:text-secondary hover:bg-surface-raised/40",
+          )}
+        >
+          <CheckSquare className="h-3 w-3" />
+          {selectMode ? "Done" : "Select"}
+        </button>
       </div>
 
       {/* Filter chips */}
@@ -173,7 +235,7 @@ export function TasksPanel() {
       </div>
 
       {/* Tasks list */}
-      <ScrollArea className="flex-1 overflow-y-auto">
+      <ScrollArea className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-3 space-y-2">
           {/* Unassigned section */}
           {unassignedTasks.length > 0 && (
@@ -208,6 +270,8 @@ export function TasksPanel() {
                       task={task}
                       onToggle={() => handleToggle(task)}
                       showAgent
+                      selectMode={selectMode}
+                      selected={selectedTaskIds.has(task.taskId)}
                     />
                   ))}
                 </div>
@@ -251,6 +315,8 @@ export function TasksPanel() {
                         task={task}
                         onToggle={() => handleToggle(task)}
                         showAgent={false}
+                        selectMode={selectMode}
+                        selected={selectedTaskIds.has(task.taskId)}
                       />
                     ))}
                   </div>
@@ -277,6 +343,51 @@ export function TasksPanel() {
           )}
         </div>
       </ScrollArea>
+
+      {/* Bulk action bar */}
+      {selectMode && (
+        <div className="px-3 py-1.5 border-t border-border-subtle bg-surface-sunken/30 flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleToggleAll}
+            className="text-[11px] text-accent hover:text-accent-hover transition-colors shrink-0"
+          >
+            {selectedTaskIds.size === filteredTasks.length ? "Deselect all" : "Select all"}
+          </button>
+          <span className="text-[11px] text-muted shrink-0">
+            {selectedTaskIds.size} selected
+          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={handleBulkReset}
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+              selectedTaskIds.size > 0
+                ? "text-muted hover:bg-surface-raised/40"
+                : "text-muted/30 cursor-not-allowed",
+            )}
+            disabled={selectedTaskIds.size === 0}
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={handleBulkComplete}
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+              selectedTaskIds.size > 0
+                ? "text-success hover:bg-success/10"
+                : "text-muted/30 cursor-not-allowed",
+            )}
+            disabled={selectedTaskIds.size === 0}
+          >
+            <CheckCircle className="h-3 w-3" />
+            Complete
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -285,10 +396,14 @@ function TaskRow({
   task,
   onToggle,
   showAgent,
+  selectMode,
+  selected,
 }: {
   task: TaskWithAgent
   onToggle: () => void
   showAgent: boolean
+  selectMode: boolean
+  selected: boolean
 }) {
   const isBlocked = task.blockedBy.length > 0
   const isCompleted = task.status === "completed"
@@ -298,17 +413,29 @@ function TaskRow({
     <button
       type="button"
       onClick={onToggle}
-      disabled={isBlocked}
+      disabled={!selectMode && isBlocked}
       className={cn(
         "w-full flex items-center gap-1.5 px-2.5 py-1 text-left transition-colors hover:bg-surface-raised/30",
-        isInProgress && "border-l-2 border-accent",
-        isCompleted && "opacity-50",
-        isBlocked && "opacity-40 cursor-not-allowed",
+        isInProgress && !selectMode && "border-l-2 border-accent",
+        isCompleted && !selectMode && "opacity-50",
+        !selectMode && isBlocked && "opacity-40 cursor-not-allowed",
+        selectMode && selected && "bg-accent/5",
       )}
       style={{ height: 22 }}
     >
-      {/* Checkbox / lock */}
-      {isBlocked ? (
+      {/* Checkbox / select / lock */}
+      {selectMode ? (
+        <div
+          className={cn(
+            "h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0",
+            selected
+              ? "bg-accent/20 border-accent/50"
+              : "border-border-default",
+          )}
+        >
+          {selected && <Check className="h-2.5 w-2.5 text-accent" strokeWidth={3} />}
+        </div>
+      ) : isBlocked ? (
         <Lock size={10} className="text-muted/30 shrink-0" />
       ) : isCompleted ? (
         <CheckSquare size={10} className="text-success/60 shrink-0" />
@@ -320,8 +447,8 @@ function TaskRow({
       <span
         className={cn(
           "text-[10px] font-mono truncate flex-1 min-w-0",
-          isCompleted && "line-through text-muted",
-          !isCompleted && "text-default",
+          isCompleted && !selectMode && "line-through text-muted",
+          (!isCompleted || selectMode) && "text-default",
         )}
       >
         {task.title}
@@ -335,18 +462,22 @@ function TaskRow({
       )}
 
       {/* Status indicator */}
-      {isInProgress ? (
-        <Play size={8} className="text-accent animate-breathe shrink-0" />
-      ) : task.status === "pending" ? (
-        <Pause size={8} className="text-muted/40 shrink-0" />
-      ) : (
-        <Circle
-          size={5}
-          className={cn(
-            "shrink-0 fill-current",
-            isCompleted && "text-success/40",
+      {!selectMode && (
+        <>
+          {isInProgress ? (
+            <Play size={8} className="text-accent animate-breathe shrink-0" />
+          ) : task.status === "pending" ? (
+            <Pause size={8} className="text-muted/40 shrink-0" />
+          ) : (
+            <Circle
+              size={5}
+              className={cn(
+                "shrink-0 fill-current",
+                isCompleted && "text-success/40",
+              )}
+            />
           )}
-        />
+        </>
       )}
     </button>
   )

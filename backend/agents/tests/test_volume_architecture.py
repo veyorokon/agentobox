@@ -14,11 +14,12 @@ a tmp_path filesystem. No Django ORM, no containers, no network.
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
 
-from agents.services.volume import MANAGED_CONFIG_FILES, Volume
+from agents.services.volume import MANAGED_CONFIG_FILES, SYMLINKED_PREFIXES, Volume
 
 
 # ---------------------------------------------------------------------------
@@ -73,15 +74,15 @@ class TestAtomicWrite:
 
     def test_write_leaves_no_tmp(self, tmp_path):
         vol = _make_vol(tmp_path)
-        vol.write("test.json", '{"key": "value"}')
-        assert (tmp_path / "test.json").read_text() == '{"key": "value"}'
-        assert not (tmp_path / "test.json.tmp").exists()
+        vol.write("_abox/test.json", '{"key": "value"}')
+        assert (tmp_path / "_abox/test.json").read_text() == '{"key": "value"}'
+        assert not (tmp_path / "_abox/test.json.tmp").exists()
 
     def test_write_overwrites_atomically(self, tmp_path):
         vol = _make_vol(tmp_path)
-        vol.write("test.json", "first")
-        vol.write("test.json", "second")
-        assert (tmp_path / "test.json").read_text() == "second"
+        vol.write("_abox/test.json", "first")
+        vol.write("_abox/test.json", "second")
+        assert (tmp_path / "_abox/test.json").read_text() == "second"
 
     def test_write_secret_sets_permissions(self, tmp_path):
         vol = _make_vol(tmp_path)
@@ -92,8 +93,8 @@ class TestAtomicWrite:
 
     def test_write_bytes(self, tmp_path):
         vol = _make_vol(tmp_path)
-        vol.write("binary.bin", b"\x00\x01\x02")
-        assert (tmp_path / "binary.bin").read_bytes() == b"\x00\x01\x02"
+        vol.write("_abox/binary.bin", b"\x00\x01\x02")
+        assert (tmp_path / "_abox/binary.bin").read_bytes() == b"\x00\x01\x02"
 
 
 # ---------------------------------------------------------------------------
@@ -169,18 +170,18 @@ class TestConvergence:
 
     def test_file_hash_is_deterministic(self, tmp_path):
         vol = _make_vol(tmp_path)
-        vol.write("test.json", '{"stable": true}')
-        h1 = vol.file_hash("test.json")
-        h2 = vol.file_hash("test.json")
+        vol.write("_abox/test.json", '{"stable": true}')
+        h1 = vol.file_hash("_abox/test.json")
+        h2 = vol.file_hash("_abox/test.json")
         assert h1 == h2
         assert len(h1) == 16  # truncated sha256
 
     def test_file_hash_changes_on_content_change(self, tmp_path):
         vol = _make_vol(tmp_path)
-        vol.write("test.json", "v1")
-        h1 = vol.file_hash("test.json")
-        vol.write("test.json", "v2")
-        h2 = vol.file_hash("test.json")
+        vol.write("_abox/test.json", "v1")
+        h1 = vol.file_hash("_abox/test.json")
+        vol.write("_abox/test.json", "v2")
+        h2 = vol.file_hash("_abox/test.json")
         assert h1 != h2
 
 
@@ -315,9 +316,9 @@ class TestProvisionUsesVolume:
                             funcs_with_runtime.add(node.name)
 
         # Only _provision_scoped_sudo should use runtime calls
-        assert funcs_with_runtime == {"_provision_scoped_sudo"}, (
+        assert funcs_with_runtime == {"provision_scoped_sudo"}, (
             f"runtime.exec/write_file found in: {funcs_with_runtime} — "
-            f"expected only _provision_scoped_sudo"
+            f"expected only provision_scoped_sudo"
         )
 
     def test_provision_workspace_takes_volume_not_runtime(self):
@@ -359,3 +360,118 @@ class TestConsumerSimplicity:
         source = consumers_path.read_text()
         assert "push_theme" not in source, "Theme push call in consumers.py"
         assert "theme_tokens" not in source, "Theme tokens reference in consumers.py"
+
+
+# ---------------------------------------------------------------------------
+# Path parity: SYMLINKED_PREFIXES matches init-volume bash script
+# ---------------------------------------------------------------------------
+
+class TestPathParity:
+    """SYMLINKED_PREFIXES in volume.py matches init-volume's actual symlinks.
+
+    init-volume creates symlinks for specific directories. The Python
+    SYMLINKED_PREFIXES constant gates Volume.write() to only allow paths
+    under those directories. If they drift, either:
+    - Python allows a path init-volume doesn't symlink (invisible file)
+    - init-volume symlinks a dir Python doesn't allow (write rejected)
+
+    This test parses the bash script and extracts the dirs it covers,
+    then verifies the Python constant matches.
+    """
+
+    @staticmethod
+    def _extract_init_volume_dirs() -> set[str]:
+        """Parse init-volume script and extract covered directory prefixes.
+
+        Handles patterns in the script:
+        1. `for dir in X Y Z; do` → explicit dirs like tmp/abox-theme
+        2. `${AGENT_VOL}/some/path/*` or `"${AGENT_VOL}"/some/path/*` → glob dirs
+        """
+        script_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "agent" / "rootfs" / "etc" / "s6-overlay" / "scripts" / "init-volume"
+        )
+        source = script_path.read_text()
+
+        dirs = set()
+
+        # Pattern 1: `for dir in tmp/abox-theme run/secrets ...; do`
+        for_match = re.search(r'for dir in\s+([^;]+);', source)
+        if for_match:
+            for d in for_match.group(1).split():
+                dirs.add(d.strip() + "/")
+
+        # Pattern 2: any ${AGENT_VOL}/path/* or "${AGENT_VOL}"/path/*
+        # Matches both quoted and unquoted AGENT_VOL references
+        for glob_match in re.finditer(
+            r'"\$\{AGENT_VOL\}"/?([^*"]+)\*|\$\{AGENT_VOL\}/([^*"\s]+)\*',
+            source,
+        ):
+            prefix = glob_match.group(1) or glob_match.group(2)
+            if prefix:
+                # Normalize: strip leading slash, ensure trailing slash
+                prefix = prefix.lstrip("/")
+                if not prefix.endswith("/"):
+                    prefix += "/"
+                dirs.add(prefix)
+
+        return dirs
+
+    def test_symlinked_prefixes_covers_init_volume(self):
+        """Every dir init-volume symlinks is in SYMLINKED_PREFIXES."""
+        init_dirs = self._extract_init_volume_dirs()
+        python_prefixes = set(SYMLINKED_PREFIXES)
+
+        # Every bash dir must be covered by a Python prefix
+        uncovered = set()
+        for d in init_dirs:
+            if not any(d.startswith(p) or p.startswith(d) for p in python_prefixes):
+                uncovered.add(d)
+
+        assert not uncovered, (
+            f"init-volume symlinks dirs not in SYMLINKED_PREFIXES: {uncovered}. "
+            f"Add them to SYMLINKED_PREFIXES in volume.py."
+        )
+
+    def test_symlinked_prefixes_no_extras(self):
+        """SYMLINKED_PREFIXES doesn't contain dirs init-volume doesn't cover.
+
+        Exception: _abox/ is control plane accessed directly, not symlinked.
+        """
+        init_dirs = self._extract_init_volume_dirs()
+        python_prefixes = set(SYMLINKED_PREFIXES)
+
+        # _abox/ is a known exception — accessed via /vol/ directly, not symlinked
+        exceptions = {"_abox/"}
+
+        extras = set()
+        for p in python_prefixes - exceptions:
+            if not any(p.startswith(d) or d.startswith(p) for d in init_dirs):
+                extras.add(p)
+
+        assert not extras, (
+            f"SYMLINKED_PREFIXES has dirs not in init-volume: {extras}. "
+            f"Either add to init-volume or remove from SYMLINKED_PREFIXES."
+        )
+
+    def test_managed_config_files_under_symlinked_prefixes(self):
+        """Every MANAGED_CONFIG_FILES entry is under a SYMLINKED_PREFIXES dir."""
+        for f in MANAGED_CONFIG_FILES:
+            assert any(f.startswith(p) for p in SYMLINKED_PREFIXES), (
+                f"MANAGED_CONFIG_FILES entry '{f}' not under any SYMLINKED_PREFIXES. "
+                f"Volume.write() would reject this path."
+            )
+
+    def test_volume_write_rejects_uncovered_path(self, tmp_path):
+        """Volume.write() raises ValueError for paths outside SYMLINKED_PREFIXES."""
+        vol = _make_vol(tmp_path)
+        with pytest.raises(ValueError, match="not under any init-volume"):
+            vol.write("usr/local/bin/something", "content")
+
+    def test_volume_write_accepts_covered_path(self, tmp_path):
+        """Volume.write() succeeds for paths under SYMLINKED_PREFIXES."""
+        vol = _make_vol(tmp_path)
+        vol.write("home/agent/.claude/settings.json", "{}")
+        vol.write("run/secrets/proxy_key", "key")
+        vol.write("_abox/state.json", "{}")
+        # No exceptions = all paths accepted

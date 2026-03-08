@@ -15,13 +15,12 @@ from agents.consumers import DashboardConsumer, RelayConsumer, VncProxyConsumer 
 
 log = structlog.get_logger("abox.graphql")
 
-# MCP coordination server — stateless HTTP so each tool call is independent.
+# MCP coordination server — SSE transport.
+# CC 2.x SDK connects with type="sse", so we use FastMCP's http_app(transport="sse")
+# which serves the SSE stream at /mcp and message POST at /messages/.
+#
 # Daphne doesn't send ASGI lifespan events, so we simulate them on first
 # request to initialize FastMCP's session manager task group.
-#
-# StreamableHTTPSessionManager.run() can only be called once per instance.
-# If the lifespan task dies (exception, cancellation), we must create a fresh
-# mcp_app to get a new session manager. _ensure_mcp_ready() handles recovery.
 _mcp_app = None
 _mcp_lifespan_task = None
 _mcp_ready = asyncio.Event()
@@ -29,11 +28,7 @@ _mcp_lock = asyncio.Lock()
 
 
 async def _mcp_lifespan_runner(app):
-    """Simulate ASGI lifespan protocol for FastMCP's Starlette app.
-
-    Sends lifespan.startup, waits for startup.complete, then blocks
-    indefinitely to keep the session manager's task group alive.
-    """
+    """Simulate ASGI lifespan protocol for FastMCP's Starlette app."""
     startup_sent = False
 
     async def receive():
@@ -41,7 +36,6 @@ async def _mcp_lifespan_runner(app):
         if not startup_sent:
             startup_sent = True
             return {"type": "lifespan.startup"}
-        # Block forever — shutdown happens when the server exits
         await asyncio.Event().wait()
 
     async def send(message):
@@ -56,26 +50,20 @@ async def _mcp_lifespan_runner(app):
 
 
 async def _ensure_mcp_ready():
-    """Ensure MCP lifespan is running. Recovers from dead task groups.
-
-    StreamableHTTPSessionManager.run() can only be called once per instance,
-    so if the lifespan task dies we must create a fresh mcp_app.
-    """
+    """Ensure MCP lifespan is running. Recovers from dead task groups."""
     global _mcp_app, _mcp_lifespan_task, _mcp_ready
 
-    # Fast path — already running
     if _mcp_lifespan_task is not None and not _mcp_lifespan_task.done():
         return
 
     async with _mcp_lock:
-        # Re-check under lock
         if _mcp_lifespan_task is not None and not _mcp_lifespan_task.done():
             return
 
         if _mcp_lifespan_task is not None:
             log.warning("graphql.mcp_lifespan_recovery", reason="task_died")
 
-        _mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
+        _mcp_app = mcp.http_app(path="/mcp", transport="sse")
         _mcp_ready = asyncio.Event()
         _mcp_lifespan_task = asyncio.create_task(_mcp_lifespan_runner(_mcp_app))
 
@@ -83,8 +71,13 @@ async def _ensure_mcp_ready():
 
 
 async def http_dispatch(scope, receive, send):
-    """Route /mcp to FastMCP, everything else to Django."""
-    if scope["path"].startswith("/mcp"):
+    """Route /mcp and /messages to FastMCP, everything else to Django.
+
+    FastMCP SSE transport serves the SSE stream at /mcp and accepts
+    message POSTs at /messages/?session_id=xxx. Both must route to
+    the same FastMCP app or MCP clients hang during initialize.
+    """
+    if scope["path"].startswith("/mcp") or scope["path"].startswith("/messages"):
         await _ensure_mcp_ready()
         await _mcp_app(scope, receive, send)
     else:
@@ -99,18 +92,14 @@ application = ProtocolTypeRouter(
         "websocket": AuthMiddlewareStack(
             URLRouter(
                 [
-                    # Relay WebSocket — bidirectional channel for stream events
-                    # and commands (replaces HTTP POST + piggyback pattern)
                     re_path(
                         r"^ws/relay/(?P<agent_id>[0-9a-f-]+)/$",
                         RelayConsumer.as_asgi(),
                     ),
-                    # VNC proxy — binary WebSocket relay to agent's websockify
                     re_path(
                         r"^ws/vnc/(?P<agent_id>[0-9a-f-]+)/$",
                         VncProxyConsumer.as_asgi(),
                     ),
-                    # Dashboard — project-scoped real-time updates (replaces polling)
                     re_path(
                         r"^ws/dashboard/(?P<project_id>[0-9a-f-]+)/$",
                         DashboardConsumer.as_asgi(),

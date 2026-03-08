@@ -25,29 +25,9 @@ if [ -n "$FF_ACTIVE" ]; then
     cp "$UHOME/.firefox-config/config.css" "$FF_TARGET/chrome/config.css"
     cat "$UHOME/.firefox-config/user-overrides.js" >> "$FF_TARGET/user.js"
 
-    # Write default theme CSS so @import in config.css doesn't 404 on first boot.
-    # Relay overwrites this with real theme tokens on WS connect.
-    cat > /tmp/abox-theme.css << 'CSSEOF'
-/* Default neutral theme — overwritten by relay on WS connect */
-:root {
-  --lwt-accent-color: #1e1e1e !important;
-  --lwt-text-color: #d4d4d4 !important;
-  --toolbar-bgcolor: #1e1e1e !important;
-  --toolbar-color: #888888 !important;
-  --toolbar-field-background-color: #1e1e1e !important;
-  --toolbar-field-color: #d4d4d4 !important;
-  --toolbar-field-border-color: #2d2d2d !important;
-  --arrowpanel-background: #1e1e1e !important;
-  --arrowpanel-color: #d4d4d4 !important;
-  --arrowpanel-border-color: #2d2d2d !important;
-  --newtab-background-color: #1e1e1e !important;
-  --newtab-text-primary-color: #d4d4d4 !important;
-  --tf-bg: #1e1e1e !important;
-  --tf-border: #2d2d2d !important;
-  --tf-accent: #5a5a5a !important;
-}
-CSSEOF
-    chown agent:agent /tmp/abox-theme.css
+    # Theme CSS is provided by the volume at /tmp/abox-theme/userChrome.css
+    # (symlinked from /vol/agents/$AGENT_ID/tmp/abox-theme/ by init-volume).
+    # No default CSS write needed — init-volume runs converters.py on boot.
 
     chown -R agent:agent "$FF_TARGET"
     echo "[agentobox] textfox + theme CSS injected into $(basename "$FF_TARGET")"

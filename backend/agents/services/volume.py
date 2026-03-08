@@ -83,6 +83,22 @@ from pathlib import Path
 
 from django.conf import settings
 
+# Directories that init-volume symlinks into the container.
+# Every volume write path MUST start with one of these prefixes.
+# If you add a new symlink dir to init-volume, add the prefix here.
+#
+# Source of truth: agent/rootfs/etc/s6-overlay/scripts/init-volume
+# Architecture test (test_volume_architecture.py) verifies parity.
+SYMLINKED_PREFIXES = (
+    "home/agent/",       # glob: ${AGENT_VOL}/home/agent/*
+    "opt/abox/",         # glob: ${AGENT_VOL}/opt/abox/*
+    "tmp/abox-theme/",   # explicit: ln -sfn
+    "run/secrets/",      # explicit: ln -sfn (under run/)
+    "run/mcp-gateway/",  # explicit: ln -sfn (under run/)
+    "mnt/abox-state/",   # explicit: ln -sfn
+    "_abox/",            # control plane — accessed directly via /vol/, not symlinked
+)
+
 # Config files the backend manages. The relay tracks convergence by
 # comparing file hashes against _abox/status.json. When a file's hash
 # doesn't match, the relay hasn't applied the latest version yet.
@@ -121,12 +137,28 @@ class Volume:
     def __init__(self, project_id: str, agent_id: str):
         self.root = Path(settings.VOLUME_ROOT) / "agents" / agent_id
 
+    @staticmethod
+    def _validate_path(path: str) -> None:
+        """Reject paths outside init-volume's symlinked directories.
+
+        Every file the backend writes must land under a directory that
+        init-volume symlinks into the container. Without this, the file
+        exists on the volume but is invisible inside the container.
+        """
+        if not any(path.startswith(p) for p in SYMLINKED_PREFIXES):
+            raise ValueError(
+                f"Volume path '{path}' is not under any init-volume symlinked directory. "
+                f"Allowed prefixes: {SYMLINKED_PREFIXES}. "
+                f"Add the directory to init-volume and SYMLINKED_PREFIXES if this is a new path."
+            )
+
     def write(self, path: str, content: str | bytes) -> None:
         """Atomic write to a volume path.
 
         Creates parent directories as needed. Uses tmp+rename for
         atomicity — relay never sees a partial file.
         """
+        self._validate_path(path)
         full = self.root / path
         full.parent.mkdir(parents=True, exist_ok=True)
         tmp = full.with_suffix(".tmp")

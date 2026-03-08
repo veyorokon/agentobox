@@ -164,16 +164,21 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       return
     }
 
-    // Retry on unclean disconnect, expired token (4001), or transient codes (4003 = container starting)
-    if (!clean || code === 4001 || (code && TRANSIENT_CODES.has(code))) {
+    // Retry when container is alive: unclean disconnect, clean server close,
+    // expired token (4001), or transient codes (4003 = container starting).
+    // Clean disconnects happen during docker compose restarts — the container
+    // comes back, so we should reconnect automatically.
+    const shouldRetry = !clean || code === 4001 || (code && TRANSIENT_CODES.has(code)) || (clean && hasContainer)
+    if (shouldRetry) {
       retryCountRef.current += 1
-      if (retryCountRef.current <= 5) {
-        log("reconnecting", { agent: agent.id, attempt: retryCountRef.current, code })
+      if (retryCountRef.current <= 8) {
+        const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 10000)
+        log("reconnecting", { agent: agent.id, attempt: retryCountRef.current, code, delay })
         setWsUrl(null)
         setConnState("idle")
         setTimeout(() => {
           if (mountedRef.current && hasContainer) fetchTokenAndConnect()
-        }, Math.min(1000 * retryCountRef.current, 5000))
+        }, delay)
         return
       }
     }

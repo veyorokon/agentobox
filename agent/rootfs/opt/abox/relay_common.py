@@ -34,6 +34,11 @@ AGENT_ID = os.environ.get("AGENT_ID", "")
 CALLBACK_URL = os.environ.get("ABOX_CALLBACK_URL", "").rstrip("/")
 RELAY_AUTH_TOKEN = os.environ.get("RELAY_AUTH_TOKEN", "")
 
+# Volume root for this agent — mirrors backend's Volume.root path.
+# Backend writes to VOLUME_ROOT/agents/{agent_id}/, container mounts the
+# whole named volume at /vol/, so the agent-specific root is /vol/agents/{id}/.
+VOL_ROOT = f"/vol/agents/{AGENT_ID}" if AGENT_ID else "/vol"
+
 # WebSocket reconnect
 WS_RECONNECT_DELAY_S = 1.0
 WS_MAX_RECONNECT_DELAY_S = 30.0

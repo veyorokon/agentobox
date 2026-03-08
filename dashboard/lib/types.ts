@@ -34,6 +34,7 @@ export type Agent = {
   workspacePath: string
   tags: string[]
   mode: "auto" | "plan" | "supervised"
+  tasks: AgentTask[]
 }
 
 export type RecipientEntry =

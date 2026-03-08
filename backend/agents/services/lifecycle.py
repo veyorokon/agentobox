@@ -250,8 +250,10 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     # Agent volume — shared between backend (writes config at VOLUME_ROOT)
     # and agent container (reads via init-volume symlinks at /vol/).
     # Single named volume for all agents; each gets subdir /vol/agents/{id}/.
+    # Name must match the actual volume name on the platform (e.g. Docker
+    # Compose prefixes with project name: "agentobox_agent-volumes").
     mounts.append(VolumeMount(
-        name="agent-volumes",
+        name=settings.AGENT_VOLUME_NAME,
         mount_path="/vol",
     ))
 
@@ -304,14 +306,26 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
 
-        # Dev: bind-mount relay.py so changes don't require image rebuild
+        # Dev: bind-mount relay files so changes don't require image rebuild.
         rootfs_path = getattr(settings, "AGENT_ROOTFS_PATH", "")
         if rootfs_path:
-            mounts.append(VolumeMount(
-                name="dev-relay",
-                mount_path="/opt/abox/relay.py",
-                host_path=f"{rootfs_path}/opt/abox/relay.py",
-            ))
+            import os as _os
+            # rootfs_path = agent/claude/rootfs (per-adapter)
+            # shared rootfs = agent/rootfs (shared across adapters)
+            shared_rootfs = _os.path.realpath(f"{rootfs_path}/../../rootfs")
+            dev_mounts = [
+                ("dev-relay", "/opt/abox/relay.py", f"{rootfs_path}/opt/abox/relay.py"),
+                ("dev-relay-common", "/opt/abox/relay_common.py",
+                 f"{shared_rootfs}/opt/abox/relay_common.py"),
+                ("dev-converters", "/opt/abox/converters.py",
+                 f"{shared_rootfs}/opt/abox/converters.py"),
+            ]
+            for name, mount_path, host_path in dev_mounts:
+                resolved = _os.path.realpath(host_path)
+                if _os.path.exists(resolved):
+                    mounts.append(VolumeMount(
+                        name=name, mount_path=mount_path, host_path=resolved,
+                    ))
 
         sandbox = await runtime.create(agent.name, env, volumes=mounts or None)
         sandbox_id = sandbox.id

@@ -294,9 +294,14 @@ class AgentMutation:
                 ]
                 agent_ids.extend(str(a.id) for a in all_agents)
             elif r.type == "agent":
+                # Accept both agent name and agent ID as value
                 agent = await Agent.objects.filter(
                     name=r.value, project_id=project_id,
                 ).afirst()
+                if not agent:
+                    agent = await Agent.objects.filter(
+                        id=r.value, project_id=project_id,
+                    ).afirst()
                 if agent:
                     agent_ids.append(str(agent.id))
                 else:
@@ -475,6 +480,12 @@ class AgentMutation:
 
         agent = await authorize_agent(info, input.agent_id)
 
+        # Snapshot old values to detect what actually changed
+        old_model = agent.model
+        old_role = agent.role
+        old_mcp_servers = agent.mcp_servers
+        old_tags = agent.tags
+
         if input.model is not None:
             agent.model = input.model
         if input.role is not None:
@@ -513,7 +524,51 @@ class AgentMutation:
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
 
-        return await hard_restart_agent(str(agent.id))
+        # Determine if a hard restart is needed based on what changed
+        restart_required = (
+            agent.model != old_model
+            or agent.role != old_role
+            or agent.mcp_servers != old_mcp_servers
+        )
+
+        if restart_required:
+            return await hard_restart_agent(str(agent.id))
+
+        # Tags changed — hot-update skills on the volume without restart
+        if input.tags is not None and agent.tags != old_tags:
+            from agents.models import Skill
+            from asgiref.sync import sync_to_async
+
+            skills = await sync_to_async(
+                lambda: list(Skill.objects.filter(project_id=agent.project_id)),
+                thread_sensitive=False,
+            )()
+            for skill in skills:
+                should_have = skill.assigned_to_all or any(
+                    tag in (agent.tags or []) for tag in (skill.assigned_tags or [])
+                )
+                had_before = skill.assigned_to_all or any(
+                    tag in (old_tags or []) for tag in (skill.assigned_tags or [])
+                )
+                if should_have and not had_before:
+                    # New skill match — write to volume
+                    from agents.utils import sanitize_skill_name
+                    safe_name = sanitize_skill_name(skill.name)
+                    if safe_name:
+                        skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
+                        agent.volume.write(skill_path, skill.content)
+                elif had_before and not should_have:
+                    # Lost skill match — remove from volume
+                    import shutil
+                    from agents.utils import sanitize_skill_name
+                    safe_name = sanitize_skill_name(skill.name)
+                    if safe_name:
+                        skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
+                        if skill_dir.exists():
+                            shutil.rmtree(skill_dir)
+
+        # No restart needed — return the updated agent
+        return agent
 
     # --- Tasks ---
 

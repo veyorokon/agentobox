@@ -458,6 +458,7 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
                 skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
                 if skill_dir.exists():
                     shutil.rmtree(skill_dir)
+        # intentional: one agent's skill push failure must not block other agents
         except Exception:
             log.exception("comms.skill_push_failed", agent_name=agent.name, agent_id=str(agent.id))
 
@@ -476,6 +477,7 @@ async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[s
             skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
             if skill_dir.exists():
                 shutil.rmtree(skill_dir)
+        # intentional: one agent's skill cleanup failure must not block other agents
         except Exception:
             log.exception("comms.skill_cleanup_failed", agent_id=agent_id)
 

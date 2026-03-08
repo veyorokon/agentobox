@@ -52,8 +52,10 @@ log = structlog.get_logger("abox.adapter.cc")
 # CC-specific constants (private — services never import these directly)
 # ---------------------------------------------------------------------------
 
-# Path where the API key helper script lives in the container
-_API_KEY_HELPER_PATH = "/opt/abox/api-key-helper.sh"
+# Path where the API key helper script lives in the container.
+# Must be on the volume (under a symlinked directory) so provisioning
+# can write the real script. /run/secrets/ is symlinked by init-volume.
+_API_KEY_HELPER_PATH = "/run/secrets/api-key-helper.sh"
 
 # Placeholder key for API proxy mode — must match sk-ant-* pattern for CC CLI validation
 _PROXY_PLACEHOLDER_KEY = "sk-ant-proxy00-placeholder-key-for-agentobox-validation"
@@ -697,7 +699,7 @@ class ClaudeCodeAdapter:
         if mcp_servers:
             for name, config in mcp_servers.items():
                 servers[name] = {
-                    "type": "http",
+                    "type": "sse",
                     "url": f"http://localhost:{config['port']}",
                 }
 

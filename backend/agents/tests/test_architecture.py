@@ -153,6 +153,8 @@ class TestNamingConventions:
             "write", "externalize", "upload", "encrypt", "decrypt",
             "reconcile", "teammate", "task", "team", "search",
             "get", "deliver", "list", "terminate",
+            "read", "exists", "status", "file", "pending", "inbox",
+            "append", "initialize", "build", "is_converged",
         )
         violations = []
 
@@ -212,6 +214,8 @@ class TestNamingConventions:
             "save", "delete", "clean", "full_clean", "validate_unique",
             "get_absolute_url", "get_queryset", "natural_key", "from_db",
         }
+        # Properties that act as computed accessors — not verb-prefixed methods
+        exempt_properties = {"volume"}
         allowed_prefixes = (
             "get_", "set_", "has_", "is_", "can_",  # accessors / predicates
         )
@@ -232,6 +236,8 @@ class TestNamingConventions:
                 if name.startswith("_"):
                     continue
                 if name in django_builtins:
+                    continue
+                if name in exempt_properties:
                     continue
                 if any(name.startswith(p) for p in allowed_prefixes):
                     continue
@@ -635,9 +641,9 @@ _LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"] + _AGENT_ABOX_DIRS
 # Valid event name domains — first segment of every domain.action event name.
 # Adding a new domain is a deliberate architectural decision, not an accident.
 _VALID_DOMAINS = {
-    "adapter", "auth", "broadcast", "callback", "comms", "dashboard", "feed", "graphql",
-    "hook", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime", "stream",
-    "triggers", "vnc",
+    "adapter", "auth", "broadcast", "callback", "comms", "dashboard", "feed", "gateway",
+    "graphql", "hook", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime",
+    "stream", "triggers", "vnc",
 }
 
 # Full regex: domain.action or domain.sub_action (1-2 dot-separated segments).

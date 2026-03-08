@@ -307,9 +307,13 @@ async def _provision_skills_to_volume(
 # ---------------------------------------------------------------------------
 
 def _build_coord_server_config(callback_url: str, relay_token: str) -> dict:
-    """Build the team coordination HTTP MCP server config for .mcp.json."""
+    """Build the team coordination SSE MCP server config for .mcp.json.
+
+    type="sse" matches the backend's FastMCP SSE transport. Do NOT use
+    "http" (wrong protocol) or omit type (CC 2.x can't auto-detect).
+    """
     return {
-        "type": "http",
+        "type": "sse",
         "url": f"{callback_url}/mcp",
         "headers": {
             "Authorization": f"Bearer {relay_token}",

@@ -1,5 +1,5 @@
 /* agentobox overrides — layout/typography, theme import from relay */
-@import url("file:///tmp/abox-theme.css");
+@import url("file:///tmp/abox-theme/userChrome.css");
 
 :root {
   --tf-font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;

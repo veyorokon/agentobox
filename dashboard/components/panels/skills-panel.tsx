@@ -80,7 +80,7 @@ export function SkillsPanel() {
   }, [skills, search, skillTagFilter])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Search + create */}
       <div className="px-3 py-2 flex items-center gap-2 border-b border-border-subtle shrink-0">
         <div className="flex-1 flex items-center gap-1.5 min-w-0 rounded-md border border-border-default bg-surface-sunken/40 px-2 py-1">
@@ -175,7 +175,7 @@ export function SkillsPanel() {
       </Collapsible>
 
       {/* Skills list */}
-      <ScrollArea className="flex-1 overflow-y-auto">
+      <ScrollArea className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-3 space-y-1.5">
           {filtered.length === 0 ? (
             <div className="py-8 text-center">

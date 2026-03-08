@@ -65,7 +65,8 @@ class DockerRuntime:
                     # Bind mount (local dev)
                     docker_volumes[mount.host_path] = {"bind": mount.mount_path, "mode": mode}
                 else:
-                    # Named Docker volume
+                    # Named Docker volume — name is the actual volume name
+                    # (e.g. "agentobox_agent-volumes", set by AGENT_VOLUME_NAME)
                     docker_volumes[mount.name] = {"bind": mount.mount_path, "mode": mode}
 
         def _create():
