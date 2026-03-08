@@ -1,18 +1,21 @@
 """
 Agent communication: send messages, signals, and mode changes.
 
-Commands are delivered to agents via WebSocket push through the relay's
-persistent connection. Each command goes through:
+Commands are delivered to agents via two paths:
 
-    1. Create StreamEvent (append-only log)
-    2. Broadcast to dashboard subscribers
-    3. Push command to relay via Channels group_send
+    1. State changes: write to volume → WS poke {"type": "poke", "changed": "path"}
+       Relay reads the file, applies it, updates status.json.
 
-The relay consumer (consumers.py) receives group_send messages on the
-relay_{agent_id} group and forwards them to the relay process over WebSocket.
+    2. Ephemeral signals: WS push {"type": "signal", "signal": "SIGINT|restart|clear"}
+       No state — just a control signal. Relay acts immediately.
+
+Messages to agents go through the inbox (volume + poke). Signals
+(interrupt, restart, clear) go directly over WS since they're ephemeral
+control signals, not state.
 """
 
 import copy
+import json
 import uuid
 
 import structlog
@@ -22,6 +25,7 @@ from channels.layers import get_channel_layer
 from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.utils import create_stream_event
+from agents.utils import sanitize_skill_name
 
 log = structlog.get_logger("abox.comms")
 
@@ -74,11 +78,24 @@ def _normalize_content(content: list) -> list:
     return content
 
 
+async def _send_via_inbox(agent: Agent, message: dict) -> None:
+    """Append a message to the agent's volume inbox and poke the relay.
+
+    Centralizes the inbox-append + poke pattern used by send_message,
+    answer_question, and broadcast_message. The message persists on the
+    volume even if the poke fails — relay reads it on next wake.
+    """
+    agent.volume.append_inbox({"type": "input", "payload": message})
+    await push_to_relay(str(agent.id), {"type": "poke", "changed": "_abox/inbox.jsonl"})
+
+
 async def push_to_relay(agent_id: str, command: dict) -> bool:
     """Push a command to the relay via Channels group_send.
 
+    Used for both poke messages and ephemeral signals. Poke payloads
+    are tiny: {"type": "poke", "changed": "filename"}. No state data.
+
     Returns False if the relay is known to be disconnected.
-    Callers can decide whether to raise, retry, or log.
     """
     try:
         connected = await Agent.objects.filter(
@@ -104,12 +121,15 @@ async def send_message(
     agent_id: str, message: str, content: list | None = None,
     source: str = "user",
 ) -> bool:
-    """Send a message to an agent's Claude Code session.
+    """Send a message to an agent via volume inbox + poke.
 
-    Args:
-        source: Origin of the message — "user" (default) or "trigger".
-            Stored in the StreamEvent data dict so the feed can filter
-            automated trigger messages from human messages.
+    The message is:
+    1. Stored as a StreamEvent (audit log, never lost)
+    2. Appended to the agent's inbox.jsonl on the volume
+    3. Poked to the relay so it reads the inbox
+
+    If the agent is dead, it's auto-restarted. The inbox message
+    survives on the volume — no backfill logic needed.
     """
     op_log = log.bind(agent_id=agent_id, source=source)
 
@@ -128,7 +148,6 @@ async def send_message(
         api_parts = parts
 
     # Store as StreamEvent BEFORE restart so the message is persisted
-    # regardless of whether the relay is connected yet.
     event_data = {
         "type": "user",
         "message": {"role": "user", "content": parts},
@@ -137,18 +156,16 @@ async def send_message(
     if source != "user":
         event_data["source"] = source
 
-    stream_event = await create_stream_event(
+    await create_stream_event(
         agent,
         event_type="user",
         data=event_data,
         message_id=f"user_{uuid.uuid4().hex[:16]}",
     )
 
-    # Push agent update to dashboard WebSocket group so the agent card feed
-    # shows the new message immediately (without refresh)
+    # Push agent update to dashboard
     try:
         from agents.consumers import _serialize_agent_for_ws
-        from channels.layers import get_channel_layer
         channel_layer = get_channel_layer()
         payload = await _serialize_agent_for_ws(agent)
         await channel_layer.group_send(
@@ -158,20 +175,16 @@ async def send_message(
     except Exception:  # intentional: dashboard push failure must not break message delivery
         op_log.warning("comms.dashboard_push_failed", exc_info=True)
 
-    # Auto-restart dead agents — relay will backfill the message on connect
+    # Auto-restart dead agents — inbox message persists on volume
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
         op_log.info("comms.auto_restarting", current_status=agent.status)
         await hard_restart_agent(str(agent_id))
-        op_log.info("comms.message_sent", delivery="backfill")
+        op_log.info("comms.message_sent", delivery="inbox")
         return True
 
-    # Push to relay via WebSocket
-    input_msg = {
-        "type": "user",
-        "message": {"role": "user", "content": api_parts},
-    }
-    await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
+    # Append to inbox and poke relay
+    await _send_via_inbox(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
 
     op_log.info("comms.message_sent")
     return True
@@ -190,7 +203,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
     parts = [{"type": "tool_result", "tool_use_id": tool_use_id, "content": answer_text}]
 
     # Store as StreamEvent
-    stream_event = await create_stream_event(
+    await create_stream_event(
         agent,
         event_type="user",
         data={
@@ -201,17 +214,16 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
         message_id=f"answer_{uuid.uuid4().hex[:16]}",
     )
 
-    # Auto-restart dead agents — relay will backfill the answer on connect
+    # Auto-restart dead agents — inbox message persists on volume
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
         op_log.info("comms.auto_restarting", current_status=agent.status)
         await hard_restart_agent(str(agent_id))
-        op_log.info("comms.question_answered", delivery="backfill")
+        op_log.info("comms.question_answered", delivery="inbox")
         return True
 
-    # Push to relay via WebSocket
-    input_msg = {"type": "user", "message": {"role": "user", "content": parts}}
-    await push_to_relay(agent_id, {"type": "input", "payload": input_msg})
+    # Append to inbox and poke relay
+    await _send_via_inbox(agent, {"type": "user", "message": {"role": "user", "content": parts}})
 
     op_log.info("comms.question_answered")
     return True
@@ -257,8 +269,7 @@ async def broadcast_message(
     parts_with_meta = [*parts, broadcast_meta]
 
     for agent in agents:
-        # Store with broadcast metadata BEFORE restart so the message is persisted
-        stream_event = await create_stream_event(
+        await create_stream_event(
             agent,
             event_type="user",
             data={
@@ -272,24 +283,21 @@ async def broadcast_message(
         if _needs_restart(agent):
             op_log.info("comms.auto_restarting", agent_id=str(agent.id))
             await hard_restart_agent(str(agent.id))
-            # Relay will backfill the message on connect
             continue
 
-        # Push to relay via WebSocket
-        input_msg = {"type": "user", "message": {"role": "user", "content": api_parts}}
-        await push_to_relay(str(agent.id), {"type": "input", "payload": input_msg})
+        # Append to inbox and poke
+        await _send_via_inbox(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
 
     op_log.info("comms.broadcast_sent", targets=target_names)
     return True
 
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
-    """Change an agent's permission mode via relay restart.
+    """Change an agent's permission mode via volume state.json + poke.
 
-    Accepts both frontend vocabulary (auto, plan, supervised) and CC wire
-    vocabulary (bypassPermissions, plan, default, etc.) for backwards compat.
-    Stores frontend vocabulary in agent.mode and CC wire format in
-    agent.permission_mode.
+    Writes mode to DB (source of truth for GraphQL) and to state.json
+    on the volume. Relay reads state.json on poke and applies via SDK.
+    No revert-on-failure — file is on volume, will be read eventually.
     """
     from agents.adapters import get_adapter
 
@@ -315,8 +323,6 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         op_log.info("comms.mode_noop")
         return agent
 
-    old_mode, old_perm = agent.mode, agent.permission_mode
-
     agent.mode = frontend_mode
     agent.permission_mode = wire_mode
     await agent.asave(update_fields=["mode", "permission_mode"])
@@ -324,35 +330,35 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     await broadcast_agent_update(agent)
 
     # Store mode change as StreamEvent
-    stream_event = await create_stream_event(
+    await create_stream_event(
         agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
-    # Push our vocabulary to relay — relay translates to SDK format via _MODE_MAP.
-    # Must NOT send wire_mode ("default") — relay's _MODE_MAP keys are our vocab.
-    sent = await push_to_relay(agent_id, {"type": "mode", "mode": frontend_mode})
-    if not sent:
-        op_log.warning("comms.mode_change_reverted")
-        agent.mode = old_mode
-        agent.permission_mode = old_perm
-        await agent.asave(update_fields=["mode", "permission_mode"])
-        await broadcast_agent_update(agent)
-        raise ValueError(
-            f"Mode change failed: relay is disconnected. "
-            f"Agent remains in '{old_mode}' mode."
-        )
+    # Write state.json and poke relay
+    agent.volume.write_state(agent.model, frontend_mode, agent.allowed_tools or [])
+    await push_to_relay(agent_id, {"type": "poke", "changed": "_abox/state.json"})
 
     op_log.info("comms.mode_changed")
     return agent
 
 
 async def push_theme_to_agents(project) -> None:
-    """Push theme tokens to all running agents in a project via relay WS.
+    """Push theme tokens to all running agents via volume write + poke.
 
-    Best-effort — one agent failure does not block others.
-    Called from project mutations when theme_tokens are updated.
+    Writes tokens.json to each agent's volume. The relay's poke handler
+    runs converters.py to generate CSS/lua and reloads AwesomeWM + Firefox.
     """
     from agents.models import Agent, AgentStatus
+    from agents.services.themes import BUILTIN_THEMES
+
+    tokens = project.theme_tokens
+    if not tokens:
+        tokens = BUILTIN_THEMES.get("claude-dark", {})
+
+    if not tokens:
+        return
+
+    tokens_json = json.dumps(tokens)
 
     running_agents = [
         a async for a in Agent.objects.filter(
@@ -363,16 +369,17 @@ async def push_theme_to_agents(project) -> None:
 
     for agent in running_agents:
         try:
-            await push_to_relay(str(agent.id), {
-                "type": "theme",
-                "tokens": project.theme_tokens,
-            })
+            agent.volume.write("tmp/abox-theme/tokens.json", tokens_json)
+            await push_to_relay(str(agent.id), {"type": "poke", "changed": "tmp/abox-theme/tokens.json"})
         except Exception:  # intentional: theme push is best-effort — one agent failure must not block others
             log.exception("comms.theme_push_failed", agent_name=agent.name)
 
 
 async def interrupt_agent(agent_id: str) -> bool:
-    """Send SIGINT to an agent's Claude Code session."""
+    """Send SIGINT to an agent's Claude Code session.
+
+    Ephemeral signal — goes directly over WS, no volume state.
+    """
     op_log = log.bind(agent_id=agent_id)
 
     try:
@@ -381,10 +388,8 @@ async def interrupt_agent(agent_id: str) -> bool:
         op_log.warning("comms.agent_not_found")
         return False
 
-    # Store as StreamEvent
     await create_stream_event(agent, event_type="interrupted", data={})
 
-    # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
     if not sent:
         op_log.warning("comms.interrupt_failed")
@@ -408,10 +413,8 @@ async def restart_agent(agent_id: str) -> bool:
         op_log.warning("comms.restart_skipped", status=agent.status)
         return False
 
-    # Store as StreamEvent
     await create_stream_event(agent, event_type="restarting", data={})
 
-    # Push to relay via WebSocket
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
     if not sent:
         op_log.warning("comms.restart_failed")
@@ -424,10 +427,12 @@ async def restart_agent(agent_id: str) -> bool:
 async def push_skill_to_agents(skill, operation: str = "write") -> None:
     """Push a skill write/delete to all matching running agents.
 
-    Finds agents with tags overlapping skill.assigned_tags (or all agents if
-    assigned_to_all=True) and pushes via WebSocket. The relay writes/removes
-    .claude/skills/<name>/SKILL.md.
+    Skills are written directly to the volume — CC discovers them via
+    filesystem. No poke needed; CC reads .claude/skills/ at startup and
+    picks up changes on the next invocation.
     """
+    import shutil
+
     all_agents = [
         a async for a in Agent.objects.filter(
             project_id=skill.project_id,
@@ -440,30 +445,37 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
         if skill.assigned_to_all or any(tag in (a.tags or []) for tag in (skill.assigned_tags or []))
     ]
 
-    command = {
-        "type": "skill",
-        "operation": operation,
-        "name": skill.name,
-    }
-    if operation == "write":
-        command["content"] = skill.content
+    safe_name = sanitize_skill_name(skill.name)
+    if not safe_name:
+        return
 
     for agent in matching_agents:
         try:
-            await push_to_relay(str(agent.id), command)
+            skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
+            if operation == "write":
+                agent.volume.write(skill_path, skill.content)
+            elif operation == "delete":
+                skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
+                if skill_dir.exists():
+                    shutil.rmtree(skill_dir)
         except Exception:
             log.exception("comms.skill_push_failed", agent_name=agent.name, agent_id=str(agent.id))
 
 
 async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[str]) -> None:
     """Push skill deletion to specific agents by ID."""
+    import shutil
+
+    safe_name = sanitize_skill_name(skill_name)
+    if not safe_name:
+        return
+
     for agent_id in agent_ids:
         try:
-            await push_to_relay(agent_id, {
-                "type": "skill",
-                "operation": "delete",
-                "name": skill_name,
-            })
+            agent = await Agent.objects.aget(id=agent_id)
+            skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
+            if skill_dir.exists():
+                shutil.rmtree(skill_dir)
         except Exception:
             log.exception("comms.skill_cleanup_failed", agent_id=agent_id)
 
@@ -482,7 +494,8 @@ async def clear_agent_session(agent_id: str) -> bool:
         op_log.warning("comms.clear_session_skipped", status=agent.status)
         return False
 
-    # Clear session files from container
+    # Clear session files from container — these are on abox-state volume,
+    # not the new agent volume, so still need runtime.exec()
     from agents.runtimes import get_runtime
     agent_state_dir = f"/mnt/abox-state/agents/{agent.id}/.claude"
     try:
@@ -497,12 +510,11 @@ async def clear_agent_session(agent_id: str) -> bool:
     agent.session_id = ""
     await agent.asave(update_fields=["session_id"])
 
-    # Store as StreamEvent
     await create_stream_event(
         agent, event_type="cleared", data={}, session_id="",
     )
 
-    # Push to relay via WebSocket
+    # Ephemeral signal — relay handles clear by discarding session
     sent = await push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
     if not sent:
         op_log.warning("comms.clear_session_lost")

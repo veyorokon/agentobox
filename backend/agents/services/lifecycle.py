@@ -24,6 +24,7 @@ Container provisioning sequence:
     relay self-starts (polls for .relay_env) → spawn tmux log tail
 """
 import asyncio
+import json
 import secrets
 
 import structlog
@@ -37,7 +38,7 @@ from agents.models import Agent, AgentStatus, StreamEvent
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_update
-from agents.services.provision import provision_workspace, write_secrets_env, write_theme_files
+from agents.services.provision import provision_workspace, provision_scoped_sudo
 from agents.services.utils import create_stream_event, terminate_sandbox
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
@@ -216,7 +217,13 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     """Build volume mount list from agent config.
 
     Priority: explicit volume_mounts field > workspace_path fallback.
-    Always includes the project state volume for session persistence.
+    Always includes the agent volume (config/state) and project state volume.
+
+    The agent volume is a per-project named Docker volume shared between
+    the backend container (writes config) and agent containers (reads via
+    symlinks). Each agent gets its own subdir: /vol/agents/{agent_id}/.
+    The backend writes to VOLUME_ROOT/{project_vol_name}/agents/{agent_id}/
+    and the agent container mounts the same volume at /vol/.
     """
     mounts: list[VolumeMount] = []
 
@@ -239,6 +246,14 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
                 host_path=agent.workspace_path,
             )
         )
+
+    # Agent volume — shared between backend (writes config at VOLUME_ROOT)
+    # and agent container (reads via init-volume symlinks at /vol/).
+    # Single named volume for all agents; each gets subdir /vol/agents/{id}/.
+    mounts.append(VolumeMount(
+        name="agent-volumes",
+        mount_path="/vol",
+    ))
 
     # Project state volume (session persistence, shared secrets)
     project_id = str(agent.project_id)[:8]
@@ -311,25 +326,19 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         op_log.info("lifecycle.container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
 
-        # Set up session persistence: symlink ~/.claude to volume-backed dir
-        # Run as root because fresh Docker volumes are root-owned
-        agent_state_dir = f"/mnt/abox-state/agents/{agent_id}/.claude"
-        await runtime.exec(sandbox_id, [
-            "bash", "-c",
-            f"mkdir -p {agent_state_dir} /mnt/abox-state/secrets"
-            f" && chown -R agent:agent /mnt/abox-state/agents/{agent_id}"
-            f" && chown agent:agent /mnt/abox-state/secrets"
-            f" && rm -rf /home/agent/.claude"
-            f" && ln -sf {agent_state_dir} /home/agent/.claude",
-        ], user="root")
+        # Initialize the agent's volume control plane (_abox/ directory).
+        # This MUST happen before any other volume writes. The init-volume
+        # oneshot inside the container polls for /vol/agents/$AGENT_ID/_abox
+        # as its readiness gate — once this directory exists, it creates
+        # symlinks and all s6 services can start. Without this, the relay
+        # service blocks forever waiting for its volume symlinks.
+        vol = agent.volume
+        vol.initialize()
 
-        # Write shared secrets env file and source it from .bashrc
-        await write_secrets_env(runtime, sandbox_id, secret_envs)
-        await runtime.exec(sandbox_id, [
-            "bash", "-c",
-            "grep -q 'abox-state/secrets/env' /home/agent/.bashrc 2>/dev/null"
-            " || echo 'source /mnt/abox-state/secrets/env 2>/dev/null' >> /home/agent/.bashrc",
-        ])
+        # Write shared secrets env file to volume
+        from agents.services.provision import build_secrets_env_content
+        secrets_content = build_secrets_env_content(secret_envs)
+        vol.write_secret("mnt/abox-state/secrets/env", secrets_content)
 
         api_key = _resolve_api_key(agent.model, secret_envs)
         if not api_key:
@@ -351,8 +360,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         from agents.services.utils import get_team_roster
         team_members = await get_team_roster(project)
 
+        # Write all config files to the volume. The init-volume oneshot
+        # creates symlinks so the container sees these at their canonical paths.
         await provision_workspace(
-            runtime, sandbox.id, project,
+            vol, project,
             agent_type=agent.agent_type,
             api_key=api_key,
             mcp_servers=agent.mcp_servers or None,
@@ -369,11 +380,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             model=agent.model,
             agent_tags=agent.tags or [],
         )
-        # tech-debt: write_theme_files is replaced by WS-based theme push (relay.py handles "theme" command).
-        # Kept temporarily for agents that connect before WS is established.
-        # Remove once all theme delivery is confirmed via WS path.
+
+        # Write theme tokens to volume (converter generates CSS/lua at boot)
         if project.theme_tokens:
-            await write_theme_files(runtime, sandbox.id, project.theme_tokens)
+            vol.write("tmp/abox-theme/tokens.json", json.dumps(project.theme_tokens))
 
         # Build relay environment via adapter (single source of truth for
         # env var names, model normalization, mode vocabulary, etc.)
@@ -392,11 +402,15 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             mcp_config_path="/home/agent/.mcp.json",
             allowed_tools=agent.allowed_tools or None,
         )
-        await runtime.write_file(
-            sandbox.id,
-            relay_env_content.encode("utf-8"),
-            "/home/agent/.relay_env",
-        )
+        vol.write("home/agent/.relay_env", relay_env_content)
+
+        # Write state.json — structured state for relay poke handler.
+        # Relay reads this on "poke" to apply mode/model changes.
+        vol.write_state(agent.model, agent.mode or "auto", agent.allowed_tools or [])
+
+        # Security hardening — still uses runtime.exec() because
+        # /etc/sudoers.d/ is a system path, not on the volume.
+        await provision_scoped_sudo(runtime, sandbox_id, op_log)
 
         # Save relay_token and sandbox details BEFORE launching relay.
         # The relay POSTs to /agents/<id>/stream/ immediately on startup,
@@ -408,11 +422,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         )
         await broadcast_agent_update(agent)
 
-        # The s6-supervised relay service polls for .relay_env every 2s.
-        # Now that we've written the env file, the relay will self-start
-        # within 2 seconds — no external signal needed. On crash,
-        # s6-supervise auto-restarts; on clean exit (code 0), the finish
-        # script touches a down file to stop restarts.
+        # The s6-supervised relay service depends on init-volume, which
+        # waits for /vol/_abox to appear. Volume.initialize() created it
+        # above, so init-volume proceeds, creates symlinks, and relay
+        # sources .relay_env and starts. No polling needed.
 
         # Spawn a tmux session tailing relay logs for VNC debug visibility.
         # S6_LOGGING=1 routes service stdout/stderr through s6-log to the
@@ -573,10 +586,10 @@ def _atomic_reset_for_restart(agent_id):
         old_runtime = agent.runtime
         resume_session_id = agent.session_id
 
-        # Extract config — prefer live agent fields (which may have been
-        # updated post-creation via mutations) over config_snapshot (which
-        # is a creation-time record). config_snapshot is only the fallback
-        # for fields that might be missing on very old agent rows.
+        # Config priority: live agent fields > config_snapshot fallback.
+        # Live fields reflect post-creation mutations (mode change, model
+        # swap). config_snapshot is creation-time only — used as fallback
+        # for old agent rows that may be missing newer fields.
         config = agent.config_snapshot or {}
         runtime_name = agent.runtime or config.get("runtime", "docker")
         model = agent.model or config.get("model", "")
@@ -594,10 +607,12 @@ def _atomic_reset_for_restart(agent_id):
                 compute_seconds=F("compute_seconds") + elapsed,
             )
 
-        # Reset agent state to DEPLOYING — clear stale session data.
-        # latest_snapshot must be cleared so derived fields (liveAction,
-        # lastOutput, cost, duration) don't show stale values from the
-        # previous session while the agent is redeploying.
+        # Clean slate: reset ALL mutable state to DEPLOYING defaults.
+        # Every field here was set by the previous container lifecycle.
+        # latest_snapshot must be cleared so GraphQL-derived fields
+        # (liveAction, lastOutput, cost) don't show stale values.
+        # relay_* fields reset because the old WS connection dies with
+        # the old container. deployed_at resets for compute tracking.
         agent.status = AgentStatus.DEPLOYING
         agent.sandbox_id = ""
         agent.vnc_url = ""

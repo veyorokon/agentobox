@@ -17,6 +17,7 @@ env = environ.Env(
     AGENT_ROOTFS_PATH=(str, ""),
     MODAL_APP_NAME=(str, "agentobox"),
     MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent-claude:latest"),
+    VOLUME_ROOT=(str, ""),
 )
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
 
@@ -142,6 +143,7 @@ DOCKER_NETWORK = env("DOCKER_NETWORK")
 AGENT_ROOTFS_PATH = env("AGENT_ROOTFS_PATH")
 MODAL_APP_NAME = env("MODAL_APP_NAME")
 MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
+VOLUME_ROOT = env("VOLUME_ROOT")
 
 # Per-agent-type image selection. Runtimes look up agent_type in these maps;
 # if missing, they fall back to AGENT_IMAGE / MODAL_AGENT_IMAGE.

@@ -1,0 +1,35 @@
+#!/bin/bash
+# init-volume — create symlinks from the agent's volume subdir into the container.
+#
+# Each agent gets its own subdir within the shared project volume:
+#   /vol/agents/$AGENT_ID/home/agent/.claude  →  /home/agent/.claude
+#   /vol/agents/$AGENT_ID/tmp/abox-theme      →  /tmp/abox-theme
+#   etc.
+#
+# AGENT_ID is set as a container env var by _build_agent_env() in lifecycle.py.
+# The volume root is /vol/ (Docker named volume mounted by _build_volume_mounts()).
+
+AGENT_VOL="/vol/agents/${AGENT_ID}"
+
+# Wait for backend to create _abox/ — the readiness handshake.
+# Backend calls vol.initialize() during provisioning which creates this dir.
+# All s6 services depend on init-volume, so nothing starts until this gate passes.
+while [ ! -d "${AGENT_VOL}/_abox" ]; do sleep 0.5; done
+
+# Create symlinks: agent volume subdir → container filesystem paths
+ln -sfn "${AGENT_VOL}/home/agent/.claude"       /home/agent/.claude
+ln -sfn "${AGENT_VOL}/home/agent/.relay_env"    /home/agent/.relay_env
+ln -sfn "${AGENT_VOL}/home/agent/workspace"     /home/agent/workspace
+ln -sfn "${AGENT_VOL}/tmp/abox-theme"           /tmp/abox-theme
+ln -sfn "${AGENT_VOL}/run/secrets"              /run/secrets
+ln -sfn "${AGENT_VOL}/run/mcp-gateway"          /run/mcp-gateway
+ln -sfn "${AGENT_VOL}/mnt/abox-state"           /mnt/abox-state
+
+# Run theme converter on initial tokens if present
+if [ -f "${AGENT_VOL}/tmp/abox-theme/tokens.json" ]; then
+    python3 /opt/abox/converters.py "${AGENT_VOL}/tmp/abox-theme/tokens.json"
+fi
+
+# Ensure secrets are sourced on login
+grep -q 'abox-state/secrets/env' /home/agent/.bashrc 2>/dev/null \
+    || echo 'source /mnt/abox-state/secrets/env 2>/dev/null' >> /home/agent/.bashrc

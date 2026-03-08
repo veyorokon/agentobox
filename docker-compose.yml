@@ -64,6 +64,7 @@ services:
       MEDIA_BUCKET: ${MEDIA_BUCKET:-agentobox-media}
       MEDIA_CDN_URL: ${MEDIA_CDN_URL:-http://localhost:4566/agentobox-media}
       AGENT_ROOTFS_PATH: ${AGENT_ROOTFS_PATH:-}
+      VOLUME_ROOT: /volumes
       LOG_FORMAT: json
     ports:
       - "8000:8000"
@@ -80,6 +81,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./agent:/agent:ro
       - ./dashboard/schema.graphql:/dashboard/schema.graphql:ro
+      - agent-volumes:/volumes
 
   dashboard:
     build: ./dashboard
@@ -99,3 +101,4 @@ services:
 volumes:
   pgdata:
   localstack-data:
+  agent-volumes:

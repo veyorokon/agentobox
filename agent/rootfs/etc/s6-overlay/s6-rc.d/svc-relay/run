@@ -1,39 +1,18 @@
 #!/command/with-contenv bash
 exec 2>&1
 
-# The relay service is registered with s6-rc so the supervisor is always
-# listening, but it stays idle until lifecycle.py writes .relay_env.
-#
-# Flow:
-#   1. Container boots -> s6-supervise starts this script
-#   2. No .relay_env yet -> poll every 2s until it appears
-#   3. lifecycle.py writes .relay_env (no external signal needed)
-#   4. Poll discovers the file -> source it, exec relay.py under s6-setuidgid
-#
-# This replaces the previous sleep-infinity + SIGTERM approach which raced
-# with s6-rc boot — the signal could arrive before s6-svscan was ready.
+# .relay_env is available via volume symlink (init-volume runs first).
+# No polling needed — s6-rc dependency ensures init-volume completes first.
 
-while [ ! -f /home/agent/.relay_env ]; do
-    sleep 2
-done
-
-# Relay env written by lifecycle.py — source it for SDK + WS config
 source /home/agent/.relay_env
 
-# Reset crash counter — we made it past .relay_env polling, so the
-# environment is valid. Consecutive crash counting starts fresh.
+# Reset crash counter
 rm -f /tmp/svc-relay-crashes
 
 WORK_DIR="/home/agent/workspace"
 [ -d "$WORK_DIR" ] && cd "$WORK_DIR" || cd /home/agent
 
-# s6-setuidgid drops privileges but does NOT update HOME — it stays as
-# /root from the container init. Claude CLI reads config from $HOME/.claude/
-# which fails silently when HOME points to a directory the agent user can't
-# access. This was the root cause of "Control request timeout: initialize".
+# s6-setuidgid drops privileges but does NOT update HOME
 export HOME=/home/agent
 
-# Select relay based on agent type. Each agent image ships its own relay.py
-# at /opt/abox/relay.py (CC uses SDK pipe, OpenCode uses HTTP/SSE).
-# Both share relay_common.py for WS transport + redaction.
 exec s6-setuidgid agent python3 /opt/abox/relay.py

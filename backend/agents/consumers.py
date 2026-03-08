@@ -31,11 +31,6 @@ from agents.models import StreamEvent
 
 log = structlog.get_logger("abox.relay")
 
-# Valid Anthropic content block types — anything prefixed with _ is
-# internal metadata (e.g. _broadcast) and must be stripped before
-# sending to Claude's stdin. Used by both deploy and reconnect backfill.
-_VALID_CONTENT_TYPES = {"text", "image", "tool_result", "tool_use"}
-
 
 class RelayConsumer(AsyncJsonWebsocketConsumer):
     """Bidirectional WebSocket channel between agent relay and backend.
@@ -92,46 +87,11 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         from agents.services.reconcile import ensure_running
         ensure_running()
 
-        # Backfill pending user messages that arrived while the relay was
-        # genuinely down (container freshly created). The agent stays in
-        # DEPLOYING until the relay connects (status=IDLE is set below),
-        # so this check cleanly distinguishes fresh deploys from transient
-        # WS reconnects (where status is already IDLE/RUNNING and Claude
-        # already has these messages in context).
+        # Transition DEPLOYING → IDLE. No backfill needed — messages are
+        # on the volume (inbox.jsonl) and the relay reads them on startup.
+        # Theme is also on the volume (tokens.json), applied by init-volume.
         from agents.models import Agent, AgentStatus
         if self.agent.status == AgentStatus.DEPLOYING:
-            pending = StreamEvent.objects.filter(
-                agent_id=self.agent_id,
-                event_type="user",
-                id__gt=self.agent.last_delivered_event_id,
-            ).order_by("id")
-
-            async for event in pending:
-                data = event.data
-                msg = data.get("message", {})
-                content = msg.get("content", "")
-                # Only replay text user messages, not tool_result events
-                if isinstance(content, str) and content.strip():
-                    await self.send_json({
-                        "type": "input",
-                        "payload": {"type": "user", "message": {"role": "user", "content": content}},
-                    })
-                elif isinstance(content, list):
-                    # Strip internal metadata blocks (type starting with _)
-                    clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
-                    # Check if it's a text-only content block list (not tool_result)
-                    text_parts = [b for b in clean if b.get("type") == "text"]
-                    if text_parts and not any(b.get("type") == "tool_result" for b in clean):
-                        await self.send_json({
-                            "type": "input",
-                            "payload": {"type": "user", "message": {"role": "user", "content": clean}},
-                        })
-
-            # Transition DEPLOYING → IDLE now that relay is connected and
-            # pending messages have been delivered. This is the only place
-            # status becomes IDLE — lifecycle.py saves sandbox details but
-            # deliberately leaves status as DEPLOYING until this point.
-            # deployed_at marks the start of billable compute time.
             now = timezone.now()
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 status=AgentStatus.IDLE,
@@ -142,82 +102,20 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(self.agent)
 
-        # Backfill messages sent during transient relay disconnect.
-        # Unlike the DEPLOYING backfill above (which handles fresh deploys),
-        # this catches messages sent while the relay was briefly down
-        # (network hiccup, container restart, etc).
-        # Uses cursor (last_delivered_event_id) instead of timestamps —
-        # monotonic auto-increment eliminates clock skew / race conditions.
-        elif self.agent.last_delivered_event_id > 0 or self.agent.relay_disconnected_at:
-            pending = StreamEvent.objects.filter(
-                agent_id=self.agent_id,
-                event_type="user",
-                id__gt=self.agent.last_delivered_event_id,
-            ).order_by("id")
-
-            async for event in pending:
-                data = event.data
-                msg = data.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, str) and content.strip():
-                    await self.send_json({
-                        "type": "input",
-                        "payload": {"type": "user", "message": {"role": "user", "content": content}},
-                    })
-                elif isinstance(content, list):
-                    # Reconnect backfill: replay ALL valid content including
-                    # tool_results (answers to AskUserQuestion). The Claude
-                    # session is still alive — tool_use_ids are still valid.
-                    clean = [b for b in content if isinstance(b, dict) and b.get("type", "") in _VALID_CONTENT_TYPES]
-                    if clean:
-                        await self.send_json({
-                            "type": "input",
-                            "payload": {"type": "user", "message": {"role": "user", "content": clean}},
-                        })
-
-            # Clear the disconnect timestamp — backfill complete
-            from agents.models import Agent
-            await Agent.objects.filter(id=self.agent_id).aupdate(relay_disconnected_at=None)
-
-        # Push active theme tokens on connect so the agent desktop
-        # matches the dashboard theme immediately after boot/reconnect.
-        try:
-            from projects.models import Project
-            project = await Project.objects.aget(id=self.agent.project_id)
-
-            # If theme_tokens is empty (new project), use default theme (claude-dark)
-            tokens = project.theme_tokens
-            if not tokens:
-                from agents.services.themes import BUILTIN_THEMES
-                tokens = BUILTIN_THEMES.get("claude-dark", {})
-
-            if tokens:
-                await self.send_json({"type": "theme", "tokens": tokens})
-        except Exception:  # intentional: theme push is best-effort — don't block relay connect
-            log.warning("relay.theme_push_failed", agent_id=self.agent_id, exc_info=True)
-
         log.info("relay.connected", agent_id=self.agent_id)
 
     async def disconnect(self, code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
-        # Track relay connection state — use filter().aupdate() because
-        # self.agent may be stale or the agent row may have been deleted.
-        # Record disconnect timestamp AND snapshot the current max
-        # StreamEvent.id as the delivery cursor. On reconnect, backfill
-        # replays events with id > cursor — no timestamp race possible.
+        # Track relay connection state. No delivery cursor needed —
+        # inbox.pos on the volume handles delivery guarantees.
         try:
             from django.utils import timezone
             from agents.models import Agent
 
-            max_event_id = await StreamEvent.objects.filter(
-                agent_id=self.agent_id, event_type="user",
-            ).order_by("-id").values_list("id", flat=True).afirst() or 0
-
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 relay_connected=False,
                 relay_disconnected_at=timezone.now(),
-                last_delivered_event_id=max_event_id,
             )
         except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
             log.warning("relay.update_failed", agent_id=self.agent_id, exc_info=True)

@@ -107,14 +107,23 @@ def check_service_naming():
         "resolve", "provision", "ensure", "answer", "hard_restart",
         "write", "externalize", "upload", "encrypt", "decrypt",
         "reconcile", "teammate", "task", "team", "search", "terminate",
-        "deliver", "get", "list", "handle",
+        "deliver", "get", "list", "handle", "build",
     )
     for f in _python_files(SERVICES_DIR):
         tree = ast.parse(_read_source(f))
+        # Collect class method names — these follow their own naming conventions
+        class_methods = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                        class_methods.add(item.name)
         for node in ast.walk(tree):
             if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 name = node.name
                 if name.startswith("_"):
+                    continue
+                if name in class_methods:
                     continue
                 if not any(name.startswith(p) for p in allowed_prefixes):
                     fail(f"Service function {f.name}::{name} does not follow verb_entity pattern")

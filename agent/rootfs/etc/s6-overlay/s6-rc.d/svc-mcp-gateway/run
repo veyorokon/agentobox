@@ -1,7 +1,5 @@
 #!/command/with-contenv bash
 exec 2>&1
 
-# Wait for gateway config (written by provisioning)
-while [ ! -f /run/mcp-gateway/config.json ]; do sleep 1; done
-
+# config.json is available via volume symlink (init-volume runs first).
 exec python3 /opt/abox/mcp-gateway.py

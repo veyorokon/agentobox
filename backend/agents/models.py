@@ -3,7 +3,7 @@ Domain models for the agents app.
 
 Defines the core entities: Agent, StreamEvent, SessionResult, TeamFeedItem,
 AgentTask, ProjectSecret, Skill, AgentFeedback. Agent is the central record
-tracking a single Claude Code container — its runtime, config facets, session
+tracking a single Claude Code container — its runtime, configuration, session
 state, and materialized view fields. StreamEvent is the append-only event log
 (INSERT only, never UPDATE) that captures every relay event verbatim.
 TeamFeedItem is the curated dashboard feed — a flat union where every row has
@@ -11,9 +11,10 @@ all fields, nulled where inapplicable, matching the frontend's discriminated
 union type.
 
 Key design decisions:
-- State facets (model, mode, mcp_servers, allowed_tools) live on the Agent
-  row. DB is source of truth; relay reads them via env vars at launch. See
-  the "State facets" comment block on Agent for the extension protocol.
+- Agent config (model, mode, mcp_servers, allowed_tools) is written to the
+  shared volume at provisioning time. The relay reads config from volume
+  files, not DB fields. DB fields are kept for GraphQL queries and as the
+  source of truth for what SHOULD be on the volume.
 - SessionResult is INSERT-per-turn (not upserted) so we get a full cost
   timeline, not just latest values.
 - config_snapshot captures creation-time config so hard_restart can
@@ -115,6 +116,7 @@ class Agent(models.Model):
 
     @classmethod
     def from_db(cls, db, field_names, values):
+        """Capture original status on load for change detection in save()."""
         instance = super().from_db(db, field_names, values)
         instance._original_status = instance.status
         return instance
@@ -135,19 +137,6 @@ class Agent(models.Model):
     parent_session_id = models.CharField(max_length=255, blank=True)
     session_id = models.CharField(max_length=255, blank=True)
 
-    # ── State facets ──────────────────────────────────────────────────
-    # Fields synchronized to the in-container relay at session launch.
-    # The DB is the source of truth; the relay reads these via env vars
-    # or _build_options() and passes them to ClaudeAgentOptions.
-    #
-    # To add a new facet:
-    #   1. Add the field here
-    #   2. Wire it in lifecycle.py (provision → relay env) or relay.py (_build_options)
-    #   3. If live-updatable: add a set_* service function in comms.py
-    #      that saves to DB + pushes command to relay (see set_agent_mode)
-    #   4. If provision-only: just save to DB — next spawn picks it up
-    #
-    # Current facets: model, permission_mode, allowed_tools, mcp_servers
     model = models.CharField(max_length=100, blank=True)
     permission_mode = models.CharField(max_length=30, blank=True)
     # Pre-authorized tool names — SDK skips can_use_tool callback for these.
@@ -208,12 +197,6 @@ class Agent(models.Model):
     # sent while the relay was transiently disconnected.
     relay_disconnected_at = models.DateTimeField(null=True, blank=True)
 
-    # Cursor for delivery guarantee — highest StreamEvent.id confirmed
-    # delivered to the relay. On reconnect, backend replays all user
-    # events with id > last_delivered_event_id. Monotonic (auto-increment)
-    # so no clock skew risk unlike relay_disconnected_at timestamps.
-    last_delivered_event_id = models.BigIntegerField(default=0)
-
     # ── Trigger configuration ─────────────────────────────────────────
     # Array of trigger objects that control what wakes this agent.
     # Each element: {"type": "cron"|"webhook"|"manual", "schedule": "0 9 * * *",
@@ -246,6 +229,11 @@ class Agent(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.status})"
+
+    @property
+    def volume(self):
+        from agents.services.volume import Volume
+        return Volume(str(self.project_id), str(self.id))
 
     @property
     def compute_seconds_live(self):
