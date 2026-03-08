@@ -106,24 +106,35 @@ def check_service_naming():
         "restart", "interrupt", "clear", "recompute", "push", "process",
         "resolve", "provision", "ensure", "answer", "hard_restart",
         "write", "externalize", "upload", "encrypt", "decrypt",
-        "reconcile", "teammate", "task", "team", "search", "terminate",
+        "reconcile", "search", "terminate",
         "deliver", "get", "list", "handle", "build",
     )
     for f in _python_files(SERVICES_DIR):
         tree = ast.parse(_read_source(f))
-        # Collect class method names — these follow their own naming conventions
-        class_methods = set()
+        # Collect names to skip: class methods and @mcp.tool decorated functions.
+        # Class methods follow their own conventions. MCP tool names follow the
+        # MCP protocol convention (entity_verb), not our verb_entity convention.
+        skip_names = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 for item in node.body:
                     if isinstance(item, (ast.AsyncFunctionDef, ast.FunctionDef)):
-                        class_methods.add(item.name)
+                        skip_names.add(item.name)
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                for dec in node.decorator_list:
+                    dec_str = ""
+                    if isinstance(dec, ast.Attribute):
+                        dec_str = dec.attr
+                    elif isinstance(dec, ast.Name):
+                        dec_str = dec.id
+                    if dec_str == "tool":
+                        skip_names.add(node.name)
         for node in ast.walk(tree):
             if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 name = node.name
                 if name.startswith("_"):
                     continue
-                if name in class_methods:
+                if name in skip_names:
                     continue
                 if not any(name.startswith(p) for p in allowed_prefixes):
                     fail(f"Service function {f.name}::{name} does not follow verb_entity pattern")
