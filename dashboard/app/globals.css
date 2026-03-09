@@ -288,6 +288,12 @@ body {
   background: var(--color-border-subtle);
 }
 
+/* Status ticker — ephemeral fade-in */
+@keyframes ticker-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* Agent roster — fade-in for list items (staggered) */
 @keyframes roster-item-in {
   from {

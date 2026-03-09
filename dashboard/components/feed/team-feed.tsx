@@ -10,7 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { SystemMessage } from "@/components/feed/system-message"
 import { TeamUserMessage } from "@/components/feed/user-message"
 import { AgentSummaryCard } from "@/components/feed/summary-card"
-import { StatusBar } from "@/components/feed/status-bar"
+import { StatusTicker } from "@/components/feed/status-ticker"
 import { AgentToAgentMessage } from "@/components/feed/agent-message"
 import { TeamErrorAlert } from "@/components/feed/error-alert"
 import { QuestionCard, MultiQuestionCard } from "@/components/feed/question-card"
@@ -73,7 +73,7 @@ export function TeamFeed() {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      <StatusBar items={statusItems} onClickAgent={handleClickAgent} />
+      <StatusTicker items={statusItems} onClickAgent={handleClickAgent} />
       <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
         <div className="max-w-3xl mx-auto w-full px-2 @[640px]/main:px-4 py-4 space-y-3">
           {nonStatusItems.map((item) => {
