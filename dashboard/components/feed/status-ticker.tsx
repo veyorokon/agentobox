@@ -150,10 +150,13 @@ export function StatusTicker({
   if (entries.length === 0) return null
 
   return (
-    <div className="w-full shrink-0 overflow-hidden" style={{ height: 28 }}>
+    <div
+      className="absolute top-0 left-0 right-0 z-10 pointer-events-none overflow-hidden"
+      style={{ height: 28 }}
+    >
       <div
         ref={containerRef}
-        className="max-w-3xl mx-auto h-full flex items-center justify-center gap-x-4 px-3 @[640px]/main:px-6 overflow-hidden flex-nowrap"
+        className="max-w-3xl mx-auto h-full flex items-center justify-center gap-x-4 px-3 @[640px]/main:px-6 overflow-hidden flex-nowrap pointer-events-auto"
       >
         {overflowCount > 0 && (
           <span className="text-[9px] text-muted/30 font-mono tabular-nums shrink-0">

@@ -72,7 +72,7 @@ export function TeamFeed() {
   }, [feedItems, agentFilter])
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
       <StatusTicker items={statusItems} onClickAgent={handleClickAgent} />
       <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
         <div className="max-w-3xl mx-auto w-full px-2 @[640px]/main:px-4 py-4 space-y-3">
