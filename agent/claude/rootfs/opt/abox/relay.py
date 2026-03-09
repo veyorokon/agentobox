@@ -29,7 +29,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -248,104 +247,6 @@ def _preflight_mcp_servers(config_path: str, timeout_s: float = 3.0) -> list[dic
 
 
 # ---------------------------------------------------------------------------
-# Marionette client — hot-reload Firefox CSS without restarting
-# ---------------------------------------------------------------------------
-
-
-class _MarionetteClient:
-    """Minimal Marionette client -- length-prefixed JSON over TCP.
-
-    Firefox Marionette listens on port 2828 when launched with --marionette.
-    The protocol is simple: each message is ``len(json):json`` in both
-    directions. We use it to execute privileged chrome JS that swaps
-    userChrome stylesheets at runtime via nsIStyleSheetService.
-    """
-
-    def __init__(self, host: str = "127.0.0.1", port: int = 2828):
-        self.host = host
-        self.port = port
-        self.sock: socket.socket | None = None
-        self._msg_id = 0
-
-    def connect(self):
-        self.sock = socket.create_connection((self.host, self.port), timeout=5)
-        self._recv()  # consume hello message
-
-    def _send(self, data: list):
-        body = json.dumps(data)
-        msg = f"{len(body)}:{body}"
-        self.sock.sendall(msg.encode("utf-8"))
-
-    def _recv(self) -> dict:
-        buf = b""
-        while True:
-            c = self.sock.recv(1)
-            if not c:
-                raise ConnectionError("Marionette socket closed mid-read")
-            if c == b":":
-                break
-            buf += c
-        length = int(buf)
-        body = b""
-        while len(body) < length:
-            chunk = self.sock.recv(length - len(body))
-            if not chunk:
-                raise ConnectionError("Marionette socket closed mid-body")
-            body += chunk
-        return json.loads(body)
-
-    def new_session(self):
-        self._msg_id += 1
-        self._send([0, self._msg_id, "WebDriver:NewSession", {"capabilities": {}}])
-        return self._recv()
-
-    def execute_chrome_script(self, script: str):
-        self._msg_id += 1
-        self._send([0, self._msg_id, "Marionette:SetContext", {"value": "chrome"}])
-        self._recv()
-        self._msg_id += 1
-        self._send([0, self._msg_id, "WebDriver:ExecuteScript", {"script": script, "sandbox": "system"}])
-        return self._recv()
-
-    def close(self):
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception:
-                pass  # intentional: best-effort cleanup on a TCP socket
-
-
-def _build_theme_swap_js(old_uri: str, new_uri: str) -> str:
-    """Build JS for atomic CSS sheet replacement via nsIStyleSheetService.
-
-    Registers the NEW sheet first (so CSS variables are never missing),
-    then unregisters the OLD sheet. This eliminates the flash of Firefox's
-    built-in hazard pattern (red diagonal stripes) that appears when no
-    user sheet is registered.
-    """
-    js = (
-        'var ss = Cc["@mozilla.org/content/style-sheet-service;1"]'
-        ".getService(Ci.nsIStyleSheetService);\n"
-        'var io = Cc["@mozilla.org/network/io-service;1"]'
-        ".getService(Ci.nsIIOService);\n"
-    )
-    # Always register the new sheet first — variables are never absent
-    js += (
-        f'var newUri = io.newURI("{new_uri}", null, null);\n'
-        "ss.loadAndRegisterSheet(newUri, ss.USER_SHEET);\n"
-    )
-    # Then unregister the old sheet if one was active
-    if old_uri and old_uri != new_uri:
-        js += (
-            f'var oldUri = io.newURI("{old_uri}", null, null);\n'
-            "if (ss.sheetRegistered(oldUri, ss.USER_SHEET)) {\n"
-            "    ss.unregisterSheet(oldUri, ss.USER_SHEET);\n"
-            "}\n"
-        )
-    return js
-
-
-# ---------------------------------------------------------------------------
 # Main relay
 # ---------------------------------------------------------------------------
 
@@ -372,8 +273,6 @@ class SDKRelay:
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
-        self._theme_reload_task: asyncio.Task | None = None  # debounced CSS reload
-        self._current_theme_uri: str = ""  # file URI of active Firefox CSS sheet
         self._init_stage: str = ""
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
@@ -825,18 +724,9 @@ class SDKRelay:
             except Exception as e:  # intentional: awesome-client reload is best-effort cosmetic — theme still applies on next restart
                 log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "awesome_reload"})
 
-        # Debounced Firefox CSS reload
-        css_content = Path(f"{VOL_ROOT}/tmp/abox-theme/userChrome.css").read_text()
-        css_hash = hashlib.md5(css_content.encode()).hexdigest()[:8]
-        versioned_css_path = f"/tmp/abox-theme-{css_hash}.css"
-        Path(versioned_css_path).write_text(css_content)
-        new_theme_uri = f"file://{versioned_css_path}"
-
-        if self._theme_reload_task and not self._theme_reload_task.done():
-            self._theme_reload_task.cancel()
-        self._theme_reload_task = asyncio.create_task(
-            self._debounced_firefox_css_reload(new_theme_uri)
-        )
+        # Firefox picks up userChrome.css changes via nsIStyleSheetService
+        # polling in mozilla.cfg (2s interval). No restart needed.
+        log.info("relay.theme_css_written")
 
     async def _on_state_changed(self):
         """state.json changed — apply mode changes."""
@@ -917,54 +807,6 @@ class SDKRelay:
         if file_path.exists():
             status[filename] = hashlib.sha256(file_path.read_bytes()).hexdigest()[:16]
         status_path.write_text(json.dumps(status))
-
-    async def _debounced_firefox_css_reload(self, new_uri: str):
-        """Wait for theme pushes to settle, then hot-reload CSS via Marionette.
-
-        Dashboard fires multiple theme mutations on connect, so we debounce
-        with a 3-second delay. Uses atomic sheet replacement: register the
-        NEW sheet first (CSS variables never absent), then unregister the OLD
-        sheet. This eliminates the red diagonal stripe flash.
-
-        Falls back to pkill if Marionette is unavailable (Firefox not yet
-        started, port not open).
-        """
-        from pathlib import Path
-
-        try:
-            await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            log.info("relay.theme_reload_cancelled")
-            raise
-
-        old_uri = self._current_theme_uri
-        swap_js = _build_theme_swap_js(old_uri, new_uri)
-
-        try:
-            client = _MarionetteClient()
-            client.connect()
-            client.new_session()
-            client.execute_chrome_script(swap_js)
-            client.close()
-            self._current_theme_uri = new_uri
-            log.info("relay.theme_css_reloaded", extra={"old": old_uri, "new": new_uri})
-
-            # Clean up the old versioned CSS file
-            if old_uri and old_uri != new_uri:
-                old_path = old_uri.removeprefix("file://")
-                try:
-                    Path(old_path).unlink(missing_ok=True)
-                except OSError:
-                    pass  # intentional: best-effort cleanup of stale theme file
-        except Exception as exc:  # intentional: CSS reload failure falls back to Firefox restart below
-            log.warning("relay.theme_css_reload_failed", extra={"error": str(exc), "agent_id": AGENT_ID, "operation": "firefox_css_reload"})
-            # Fallback: restart Firefox (s6 auto-restarts the service)
-            # On restart, mozilla.cfg loads /tmp/abox-theme/userChrome.css
-            try:
-                subprocess.run(["pkill", "firefox-esr"], timeout=5, capture_output=True)
-                log.info("relay.theme_firefox_restarted_fallback")
-            except Exception:
-                pass  # intentional: best-effort fallback when both Marionette and pkill fail
 
     # ── Periodic stats ──
 
