@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
+import { useQuery } from "@apollo/client/react"
 import {
   CheckSquare,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   Users,
   BookOpen,
 } from "lucide-react"
+import { GET_PROJECT } from "@/lib/graphql/queries/projects"
 import { formatCost } from "@/lib/utils"
 import { getAllPendingItems } from "@/lib/attention"
 import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
@@ -42,9 +44,17 @@ import { ThemePicker } from "@/components/layout/theme-picker"
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>()
+  const router = useRouter()
   useProjectWebSocket(projectId)
 
   const bp = useBreakpoint()
+
+  // ── Project name (for breadcrumb) ─────────────────────────────────
+  const { data: projectData } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
+    variables: { id: projectId },
+    skip: !projectId,
+  })
+  const projectName = projectData?.project?.name ?? ""
 
   // ── Sidebar store (mobile tab) ──────────────────────────────────
   const mainTab = useSidebarStore(s => s.mainTab)
@@ -100,19 +110,37 @@ export default function ProjectPage() {
       )}
 
       <div className="@container/main flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {/* Breadcrumb bar (desktop) */}
+        {bp !== "mobile" && (
+          <div className="h-8 px-4 flex items-center gap-1.5 border-b border-border-subtle bg-surface shrink-0">
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              className="text-[11px] text-muted hover:text-accent transition-colors"
+            >
+              Global
+            </button>
+            <ChevronRight className="h-2.5 w-2.5 text-muted/30" />
+            <span className="text-[11px] text-default font-medium truncate">
+              {projectName || projectId}
+            </span>
+          </div>
+        )}
+
         {/* Mobile header: project + secrets + user */}
         {bp === "mobile" && (
           <div className="h-10 px-3 flex items-center border-b border-border-default bg-surface shrink-0">
             <button
               type="button"
-              className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors min-w-0"
+              onClick={() => router.push("/")}
+              className="text-[11px] text-muted hover:text-accent transition-colors shrink-0"
             >
-              <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent shrink-0">
-                A
-              </div>
-              <span className="text-sm font-medium text-default truncate">agentobox</span>
-              <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
+              Global
             </button>
+            <ChevronRight className="h-2.5 w-2.5 text-muted/30 shrink-0" />
+            <span className="text-[11px] text-default font-medium truncate">
+              {projectName || projectId}
+            </span>
             <span className="flex-1" />
             <button
               type="button"
