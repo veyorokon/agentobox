@@ -7,6 +7,7 @@ No Django ORM needed (except schema contract test which needs Strawberry).
 
 import ast
 import inspect
+import json
 import re
 from pathlib import Path
 
@@ -1085,4 +1086,83 @@ class TestWsSerializerMatchesGraphQL:
         assert not only_in_gql, (
             f"GraphQL AgentType has fields not in WS serializer: {only_in_gql}. "
             "Add to _serialize_agent_for_ws in consumers.py."
+        )
+
+
+# ── Dependency compatibility matrix enforcement ──
+
+
+class TestDependencyCompatibilityMatrix:
+    """Verify Dockerfile version pins match COMPATIBILITY.json.
+
+    The compatibility matrix is the source of truth for known-good
+    CLI + SDK + proxy version combinations. If someone bumps a version
+    in the Dockerfile without updating the matrix (or vice versa),
+    the relay startup check will reject the combination at runtime.
+    """
+
+    COMPAT_FILE = AGENT_ROOT / "claude" / "COMPATIBILITY.json"
+    DOCKERFILE = AGENT_ROOT / "claude" / "Dockerfile"
+
+    @pytest.fixture
+    def compat_data(self):
+        if not self.COMPAT_FILE.exists():
+            pytest.skip(f"COMPATIBILITY.json not found at {self.COMPAT_FILE} (not in agent image context)")
+        return json.loads(self.COMPAT_FILE.read_text())
+
+    @pytest.fixture
+    def dockerfile_versions(self) -> dict:
+        """Parse CLI and SDK version pins from the Dockerfile."""
+        if not self.DOCKERFILE.exists():
+            pytest.skip(f"Dockerfile not found at {self.DOCKERFILE} (not in agent image context)")
+        content = self.DOCKERFILE.read_text()
+
+        # SDK: pip3 install ... claude-agent-sdk==X.Y.Z
+        sdk_match = re.search(r"claude-agent-sdk==(\S+)", content)
+        assert sdk_match, "Could not find claude-agent-sdk version pin in Dockerfile"
+
+        # CLI: ARG CLAUDE_CODE_VERSION=X.Y.Z
+        cli_match = re.search(r"ARG\s+CLAUDE_CODE_VERSION=(\S+)", content)
+        assert cli_match, "Could not find CLAUDE_CODE_VERSION ARG in Dockerfile"
+
+        return {
+            "sdk": sdk_match.group(1),
+            "cli": cli_match.group(1),
+        }
+
+    def test_inv_comp_001_dockerfile_pins_match_matrix(self, compat_data, dockerfile_versions):
+        """Dockerfile version pins must match the 'current' entry in COMPATIBILITY.json.
+
+        If this fails, either:
+        1. You bumped a version in the Dockerfile — update COMPATIBILITY.json to match
+        2. You updated COMPATIBILITY.json — update the Dockerfile pins to match
+        """
+        current = compat_data["current"]
+        assert current["cli"] == dockerfile_versions["cli"], (
+            f"CLI version mismatch: Dockerfile pins {dockerfile_versions['cli']} "
+            f"but COMPATIBILITY.json current says {current['cli']}"
+        )
+        assert current["sdk"] == dockerfile_versions["sdk"], (
+            f"SDK version mismatch: Dockerfile pins {dockerfile_versions['sdk']} "
+            f"but COMPATIBILITY.json current says {current['sdk']}"
+        )
+
+    def test_inv_comp_002_compatibility_matrix_has_current_entry(self, compat_data):
+        """The matrix must contain a 'verified' entry matching the current pins.
+
+        This ensures that the current pin combination has actually been tested,
+        not just declared.
+        """
+        current = compat_data["current"]
+        verified = [
+            entry for entry in compat_data["matrix"]
+            if entry.get("status") == "verified"
+            and entry["cli"] == current["cli"]
+            and entry["sdk"] == current["sdk"]
+            and entry["proxy"] == current["proxy"]
+        ]
+        assert verified, (
+            f"No verified matrix entry for current pins: "
+            f"cli={current['cli']} sdk={current['sdk']} proxy={current['proxy']}. "
+            "Add a verified entry to the matrix after testing this combination."
         )

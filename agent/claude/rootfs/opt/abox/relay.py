@@ -1117,12 +1117,94 @@ class SDKRelay:
 
 
 # ---------------------------------------------------------------------------
+# Dependency compatibility check
+# ---------------------------------------------------------------------------
+
+# Known-good version combinations. Kept in sync with COMPATIBILITY.json
+# (the JSON file is the source of truth for CI; this constant is the
+# runtime check so the relay doesn't depend on filesystem layout).
+_COMPATIBLE_VERSIONS = [
+    {"cli": "2.1.70", "sdk": "0.1.47", "proxy": "1"},
+]
+
+
+class DependencyCompatibilityError(RuntimeError):
+    """Raised when CLI/SDK/proxy versions don't match any known-good combination."""
+
+
+def _check_dependency_compatibility() -> dict[str, str]:
+    """Verify CLI + SDK + proxy versions match a known-good combination.
+
+    Called early in startup, before SDK spawn. Emits a structured log event
+    with the detected versions and raises DependencyCompatibilityError if
+    the combination is untested.
+
+    Returns a dict of detected versions for diagnostic logging.
+    """
+    import claude_agent_sdk
+
+    # SDK version
+    sdk_version = getattr(claude_agent_sdk, "__version__", "unknown")
+
+    # CLI version — run `claude --version` and parse output
+    try:
+        result = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        cli_output = result.stdout.strip()
+        # Output format varies: "claude-code 2.1.70" or just "2.1.70"
+        cli_version = cli_output.split()[-1] if cli_output else "unknown"
+    except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
+        cli_version = "unknown"
+
+    # Proxy version — read from env or default to "1"
+    proxy_version = os.environ.get("ABOX_PROXY_VERSION", "1")
+
+    versions = {
+        "cli": cli_version,
+        "sdk": sdk_version,
+        "proxy": proxy_version,
+    }
+
+    log.info("relay.dependency_versions", extra=versions)
+
+    # Check against known-good matrix
+    compatible = any(
+        entry["cli"] == cli_version
+        and entry["sdk"] == sdk_version
+        and entry["proxy"] == proxy_version
+        for entry in _COMPATIBLE_VERSIONS
+    )
+
+    if not compatible:
+        known = ", ".join(
+            f"cli={e['cli']} sdk={e['sdk']} proxy={e['proxy']}"
+            for e in _COMPATIBLE_VERSIONS
+        )
+        msg = (
+            f"ERR-DEPENDENCY-COMPATIBILITY: detected cli={cli_version} "
+            f"sdk={sdk_version} proxy={proxy_version} — no matching entry "
+            f"in compatibility matrix. Known-good: [{known}]"
+        )
+        log.error("relay.dependency_incompatible", extra={
+            "error_code": "ERR-DEPENDENCY-COMPATIBILITY",
+            **versions,
+            "known_good": _COMPATIBLE_VERSIONS,
+        })
+        raise DependencyCompatibilityError(msg)
+
+    return versions
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def main():
     validate_config()
+    _check_dependency_compatibility()
 
     # Log env diagnostics at startup — these go to tmux pane AND
     # are visible in container logs before the container is cleaned up.

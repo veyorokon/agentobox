@@ -1,0 +1,15 @@
+{
+  "matrix": [
+    {
+      "cli": "2.1.70",
+      "sdk": "0.1.47",
+      "proxy": "1",
+      "status": "verified"
+    }
+  ],
+  "current": {
+    "cli": "2.1.70",
+    "sdk": "0.1.47",
+    "proxy": "1"
+  }
+}

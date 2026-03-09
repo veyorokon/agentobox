@@ -166,6 +166,84 @@ class TestUserMessageFiltering:
         assert has_tool_result
 
 
+class TestDependencyVersionCheck:
+    """_check_dependency_compatibility — validates CLI + SDK + proxy versions
+    against the known-good matrix before spawning the SDK."""
+
+    def test_dependency_version_check_format(self):
+        """The compatibility check function validates version strings correctly.
+
+        _COMPATIBLE_VERSIONS entries must have cli, sdk, proxy keys with
+        string values matching semver-like patterns.
+        """
+        from relay import _COMPATIBLE_VERSIONS
+
+        assert len(_COMPATIBLE_VERSIONS) >= 1, "Matrix must have at least one entry"
+        for entry in _COMPATIBLE_VERSIONS:
+            assert "cli" in entry, "Matrix entry missing 'cli' key"
+            assert "sdk" in entry, "Matrix entry missing 'sdk' key"
+            assert "proxy" in entry, "Matrix entry missing 'proxy' key"
+            assert isinstance(entry["cli"], str), "cli version must be a string"
+            assert isinstance(entry["sdk"], str), "sdk version must be a string"
+            assert isinstance(entry["proxy"], str), "proxy version must be a string"
+            # Versions should look like semver (X.Y.Z) or simple integers
+            assert entry["cli"].replace(".", "").isdigit(), (
+                f"cli version '{entry['cli']}' doesn't look like a version number"
+            )
+            assert entry["sdk"].replace(".", "").isdigit(), (
+                f"sdk version '{entry['sdk']}' doesn't look like a version number"
+            )
+
+    def test_incompatible_versions_emit_typed_error(self, monkeypatch):
+        """Mismatched versions must raise DependencyCompatibilityError
+        with ERR-DEPENDENCY-COMPATIBILITY in the message."""
+        import relay
+        import subprocess as _subprocess
+
+        # Mock SDK version to something not in the matrix
+        import claude_agent_sdk
+        monkeypatch.setattr(claude_agent_sdk, "__version__", "0.0.0-fake")
+
+        # Mock CLI version check — patch on relay module since it uses
+        # subprocess.run via its own module-level import
+        fake_result = _subprocess.CompletedProcess(
+            args=["claude", "--version"],
+            returncode=0,
+            stdout="0.0.0-fake\n",
+            stderr="",
+        )
+        monkeypatch.setattr(relay.subprocess, "run", lambda *a, **kw: fake_result)
+        monkeypatch.setenv("ABOX_PROXY_VERSION", "999")
+
+        with pytest.raises(relay.DependencyCompatibilityError, match="ERR-DEPENDENCY-COMPATIBILITY"):
+            relay._check_dependency_compatibility()
+
+    def test_compatible_versions_pass(self, monkeypatch):
+        """When versions match the matrix, the check succeeds and returns
+        a dict of the detected versions."""
+        import relay
+        import subprocess as _subprocess
+
+        entry = relay._COMPATIBLE_VERSIONS[0]
+
+        import claude_agent_sdk
+        monkeypatch.setattr(claude_agent_sdk, "__version__", entry["sdk"])
+
+        fake_result = _subprocess.CompletedProcess(
+            args=["claude", "--version"],
+            returncode=0,
+            stdout=f"claude-code {entry['cli']}\n",
+            stderr="",
+        )
+        monkeypatch.setattr(relay.subprocess, "run", lambda *a, **kw: fake_result)
+        monkeypatch.setenv("ABOX_PROXY_VERSION", entry["proxy"])
+
+        versions = relay._check_dependency_compatibility()
+        assert versions["cli"] == entry["cli"]
+        assert versions["sdk"] == entry["sdk"]
+        assert versions["proxy"] == entry["proxy"]
+
+
 class TestHookBridgeRouting:
     """team-bridge.py tool classification — PRE tools are intercepted,
     POST tools are forwarded after native execution, others pass through."""
