@@ -24,9 +24,9 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def Redactor():
-    """Import _Redactor from relay.py inside fixture to ensure env is set."""
-    from relay import _Redactor
-    return _Redactor
+    """Import shared Redactor from relay_common."""
+    from relay_common import Redactor
+    return Redactor
 
 
 class TestRedactorLoading:

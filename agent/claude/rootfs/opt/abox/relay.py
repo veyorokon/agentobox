@@ -23,6 +23,7 @@ Synthetic events (not from Claude):
 """
 
 import asyncio
+import argparse
 import hashlib
 import json
 import os
@@ -1380,8 +1381,8 @@ def _check_dependency_compatibility() -> dict[str, str]:
             capture_output=True, text=True, timeout=10,
         )
         cli_output = result.stdout.strip()
-        # Output format varies: "claude-code 2.1.70" or just "2.1.70"
-        cli_version = cli_output.split()[-1] if cli_output else "unknown"
+        # Output format: "2.1.71 (Claude Code)" — version is the first token
+        cli_version = cli_output.split()[0] if cli_output else "unknown"
     except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
         cli_version = "unknown"
 
@@ -1424,12 +1425,72 @@ def _check_dependency_compatibility() -> dict[str, str]:
     return versions
 
 
+def _smoke_runtime_contract() -> dict[str, object]:
+    """Validate the built image exposes the relay runtime contract.
+
+    Intended for CI/build smoke checks. This is deliberately offline-safe:
+    it proves the image contains a compatible CLI + SDK pair and the relay's
+    supporting binaries/files are present without needing a live backend or API
+    credentials.
+    """
+    versions = _check_dependency_compatibility()
+    relay_root = Path(__file__).resolve().parent
+    candidate_roots = [relay_root]
+    try:
+        repo_agent_root = Path(__file__).resolve().parents[4]
+    except IndexError:
+        repo_agent_root = None
+    if repo_agent_root is not None:
+        shared_root = repo_agent_root / "rootfs" / "opt" / "abox"
+        if shared_root not in candidate_roots:
+            candidate_roots.append(shared_root)
+
+    def has_artifact(filename: str) -> bool:
+        return any((root / filename).exists() for root in candidate_roots)
+
+    help_result = subprocess.run(
+        ["claude", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    help_text = (help_result.stdout or "") + (help_result.stderr or "")
+    flags = {
+        "output_format": "--output-format" in help_text,
+        "verbose": "--verbose" in help_text,
+    }
+    artifacts = {
+        "relay": has_artifact("relay.py"),
+        "api_proxy": has_artifact("api-proxy.py"),
+        "mcp_gateway": has_artifact("mcp-gateway.py"),
+    }
+    return {
+        "ok": help_result.returncode == 0 and all(artifacts.values()),
+        "versions": versions,
+        "flags": flags,
+        "artifacts": artifacts,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def main():
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument(
+        "--smoke-runtime",
+        action="store_true",
+        help="Validate the built image's relay runtime contract and exit.",
+    )
+    args = parser.parse_args()
+
+    if args.smoke_runtime:
+        payload = _smoke_runtime_contract()
+        print(json.dumps(payload))
+        sys.exit(0 if payload["ok"] else 1)
+
     validate_config()
     _check_dependency_compatibility()
 

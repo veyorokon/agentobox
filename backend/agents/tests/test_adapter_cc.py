@@ -629,3 +629,87 @@ class TestBuildRelayEnv:
     def test_without_key_empty_api_key(self, adapter):
         env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
         assert "ANTHROPIC_API_KEY=''" in env
+
+
+# ── MCP config builders ──
+
+
+class TestBuildMcpConfig:
+    """Verify build_mcp_config handles all config shapes without crashing.
+
+    Bug: custom MCP servers passed as dicts (via mcp_custom_servers) may lack
+    a 'port' key. build_mcp_config did config['port'] → KeyError crash.
+    This killed the qa agent during provisioning.
+    """
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def test_registry_resolved_config_works(self, adapter):
+        """Normal path: resolve_mcp_servers returns configs with port."""
+        import json
+        mcp = adapter.resolve_mcp_servers(["playwright"])
+        result = json.loads(adapter.build_mcp_config(mcp_servers=mcp))
+        assert "playwright" in result["mcpServers"]
+        assert "localhost:7001" in result["mcpServers"]["playwright"]["url"]
+
+    def test_custom_config_without_port_crashes(self, adapter):
+        """BUG REPRO: custom MCP config missing 'port' key → KeyError.
+
+        This test should FAIL before the fix and PASS after.
+        """
+        import json
+        # This is what happens when mcp_custom_servers is a dict without port
+        custom = {"my-server": {"command": "node", "args": ["server.js"]}}
+        # This should NOT crash — it should either skip or handle gracefully
+        result = json.loads(adapter.build_mcp_config(mcp_servers=custom))
+        # Server without port should be excluded from .mcp.json
+        assert "my-server" not in result["mcpServers"]
+
+    def test_custom_config_with_port_works(self, adapter):
+        """Custom config WITH port should work normally."""
+        import json
+        custom = {"my-server": {"command": "node", "args": ["server.js"], "port": 9000}}
+        result = json.loads(adapter.build_mcp_config(mcp_servers=custom))
+        assert "my-server" in result["mcpServers"]
+        assert "localhost:9000" in result["mcpServers"]["my-server"]["url"]
+
+    def test_empty_mcp_servers(self, adapter):
+        import json
+        result = json.loads(adapter.build_mcp_config())
+        assert result["mcpServers"] == {}
+
+    def test_coord_server_added(self, adapter):
+        import json
+        coord = {"type": "sse", "url": "http://localhost:3000"}
+        result = json.loads(adapter.build_mcp_config(coord_server=coord))
+        assert result["mcpServers"]["team"] == coord
+
+
+class TestBuildGatewayConfig:
+    """Verify build_gateway_config handles missing fields."""
+
+    @pytest.fixture
+    def adapter(self):
+        return ClaudeCodeAdapter()
+
+    def test_custom_config_without_port_crashes(self, adapter):
+        """BUG REPRO: gateway config also does config['port'] → KeyError."""
+        import json
+        custom = {"my-server": {"command": "node", "args": ["server.js"]}}
+        result = json.loads(adapter.build_gateway_config(mcp_servers=custom))
+        assert "my-server" not in result["servers"]
+
+    def test_custom_config_without_command_crashes(self, adapter):
+        """BUG REPRO: gateway config does config['command'] → KeyError."""
+        import json
+        custom = {"my-server": {"port": 9000}}
+        result = json.loads(adapter.build_gateway_config(mcp_servers=custom))
+        assert "my-server" not in result["servers"]
+
+    def test_valid_config(self, adapter):
+        import json
+        mcp = {"test": {"command": "node", "args": ["s.js"], "port": 8000}}
+        result = json.loads(adapter.build_gateway_config(mcp_servers=mcp))
+        assert result["servers"]["test"]["port"] == 8000

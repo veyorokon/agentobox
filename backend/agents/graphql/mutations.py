@@ -160,17 +160,6 @@ async def _get_matching_agents(project_id, assigned_to_all: bool, assigned_tags:
     return {str(a.id) for a in matching_agents}
 
 
-async def _push_skill_to_agents(skill) -> None:
-    """Push skill content to all matching running agents via comms service."""
-    from agents.services.comms import push_skill_to_agents
-    await push_skill_to_agents(skill, operation="write")
-
-
-async def _push_skill_delete_to_agents(skill) -> None:
-    """Push skill deletion to all matching running agents via comms service."""
-    from agents.services.comms import push_skill_to_agents
-    await push_skill_to_agents(skill, operation="delete")
-
 
 @strawberry.type
 class AgentMutation:
@@ -674,7 +663,8 @@ class AgentMutation:
             raise ValueError(f"A skill named '{input.name}' already exists in this project")
 
         # Push skill to matching running agents (hot-reload without restart)
-        await _push_skill_to_agents(skill)
+        from agents.services.comms import push_skill_to_agents as _push_skill
+        await _push_skill(skill, operation="write")
 
         return skill
 
@@ -734,7 +724,8 @@ class AgentMutation:
                     await push_skill_delete_to_specific_agents(skill.name, agents_to_cleanup)
 
             # Push updated skill to matching running agents (hot-reload without restart)
-            await _push_skill_to_agents(skill)
+            from agents.services.comms import push_skill_to_agents as _push_skill
+        await _push_skill(skill, operation="write")
 
         return skill
 
@@ -751,7 +742,8 @@ class AgentMutation:
 
         # Push delete command to matching running agents BEFORE deleting from DB
         # (need skill properties to determine which agents to notify)
-        await _push_skill_delete_to_agents(skill)
+        from agents.services.comms import push_skill_to_agents as _push_skill_del
+        await _push_skill_del(skill, operation="delete")
 
         await skill.adelete()
         return True

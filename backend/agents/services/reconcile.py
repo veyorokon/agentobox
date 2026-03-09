@@ -52,6 +52,12 @@ _task: asyncio.Task | None = None
 _db = sync_to_async(thread_sensitive=False)
 
 
+def _keep_failed_agent_containers() -> bool:
+    """Return whether failed agent sandboxes should be preserved for debugging."""
+    raw = os.environ.get("KEEP_FAILED_AGENT_CONTAINERS", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def ensure_running():
     """Idempotent: start the reconciliation loop if not already running."""
     global _task
@@ -341,6 +347,9 @@ async def _reap_errored_agents(now):
     keeping dead containers alive wastes resources. The grace period ensures
     final relay events have time to flush before cleanup.
     """
+    if _keep_failed_agent_containers():
+        log.info("reconciler.error_reap_skipped", keep_failed_containers=True)
+        return
 
     reap_cutoff = now - timedelta(seconds=ERROR_REAP_GRACE_S)
     errored_agents = await _get_agents(

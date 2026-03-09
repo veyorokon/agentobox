@@ -210,30 +210,6 @@ class ProjectMutation:
         project.theme_tokens = tokens
         await project.asave(update_fields=["theme_tokens"])
 
-        await _push_theme_for_project(project)
+        from agents.services.comms import push_theme_to_agents
+        await push_theme_to_agents(project)
         return True
-
-
-async def _push_theme_for_project(project) -> None:
-    """Push theme tokens to all running agents in a project via WebSocket.
-
-    Uses push_to_relay() instead of runtime file writes — the relay
-    receives {"type": "theme", "tokens": {...}} and writes the files locally.
-    This works regardless of runtime (Docker, Modal) and doesn't need
-    sandbox_id or runtime API access.
-    """
-    from agents.models import Agent, AgentStatus
-    from agents.services.comms import push_to_relay
-
-    running_agents = [
-        a async for a in Agent.objects.filter(
-            project=project,
-            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
-        )
-    ]
-
-    for agent in running_agents:
-        try:
-            await push_to_relay(str(agent.id), {"type": "theme", "tokens": project.theme_tokens})
-        except Exception:
-            log.exception("theme_push_failed", agent_name=agent.name, agent_id=str(agent.id))

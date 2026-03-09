@@ -18,6 +18,7 @@ Usage::
 import json
 import logging
 import os
+import re
 import sys
 
 
@@ -49,15 +50,64 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
+def _persist_logs_enabled() -> bool:
+    raw = os.environ.get("ABOX_PERSIST_LOGS", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _log_dir() -> str:
+    explicit = os.environ.get("ABOX_LOG_DIR", "").strip()
+    if explicit:
+        return explicit
+    agent_id = os.environ.get("AGENT_ID", "").strip()
+    if not agent_id:
+        return ""
+    return f"/vol/agents/{agent_id}/_abox"
+
+
+def _safe_log_name(name: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-")
+    return sanitized or "agent"
+
+
+def _has_handler(root: logging.Logger, *, handler_type: type, path: str | None = None) -> bool:
+    expected = os.path.abspath(path) if path else None
+    for handler in root.handlers:
+        if not isinstance(handler, handler_type):
+            continue
+        if expected is None:
+            return True
+        if os.path.abspath(getattr(handler, "baseFilename", "")) == expected:
+            return True
+    return False
+
+
 def setup(name: str, *, level: str = "INFO") -> logging.Logger:
     """Configure the root logger with JSON output and return a named logger.
 
     Safe to call multiple times — only attaches the handler once.
     """
     root = logging.root
+    formatter = JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ")
+
     if not any(isinstance(h.formatter, JSONFormatter) for h in root.handlers):
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ"))
-        root.addHandler(handler)
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setFormatter(formatter)
+        root.addHandler(stderr_handler)
+
+    if _persist_logs_enabled():
+        log_dir = _log_dir()
+        if log_dir:
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, f"{_safe_log_name(name)}.log")
+                if not _has_handler(root, handler_type=logging.FileHandler, path=log_path):
+                    file_handler = logging.FileHandler(log_path)
+                    file_handler.setFormatter(formatter)
+                    root.addHandler(file_handler)
+            except OSError:
+                # Logging must never fail the process startup path.
+                pass
+
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     return logging.getLogger(name)

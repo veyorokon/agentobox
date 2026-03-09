@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  unit:
-    name: Unit + Invariant
+  backend-unit:
+    name: Backend Unit + Invariant
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,10 +20,27 @@ jobs:
       - name: Run unit and invariant tests
         run: cd backend && uv run pytest -m "unit or invariant" --tb=short -q
 
-  integration:
-    name: Integration
+  backend-chaos:
+    name: Backend Chaos
     runs-on: ubuntu-latest
-    needs: unit
+    needs: backend-unit
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DJANGO_SETTINGS_MODULE: config.settings_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: cd backend && uv sync --group dev
+      - name: Run chaos tests
+        run: cd backend && uv run pytest -m "chaos" --tb=short -q
+
+  backend-integration:
+    name: Backend Integration
+    runs-on: ubuntu-latest
+    needs: backend-unit
     services:
       postgres:
         image: postgres:16
@@ -63,6 +80,22 @@ jobs:
         run: cd backend && uv run python manage.py migrate --noinput
       - name: Run integration tests
         run: cd backend && uv run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+
+  agent-unit:
+    name: Agent Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install agent test dependencies
+        run: |
+          SDK_VERSION=$(sed -n 's/.*claude-agent-sdk==\\([^[:space:]\\\\]*\\).*/\\1/p' agent/claude/Dockerfile)
+          python -m pip install --upgrade pip
+          python -m pip install pytest==9.0.2 websockets==16.0 "claude-agent-sdk==${SDK_VERSION}"
+      - name: Run agent unit tests
+        run: cd agent && python -m pytest -q
 
   lint:
     name: Lint

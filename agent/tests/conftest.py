@@ -1,19 +1,51 @@
 """Shared fixtures for agent-side tests.
 
-Tests run inside the agent Docker image where code lives at /opt/abox/.
-On the host, agent/tests/ is bind-mounted to /opt/abox/tests/.
+Tests should run both:
+- inside the agent Docker image where code lives at ``/opt/abox/``
+- on the host against the checked-out repo
 """
 
 import os
+from pathlib import Path
 import sys
-import tempfile
 
 import pytest
 
-# Add /opt/abox to path so tests can import relay, abox_logging, etc.
-# On host this resolves to agent/rootfs/opt/abox/ — doesn't matter,
-# tests only run inside the container.
-sys.path.insert(0, "/opt/abox")
+
+def _bootstrap_pythonpath() -> None:
+    """Make relay/shared modules importable in both host and container runs."""
+    repo_agent_dir = Path(__file__).resolve().parents[1]
+    container_path = Path("/opt/abox")
+    host_paths = [
+        repo_agent_dir / "claude" / "rootfs" / "opt" / "abox",
+        repo_agent_dir / "rootfs" / "opt" / "abox",
+    ]
+
+    candidate_paths = []
+    if container_path.exists():
+        candidate_paths.append(container_path)
+    candidate_paths.extend(path for path in host_paths if path.exists())
+
+    for path in reversed(candidate_paths):
+        path_str = str(path)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+
+_bootstrap_pythonpath()
+
+
+@pytest.fixture(scope="session")
+def agent_repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="session")
+def hooks_dir(agent_repo_root: Path) -> Path:
+    container_hooks = Path("/opt/abox/hooks")
+    if container_hooks.exists():
+        return container_hooks
+    return agent_repo_root / "claude" / "rootfs" / "opt" / "abox" / "hooks"
 
 
 @pytest.fixture(autouse=True)

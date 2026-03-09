@@ -364,6 +364,40 @@ class TestConsumerSimplicity:
         assert "theme_tokens" not in source, "Theme tokens reference in consumers.py"
 
 
+class TestNoPushToRelayDataPayloads:
+    """push_to_relay must ONLY carry pokes and signals — never data payloads.
+
+    The volume architecture routes all state through files. WS messages are
+    tiny notifications ("poke" = file changed, "signal" = ephemeral control).
+    Any push_to_relay call with type "theme", "mode", "skill", or "input"
+    is a stale pre-volume code path that bypasses the volume and will be
+    silently dropped by the relay.
+
+    This test greps ALL Python files in the project (not just services/)
+    to catch stale callers in mutations, management commands, etc.
+    """
+
+    FORBIDDEN_TYPES = {'"type": "theme"', '"type": "mode"', '"type": "skill"'}
+
+    def test_no_data_payloads_in_push_to_relay(self):
+        backend_root = Path(__file__).resolve().parent.parent.parent
+        violations = []
+        for f in sorted(backend_root.rglob("*.py")):
+            if "test" in f.name or "__pycache__" in str(f):
+                continue
+            src = f.read_text(encoding="utf-8")
+            if "push_to_relay" not in src:
+                continue
+            for forbidden in self.FORBIDDEN_TYPES:
+                if forbidden in src:
+                    violations.append(f"{f.relative_to(backend_root)}:{forbidden}")
+
+        assert violations == [], (
+            "push_to_relay calls with data payloads found (should use volume write + poke):\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Path parity: SYMLINKED_PREFIXES matches init-volume bash script
 # ---------------------------------------------------------------------------
@@ -477,3 +511,64 @@ class TestPathParity:
         vol.write("run/secrets/proxy_key", "key")
         vol.write("_abox/state.json", "{}")
         # No exceptions = all paths accepted
+
+
+# ---------------------------------------------------------------------------
+# Mutation boundary: state push MUST go through agents/services/comms.py
+# ---------------------------------------------------------------------------
+
+class TestMutationBoundary:
+    """Mutations that push state to agents must go through comms.py — not DIY.
+
+    Bug: set_project_theme in projects/graphql/mutations.py had its own
+    _push_theme_for_project() that sent old {"type": "theme"} WS payloads.
+    The relay only handles {"type": "poke"}, so the theme never updated.
+    This test ensures no mutation file has inline push_to_relay or
+    channel_layer.group_send calls that bypass comms.py.
+    """
+
+    # Directories that should NEVER directly import push_to_relay
+    # All agent state push must go through agents/services/comms.py
+    FORBIDDEN_DIRS = {"graphql", "management"}
+
+    def test_no_push_to_relay_in_mutations_or_views(self):
+        """Mutation/view/management files must not import push_to_relay directly."""
+        backend_root = Path(__file__).resolve().parent.parent.parent
+        violations = []
+        for f in sorted(backend_root.rglob("*.py")):
+            if "__pycache__" in str(f) or "test" in f.name:
+                continue
+            # Only check files in forbidden dirs (graphql/, management/, views)
+            parts = set(f.relative_to(backend_root).parts)
+            is_view = f.name == "views.py"
+            is_forbidden_dir = bool(parts & self.FORBIDDEN_DIRS)
+            if not (is_view or is_forbidden_dir):
+                continue
+            src = f.read_text(encoding="utf-8")
+            if "push_to_relay" in src:
+                for i, line in enumerate(src.splitlines(), 1):
+                    if "push_to_relay" in line and not line.strip().startswith("#"):
+                        violations.append(f"{f.relative_to(backend_root)}:{i}: {line.strip()}")
+
+        assert violations == [], (
+            "push_to_relay in mutation/view/management files — use comms.py service functions:\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_no_inline_theme_functions_in_mutations(self):
+        """No mutation file should define its own theme push function."""
+        backend_root = Path(__file__).resolve().parent.parent.parent
+        violations = []
+        for f in sorted(backend_root.rglob("mutations.py")):
+            if "__pycache__" in str(f) or "test" in f.name:
+                continue
+            src = f.read_text(encoding="utf-8")
+            # Look for function defs that suggest inline push logic
+            for i, line in enumerate(src.splitlines(), 1):
+                if re.match(r'\s*(async\s+)?def\s+_push_', line):
+                    violations.append(f"{f.relative_to(backend_root)}:{i}: {line.strip()}")
+
+        assert violations == [], (
+            "Inline push functions in mutations — use comms.py instead:\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )

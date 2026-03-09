@@ -11,9 +11,11 @@ Validates:
 import json
 import logging
 import os
+from pathlib import Path
 
 import pytest
 
+import abox_logging
 from abox_logging import JSONFormatter, setup
 
 pytestmark = pytest.mark.unit
@@ -125,16 +127,35 @@ class TestSetup:
     def test_idempotent(self):
         """Calling setup() twice should not duplicate handlers."""
         root = logging.root
-        initial_count = len(root.handlers)
+        before_json = sum(isinstance(h.formatter, JSONFormatter) for h in root.handlers)
         setup("idempotent-test-1")
         setup("idempotent-test-2")
-        # At most one JSONFormatter handler should exist
-        json_handlers = [
-            h for h in root.handlers
-            if isinstance(h.formatter, JSONFormatter)
-        ]
-        assert len(json_handlers) == 1
+        after_json = sum(isinstance(h.formatter, JSONFormatter) for h in root.handlers)
+        assert after_json == max(before_json, 1)
 
     def test_respects_level(self):
         log = setup("debug-logger", level="DEBUG")
         assert logging.root.level == logging.DEBUG
+
+    def test_persists_logs_to_volume_when_log_dir_set(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ABOX_LOG_DIR", str(tmp_path))
+        log = setup("relay smoke logger")
+        log.info("relay.test_log_file")
+
+        expected = tmp_path / "relay-smoke-logger.log"
+        assert expected.exists()
+        lines = [line for line in expected.read_text().splitlines() if line.strip()]
+        assert lines, "expected at least one persisted log line"
+        parsed = json.loads(lines[-1])
+        assert parsed["event"] == "relay.test_log_file"
+
+    def test_persist_logs_can_be_disabled(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ABOX_LOG_DIR", str(tmp_path))
+        monkeypatch.setenv("ABOX_PERSIST_LOGS", "0")
+        setup("disabled-log")
+        assert not any(Path(tmp_path).glob("*.log"))
+
+
+class TestHelpers:
+    def test_safe_log_name(self):
+        assert abox_logging._safe_log_name("relay smoke/logger") == "relay-smoke-logger"

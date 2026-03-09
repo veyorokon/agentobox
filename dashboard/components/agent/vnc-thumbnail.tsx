@@ -74,12 +74,14 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   // when a WebSocket drops, unreachable by React error boundaries.
   useEffect(() => {
     const handler = (e: ErrorEvent) => {
-      if (e.message?.includes("disconnected RFB")) {
+      if (e.message?.includes("disconnected RFB") || e.message?.includes("changing state")) {
         e.preventDefault()
+        e.stopImmediatePropagation()
+        return true
       }
     }
-    window.addEventListener("error", handler)
-    return () => window.removeEventListener("error", handler)
+    window.addEventListener("error", handler, true)
+    return () => window.removeEventListener("error", handler, true)
   }, [])
 
   const fetchTokenAndConnect = useCallback(async () => {
@@ -96,9 +98,12 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       const token = data?.createVncToken?.token
       if (!token) {
         log("token.failed", { agent: agent.id, reason: "no token in response" }, "warn")
-        setConnState("error")
-        setErrorMsg("Failed to get VNC token")
         connectingRef.current = false
+        // Retry — token generation can fail transiently during container startup
+        retryCountRef.current += 1
+        const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
+        setConnState("idle")
+        setTimeout(() => { if (mountedRef.current) fetchTokenAndConnect() }, delay)
         return
       }
 
@@ -109,10 +114,13 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       // connectingRef stays true until onConnect or onDisconnect
     } catch (err: any) {
       if (!mountedRef.current) { connectingRef.current = false; return }
-      log("token.error", { agent: agent.id, error: err.message }, "error")
-      setConnState("error")
-      setErrorMsg(err.message ?? "Failed to connect")
+      log("token.error", { agent: agent.id, error: err.message }, "warn")
       connectingRef.current = false
+      // Retry — network errors, backend restarts, etc. are transient
+      retryCountRef.current += 1
+      const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
+      setConnState("idle")
+      setTimeout(() => { if (mountedRef.current) fetchTokenAndConnect() }, delay)
     }
   }, [agent.id, agent.name, createVncToken])
 
@@ -124,15 +132,20 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     }
     if (!hasContainer) {
       log("cleanup", { agent: agent.id, lifecycle: agent.lifecycleStatus, relay: agent.relayConnected })
-      // Disconnect RFB and clear URL before VncScreen unmounts to avoid
-      // "Tried changing state of a disconnected RFB object"
-      try { vncRef.current?.disconnect() } catch {}
-      vncRef.current = null
-      setConnState("idle")
+      // Clear URL first to unmount VncScreen, THEN null the ref.
+      // This order prevents "Tried changing state of a disconnected RFB"
+      // because VncScreen unmounts before we touch the RFB object.
       setWsUrl(null)
+      setConnState("idle")
       setErrorMsg(null)
       retryCountRef.current = 0
       connectingRef.current = false
+      // Defer disconnect to next tick — let React unmount VncScreen first
+      const ref = vncRef.current
+      vncRef.current = null
+      if (ref) {
+        setTimeout(() => { try { ref.disconnect() } catch {} }, 0)
+      }
     }
   }, [hasContainer]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -164,35 +177,30 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       return
     }
 
-    // Retry when container is alive: unclean disconnect, clean server close,
-    // expired token (4001), or transient codes (4003 = container starting).
-    // Clean disconnects happen during docker compose restarts — the container
-    // comes back, so we should reconnect automatically.
-    const shouldRetry = !clean || code === 4001 || (code && TRANSIENT_CODES.has(code)) || (clean && hasContainer)
-    if (shouldRetry) {
+    // Always retry while the container is alive — never give up on a running agent.
+    // The VNC server is running, WS drops are transient (token expiry, network blip,
+    // docker compose restart). Exponential backoff caps at 30s between attempts.
+    if (hasContainer) {
       retryCountRef.current += 1
-      if (retryCountRef.current <= 8) {
-        const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 10000)
-        log("reconnecting", { agent: agent.id, attempt: retryCountRef.current, code, delay })
-        setWsUrl(null)
-        setConnState("idle")
-        setTimeout(() => {
-          if (mountedRef.current && hasContainer) fetchTokenAndConnect()
-        }, delay)
-        return
-      }
+      const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
+      log("reconnecting", { agent: agent.id, attempt: retryCountRef.current, code, delay })
+      setWsUrl(null)
+      setConnState("idle")
+      setTimeout(() => {
+        if (mountedRef.current && hasContainer) fetchTokenAndConnect()
+      }, delay)
+      return
     }
 
-    // Build context-aware error message from agent lifecycle + close reason
+    // Container is gone — show appropriate final state
     let msg = "Desktop disconnected"
     if (agent.lifecycleStatus === "stopped") msg = "Desktop stopped — session ended"
     else if (agent.lifecycleStatus === "error") msg = "Desktop lost — agent errored"
     else if (agent.lifecycleStatus === "deploying") msg = "Desktop not ready yet"
     else if (!agent.relayConnected) msg = "Desktop lost — relay disconnected"
-    else if (clean) msg = "Desktop closed by server"
-    else msg = "Desktop unreachable — retries exhausted"
+    else msg = "Desktop closed"
 
-    log("error", { agent: agent.id, message: msg }, "error")
+    log("disconnected.final", { agent: agent.id, message: msg })
     setWsUrl(null)
     setConnState("error")
     setErrorMsg(msg)
@@ -257,23 +265,14 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
             </div>
             {/* Status content */}
             <div className="flex-1 bg-surface p-1.5 flex items-center justify-center">
-              {connState === "fetching-token" || connState === "connecting" ? (
+              {connState === "fetching-token" || connState === "connecting" || (connState === "idle" && hasContainer) ? (
                 <div className="flex flex-col items-center gap-1">
                   <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
                   <span className="text-[7px] font-mono text-muted/40">connecting...</span>
                 </div>
               ) : connState === "error" && errorMsg ? (
                 <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-[7px] font-mono text-danger/60">{errorMsg}</span>
-                  {hasContainer && (
-                    <button
-                      type="button"
-                      onClick={() => { retryCountRef.current = 0; setConnState("idle"); setErrorMsg(null); fetchTokenAndConnect() }}
-                      className="text-[7px] font-mono text-accent hover:text-accent-hover transition-colors"
-                    >
-                      reconnect
-                    </button>
-                  )}
+                  <span className="text-[7px] font-mono text-muted/40">{errorMsg}</span>
                 </div>
               ) : isStopped ? (
                 <span className="text-[7px] font-mono text-muted/20">session ended</span>

@@ -20,6 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("claude_code_sdk", reason="requires claude_code_sdk (container-only)")
+
 pytestmark = pytest.mark.unit
 
 
@@ -280,7 +282,7 @@ class TestDependencyVersionCheck:
         fake_result = _subprocess.CompletedProcess(
             args=["claude", "--version"],
             returncode=0,
-            stdout=f"claude-code {entry['cli']}\n",
+            stdout=f"{entry['cli']} (Claude Code)\n",
             stderr="",
         )
         monkeypatch.setattr(relay.subprocess, "run", lambda *a, **kw: fake_result)
@@ -291,26 +293,64 @@ class TestDependencyVersionCheck:
         assert versions["sdk"] == entry["sdk"]
         assert versions["proxy"] == entry["proxy"]
 
+    def test_smoke_runtime_contract_reports_artifacts(self, monkeypatch):
+        import relay
+        import subprocess as _subprocess
+
+        entry = relay._COMPATIBLE_VERSIONS[0]
+
+        import claude_agent_sdk
+        monkeypatch.setattr(claude_agent_sdk, "__version__", entry["sdk"])
+
+        def fake_run(args, **kwargs):
+            if args == ["claude", "--version"]:
+                return _subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=f"{entry['cli']} (Claude Code)\n",
+                    stderr="",
+                )
+            if args == ["claude", "--help"]:
+                return _subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="Usage: claude [options]\n  --output-format <fmt>\n  --verbose\n",
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected subprocess call: {args}")
+
+        monkeypatch.setattr(relay.subprocess, "run", fake_run)
+        monkeypatch.setenv("ABOX_PROXY_VERSION", entry["proxy"])
+
+        payload = relay._smoke_runtime_contract()
+
+        assert payload["ok"] is True
+        assert payload["versions"]["cli"] == entry["cli"]
+        assert payload["versions"]["sdk"] == entry["sdk"]
+        assert payload["versions"]["proxy"] == entry["proxy"]
+        assert payload["flags"]["output_format"] is True
+        assert payload["flags"]["verbose"] is True
+
 
 class TestHookBridgeRouting:
     """team-bridge.py tool classification — PRE tools are intercepted,
     POST tools are forwarded after native execution, others pass through."""
 
     @pytest.fixture
-    def bridge_sets(self):
-        # Import from the hooks directory
+    def bridge_sets(self, hooks_dir):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "team_bridge", "/opt/abox/hooks/team-bridge.py"
+            "team_bridge", hooks_dir / "team-bridge.py"
         )
-        mod = importlib.util.find_module_and_load(spec)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
         return mod.PRE, mod.POST, mod.BRIDGED
 
     @pytest.fixture
-    def bridge_module(self):
+    def bridge_module(self, hooks_dir):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "team_bridge", "/opt/abox/hooks/team-bridge.py"
+            "team_bridge", hooks_dir / "team-bridge.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -345,8 +385,8 @@ class TestHookBridgeRouting:
 
     def test_format_result_tasklist_items(self, bridge_module):
         tasks = [
-            {"id": "1", "subject": "Fix bug", "status": "pending"},
-            {"id": "2", "subject": "Add tests", "status": "in_progress"},
+            {"id": "1", "title": "Fix bug", "status": "pending"},
+            {"id": "2", "title": "Add tests", "status": "in_progress"},
         ]
         result = bridge_module._format_result("TaskList", tasks)
         assert "Fix bug" in result

@@ -698,9 +698,13 @@ class ClaudeCodeAdapter:
         servers = {}
         if mcp_servers:
             for name, config in mcp_servers.items():
+                port = config.get("port") if isinstance(config, dict) else None
+                if not port:
+                    log.warning("adapter.mcp_missing_port", server=name)
+                    continue
                 servers[name] = {
                     "type": "sse",
-                    "url": f"http://localhost:{config['port']}",
+                    "url": f"http://localhost:{port}",
                 }
 
         if coord_server:
@@ -717,10 +721,19 @@ class ClaudeCodeAdapter:
         servers = {}
         if mcp_servers:
             for name, config in mcp_servers.items():
+                if not isinstance(config, dict):
+                    log.warning("adapter.gateway_invalid_config", server=name)
+                    continue
+                command = config.get("command")
+                port = config.get("port")
+                if not command or not port:
+                    log.warning("adapter.gateway_missing_fields", server=name,
+                                has_command=bool(command), has_port=bool(port))
+                    continue
                 servers[name] = {
-                    "command": config["command"],
+                    "command": command,
                     "args": config.get("args", []),
-                    "port": config["port"],
+                    "port": port,
                 }
         return json.dumps({"servers": servers}, indent=2)
 

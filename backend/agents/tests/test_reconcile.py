@@ -19,6 +19,7 @@ from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
     _detect_stuck_deploys,
+    _reap_errored_agents,
     _reap_orphans_sync,
 )
 
@@ -264,3 +265,41 @@ class TestReapOrphans:
 
         container.stop.assert_called_once_with(timeout=5)
         container.remove.assert_called_once_with(force=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.chaos
+class TestErrorReapDebugMode:
+    """Failure-injection coverage for errored-agent cleanup behavior."""
+
+    async def test_keep_failed_containers_skips_reap(self, monkeypatch):
+        monkeypatch.setenv("KEEP_FAILED_AGENT_CONTAINERS", "1")
+        agent = _make_agent(agent_id="error-agent-1")
+
+        with (
+            patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+            patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+            patch("agents.services.reconcile._mark_stopped", new_callable=AsyncMock) as mock_mark_stopped,
+            patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+        ):
+            await _reap_errored_agents(timezone.now())
+
+        mock_terminate.assert_not_awaited()
+        mock_mark_stopped.assert_not_awaited()
+        mock_broadcast.assert_not_awaited()
+
+    async def test_default_mode_reaps_failed_agents(self, monkeypatch):
+        monkeypatch.delenv("KEEP_FAILED_AGENT_CONTAINERS", raising=False)
+        agent = _make_agent(agent_id="error-agent-2")
+
+        with (
+            patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+            patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+            patch("agents.services.reconcile._mark_stopped", new_callable=AsyncMock, return_value=agent) as mock_mark_stopped,
+            patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+        ):
+            await _reap_errored_agents(timezone.now())
+
+        mock_terminate.assert_awaited_once()
+        mock_mark_stopped.assert_awaited_once_with(agent.id)
+        mock_broadcast.assert_awaited_once_with(agent)

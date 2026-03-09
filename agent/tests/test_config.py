@@ -19,10 +19,19 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+pytest.importorskip("claude_code_sdk", reason="requires claude_code_sdk (container-only)")
+
+
 @pytest.fixture
 def relay_module():
     import relay
     return relay
+
+
+@pytest.fixture
+def relay_common_module():
+    import relay_common
+    return relay_common
 
 
 class TestBuildOptions:
@@ -115,29 +124,29 @@ class TestBuildSdkEnv:
 class TestWSUrl:
     """WSTransport._ws_url — builds WS endpoint from HTTP callback URL."""
 
-    def test_http_becomes_ws(self, relay_module, monkeypatch):
-        monkeypatch.setattr(relay_module, "CALLBACK_URL", "http://backend:8000")
-        transport = relay_module.WSTransport()
+    def test_http_becomes_ws(self, relay_common_module, monkeypatch):
+        monkeypatch.setattr(relay_common_module, "CALLBACK_URL", "http://backend:8000")
+        transport = relay_common_module.WSTransport()
         url = transport._ws_url()
         assert url.startswith("ws://")
         assert "backend:8000" in url
 
-    def test_https_becomes_wss(self, relay_module, monkeypatch):
-        monkeypatch.setattr(relay_module, "CALLBACK_URL", "https://api.example.com")
-        transport = relay_module.WSTransport()
+    def test_https_becomes_wss(self, relay_common_module, monkeypatch):
+        monkeypatch.setattr(relay_common_module, "CALLBACK_URL", "https://api.example.com")
+        transport = relay_common_module.WSTransport()
         url = transport._ws_url()
         assert url.startswith("wss://")
 
-    def test_path_includes_agent_id(self, relay_module, monkeypatch):
-        monkeypatch.setattr(relay_module, "CALLBACK_URL", "http://backend:8000")
-        monkeypatch.setattr(relay_module, "AGENT_ID", "agent-xyz")
-        transport = relay_module.WSTransport()
+    def test_path_includes_agent_id(self, relay_common_module, monkeypatch):
+        monkeypatch.setattr(relay_common_module, "CALLBACK_URL", "http://backend:8000")
+        monkeypatch.setattr(relay_common_module, "AGENT_ID", "agent-xyz")
+        transport = relay_common_module.WSTransport()
         url = transport._ws_url()
         assert "/ws/relay/agent-xyz/" in url
 
-    def test_preserves_port(self, relay_module, monkeypatch):
-        monkeypatch.setattr(relay_module, "CALLBACK_URL", "http://backend:9999")
-        transport = relay_module.WSTransport()
+    def test_preserves_port(self, relay_common_module, monkeypatch):
+        monkeypatch.setattr(relay_common_module, "CALLBACK_URL", "http://backend:9999")
+        transport = relay_common_module.WSTransport()
         url = transport._ws_url()
         assert ":9999" in url
 

@@ -52,6 +52,21 @@ def tokens_to_css(tokens: dict) -> str:
         f"  --tf-border: {border} !important;\n"
         f"  --tf-accent: {accent} !important;\n"
         "}\n"
+        "\n"
+        "/* Direct element overrides — kill Firefox's default background-image\n"
+        "   patterns (red diagonal stripes) that paint over CSS variables. */\n"
+        f"#navigator-toolbox, #nav-bar, #PersonalToolbar {{\n"
+        f"  background-color: {surface} !important;\n"
+        f"  background-image: none !important;\n"
+        f"}}\n"
+        f"#urlbar-background {{\n"
+        f"  background-color: {surface} !important;\n"
+        f"  background-image: none !important;\n"
+        f"}}\n"
+        f"#urlbar-input-container {{\n"
+        f"  background-color: {surface} !important;\n"
+        f"  background-image: none !important;\n"
+        f"}}\n"
     )
 
 
