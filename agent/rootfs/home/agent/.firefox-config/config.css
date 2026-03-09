@@ -1,8 +1,8 @@
-/* agentobox overrides — layout/typography, theme import from relay.
-   Every --tf-* variable from textfox defaults.css must be set here or in
-   the generated userChrome.css. test_theme_chain.py enforces this — if
-   textfox adds a new variable, the test fails until we explicitly cover it. */
-@import url("file:///tmp/abox-theme/userChrome.css");
+/* agentobox overrides — layout/typography only.
+   Theme colors come from /tmp/abox-theme/userChrome.css, loaded dynamically
+   by mozilla.cfg via nsIStyleSheetService (polls for changes every 2s).
+   DO NOT @import the theme CSS here — @import is cached at startup and
+   never re-read, which blocks live theme reload. */
 
 :root {
   /* Typography */

@@ -422,11 +422,18 @@ class TestFirefoxConfig:
             "Firefox will never see theme changes"
         )
 
-    def test_config_css_imports_correct_path(self):
+    def test_config_css_does_not_import_theme(self):
+        """config.css must NOT @import the theme CSS — it caches at startup
+        and blocks live theme reload via nsIStyleSheetService polling."""
         source = self.CONFIG_CSS.read_text()
-        assert "/tmp/abox-theme/userChrome.css" in source, (
-            "config.css does not @import /tmp/abox-theme/userChrome.css — "
-            "Firefox will never see theme changes"
+        # Check for actual @import rule, not the word in comments
+        has_import_rule = any(
+            line.strip().startswith("@import") for line in source.splitlines()
+        )
+        assert not has_import_rule, (
+            "config.css still uses @import for theme CSS — "
+            "this caches the CSS at startup and prevents live reload. "
+            "Theme CSS is loaded by mozilla.cfg via nsIStyleSheetService."
         )
 
     def test_mozilla_cfg_does_not_enable_marionette(self):
@@ -438,19 +445,13 @@ class TestFirefoxConfig:
             "mozilla.cfg still pins Marionette port even though runtime theme reload no longer uses it"
         )
 
-    def test_paths_agree(self):
-        """Both files must reference the SAME path."""
+    def test_mozilla_cfg_loads_theme_css(self):
+        """mozilla.cfg must reference the theme CSS path for nsIStyleSheetService."""
         cfg_source = self.MOZILLA_CFG.read_text()
-        css_source = self.CONFIG_CSS.read_text()
-
-        # Extract paths from both
         cfg_match = re.search(r'file:///[^\s"]+\.css', cfg_source)
-        css_match = re.search(r'file:///[^\s"]+\.css', css_source)
         assert cfg_match, "No CSS file:// URI in mozilla.cfg"
-        assert css_match, "No CSS file:// URI in config.css"
-        assert cfg_match.group() == css_match.group(), (
-            f"Path mismatch: mozilla.cfg has {cfg_match.group()}, "
-            f"config.css has {css_match.group()}"
+        assert "abox-theme/userChrome.css" in cfg_match.group(), (
+            f"mozilla.cfg theme path doesn't point to abox-theme/userChrome.css: {cfg_match.group()}"
         )
 
 
