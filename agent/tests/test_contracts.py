@@ -11,9 +11,12 @@ Contract sources:
 - critical events: relay.py:CRITICAL_EVENT_TYPES → event buffering
 - user filtering: relay.py:_message_to_event → prevents duplicate feed items
 - hook bridge: team-bridge.py:main → views.py:159-197
+- buffer observability: relay_common.py:EventSender — seq IDs, drop counters, overflow events
 """
 
+import asyncio
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -231,3 +234,221 @@ class TestHookBridgeRouting:
         result = bridge_module._format_result("TaskGet", task)
         assert "Fix bug" in result
         assert "Details here" in result
+
+
+# ---------------------------------------------------------------------------
+# EventSender buffer observability (INV-OBS-002)
+# ---------------------------------------------------------------------------
+
+
+class _FakeWSTransport:
+    """Minimal WSTransport stand-in for testing EventSender."""
+
+    def __init__(self, connected=True, send_ok=True):
+        self.connected = connected
+        self._send_ok = send_ok
+        self.sent_events = []
+
+    async def send(self, event):
+        if not self.connected or not self._send_ok:
+            return False
+        self.sent_events.append(event)
+        return True
+
+    async def reconnect(self):
+        return False
+
+
+class _FakeRedactor:
+    """Pass-through redactor for tests."""
+
+    def redact_event(self, event):
+        return event
+
+
+def _make_sender(ws_connected=True, ws_send_ok=True):
+    """Create an EventSender with a fake WSTransport for testing."""
+    from relay_common import EventSender
+
+    ws = _FakeWSTransport(connected=ws_connected, send_ok=ws_send_ok)
+    redactor = _FakeRedactor()
+
+    log = MagicMock()
+    log.info = MagicMock()
+    log.warning = MagicMock()
+    log.debug = MagicMock()
+
+    return EventSender(ws, redactor, log=log)
+
+
+class TestSequenceIdsMonotonic:
+    """INV-OBS-002: Every outbound event gets a monotonic seq field."""
+
+    def test_inv_obs_002_sequence_ids_monotonic(self):
+        """Send 10 events, verify seq is 1..10."""
+        sender = _make_sender(ws_connected=True, ws_send_ok=True)
+        sent_seqs = []
+
+        async def _run():
+            for i in range(10):
+                event = {"type": "assistant", "content": f"msg-{i}"}
+                await sender.send(event)
+                sent_seqs.append(event["seq"])
+
+        asyncio.run(_run())
+
+        assert sent_seqs == list(range(1, 11))
+        assert sender.events_sent == 10
+
+    def test_seq_never_resets_across_sends(self):
+        """Seq counter persists across multiple send calls."""
+        sender = _make_sender(ws_connected=True, ws_send_ok=True)
+
+        async def _run():
+            await sender.send({"type": "assistant"})
+            await sender.send({"type": "assistant"})
+            await sender.send({"type": "result"})
+
+        asyncio.run(_run())
+        assert sender._seq == 3
+
+
+class TestDropCounterIncrements:
+    """INV-OBS-002: Drop counters track non-critical drops during disconnect."""
+
+    def test_inv_obs_002_drop_counter_increments(self):
+        """Simulate disconnect, attempt non-critical send, verify counter."""
+        sender = _make_sender(ws_connected=False, ws_send_ok=False)
+
+        async def _run():
+            await sender.send({"type": "assistant", "content": "hello"})
+
+        asyncio.run(_run())
+
+        assert sender.events_dropped_noncritical == 1
+        assert sender.events_sent == 0
+
+    def test_critical_events_buffered_not_dropped(self):
+        """Critical events go to buffer, not drop counter."""
+        sender = _make_sender(ws_connected=False, ws_send_ok=False)
+
+        async def _run():
+            await sender.send({"type": "result", "cost": 0.01})
+
+        asyncio.run(_run())
+
+        assert sender.events_dropped_noncritical == 0
+        assert len(sender._event_buffer) == 1
+        assert sender._event_buffer[0]["type"] == "result"
+
+
+class TestOverflowEmitsTypedEvent:
+    """INV-OBS-002: Buffer overflow emits relay.buffer_overflow event."""
+
+    def test_inv_obs_002_overflow_emits_typed_event(self):
+        """Fill buffer beyond maxlen, verify overflow event emitted."""
+        sender = _make_sender(ws_connected=False, ws_send_ok=False)
+
+        async def _run():
+            # Fill buffer to capacity
+            for i in range(sender.BUFFER_MAXLEN):
+                await sender.send({"type": "system", "subtype": f"event-{i}"})
+
+            assert len(sender._event_buffer) == sender.BUFFER_MAXLEN
+
+            # One more critical event should trigger overflow
+            await sender.send({"type": "result", "subtype": "overflow-trigger"})
+
+        asyncio.run(_run())
+
+        # Buffer still at maxlen (deque enforces it)
+        assert len(sender._event_buffer) == sender.BUFFER_MAXLEN
+
+        # At least one eviction was counted
+        assert sender.events_evicted_critical >= 1
+
+        # Find the overflow event in the buffer
+        overflow_events = [
+            e for e in sender._event_buffer
+            if e.get("subtype") == "relay.buffer_overflow"
+        ]
+        assert len(overflow_events) >= 1
+
+        overflow = overflow_events[0]
+        assert overflow["error_code"] == "ERR-RELAY-BUFFER-OVERFLOW"
+        assert overflow["buffer_size"] == sender.BUFFER_MAXLEN
+        assert "evicted_seq" in overflow
+        assert "seq" in overflow
+
+    def test_overflow_event_has_seq(self):
+        """Overflow events themselves get monotonic seq numbers."""
+        sender = _make_sender(ws_connected=False, ws_send_ok=False)
+
+        async def _run():
+            for i in range(sender.BUFFER_MAXLEN + 1):
+                await sender.send({"type": "system", "subtype": f"evt-{i}"})
+
+        asyncio.run(_run())
+
+        overflow_events = [
+            e for e in sender._event_buffer
+            if e.get("subtype") == "relay.buffer_overflow"
+        ]
+        for oe in overflow_events:
+            assert isinstance(oe["seq"], int)
+            assert oe["seq"] > 0
+
+
+class TestBufferStatsReportedOnReconnect:
+    """Buffer stats are logged and buffer is flushed on reconnect."""
+
+    def test_buffer_stats_reported_on_reconnect(self):
+        """Simulate disconnect+reconnect, verify stats logged and buffer flushed."""
+        sender = _make_sender(ws_connected=False, ws_send_ok=False)
+
+        async def _run():
+            # Buffer some critical events during disconnect
+            await sender.send({"type": "result", "cost": 0.01})
+            await sender.send({"type": "system", "subtype": "process_exit"})
+            # Drop a non-critical event
+            await sender.send({"type": "assistant", "content": "dropped"})
+
+            assert len(sender._event_buffer) == 2
+            assert sender.events_dropped_noncritical == 1
+
+            # Now simulate reconnect — WS becomes available
+            sender.ws.connected = True
+            sender.ws._send_ok = True
+
+            await sender.on_reconnect()
+
+        asyncio.run(_run())
+
+        # Buffer should be flushed
+        assert len(sender._event_buffer) == 0
+
+        # Stats were logged (check the log mock)
+        log_calls = [call for call in sender._log.info.call_args_list
+                     if call[0][0] == "relay.buffer_stats"]
+        assert len(log_calls) >= 1
+
+        # Reconnect event was logged
+        reconnect_calls = [call for call in sender._log.info.call_args_list
+                           if call[0][0] == "relay.reconnected"]
+        assert len(reconnect_calls) >= 1
+
+    def test_buffer_stats_property(self):
+        """buffer_stats property returns correct counters."""
+        sender = _make_sender(ws_connected=True, ws_send_ok=True)
+
+        async def _run():
+            await sender.send({"type": "assistant"})
+            await sender.send({"type": "result"})
+
+        asyncio.run(_run())
+
+        stats = sender.buffer_stats
+        assert stats["events_sent"] == 2
+        assert stats["events_dropped_noncritical"] == 0
+        assert stats["events_evicted_critical"] == 0
+        assert stats["buffer_size"] == 0

@@ -559,8 +559,7 @@ class SDKRelay:
                     log.warning("relay.ws_disconnected")
                     try:
                         if await self.ws.reconnect():
-                            log.info("relay.ws_reconnected")
-                            await self._sender.flush_buffer()
+                            await self._sender.on_reconnect()
                     except FatalWSClose:
                         raise  # propagate to run loop
                 continue
@@ -800,6 +799,18 @@ class SDKRelay:
             except Exception:
                 pass  # intentional: best-effort fallback when both Marionette and pkill fail
 
+    # ── Periodic stats ──
+
+    async def _periodic_buffer_stats(self):
+        """Emit relay.buffer_stats log event every 60 seconds."""
+        while True:
+            await asyncio.sleep(60)
+            self._log_buffer_stats()
+
+    def _log_buffer_stats(self):
+        """Log current buffer stats."""
+        log.info("relay.buffer_stats", extra=self._sender.buffer_stats)
+
     # ── Synthetic events ──
 
     async def _post_exit_event(self, exit_code: int, stderr: str):
@@ -871,7 +882,10 @@ class SDKRelay:
             return
 
         # Flush any events buffered from a previous connection attempt
-        await self._sender.flush_buffer()
+        if self._sender._event_buffer:
+            await self._sender.on_reconnect()
+        else:
+            await self._sender.flush_buffer()
 
         # Send relay_init diagnostic event through WS so backend has it
         # even if the container dies before we can inspect logs.
@@ -952,9 +966,10 @@ class SDKRelay:
 
             log.info("relay.sdk_connected", extra={"perm": permission_mode, "resume": resume_session_id or "fresh"})
 
-            # Two tasks: forward messages upstream, receive commands downstream
+            # Three tasks: forward upstream, receive downstream, periodic stats
             forward_task = asyncio.create_task(self._forward_messages(), name="forward")
             downstream_task = asyncio.create_task(self._ws_downstream(), name="downstream")
+            stats_task = asyncio.create_task(self._periodic_buffer_stats(), name="stats")
 
             # Feed pending input from idle wait state. Must happen AFTER tasks
             # start so forward_task is already iterating receive_messages() and
@@ -966,9 +981,9 @@ class SDKRelay:
                 await self._handle_command({"type": "input", "payload": pending_payload})
 
             # Wait for the forward task to complete (Claude exits/disconnects).
-            # The downstream task runs indefinitely until cancelled.
+            # The downstream and stats tasks run indefinitely until cancelled.
             done, pending = await asyncio.wait(
-                [forward_task, downstream_task],
+                [forward_task, downstream_task, stats_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -1077,7 +1092,7 @@ class SDKRelay:
                         log.warning("relay.idle_ws_disconnected")
                         try:
                             if await self.ws.reconnect():
-                                await self._sender.flush_buffer()
+                                await self._sender.on_reconnect()
                         except FatalWSClose:
                             idle_fatal = True
                             break
