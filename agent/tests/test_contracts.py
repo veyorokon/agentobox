@@ -332,15 +332,15 @@ class TestDependencyVersionCheck:
         assert payload["flags"]["verbose"] is True
 
 
-class TestFirefoxThemePolling:
-    """Theme changes rely on mozilla.cfg polling — relay must NOT restart Firefox."""
+class TestFirefoxThemeReload:
+    """Theme changes use loopback socket poke — relay must NOT restart Firefox."""
 
     def test_no_firefox_restart_method(self):
-        """Relay must not have _restart_firefox_for_theme — polling replaces it."""
+        """Relay must not have _restart_firefox_for_theme — socket poke replaces it."""
         import relay
         assert not hasattr(relay.SDKRelay, "_restart_firefox_for_theme"), (
             "SDKRelay still has _restart_firefox_for_theme — "
-            "theme reload should use mozilla.cfg nsIStyleSheetService polling"
+            "theme reload should use mozilla.cfg socket poke"
         )
 
     def test_no_firefox_process_constants(self):

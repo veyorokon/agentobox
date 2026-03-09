@@ -424,7 +424,7 @@ class TestFirefoxConfig:
 
     def test_config_css_does_not_import_theme(self):
         """config.css must NOT @import the theme CSS — it caches at startup
-        and blocks live theme reload via nsIStyleSheetService polling."""
+        and blocks live theme reload via nsIStyleSheetService."""
         source = self.CONFIG_CSS.read_text()
         # Check for actual @import rule, not the word in comments
         has_import_rule = any(
@@ -480,24 +480,39 @@ class TestRelayPokeConfig:
         )
 
     def test_relay_does_not_restart_firefox(self):
-        """Relay must NOT restart Firefox — mozilla.cfg polls userChrome.css via
-        nsIStyleSheetService and picks up changes automatically."""
+        """Relay must NOT restart Firefox — it pokes mozilla.cfg's loopback
+        socket to trigger CSS reload via nsIStyleSheetService."""
         source = self.RELAY_PY.read_text()
         assert "_restart_firefox_for_theme" not in source, (
             "Relay still has _restart_firefox_for_theme — "
-            "theme reload should use mozilla.cfg polling, not Firefox restart"
+            "theme reload should use socket poke, not Firefox restart"
         )
         assert "pkill" not in source.split("_on_theme_changed")[1].split("async def")[0] if "_on_theme_changed" in source else True, (
             "Relay kills Firefox in theme handler — "
-            "should rely on mozilla.cfg polling instead"
+            "should poke mozilla.cfg socket instead"
         )
 
-    def test_mozilla_cfg_has_polling_timer(self):
-        """mozilla.cfg must set up nsITimer for polling userChrome.css changes."""
+    def test_relay_pokes_firefox_socket(self):
+        """Relay must poke Firefox's loopback socket after writing CSS."""
+        source = self.RELAY_PY.read_text()
+        # Find the method body — starts at "async def _on_theme_changed"
+        marker = "async def _on_theme_changed"
+        idx = source.index(marker)
+        method_body = source[idx:].split("\n    async def ")[0]
+        assert "9224" in method_body, (
+            "Relay theme handler does not poke port 9224 — "
+            "Firefox won't know CSS changed"
+        )
+
+    def test_mozilla_cfg_has_socket_listener(self):
+        """mozilla.cfg must listen on loopback socket for reload pokes."""
         mozilla_cfg = AGENT_ROOT / "rootfs" / "usr" / "lib" / "firefox-esr" / "mozilla.cfg"
         source = mozilla_cfg.read_text()
-        assert "nsITimer" in source, (
-            "mozilla.cfg does not use nsITimer — live theme polling is missing"
+        assert "nsIServerSocket" in source, (
+            "mozilla.cfg does not use nsIServerSocket — no reload listener"
+        )
+        assert "9224" in source, (
+            "mozilla.cfg does not listen on port 9224"
         )
         assert "nsIStyleSheetService" in source, (
             "mozilla.cfg does not use nsIStyleSheetService — cannot reload CSS at runtime"

@@ -724,9 +724,15 @@ class SDKRelay:
             except Exception as e:  # intentional: awesome-client reload is best-effort cosmetic — theme still applies on next restart
                 log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "awesome_reload"})
 
-        # Firefox picks up userChrome.css changes via nsIStyleSheetService
-        # polling in mozilla.cfg (2s interval). No restart needed.
-        log.info("relay.theme_css_written")
+        # Poke Firefox to reload CSS — mozilla.cfg listens on loopback:9224.
+        # Connect + close = reload signal. Best-effort: Firefox may not be up yet.
+        try:
+            import socket as _socket
+            with _socket.create_connection(("127.0.0.1", 9224), timeout=1) as s:
+                pass
+            log.info("relay.theme_firefox_reloaded")
+        except OSError:
+            log.info("relay.theme_css_written", extra={"firefox_poke": "failed"})
 
     async def _on_state_changed(self):
         """state.json changed — apply mode changes."""
