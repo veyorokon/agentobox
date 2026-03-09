@@ -22,6 +22,15 @@ import structlog
 from asgiref.sync import sync_to_async as _s2a
 from channels.layers import get_channel_layer
 
+from agents.errors import (
+    ERR_COMMS_DASHBOARD_PUSH_FAILED,
+    ERR_COMMS_RELAY_CHECK_FAILED,
+    ERR_COMMS_SESSION_CLEANUP_FAILED,
+    ERR_COMMS_SKILL_CLEANUP_FAILED,
+    ERR_COMMS_SKILL_PUSH_FAILED,
+    ERR_COMMS_THEME_PUSH_FAILED,
+    ERR_COMMS_URL_TO_BASE64_FAILED,
+)
 from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.utils import create_stream_event
@@ -72,8 +81,14 @@ def _normalize_content(content: list) -> list:
                 source["type"] = "base64"
                 source["media_type"] = ct
                 source["data"] = b64
-            except Exception:  # intentional: URL-to-base64 conversion is best-effort — keep original block
-                log.warning("comms.url_to_base64_failed", url=url)
+            except Exception as exc:  # intentional: URL-to-base64 conversion is best-effort — keep original block
+                log.warning(
+                    "comms.url_to_base64_failed",
+                    url=url,
+                    error_code=ERR_COMMS_URL_TO_BASE64_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="url_to_base64",
+                )
 
     return content
 
@@ -115,8 +130,15 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
         connected = await Agent.objects.filter(
             id=agent_id,
         ).values_list("relay_connected", flat=True).afirst()
-    except Exception:  # intentional: DB error checking relay state — fall through and attempt send anyway
-        log.warning("comms.relay_check_failed", agent_id=str(agent_id), exc_info=True)
+    except Exception as exc:  # intentional: DB error checking relay state — fall through and attempt send anyway
+        log.warning(
+            "comms.relay_check_failed",
+            agent_id=str(agent_id),
+            error_code=ERR_COMMS_RELAY_CHECK_FAILED,
+            error_class=type(exc).__name__,
+            operation="check_relay_connected",
+            exc_info=True,
+        )
         connected = None
 
     if connected is False:
@@ -134,6 +156,7 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
 async def send_message(
     agent_id: str, message: str, content: list | None = None,
     source: str = "user",
+    correlation_id: str = "",
 ) -> bool:
     """Send a message to an agent via volume inbox + poke.
 
@@ -144,8 +167,14 @@ async def send_message(
 
     If the agent is dead, it's auto-restarted. The inbox message
     survives on the volume — no backfill logic needed.
+
+    Args:
+        correlation_id: Optional ID to trace this message through the system.
+            Generated automatically if not provided.
     """
-    op_log = log.bind(agent_id=agent_id, source=source)
+    if not correlation_id:
+        correlation_id = uuid.uuid4().hex[:16]
+    op_log = log.bind(agent_id=agent_id, source=source, correlation_id=correlation_id)
 
     try:
         agent = await Agent.objects.aget(id=agent_id)
@@ -186,8 +215,15 @@ async def send_message(
             f"dashboard_{agent.project_id}",
             {"type": "dashboard.agent_update", "payload": payload},
         )
-    except Exception:  # intentional: dashboard push failure must not break message delivery
-        op_log.warning("comms.dashboard_push_failed", exc_info=True)
+    except Exception as exc:  # intentional: dashboard push failure must not break message delivery
+        op_log.warning(
+            "comms.dashboard_push_failed",
+            error_code=ERR_COMMS_DASHBOARD_PUSH_FAILED,
+            error_class=type(exc).__name__,
+            operation="push_agent_update",
+            agent_id=agent_id,
+            exc_info=True,
+        )
 
     # Auto-restart dead agents — inbox message persists on volume
     if _needs_restart(agent):
@@ -385,8 +421,15 @@ async def push_theme_to_agents(project) -> None:
         try:
             agent.volume.write("tmp/abox-theme/tokens.json", tokens_json)
             await push_to_relay(str(agent.id), {"type": "poke", "changed": "tmp/abox-theme/tokens.json"})
-        except Exception:  # intentional: theme push is best-effort — one agent failure must not block others
-            log.exception("comms.theme_push_failed", agent_name=agent.name)
+        except Exception as exc:  # intentional: theme push is best-effort — one agent failure must not block others
+            log.exception(
+                "comms.theme_push_failed",
+                agent_name=agent.name,
+                error_code=ERR_COMMS_THEME_PUSH_FAILED,
+                error_class=type(exc).__name__,
+                operation="push_theme",
+                agent_id=str(agent.id),
+            )
 
 
 async def interrupt_agent(agent_id: str) -> bool:
@@ -472,9 +515,15 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
                 skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
                 if skill_dir.exists():
                     shutil.rmtree(skill_dir)
-        # intentional: one agent's skill push failure must not block other agents
-        except Exception:
-            log.exception("comms.skill_push_failed", agent_name=agent.name, agent_id=str(agent.id))
+        except Exception as exc:  # intentional: one agent's skill push failure must not block other agents
+            log.exception(
+                "comms.skill_push_failed",
+                agent_name=agent.name,
+                agent_id=str(agent.id),
+                error_code=ERR_COMMS_SKILL_PUSH_FAILED,
+                error_class=type(exc).__name__,
+                operation="push_skill",
+            )
 
 
 async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[str]) -> None:
@@ -491,9 +540,14 @@ async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[s
             skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
             if skill_dir.exists():
                 shutil.rmtree(skill_dir)
-        # intentional: one agent's skill cleanup failure must not block other agents
-        except Exception:
-            log.exception("comms.skill_cleanup_failed", agent_id=agent_id)
+        except Exception as exc:  # intentional: one agent's skill cleanup failure must not block other agents
+            log.exception(
+                "comms.skill_cleanup_failed",
+                agent_id=agent_id,
+                error_code=ERR_COMMS_SKILL_CLEANUP_FAILED,
+                error_class=type(exc).__name__,
+                operation="delete_skill",
+            )
 
 
 async def clear_agent_session(agent_id: str) -> bool:
@@ -520,8 +574,15 @@ async def clear_agent_session(agent_id: str) -> bool:
             "bash", "-c",
             f"rm -rf {agent_state_dir}/projects/*/",
         ])
-    except Exception:  # intentional: session file cleanup is best-effort — restart still proceeds
-        op_log.warning("comms.clear_session_failed", exc_info=True)
+    except Exception as exc:  # intentional: session file cleanup is best-effort — restart still proceeds
+        op_log.warning(
+            "comms.clear_session_failed",
+            error_code=ERR_COMMS_SESSION_CLEANUP_FAILED,
+            error_class=type(exc).__name__,
+            operation="clear_session_files",
+            agent_id=agent_id,
+            exc_info=True,
+        )
 
     agent.session_id = ""
     await agent.asave(update_fields=["session_id"])

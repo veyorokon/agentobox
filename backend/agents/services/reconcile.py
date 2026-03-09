@@ -23,6 +23,10 @@ from asgiref.sync import sync_to_async
 from django.db.models import F
 from django.utils import timezone
 
+from agents.errors import (
+    ERR_RECONCILER_LOOP_FAILED,
+    ERR_RECONCILER_STATUS_CHECK_FAILED,
+)
 from agents.models import Agent, AgentLifecycleAttempt, AgentLifecycleAttemptStatus, AgentStatus
 from agents.services.lifecycle import transition_agent_status
 from agents.services.broadcast import broadcast_agent_update
@@ -62,8 +66,13 @@ async def _loop():
         await asyncio.sleep(INTERVAL_S)
         try:
             await reconcile_agents()
-        except Exception:  # intentional: reconciliation loop must never crash — log and retry next interval
-            log.exception("reconciler.failed")
+        except Exception as exc:  # intentional: reconciliation loop must never crash — log and retry next interval
+            log.exception(
+                "reconciler.failed",
+                error_code=ERR_RECONCILER_LOOP_FAILED,
+                error_class=type(exc).__name__,
+                operation="reconcile_agents",
+            )
 
 
 async def reconcile_agents():
@@ -297,8 +306,13 @@ async def _detect_stuck_deploys(now):
                 if container_status == "running":
                     agent_log.info("reconciler.deploy_still_alive")
                     continue  # Container alive — give it more time
-            except Exception:  # intentional: can't check status — fall through to kill
-                pass
+            except Exception as exc:  # intentional: can't check status — fall through to kill
+                agent_log.debug(
+                    "reconciler.status_check_failed",
+                    error_code=ERR_RECONCILER_STATUS_CHECK_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="get_container_status",
+                )
 
         await terminate_sandbox(agent, agent_log)
         agent = await _mark_error(agent.id)

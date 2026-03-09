@@ -74,5 +74,13 @@ async def push_secrets_for_project(project) -> None:
                 await push_secrets_to_agent(
                     runtime, agent.sandbox_id, agent, secret_envs,
                 )
-        except Exception:  # intentional: one agent's push failure must not block other agents' secrets
-            op_log.exception("lifecycle.secret_push_failed", agent_name=agent.name)
+        except Exception as exc:  # intentional: one agent's push failure must not block other agents' secrets
+            from agents.errors import ERR_SECRETS_PUSH_FAILED
+            op_log.exception(
+                "lifecycle.secret_push_failed",
+                agent_name=agent.name,
+                error_code=ERR_SECRETS_PUSH_FAILED,
+                error_class=type(exc).__name__,
+                operation="push_secrets_to_agent",
+                agent_id=str(agent.id),
+            )

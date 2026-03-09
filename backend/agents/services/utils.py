@@ -23,8 +23,15 @@ def spawn_logged_task(coro, *, op_log, task_name: str, event: str, **context) ->
             done_task.result()
         except asyncio.CancelledError:
             op_log.info(f"{event}.cancelled", task_name=task_name, **context)
-        except Exception:  # intentional: done callback must surface uncaught background task failures
-            op_log.exception(f"{event}.failed", task_name=task_name, **context)
+        except Exception as exc:  # intentional: done callback must surface uncaught background task failures
+            from agents.errors import ERR_UTILS_BACKGROUND_TASK_FAILED
+            op_log.exception(
+                f"{event}.failed",
+                task_name=task_name,
+                error_code=ERR_UTILS_BACKGROUND_TASK_FAILED,
+                error_class=type(exc).__name__,
+                **context,
+            )
 
     task.add_done_callback(_on_done)
     return task
@@ -76,6 +83,14 @@ async def terminate_sandbox(agent: Agent, op_log) -> bool:
         runtime = get_runtime(agent.runtime)
         await runtime.terminate(agent.sandbox_id)
         return True
-    except Exception:  # intentional: container may already be gone — log and report failure
-        op_log.exception("runtime.terminate_failed", sandbox_id=agent.sandbox_id)
+    except Exception as exc:  # intentional: container may already be gone — log and report failure
+        from agents.errors import ERR_UTILS_TERMINATE_FAILED
+        op_log.exception(
+            "runtime.terminate_failed",
+            sandbox_id=agent.sandbox_id,
+            error_code=ERR_UTILS_TERMINATE_FAILED,
+            error_class=type(exc).__name__,
+            operation="terminate_sandbox",
+            agent_id=str(agent.id),
+        )
         return False

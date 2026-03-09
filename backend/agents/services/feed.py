@@ -10,6 +10,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
 
+from agents.errors import ERR_FEED_DASHBOARD_PUSH_FAILED
 from agents.models import Agent, TeamFeedItem
 
 log = structlog.get_logger("abox.feed")
@@ -54,8 +55,15 @@ async def create_feed_item(project_id, source_event=None, agent_record=None, **k
             f"dashboard_{item.project_id}",
             {"type": "dashboard.feed_item", "payload": payload},
         )
-    except Exception:  # intentional: dashboard push failure must not break feed creation
-        log.warning("feed.dashboard_push_failed", item_id=str(item.id), exc_info=True)
+    except Exception as exc:  # intentional: dashboard push failure must not break feed creation
+        log.warning(
+            "feed.dashboard_push_failed",
+            item_id=str(item.id),
+            error_code=ERR_FEED_DASHBOARD_PUSH_FAILED,
+            error_class=type(exc).__name__,
+            operation="push_feed_item",
+            exc_info=True,
+        )
 
     return item
 
@@ -78,8 +86,15 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
             f"dashboard_{item.project_id}",
             {"type": "dashboard.feed_item", "payload": payload},
         )
-    except Exception:  # intentional: dashboard push failure must not break feed update
-        log.warning("feed.dashboard_push_failed", item_id=str(item.id), exc_info=True)
+    except Exception as exc:  # intentional: dashboard push failure must not break feed update
+        log.warning(
+            "feed.dashboard_push_failed",
+            item_id=str(item.id),
+            error_code=ERR_FEED_DASHBOARD_PUSH_FAILED,
+            error_class=type(exc).__name__,
+            operation="push_feed_item_update",
+            exc_info=True,
+        )
 
     return item
 

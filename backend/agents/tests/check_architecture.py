@@ -362,6 +362,55 @@ def check_no_direct_status_writes():
             )
 
 
+# ── Error metadata enforcement ──
+
+
+def check_broad_except_has_error_metadata():
+    """Every ``except Exception`` block in services/ must log with ``error_code``.
+
+    Parses Python files as AST and checks that any ``except Exception`` handler
+    contains a call with ``error_code`` as a keyword argument. This enforces the
+    observability contract: every broad catch is attributable with a typed code.
+
+    Skips test files and conftest.py.
+    """
+    for f in _python_files(SERVICES_DIR):
+        if f.name.startswith("test_") or f.name == "conftest.py":
+            continue
+        src = _read_source(f)
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            # Only check broad "except Exception" handlers
+            if node.type is None:
+                # bare except — also broad
+                pass
+            elif isinstance(node.type, ast.Name) and node.type.id == "Exception":
+                pass
+            else:
+                continue
+
+            # Walk the handler body looking for a call with error_code kwarg
+            has_error_code = False
+            for child in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+                if isinstance(child, ast.Call):
+                    for kw in child.keywords:
+                        if kw.arg == "error_code":
+                            has_error_code = True
+                            break
+                if has_error_code:
+                    break
+
+            if not has_error_code:
+                # Get line number for the except clause
+                fail(
+                    f"{f.name}:{node.lineno} has 'except Exception' without "
+                    f"error_code in its log call — add error_code from agents.errors"
+                )
+
+
+
 # ── Main ──
 
 
@@ -381,7 +430,8 @@ def main() -> int:
         check_no_cross_module_private_imports,
         check_orchestrators_use_spawn_logged_task,
         check_mutable_models_have_updated_at,
-        check_no_direct_status_writes,
+check_no_direct_status_writes,
+        check_broad_except_has_error_metadata,
     ]
 
     for check in checks:

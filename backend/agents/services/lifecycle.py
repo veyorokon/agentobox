@@ -34,6 +34,15 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from agents.errors import (
+    ERR_LIFECYCLE_LOG_CAPTURE_FAILED,
+    ERR_LIFECYCLE_PROVISION_CLEANUP_FAILED,
+    ERR_LIFECYCLE_PROVISION_FAILED,
+    ERR_LIFECYCLE_PROVISION_ORPHANED,
+    ERR_LIFECYCLE_RELAY_SHUTDOWN_FAILED,
+    ERR_LIFECYCLE_SECRET_DECRYPT_FAILED,
+    ERR_LIFECYCLE_TERMINATE_FAILED,
+)
 from agents.models import (
     Agent,
     AgentLifecycleAttempt,
@@ -653,16 +662,29 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         op_log.info("lifecycle.agent_provisioned", agent_id=agent_id)
 
-    except Exception:  # intentional: provisioning is background task — must not crash, cleanup below
-        op_log.exception("lifecycle.provision_failed", agent_id=agent_id)
+    except Exception as exc:  # intentional: provisioning is background task — must not crash, cleanup below
+        op_log.exception(
+            "lifecycle.provision_failed",
+            agent_id=agent_id,
+            error_code=ERR_LIFECYCLE_PROVISION_FAILED,
+            error_class=type(exc).__name__,
+            operation="provision_agent",
+        )
 
         if runtime and sandbox_id:
             try:
                 await runtime.terminate(sandbox_id)
                 op_log.info("lifecycle.orphan_cleaned", sandbox_id=sandbox_id)
-            # intentional: orphan container kill is best-effort during provision failure cleanup
-            except Exception:
-                op_log.warning("lifecycle.orphan_cleanup_failed", sandbox_id=sandbox_id, exc_info=True)
+            except Exception as cleanup_exc:  # intentional: orphan container kill is best-effort during provision failure cleanup
+                op_log.warning(
+                    "lifecycle.orphan_cleanup_failed",
+                    sandbox_id=sandbox_id,
+                    error_code=ERR_LIFECYCLE_PROVISION_ORPHANED,
+                    error_class=type(cleanup_exc).__name__,
+                    operation="terminate_orphan",
+                    agent_id=agent_id,
+                    exc_info=True,
+                )
 
         try:
             agent = await _save_failed(agent_id)
@@ -680,8 +702,15 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                     error_detail="Container provisioning failed",
                     metadata={"sandbox_id": sandbox_id or ""},
                 )
-        except Exception:  # intentional: DB cleanup after failed provision — nothing more to do
-            op_log.warning("lifecycle.provision_cleanup_failed", agent_id=agent_id, exc_info=True)
+        except Exception as db_exc:  # intentional: DB cleanup after failed provision — nothing more to do
+            op_log.warning(
+                "lifecycle.provision_cleanup_failed",
+                agent_id=agent_id,
+                error_code=ERR_LIFECYCLE_PROVISION_CLEANUP_FAILED,
+                error_class=type(db_exc).__name__,
+                operation="save_failed_state",
+                exc_info=True,
+            )
     finally:
         clear_agent_context()
 
@@ -717,8 +746,14 @@ async def kill_agent(agent_id: str) -> bool:
             f"relay_{agent_id}",
             {"type": "relay.shutdown"},
         )
-    except Exception:  # intentional: best-effort — container stop is the real cleanup
-        pass
+    except Exception as exc:  # intentional: best-effort — container stop is the real cleanup
+        op_log.debug(
+            "lifecycle.relay_shutdown_failed",
+            error_code=ERR_LIFECYCLE_RELAY_SHUTDOWN_FAILED,
+            error_class=type(exc).__name__,
+            operation="relay_shutdown",
+            agent_id=agent_id,
+        )
 
     await terminate_sandbox(agent, op_log)
 
@@ -916,9 +951,16 @@ async def hard_restart_agent(agent_id: str) -> Agent:
             runtime = get_runtime(old_runtime)
             await runtime.terminate(old_sandbox_id)
             op_log.info("lifecycle.container_terminated", sandbox_id=old_sandbox_id)
-        # intentional: old container kill is best-effort during restart — new one will be provisioned regardless
-        except Exception:
-            op_log.warning("runtime.terminate_failed", sandbox_id=old_sandbox_id, exc_info=True)
+        except Exception as exc:  # intentional: old container kill is best-effort during restart — new one will be provisioned regardless
+            op_log.warning(
+                "runtime.terminate_failed",
+                sandbox_id=old_sandbox_id,
+                error_code=ERR_LIFECYCLE_TERMINATE_FAILED,
+                error_class=type(exc).__name__,
+                operation="terminate_old_container",
+                agent_id=agent_id,
+                exc_info=True,
+            )
 
     # Resolve project secrets for this agent
     from projects.models import Project
@@ -1008,8 +1050,13 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
         )
         truncated = output[:200] if output else "(empty)"
         op_log.info("lifecycle.processes_captured", output=truncated)
-    except Exception:  # intentional: log capture is diagnostic only — never block provisioning
-        op_log.warning("lifecycle.log_capture_failed")
+    except Exception as exc:  # intentional: log capture is diagnostic only — never block provisioning
+        op_log.warning(
+            "lifecycle.log_capture_failed",
+            error_code=ERR_LIFECYCLE_LOG_CAPTURE_FAILED,
+            error_class=type(exc).__name__,
+            operation="capture_sandbox_logs",
+        )
 
 
 def _build_agent_env(agent, project) -> dict[str, str]:
@@ -1102,8 +1149,15 @@ async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
         if not scoped_ids or agent.id in scoped_ids:
             try:
                 merged[secret.key] = decrypt_value(bytes(secret.encrypted_value))
-            except Exception:  # intentional: one corrupt secret must not block other secrets or provisioning
-                op_log.warning("lifecycle.secret_decrypt_failed", key=secret.key)
+            except Exception as exc:  # intentional: one corrupt secret must not block other secrets or provisioning
+                op_log.warning(
+                    "lifecycle.secret_decrypt_failed",
+                    key=secret.key,
+                    error_code=ERR_LIFECYCLE_SECRET_DECRYPT_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="decrypt_secret",
+                    agent_id=str(agent.id),
+                )
 
     if not merged:
         return None

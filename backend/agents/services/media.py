@@ -100,6 +100,12 @@ def externalize_image_block(block: dict, prefix: str = "media") -> dict:
             **block,
             "source": {"type": "url", "url": url},
         }
-    except Exception:  # intentional: S3 upload fail-open — keep base64 so API call still works
-        log.exception("comms.image_externalize_failed")
+    except Exception as exc:  # intentional: S3 upload fail-open — keep base64 so API call still works
+        from agents.errors import ERR_MEDIA_EXTERNALIZE_FAILED
+        log.exception(
+            "comms.image_externalize_failed",
+            error_code=ERR_MEDIA_EXTERNALIZE_FAILED,
+            error_class=type(exc).__name__,
+            operation="externalize_image_block",
+        )
         return block
