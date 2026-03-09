@@ -1336,7 +1336,7 @@ class SDKRelay:
 # (the JSON file is the source of truth for CI; this constant is the
 # runtime check so the relay doesn't depend on filesystem layout).
 _COMPATIBLE_VERSIONS = [
-    {"cli": "2.1.70", "sdk": "0.1.47", "proxy": "1"},
+    {"cli": "2.1.71", "sdk": "0.1.48", "proxy": "1"},
 ]
 
 

@@ -46,6 +46,32 @@ class AgentLifecycleAttemptStatus(models.TextChoices):
     CANCELLED = "cancelled"
 
 
+class IllegalTransitionError(Exception):
+    """Raised when an agent status transition violates the state machine.
+
+    Error code: ERR-LIFECYCLE-STATE-ILLEGAL
+    """
+
+    def __init__(self, agent_id, from_status, to_status):
+        self.agent_id = agent_id
+        self.from_status = from_status
+        self.to_status = to_status
+        super().__init__(
+            f"ERR-LIFECYCLE-STATE-ILLEGAL: cannot transition agent {agent_id} "
+            f"from {from_status} to {to_status}"
+        )
+
+
+VALID_TRANSITIONS: dict[str, set[str]] = {
+    AgentStatus.DEPLOYING: {AgentStatus.IDLE, AgentStatus.ERROR, AgentStatus.STOPPED},
+    AgentStatus.IDLE: {AgentStatus.RUNNING, AgentStatus.ERROR, AgentStatus.STOPPED, AgentStatus.DEPLOYING},
+    AgentStatus.RUNNING: {AgentStatus.IDLE, AgentStatus.WAITING, AgentStatus.ERROR, AgentStatus.STOPPED},
+    AgentStatus.WAITING: {AgentStatus.RUNNING, AgentStatus.IDLE, AgentStatus.ERROR, AgentStatus.STOPPED},
+    AgentStatus.ERROR: {AgentStatus.DEPLOYING, AgentStatus.STOPPED},
+    AgentStatus.STOPPED: {AgentStatus.DEPLOYING},
+}
+
+
 class FeedItemType(models.TextChoices):
     SYSTEM = "system"
     USER = "user"

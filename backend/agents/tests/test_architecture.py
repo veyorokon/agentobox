@@ -153,7 +153,7 @@ class TestNamingConventions:
             "resolve", "provision", "ensure", "answer", "hard_restart",
             "write", "externalize", "upload", "encrypt", "decrypt",
             "reconcile", "teammate", "task", "team", "search",
-            "get", "deliver", "list", "terminate",
+            "get", "deliver", "list", "terminate", "transition",
             "read", "exists", "status", "file", "pending", "inbox",
             "append", "initialize", "build", "is_converged",
             "spawn", "succeed", "fail", "recover",

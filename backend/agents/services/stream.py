@@ -25,6 +25,7 @@ from django.utils import timezone
 from agents.models import Agent, AgentStatus, SessionResult, StreamEvent
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item, recompute_attention
+from agents.services.lifecycle import transition_agent_status
 from agents.services.media import externalize_image_block
 
 log = structlog.get_logger("abox.stream")
@@ -318,7 +319,7 @@ async def _maybe_create_message_item(agent: Agent, event: dict, source_event: St
 async def _maybe_set_running(agent: Agent) -> None:
     """Promote agent to RUNNING on first assistant event."""
     if agent.status != AgentStatus.RUNNING:
-        agent.status = AgentStatus.RUNNING
+        transition_agent_status(agent, AgentStatus.RUNNING, reason="assistant_event")
         await agent.asave(update_fields=["status"])
         await broadcast_agent_update(agent)
 
@@ -364,7 +365,7 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
     agent.latest_snapshot = snapshot
 
     agent.session_cost_usd = corrected_cost
-    agent.status = AgentStatus.IDLE
+    transition_agent_status(agent, AgentStatus.IDLE, reason="result_event")
     agent.phase = ""
     await agent.asave(update_fields=[
         "latest_snapshot", "session_cost_usd", "status", "phase",
@@ -460,6 +461,9 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         exit_code = event.get("exit_code", -1)
         is_error = exit_code != 0
         new_status = AgentStatus.STOPPED if not is_error else AgentStatus.ERROR
+
+        # Validate transition (logs it); actual persistence is via aupdate below.
+        transition_agent_status(agent, new_status, reason=f"process_exit(code={exit_code})")
 
         # Accumulate compute time atomically (F-expression avoids races)
         f_update = {"status": new_status, "phase": "", "deployed_at": None}

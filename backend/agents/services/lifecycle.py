@@ -40,7 +40,9 @@ from agents.models import (
     AgentLifecycleAttemptStatus,
     AgentLifecycleKind,
     AgentStatus,
+    IllegalTransitionError,
     StreamEvent,
+    VALID_TRANSITIONS,
 )
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
@@ -57,6 +59,41 @@ ERR_LIFECYCLE_STUCK_DEPLOY = "ERR-LIFECYCLE-STUCK-DEPLOY"
 ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 
 log = structlog.get_logger("abox.lifecycle")
+
+
+def transition_agent_status(agent: Agent, new_status: str, *, reason: str = "", force: bool = False) -> Agent:
+    """Enforce the lifecycle state machine when changing agent status.
+
+    Checks VALID_TRANSITIONS[agent.status] contains new_status. If illegal
+    and force=False, raises IllegalTransitionError. If legal (or forced),
+    updates agent.status and logs the transition.
+
+    Args:
+        agent: Agent instance (must have current status loaded).
+        new_status: Target AgentStatus value.
+        reason: Optional context for the transition log.
+        force: Skip validation (for recovery paths like reconciler fixing stuck states).
+
+    Returns:
+        The agent with updated status (caller must still save).
+    """
+    old_status = agent.status
+
+    if not force:
+        valid = VALID_TRANSITIONS.get(old_status, set())
+        if new_status not in valid:
+            raise IllegalTransitionError(agent.id, old_status, new_status)
+
+    agent.status = new_status
+    log.info(
+        "lifecycle.status_transition",
+        agent_id=str(agent.id),
+        from_status=old_status,
+        to_status=new_status,
+        reason=reason,
+        forced=force,
+    )
+    return agent
 
 
 def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
@@ -222,7 +259,7 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
 def _save_agent_failed(agent_id):
     """Sync helper: mark agent as error."""
     agent = Agent.objects.get(id=agent_id)
-    agent.status = AgentStatus.ERROR
+    transition_agent_status(agent, AgentStatus.ERROR, reason="provision_failed")
     agent.save(update_fields=["status", "updated_at"])
     return agent
 
@@ -685,6 +722,11 @@ async def kill_agent(agent_id: str) -> bool:
 
     await terminate_sandbox(agent, op_log)
 
+    # Validate transition before atomic bulk update.
+    # transition_agent_status logs but does NOT save — the aupdate below
+    # persists atomically with the F-expression compute accumulation.
+    transition_agent_status(agent, AgentStatus.STOPPED, reason="kill_agent")
+
     # Accumulate compute time atomically (F-expression avoids races)
     # then set terminal status in a single update.
     update_kwargs = {"status": AgentStatus.STOPPED, "deployed_at": None}
@@ -795,7 +837,7 @@ def _atomic_reset_for_restart(agent_id):
         # (liveAction, lastOutput, cost) don't show stale values.
         # relay_* fields reset because the old WS connection dies with
         # the old container. deployed_at resets for compute tracking.
-        agent.status = AgentStatus.DEPLOYING
+        transition_agent_status(agent, AgentStatus.DEPLOYING, reason="hard_restart")
         agent.sandbox_id = ""
         agent.vnc_url = ""
         agent.session_id = ""
