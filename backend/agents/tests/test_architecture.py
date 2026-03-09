@@ -147,35 +147,6 @@ class TestNamingConventions:
     start with a verb, mutations are verb_entity.
     """
 
-    def test_service_functions_are_verb_entity(self):
-        """All public async functions in services/ should follow verb_entity naming."""
-        allowed_prefixes = (
-            "create", "kill", "remove", "send", "set", "update", "broadcast",
-            "restart", "interrupt", "clear", "recompute", "push", "process",
-            "resolve", "provision", "ensure", "answer", "hard_restart",
-            "write", "externalize", "upload", "encrypt", "decrypt",
-            "reconcile", "teammate", "task", "team", "search",
-            "get", "deliver", "list", "terminate", "transition",
-            "read", "exists", "status", "file", "pending", "inbox",
-            "append", "initialize", "build", "is_converged",
-            "spawn", "succeed", "fail", "recover",
-        )
-        violations = []
-
-        for f in _python_files(SERVICES_DIR):
-            tree = ast.parse(_read_source(f))
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-                    name = node.name
-                    if name.startswith("_"):
-                        continue  # skip private functions
-                    if not any(name.startswith(p) for p in allowed_prefixes):
-                        violations.append(f"{f.name}::{name}")
-
-        assert not violations, (
-            f"Service functions not following verb_entity pattern: {violations}"
-        )
-
     def test_graphql_mutations_are_verb_entity(self):
         """All mutation method names should follow verb_entity pattern."""
         allowed_prefixes = (

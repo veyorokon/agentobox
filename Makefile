@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -40,8 +40,16 @@ docs:
 test:
 	docker compose exec backend uv run python -m pytest agents/tests/ -v
 
-test-local:
+test-local: _test-backend _test-agent _test-dashboard
+
+_test-backend:
 	cd backend && uv run python -m pytest agents/tests/ -v
+
+_test-agent:
+	uv run pytest agent/tests/ tests/architecture/ -v -o "addopts="
+
+_test-dashboard:
+	cd dashboard && npx vitest run
 
 test-agent:
 	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent-claude:latest \
