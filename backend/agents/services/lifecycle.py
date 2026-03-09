@@ -168,8 +168,14 @@ async def create_agent(
             f"An agent named '{name}' already exists in this project"
         )
 
-    # Resolve MCP names to full config
-    resolved_mcps = mcp_servers or {}
+    # Resolve MCP names to full config; include defaults if none specified
+    if not mcp_servers:
+        from agents.adapters import get_adapter
+        adapter = get_adapter(agent_type)
+        default_names = adapter.default_mcp_names()
+        resolved_mcps = adapter.resolve_mcp_servers(default_names) if default_names else {}
+    else:
+        resolved_mcps = mcp_servers
 
     # Build config snapshot for future restarts
     config_snapshot = {

@@ -40,6 +40,7 @@ import structlog
 import textwrap
 
 from agents.adapters.claude_code.registries import (
+    DEFAULT_MCPS,
     MCP_REGISTRY,
     MODELS_REGISTRY,
     PROVIDER_CONFIGS,
@@ -867,6 +868,10 @@ class ClaudeCodeAdapter:
     def available_models(self) -> list[dict]:
         """[{value, label}] of models this agent type supports."""
         return list(MODELS_REGISTRY)
+
+    def default_mcp_names(self) -> list[str]:
+        """MCP server names included on every agent by default."""
+        return list(DEFAULT_MCPS)
 
     def mcp_registry_entries(self) -> list[dict]:
         """[{name, compat}] of known MCP servers for this agent type."""

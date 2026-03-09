@@ -56,6 +56,7 @@ class TestRegistry:
             def build_api_key_files(self, api_key): return []
             def build_relay_env(self, **kw): return ""
             def available_models(self): return []
+            def default_mcp_names(self): return []
             def mcp_registry_entries(self): return []
             def resolve_mcp_servers(self, names, variant="debian"): return {}
             def resolve_mcp_instructions(self, mcp_servers): return []

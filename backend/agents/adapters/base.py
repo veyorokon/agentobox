@@ -219,6 +219,10 @@ class AgentAdapter(Protocol):
         """[{value, label}] of models this agent type supports."""
         ...
 
+    def default_mcp_names(self) -> list[str]:
+        """MCP server names included on every agent by default."""
+        return []
+
     def mcp_registry_entries(self) -> list[dict]:
         """[{name, compat}] of known MCP servers for this agent type."""
         ...

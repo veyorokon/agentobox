@@ -208,6 +208,9 @@ MCP_REGISTRY = {
     },
 }
 
+# MCPs included on every agent by default (unless explicitly overridden).
+DEFAULT_MCPS = ["computer-use"]
+
 # Team configuration templates
 # Each template defines a complete agent team with role, model, and responsibilities
 TEAM_CONFIGS = {
