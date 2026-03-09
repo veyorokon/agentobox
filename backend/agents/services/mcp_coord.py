@@ -83,8 +83,17 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
                 to_value=recipient,
                 text=content[:500],
             )
-        except Exception:  # intentional: feed is secondary — message delivery already succeeded
-            log.warning("mcp.message_feed_item_failed", sender=agent.name, recipient=recipient, exc_info=True)
+        except Exception as exc:  # intentional: feed is secondary — message delivery already succeeded
+            from agents.errors import ERR_MCP_FEED_ITEM_FAILED
+            log.warning(
+                "mcp.message_feed_item_failed",
+                sender=agent.name, recipient=recipient,
+                error_code=ERR_MCP_FEED_ITEM_FAILED,
+                error_class=type(exc).__name__,
+                operation="create_message_feed_item",
+                agent_id=str(agent.id),
+                exc_info=True,
+            )
 
         log.info("mcp.message_sent", sender=agent.name, recipient=recipient, delivered=sent)
         if not sent:
@@ -108,8 +117,17 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
                 to_value="all",
                 text=content[:500],
             )
-        except Exception:  # intentional: feed is secondary — broadcast delivery already succeeded
-            log.warning("mcp.broadcast_feed_item_failed", sender=agent.name, exc_info=True)
+        except Exception as exc:  # intentional: feed is secondary — broadcast delivery already succeeded
+            from agents.errors import ERR_MCP_FEED_ITEM_FAILED
+            log.warning(
+                "mcp.broadcast_feed_item_failed",
+                sender=agent.name,
+                error_code=ERR_MCP_FEED_ITEM_FAILED,
+                error_class=type(exc).__name__,
+                operation="create_broadcast_feed_item",
+                agent_id=str(agent.id),
+                exc_info=True,
+            )
 
         log.info("mcp.broadcast_sent", sender=agent.name)
         return {"ok": True}
@@ -230,8 +248,17 @@ async def create_task(agent, *, title: str, description: str = "", active_form: 
         )
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
-    except Exception:  # intentional: feed/broadcast is secondary — task creation already succeeded
-        log.warning("mcp.task_create_broadcast_failed", agent_name=agent.name, exc_info=True)
+    except Exception as exc:  # intentional: feed/broadcast is secondary — task creation already succeeded
+        from agents.errors import ERR_MCP_BROADCAST_FAILED
+        log.warning(
+            "mcp.task_create_broadcast_failed",
+            agent_name=agent.name,
+            error_code=ERR_MCP_BROADCAST_FAILED,
+            error_class=type(exc).__name__,
+            operation="broadcast_task_create",
+            agent_id=str(agent.id),
+            exc_info=True,
+        )
 
     log.info("mcp.task_created", agent_name=agent.name, title=title[:80])
     return {"task_id": task.task_id, "title": task.title}
@@ -289,8 +316,17 @@ async def update_task(
             try:
                 from agents.services.broadcast import broadcast_agent_update
                 await broadcast_agent_update(agent)
-            except Exception:  # intentional: broadcast is secondary — task deletion already committed
-                log.warning("mcp.task_delete_broadcast_failed", agent_name=agent.name, exc_info=True)
+            except Exception as exc:  # intentional: broadcast is secondary — task deletion already committed
+                from agents.errors import ERR_MCP_BROADCAST_FAILED
+                log.warning(
+                    "mcp.task_delete_broadcast_failed",
+                    agent_name=agent.name,
+                    error_code=ERR_MCP_BROADCAST_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="broadcast_task_delete",
+                    agent_id=str(agent.id),
+                    exc_info=True,
+                )
             log.info("mcp.task_deleted", agent_name=agent.name, task_id=task_id)
             return {"ok": True, "deleted": True}
         task.status = status
@@ -353,8 +389,17 @@ async def update_task(
         if "status" in update_fields or "assignee" in update_fields:
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(agent)
-    except Exception:  # intentional: feed/broadcast is secondary — task update already committed
-        log.warning("mcp.task_update_broadcast_failed", agent_name=agent.name, exc_info=True)
+    except Exception as exc:  # intentional: feed/broadcast is secondary — task update already committed
+        from agents.errors import ERR_MCP_BROADCAST_FAILED
+        log.warning(
+            "mcp.task_update_broadcast_failed",
+            agent_name=agent.name,
+            error_code=ERR_MCP_BROADCAST_FAILED,
+            error_class=type(exc).__name__,
+            operation="broadcast_task_update",
+            agent_id=str(agent.id),
+            exc_info=True,
+        )
 
     log.info("mcp.task_updated", agent_name=agent.name, task_id=task_id, fields=update_fields)
     return {"ok": True, "task_id": task_id}

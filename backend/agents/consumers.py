@@ -27,6 +27,15 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocke
 from channels.layers import get_channel_layer
 from django.utils import timezone
 
+from agents.errors import (
+    ERR_CONSUMER_CALLBACK_FAILED,
+    ERR_CONSUMER_EVENT_FAILED,
+    ERR_CONSUMER_RELAY_UPDATE_FAILED,
+    ERR_CONSUMER_VNC_CLOSE_FAILED,
+    ERR_CONSUMER_VNC_SEND_FAILED,
+    ERR_CONSUMER_VNC_UPSTREAM_CLOSED,
+    ERR_CONSUMER_VNC_UPSTREAM_FAILED,
+)
 from agents.models import StreamEvent
 
 log = structlog.get_logger("abox.relay")
@@ -117,8 +126,15 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 relay_connected=False,
                 relay_disconnected_at=timezone.now(),
             )
-        except Exception:  # intentional: agent row may be deleted — don't crash disconnect handler
-            log.warning("relay.update_failed", agent_id=self.agent_id, exc_info=True)
+        except Exception as exc:  # intentional: agent row may be deleted — don't crash disconnect handler
+            log.warning(
+                "relay.update_failed",
+                agent_id=self.agent_id,
+                error_code=ERR_CONSUMER_RELAY_UPDATE_FAILED,
+                error_class=type(exc).__name__,
+                operation="update_relay_state",
+                exc_info=True,
+            )
 
         disconnect_source = "server" if code and 4000 <= code <= 4999 else "client"
         log.info("relay.disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
@@ -136,8 +152,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             from agents.services.callbacks import process_callback
             try:
                 await process_callback(self.agent, content)
-            except Exception:  # intentional: callback failure must not break relay WS — log and send deny
-                log.exception("relay.callback_failed", agent_id=self.agent_id)
+            except Exception as exc:  # intentional: callback failure must not break relay WS — log and send deny
+                log.exception(
+                    "relay.callback_failed",
+                    agent_id=self.agent_id,
+                    error_code=ERR_CONSUMER_CALLBACK_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="process_callback",
+                )
                 # Send deny response so the relay's Future resolves immediately
                 # instead of hanging for the 300s timeout.
                 request_id = content.get("request_id", "")
@@ -154,11 +176,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
 
         try:
             await process_stream_event(self.agent, content)
-        except Exception:  # intentional: one bad event must not kill the relay WS connection
+        except Exception as exc:  # intentional: one bad event must not kill the relay WS connection
             log.exception(
                 "relay.event_failed",
                 agent_id=self.agent_id,
                 event_type=event_type,
+                error_code=ERR_CONSUMER_EVENT_FAILED,
+                error_class=type(exc).__name__,
+                operation="process_stream_event",
             )
 
     # ── Downstream: backend → relay ──
@@ -250,8 +275,15 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                 open_timeout=10,
             )
             log.info("vnc.upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))
-        except Exception:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
-            log.exception("vnc.upstream_failed", agent_id=self.agent_id, url=vnc_ws_url)
+        except Exception as exc:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
+            log.exception(
+                "vnc.upstream_failed",
+                agent_id=self.agent_id,
+                url=vnc_ws_url,
+                error_code=ERR_CONSUMER_VNC_UPSTREAM_FAILED,
+                error_class=type(exc).__name__,
+                operation="connect_vnc_upstream",
+            )
             await self.accept()
             await self.close(code=4003)
             return
@@ -270,8 +302,14 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                     await self.send(bytes_data=message)
                 else:
                     await self.send(text_data=message)
-        except Exception:  # intentional: upstream WS close/error ends relay loop — normal teardown path
-            log.debug("vnc.upstream_closed", agent_id=self.agent_id)
+        except Exception as exc:  # intentional: upstream WS close/error ends relay loop — normal teardown path
+            log.debug(
+                "vnc.upstream_closed",
+                agent_id=self.agent_id,
+                error_code=ERR_CONSUMER_VNC_UPSTREAM_CLOSED,
+                error_class=type(exc).__name__,
+                operation="relay_upstream_frames",
+            )
         finally:
             await self.close()
 
@@ -283,8 +321,14 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                     await self.upstream_ws.send(bytes_data)
                 elif text_data:
                     await self.upstream_ws.send(text_data)
-            except Exception:  # intentional: upstream send failure — close proxy cleanly
-                log.debug("vnc.send_failed", agent_id=self.agent_id)
+            except Exception as exc:  # intentional: upstream send failure — close proxy cleanly
+                log.debug(
+                    "vnc.send_failed",
+                    agent_id=self.agent_id,
+                    error_code=ERR_CONSUMER_VNC_SEND_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="send_to_vnc_upstream",
+                )
                 await self.close()
 
     async def disconnect(self, code):
@@ -293,8 +337,15 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
         if self.upstream_ws:
             try:
                 await self.upstream_ws.close()
-            except Exception:  # intentional: upstream WS may already be closed during teardown
-                log.debug("vnc.upstream_close_error", agent_id=self.agent_id, exc_info=True)
+            except Exception as exc:  # intentional: upstream WS may already be closed during teardown
+                log.debug(
+                    "vnc.upstream_close_error",
+                    agent_id=self.agent_id,
+                    error_code=ERR_CONSUMER_VNC_CLOSE_FAILED,
+                    error_class=type(exc).__name__,
+                    operation="close_vnc_upstream",
+                    exc_info=True,
+                )
         disconnect_source = "server" if code and 4000 <= code <= 4999 else "client"
         log.info("vnc.disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
 

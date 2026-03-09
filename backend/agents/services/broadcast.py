@@ -12,6 +12,7 @@ import structlog
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
+from agents.errors import ERR_BROADCAST_DASHBOARD_PUSH_FAILED
 from agents.models import Agent, StreamEvent
 
 log = structlog.get_logger("abox.broadcast")
@@ -81,5 +82,12 @@ async def broadcast_agent_update(agent: Agent) -> None:
             f"dashboard_{agent.project_id}",
             {"type": "dashboard.agent_update", "payload": payload},
         )
-    except Exception:  # intentional: dashboard push failure must not break agent lifecycle
-        log.warning("broadcast.dashboard_push_failed", agent_id=str(agent.id), exc_info=True)
+    except Exception as exc:  # intentional: dashboard push failure must not break agent lifecycle
+        log.warning(
+            "broadcast.dashboard_push_failed",
+            agent_id=str(agent.id),
+            error_code=ERR_BROADCAST_DASHBOARD_PUSH_FAILED,
+            error_class=type(exc).__name__,
+            operation="push_agent_to_dashboard",
+            exc_info=True,
+        )

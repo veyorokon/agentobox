@@ -111,17 +111,27 @@ MAX_VALUE_LENGTH = 200
 def truncate_long_values(logger, method_name, event_dict):
     """Truncate string values longer than MAX_VALUE_LENGTH in log output.
 
-    Prevents log lines from being bloated by large stdout blobs, file
-    contents, error messages, or other long string values.
+    For values over MAX_VALUE_LENGTH, logs a preview of first 100 + last 50
+    chars with truncated=True and full_length metadata. This replaces blind
+    truncation with enough context to know what was lost.
+
     Skips 'event' (the event name) and 'exception' / 'exception.stacktrace'
     (handled by structlog's exception formatting).
     """
     skip_keys = {"event", "exception", "exception.stacktrace", "exception.type", "exception.message"}
+    truncated_keys = []
     for key, value in event_dict.items():
         if key in skip_keys:
             continue
         if isinstance(value, str) and len(value) > MAX_VALUE_LENGTH:
-            event_dict[key] = value[:MAX_VALUE_LENGTH] + f"... ({len(value)} chars)"
+            full_length = len(value)
+            preview = value[:100] + " ... " + value[-50:]
+            event_dict[key] = preview
+            truncated_keys.append((key, full_length))
+    if truncated_keys:
+        event_dict["truncated"] = True
+        for key, full_length in truncated_keys:
+            event_dict[f"{key}.full_length"] = full_length
     return event_dict
 
 
