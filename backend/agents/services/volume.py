@@ -113,6 +113,36 @@ MANAGED_CONFIG_FILES = [
     "_abox/state.json",
 ]
 
+# ── Poke registry ──────────────────────────────────────────────────────
+#
+# The single contract between backend and relay for mutable runtime state.
+# Keys = volume file paths that the backend writes and the relay handles.
+# Values = sets of state field names that each file owns.
+#
+# This registry defines ALL mutable runtime state. If a piece of data:
+#   - Is in this registry → it lives on the volume, NOT in the DB
+#   - Is NOT in this registry → it's metadata (DB) or immutable config
+#
+# Architectural tests enforce:
+#   1. Every key has a matching handler in relay._poke_handlers
+#   2. Every write to a registered path goes through Volume.mutate()
+#   3. No Agent model save() touches fields owned by this registry
+#
+# To add new runtime state: add the file + fields here, add a relay handler,
+# add a Volume helper method if needed. The arch tests will guide you.
+POKE_REGISTRY: dict[str, set[str]] = {
+    "_abox/state.json": {"mode", "allowed_tools", "model"},
+    "_abox/inbox.jsonl": {"messages"},
+    "tmp/abox-theme/tokens.json": {"theme_tokens"},
+    "home/agent/workspace/CLAUDE.md": {"instructions"},
+    "home/agent/workspace/.mcp.json": {"mcp_servers"},
+    "run/mcp-gateway/config.json": {"gateway_config"},
+}
+
+# Flattened set of all state fields owned by the volume.
+# Used by arch tests to verify no DB dual-writes.
+VOLUME_OWNED_FIELDS: set[str] = set().union(*POKE_REGISTRY.values())
+
 
 class Volume:
     """Filesystem interface for an agent's shared volume.
@@ -254,14 +284,34 @@ class Volume:
         with open(path, "a") as f:
             f.write(json.dumps(message) + "\n")
 
-    def write_state(self, model: str, mode: str, allowed_tools: list) -> None:
-        """Write structured agent state to _abox/state.json.
+    def mutate(self, path: str, content: str | bytes) -> dict:
+        """Write a poke-registered file and return the poke message.
 
-        Centralizes the state schema so callers dont construct the dict
-        themselves. Relay reads this on poke to apply mode/model changes.
+        This is the ONLY way to write mutable runtime state. The caller
+        must send the returned poke dict via push_to_relay(). Using raw
+        write() for poke-registered paths is an architectural violation
+        caught by tests.
+
+        Returns: {"type": "poke", "changed": path}
+        Raises: ValueError if path is not in POKE_REGISTRY.
+        """
+        if path not in POKE_REGISTRY:
+            raise ValueError(
+                f"Volume.mutate() called with unregistered path '{path}'. "
+                f"Registered paths: {sorted(POKE_REGISTRY.keys())}. "
+                f"Use write() for provision-time config, mutate() for runtime state."
+            )
+        self.write(path, content)
+        return {"type": "poke", "changed": path}
+
+    def mutate_state(self, model: str, mode: str, allowed_tools: list) -> dict:
+        """Write _abox/state.json and return the poke message.
+
+        Convenience wrapper around mutate() that centralizes the state
+        schema so callers dont construct the dict themselves.
         """
         state = {"model": model, "mode": mode, "allowed_tools": allowed_tools}
-        self.write("_abox/state.json", json.dumps(state))
+        return self.mutate("_abox/state.json", json.dumps(state))
 
     def initialize(self) -> None:
         """Create empty control plane files for a new agent.

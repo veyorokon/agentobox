@@ -269,6 +269,7 @@ class SDKRelay:
         self.clear_requested = False
         self.next_permission_mode: str = ""
         self.permission_mode: str = "bypassPermissions"  # live mode, read by can_use_tool callback
+        self.allowed_tools: set[str] = set()  # tools auto-allowed without prompting (updated via state.json poke)
         self._exit_posted = False  # guards against double process_exit events
         self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
@@ -409,10 +410,12 @@ class SDKRelay:
         can_use_tool = self._make_can_use_tool_callback()
 
         # Parse allowed_tools facet (JSON list from env, e.g. '["Read","Glob"]')
+        # Seed both SDK option and the live set checked by can_use_tool callback.
         allowed_tools: list[str] | None = None
         if allowed_tools_raw:
             try:
                 allowed_tools = json.loads(allowed_tools_raw)
+                self.allowed_tools = set(allowed_tools)
             except json.JSONDecodeError:
                 log.warning("relay.config_invalid_allowed_tools", extra={"raw": allowed_tools_raw})
 
@@ -483,6 +486,8 @@ class SDKRelay:
         """
         async def _can_use_tool(tool_name, tool_input, context):
             if self.permission_mode == "bypassPermissions":
+                return PermissionResultAllow()
+            if tool_name in self.allowed_tools:
                 return PermissionResultAllow()
             result = await self._request_callback("can_use_tool", {
                 "tool_name": tool_name,
@@ -678,6 +683,8 @@ class SDKRelay:
             if handler:
                 await handler()
                 self._update_status(filename)
+            else:
+                log.warning("relay.poke_handler_missing", extra={"filename": filename})
 
     # ── Poke handlers ──
 
@@ -687,9 +694,10 @@ class SDKRelay:
         from pathlib import Path
 
         tokens_path = Path(f"{VOL_ROOT}/tmp/abox-theme/tokens.json")
-        if not tokens_path.exists():
+        try:
+            tokens = json.loads(tokens_path.read_text())
+        except FileNotFoundError:
             return
-        tokens = json.loads(tokens_path.read_text())
 
         # Run converter to regenerate derived files
         _sp.run(["python3", "/opt/abox/converters.py", str(tokens_path)],
@@ -737,13 +745,17 @@ class SDKRelay:
         the next attempt connects and the CSS reloads instantly.
         """
         import socket as _socket
+
+        def _connect():
+            with _socket.create_connection(("127.0.0.1", 9224), timeout=1):
+                pass
+
         delay = 0.5
         max_elapsed = 10.0
         elapsed = 0.0
         while elapsed < max_elapsed:
             try:
-                with _socket.create_connection(("127.0.0.1", 9224), timeout=1):
-                    pass
+                await asyncio.get_event_loop().run_in_executor(None, _connect)
                 log.info("relay.theme_firefox_reloaded")
                 return
             except OSError:
@@ -755,9 +767,19 @@ class SDKRelay:
                 await asyncio.sleep(delay)
 
     async def _on_state_changed(self):
-        """state.json changed — apply mode changes."""
+        """state.json changed — apply mode and allowed_tools changes."""
         from pathlib import Path
         state = json.loads(Path(f"{VOL_ROOT}/_abox/state.json").read_text())
+
+        # Update allowed_tools — takes effect immediately via can_use_tool callback
+        allowed = state.get("allowed_tools", [])
+        if allowed:
+            prev = self.allowed_tools
+            self.allowed_tools = set(allowed)
+            added = self.allowed_tools - prev
+            if added:
+                log.info("relay.allowed_tools_updated", extra={"added": sorted(added), "total": len(self.allowed_tools)})
+
         mode = state.get("mode", "")
         if mode:
             sdk_mode = _translate_mode(mode)

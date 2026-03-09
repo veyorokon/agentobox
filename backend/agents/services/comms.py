@@ -375,7 +375,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
 
     agent.mode = frontend_mode
     agent.permission_mode = wire_mode
-    await agent.asave(update_fields=["mode", "permission_mode"])
+    await agent.asave(update_fields=["mode", "permission_mode"])  # DB cache for GraphQL — volume is source of truth
 
     await broadcast_agent_update(agent)
 
@@ -385,8 +385,8 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     )
 
     # Write state.json and poke relay
-    agent.volume.write_state(agent.model, frontend_mode, agent.allowed_tools or [])
-    await push_to_relay(agent_id, {"type": "poke", "changed": "_abox/state.json"})
+    poke = agent.volume.mutate_state(agent.model, frontend_mode, agent.allowed_tools or [])
+    await push_to_relay(agent_id, poke)
 
     op_log.info("comms.mode_changed")
     return agent
@@ -419,8 +419,8 @@ async def push_theme_to_agents(project) -> None:
 
     for agent in running_agents:
         try:
-            agent.volume.write("tmp/abox-theme/tokens.json", tokens_json)
-            await push_to_relay(str(agent.id), {"type": "poke", "changed": "tmp/abox-theme/tokens.json"})
+            poke = agent.volume.mutate("tmp/abox-theme/tokens.json", tokens_json)
+            await push_to_relay(str(agent.id), poke)
         except Exception as exc:  # intentional: theme push is best-effort — one agent failure must not block others
             log.exception(
                 "comms.theme_push_failed",

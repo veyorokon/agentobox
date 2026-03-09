@@ -210,7 +210,7 @@ def _atomic_append_allowed_tool(agent_id, tool_name) -> Agent | None:
         if tool_name in agent.allowed_tools:
             return None
         agent.allowed_tools = [*agent.allowed_tools, tool_name]
-        agent.save(update_fields=["allowed_tools"])
+        agent.save(update_fields=["allowed_tools"])  # DB cache for GraphQL — volume is source of truth
     return agent
 
 
@@ -236,6 +236,12 @@ async def _persist_allowed_tool(item: TeamFeedItem) -> None:
         str(item.agent_record_id), tool_name
     )
     if agent is not None:
+        # Poke relay so allowed_tools take effect immediately (no redeploy needed).
+        poke = agent.volume.mutate_state(
+            agent.model or "", agent.mode or "auto", agent.allowed_tools or []
+        )
+        from agents.services.comms import push_to_relay
+        await push_to_relay(str(agent.id), poke)
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
 

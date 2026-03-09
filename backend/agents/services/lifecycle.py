@@ -615,9 +615,10 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="relay_env_written")
 
-        # Write state.json — structured state for relay poke handler.
-        # Relay reads this on "poke" to apply mode/model changes.
-        vol.write_state(agent.model, agent.mode or "auto", agent.allowed_tools or [])
+        # Write state.json — initial state for relay boot.
+        # At provision time relay isn't running, so no poke needed (use write, not mutate).
+        state = json.dumps({"model": agent.model, "mode": agent.mode or "auto", "allowed_tools": agent.allowed_tools or []})
+        vol.write("_abox/state.json", state)
 
         # Security hardening — still uses runtime.exec() because
         # /etc/sudoers.d/ is a system path, not on the volume.

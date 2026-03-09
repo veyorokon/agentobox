@@ -18,7 +18,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.invariant]
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 BACKEND_DIR = PROJECT_ROOT / "backend"
 AGENT_DIR = PROJECT_ROOT / "agent"

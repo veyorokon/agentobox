@@ -105,7 +105,7 @@ class TestTextfoxVariableCoverage:
         )
 
     def test_config_css_covers_all_layout_vars(self):
-        """Layout --tf-* variables must be set in config.css (static, not per-theme)."""
+        """Layout --tf-* variables must be set in config.css OR use textfox defaults."""
         if not self.TEXTFOX_DEFAULTS.exists() or not self.CONFIG_CSS.exists():
             pytest.skip("textfox or config.css not found")
 
@@ -115,11 +115,12 @@ class TestTextfoxVariableCoverage:
         generated_css = tokens_to_css(SAMPLE_TOKENS)
         generated_vars = self._extract_tf_vars(generated_css)
 
-        # Every textfox var must be in EITHER generated CSS or config.css
-        all_covered = generated_vars | config_vars
+        # Every textfox var must be in generated CSS, config.css, or LAYOUT_VARS
+        # (layout vars in LAYOUT_VARS that match textfox defaults don't need overriding)
+        all_covered = generated_vars | config_vars | self.LAYOUT_VARS
         uncovered = textfox_vars - all_covered
         assert not uncovered, (
-            f"Textfox variables not covered by generated CSS or config.css: {uncovered}. "
+            f"Textfox variables not covered by generated CSS, config.css, or known layout defaults: {uncovered}. "
             "These use textfox defaults, which may not match our theme."
         )
 

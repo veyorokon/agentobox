@@ -1,28 +1,11 @@
-/* agentobox overrides — layout/typography only.
+/* agentobox overrides — only values that differ from textfox defaults.css.
    Theme colors come from /tmp/abox-theme/userChrome.css, loaded dynamically
-   by mozilla.cfg via nsIStyleSheetService (polls for changes every 2s).
+   by mozilla.cfg via nsIStyleSheetService (socket poke on change).
    DO NOT @import the theme CSS here — @import is cached at startup and
    never re-read, which blocks live theme reload. */
 
 :root {
-  /* Typography */
   --tf-font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
-  --tf-font-size: 14px;
-  --tf-text-transform: none;
-  /* Borders & rounding */
-  --tf-border-width: 2px;
-  --tf-border-transition: 0.2s ease;
-  --tf-rounding: 0px;
-  --tf-margin: 0.8rem;
-  /* Display controls */
   --tf-display-horizontal-tabs: block;
   --tf-display-nav-buttons: flex;
-  --tf-display-window-controls: none;
-  --tf-display-urlbar-icons: none;
-  --tf-display-sidebar-tools: flex;
-  --tf-display-titles: flex;
-  /* Navbar layout */
-  --tf-navbar-margin: 8px 8px 2px;
-  --tf-navbar-padding: 4px;
-  --tf-bookmarks-alignment: center;
 }

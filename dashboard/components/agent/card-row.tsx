@@ -406,7 +406,7 @@ export function AgentCardRow({
         <div>
           <div className="relative">
             <div className={cn(viewMode !== "terminal" && "invisible")}>
-              <VncThumbnail key={`vnc-${agent.id}-${agent.lifecycleStatus}`} agent={agent} />
+              <VncThumbnail key={agent.id} agent={agent} />
             </div>
             {viewMode === "feed" && (
               <div className="absolute inset-0 overflow-y-auto px-3 pb-2">
