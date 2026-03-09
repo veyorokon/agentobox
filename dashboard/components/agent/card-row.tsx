@@ -13,6 +13,7 @@ import {
   MoreVertical,
   Square,
   RotateCcw,
+  Rocket,
   Trash2,
   Pause,
   Play,
@@ -366,7 +367,7 @@ export function AgentCardRow({
                   onClick={(e) => { e.stopPropagation(); hardRestartAgent(agent.id); setKebabOpen(false) }}
                   className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
                 >
-                  <RotateCcw className="h-3 w-3 text-accent" strokeWidth={2.5} />
+                  <Rocket className="h-3 w-3 text-accent" strokeWidth={2.5} />
                   Redeploy
                 </button>
                 <div className="border-t border-border-subtle my-0.5" />
