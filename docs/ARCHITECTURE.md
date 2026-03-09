@@ -220,7 +220,8 @@ All in `backend/agents/models.py`:
 | `SessionResult` | Cost/usage snapshot per turn (from `result` events). One row per turn, not upserted. |
 | `TeamFeedItem` | Curated dashboard feed entries. Flat union — every field on every row, null where N/A. |
 | `AgentTask` | Team tasks created via MCP `task_add`. Synced from MCP calls, visible in dashboard. |
-| `ProjectSecret` | Fernet-encrypted secrets at project level. Optional agent scoping via M2M. |
+| `AccountSecret` | Fernet-encrypted secrets at account (user) level. Inherited by all projects. |
+| `ProjectSecret` | Fernet-encrypted secrets at project level. Overrides account secrets with same key. Optional agent scoping via M2M. |
 | `AgentFeedback` | User ratings/comments on agent sessions. |
 
 ## Frontend Data Layer
@@ -243,7 +244,7 @@ Agent containers need secrets (API keys, CLI tokens, MCP credentials) but the ag
 
 ### Layer 1: Secret File Mounts (protect at rest)
 
-`build_api_key_files()` writes secrets to `/run/secrets/<name>` with 0600 root:root permissions. The provisioning flow handles both Docker and Modal via the runtime adapter.
+`build_api_key_files()` writes secrets to `/run/secrets/<name>` with 0600 root:root permissions. The provisioning flow handles both Docker and Modal via the runtime adapter. Secrets resolve in priority order: project secret > account secret > global settings fallback.
 
 **Blocks:** `docker inspect`, `/proc/1/environ`, cross-container access, agent user reading files directly.
 
@@ -306,47 +307,124 @@ The relay (`relay.py`) is the single chokepoint — every event flows through `_
 
 See `docs/drafts/agent-secrets.md` for the full threat model matrix and design rationale.
 
-### Future: s6 MCP Secret Isolation
+## MCP Server Architecture
 
-When secret-bearing MCPs are added (github, aws, etc.), each MCP runs as its own s6 `longrun` service under its own linux user. The agent process never possesses the secret — only a socket path.
+MCP servers give agents capabilities beyond the CLI — browser control, computer interaction, external API access. The architecture isolates MCP secrets from the agent process using a gateway pattern.
 
-```
-s6 orchestrator
-  ├── svc-relay (user: agent) — no secrets, only socket paths + placeholder key
-  ├── svc-apiproxy (user: root) — reads /run/secrets/proxy_key
-  ├── svc-mcp-github (user: mcp-github) — GITHUB_TOKEN via s6-envdir
-  └── svc-mcp-aws (user: mcp-aws) — AWS creds via s6-envdir
-```
-
-Each MCP:
-- Runs as its own s6 `longrun` service with a dedicated linux user
-- Gets secrets via `s6-envdir /run/secrets/mcp-<name>/`
-- Listens on unix socket `/run/mcp/<name>.sock` or local HTTP port
-- Agent connects via MCP SSE/HTTP transport (not stdio)
-- Agent never possesses the secret — only the socket path
-
-**Concrete example — adding mcp-github:**
+### Registry → Config → Runtime Flow
 
 ```
-# 1. Dockerfile: create dedicated user
-RUN useradd -r -s /usr/sbin/nologin mcp-github
-
-# 2. s6 service directory: agent/rootfs/etc/s6-overlay/s6-rc.d/svc-mcp-github/
-#    run script:
-#!/command/execlineb -P
-s6-setuidgid mcp-github
-s6-envdir /run/secrets/mcp-github/
-npx @anthropic/mcp-github --transport sse --port 7001
-
-# 3. Backend provisioning (lifecycle.py):
-#    Write GITHUB_TOKEN to /run/secrets/mcp-github/GITHUB_TOKEN
-
-# 4. Agent .mcp.json entry:
-#    {"github": {"type": "sse", "url": "http://localhost:7001/sse"}}
-
-# 5. Result: agent calls MCP tools over HTTP, never sees the token
+MCP_REGISTRY (registries.py)
+  Each entry: {command, args, port, secrets[], compat[], instructions}
+  ├── "computer-use": {node, dist/main.js, port: 7002, secrets: []}
+  └── "playwright":   {npx @playwright/mcp, port: 7003, secrets: []}
+                │
+                ▼
+createAgent(mcp_servers: ["computer-use", "playwright"])
+                │
+                ▼
+adapter.resolve_mcp_servers(names, variant="debian")
+  → filters by compat, returns {name: {command, args, port, secrets}}
+  → stored on Agent.mcp_servers (JSONField)
+                │
+                ▼
+provision_workspace()
+  ├── adapter.build_gateway_config()
+  │     → writes /vol/.../run/mcp-gateway/config.json
+  │       {"servers": {"computer-use": {command, args, port}}}
+  │
+  ├── adapter.build_mcp_config()
+  │     → writes /vol/.../home/agent/.mcp.json
+  │       {"mcpServers": {"computer-use": {type: "sse", url: "http://localhost:7002"}}}
+  │
+  └── write scoped secrets
+        → /vol/.../run/secrets/mcp-{name}/{KEY} (0600 permissions)
+                │
+                ▼
+Container Boot (s6-overlay)
+  ├── init-volume oneshot
+  │     → symlinks /run/mcp-gateway → volume path
+  │     → symlinks /run/secrets → volume path
+  │
+  └── svc-mcp-gateway longrun
+        → reads /run/mcp-gateway/config.json
+        → for each server in config:
+            ├── loads secrets from /run/secrets/mcp-{name}/*
+            ├── spawns subprocess with scoped env
+            ├── binds HTTP bridge on localhost:{port}
+            └── monitors health, restarts on crash
+                │
+                ▼
+Claude Code starts
+  ├── reads .mcp.json
+  ├── preflight: HTTP GET to each MCP endpoint
+  ├── connects via SSE transport
+  └── makes JSON-RPC tool calls (screenshot, click, navigate, etc.)
 ```
 
-**Not built yet.** The team MCP (`/mcp` on the backend) does not need s6 isolation — it runs on the backend, not inside the container, and auth is via relay_token over HTTP. The first real candidate for s6 isolation is whichever secret-bearing MCP gets added first (likely github or playwright).
+### Secret Isolation via Gateway
 
-When building, create: the s6 service directory (`svc-mcp-<name>/`), the linux user in the Dockerfile, secret provisioning in lifecycle.py, and the `.mcp.json` entry with `type: "sse"` transport.
+The gateway (`mcp-gateway.py`) provides process-level secret isolation. Each MCP subprocess gets only its own secrets — the agent process never possesses them.
+
+```
+s6 process tree
+  ├── svc-relay (user: agent)
+  │     └── Claude Code CLI — sees only .mcp.json URLs, no secrets
+  │
+  ├── svc-apiproxy (user: root)
+  │     └── reads /run/secrets/proxy_key — Anthropic API key
+  │
+  └── svc-mcp-gateway (user: root)
+        ├── computer-use subprocess — env: {} (no secrets needed)
+        ├── tavily subprocess — env: {TAVILY_API_KEY=sk-...}
+        └── github subprocess — env: {GITHUB_TOKEN=ghp_...}
+```
+
+**How secrets flow:**
+
+```
+AccountSecret / ProjectSecret (encrypted in DB)
+        │
+        ▼
+resolve_agent_secrets() — merges account (base) + project (override), decrypts
+        │
+        ▼
+provision_workspace() — matches MCP registry secrets[] to resolved secrets:
+  if "TAVILY_API_KEY" in mcp.secrets and "TAVILY_API_KEY" in secret_envs:
+    vol.write_secret("run/secrets/mcp-tavily/TAVILY_API_KEY", value)
+        │
+        ▼
+mcp-gateway.py _load_secrets(name):
+  reads /run/secrets/mcp-{name}/* as {filename: contents} dict
+  injects as env vars when spawning subprocess
+        │
+        ▼
+MCP subprocess runs with scoped env:
+  TAVILY_API_KEY=sk-... (only this MCP sees it)
+  Claude Code cannot access — only talks HTTP to localhost:{port}
+```
+
+### MCP Registry
+
+`backend/agents/adapters/claude_code/registries.py` defines `MCP_REGISTRY`:
+
+| Field | Purpose |
+|-------|---------|
+| `command` | Executable to spawn (e.g. `node`, `npx`) |
+| `args` | Command arguments (e.g. `["/opt/mcp-servers/computer-use/dist/main.js"]`) |
+| `port` | localhost port for HTTP bridge |
+| `secrets` | List of required secret key names (e.g. `["TAVILY_API_KEY"]`) |
+| `compat` | Compatible image variants (e.g. `["debian"]`) |
+| `instructions` | Behavioral guidance injected into CLAUDE.md |
+
+Bundled MCPs (pre-installed in image): `computer-use`, `playwright`.
+
+Adding a new MCP requires: (1) add to `MCP_REGISTRY`, (2) install binary in Dockerfile or use npx, (3) document required secrets in the `secrets` field. The gateway handles everything else — no new s6 service needed.
+
+### Gateway vs Per-Service Architecture
+
+The gateway pattern (one s6 service managing N subprocesses) was chosen over per-MCP s6 services because:
+- **Dynamic**: MCPs are configured per-agent at provision time, not baked into the image
+- **Config-driven reload**: SIGHUP triggers config re-read and subprocess restart
+- **Simpler image**: no need to create linux users or s6 service directories per MCP
+- **Same isolation**: each subprocess gets scoped env, agent process only sees HTTP URLs

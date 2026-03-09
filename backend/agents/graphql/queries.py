@@ -13,6 +13,7 @@ from strawberry import ID
 from agents.graphql.auth import authorize_agent, authorize_project
 from agents.models import Agent
 from agents.graphql.types import (
+    AccountSecretType,
     AgentType,
     McpPackageType,
     McpRegistryEntryType,
@@ -257,6 +258,17 @@ class AgentQuery:
         return [s async for s in Skill.objects.filter(project_id=project_id)]
 
     @strawberry.field
+    async def account_secrets(self, info: strawberry.types.Info) -> list[AccountSecretType]:
+        """Account-level secrets for the authenticated user."""
+        from agents.models import AccountSecret
+
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        return [s async for s in AccountSecret.objects.filter(user=user).order_by("key")]
+
+    @strawberry.field
     async def project_secrets(self, project_id: ID, info: strawberry.types.Info) -> list[ProjectSecretType]:
         from agents.models import ProjectSecret
 
@@ -270,19 +282,30 @@ class AgentQuery:
 
     @strawberry.field
     async def provider_status(self, project_id: ID, info: strawberry.types.Info) -> list[ProviderStatusType]:
-        """Check which provider API keys are configured for a project."""
-        from agents.adapters.claude_code.registries import PROVIDER_CONFIGS, PROVIDER_SECRET_KEYS
-        from agents.models import ProjectSecret
+        """Check which provider API keys are configured for a project.
 
+        A provider is "configured" if its key exists at project level OR account level.
+        """
+        from agents.adapters.claude_code.registries import PROVIDER_CONFIGS, PROVIDER_SECRET_KEYS
+        from agents.models import AccountSecret, ProjectSecret
+
+        user = info.context["request"].user
         await authorize_project(info, project_id)
 
-        # Fetch all secret keys for this project (just the key names, no values)
-        existing_keys = await sync_to_async(
+        # Fetch secret key names at both levels
+        project_keys = await sync_to_async(
             lambda: set(
                 ProjectSecret.objects.filter(project_id=project_id).values_list("key", flat=True)
             ),
             thread_sensitive=False,
         )()
+        account_keys = await sync_to_async(
+            lambda: set(
+                AccountSecret.objects.filter(user=user).values_list("key", flat=True)
+            ),
+            thread_sensitive=False,
+        )()
+        effective_keys = project_keys | account_keys
 
         # Human-readable names for each provider slug
         provider_names = {
@@ -301,6 +324,6 @@ class AgentQuery:
                 slug=slug,
                 name=provider_names.get(slug, slug),
                 key_name=key_name,
-                configured=key_name in existing_keys,
+                configured=key_name in effective_keys,
             ))
         return result

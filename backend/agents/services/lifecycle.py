@@ -1124,28 +1124,49 @@ async def spawn_team_lead(project_id: str) -> None:
 
 
 async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
-    """Collect all project secrets this agent should receive.
+    """Collect all secrets this agent should receive.
 
-    A secret goes to this agent if:
+    Resolution order: account secrets (base) → project secrets (override).
+    Project secrets with the same key override account secrets.
+
+    A project secret goes to this agent if:
       1. It has no scoped_agents (default-all), OR
       2. This agent is in its scoped_agents set
 
     Returns a flat {key: value} dict, or None if no secrets.
     """
-    from agents.models import ProjectSecret
+    from agents.models import AccountSecret, ProjectSecret
     from agents.services.secrets import decrypt_value
 
-    all_secrets = [
+    merged: dict[str, str] = {}
+
+    # Layer 1: account-level secrets (base)
+    account_secrets = [
+        s async for s in AccountSecret.objects.filter(
+            user_id=agent.project.owner_id
+        )
+    ]
+    for secret in account_secrets:
+        try:
+            merged[secret.key] = decrypt_value(bytes(secret.encrypted_value))
+        except Exception as exc:  # intentional: one corrupt secret must not block other secrets or provisioning
+            op_log.warning(
+                "lifecycle.secret_decrypt_failed",
+                key=secret.key,
+                level="account",
+                error_code=ERR_LIFECYCLE_SECRET_DECRYPT_FAILED,
+                error_class=type(exc).__name__,
+                operation="decrypt_secret",
+                agent_id=str(agent.id),
+            )
+
+    # Layer 2: project-level secrets (override)
+    project_secrets = [
         s async for s in ProjectSecret.objects.filter(
             project_id=agent.project_id
         ).prefetch_related("scoped_agents")
     ]
-
-    if not all_secrets:
-        return None
-
-    merged: dict[str, str] = {}
-    for secret in all_secrets:
+    for secret in project_secrets:
         scoped_ids = {a.id for a in secret.scoped_agents.all()}
         if not scoped_ids or agent.id in scoped_ids:
             try:
@@ -1154,6 +1175,7 @@ async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:
                 op_log.warning(
                     "lifecycle.secret_decrypt_failed",
                     key=secret.key,
+                    level="project",
                     error_code=ERR_LIFECYCLE_SECRET_DECRYPT_FAILED,
                     error_class=type(exc).__name__,
                     operation="decrypt_secret",

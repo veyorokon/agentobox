@@ -3,10 +3,13 @@
 import { useState, useEffect, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import { useQuery, useMutation } from "@apollo/client/react"
-import { Plus, FolderOpen, ChevronRight } from "lucide-react"
+import { Plus, FolderOpen, ChevronRight, KeyRound } from "lucide-react"
 import { GET_PROJECTS } from "@/lib/graphql/queries/projects"
 import { CREATE_PROJECT } from "@/lib/graphql/mutations/projects"
+import { GET_ACCOUNT_SECRETS } from "@/lib/graphql/queries/secrets"
+import { SET_ACCOUNT_SECRET } from "@/lib/graphql/mutations/secrets"
 import { createLogger } from "@/lib/logger"
+import { cn } from "@/lib/utils"
 
 const log = createLogger("router")
 
@@ -28,6 +31,7 @@ export default function HomePage() {
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [apiKey, setApiKey] = useState("")
   const [error, setError] = useState("")
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null)
 
@@ -46,14 +50,35 @@ export default function HomePage() {
   })
 
   const [createProject, { loading: creating }] = useMutation<{ createProject: { id: string } }>(CREATE_PROJECT)
+  const [setAccountSecret] = useMutation(SET_ACCOUNT_SECRET, {
+    refetchQueries: [{ query: GET_ACCOUNT_SECRETS }],
+  })
+
+  // Check if user already has an Anthropic API key at account level
+  const { data: accountSecretsData } = useQuery<{ accountSecrets: { key: string }[] }>(GET_ACCOUNT_SECRETS, {
+    skip: !authed,
+  })
+  const hasAccountKey = (accountSecretsData?.accountSecrets ?? []).some((s) => s.key === "ANTHROPIC_API_KEY")
 
   const projects = data?.projects ?? []
+
+  // Detect credential type from API key input
+  const credentialHint = apiKey.startsWith("sk-ant-oat") ? "oauth" as const
+    : apiKey.startsWith("sk-ant-") ? "api_key" as const
+    : null
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
     setError("")
     try {
+      // Save API key as account-level secret if provided
+      if (apiKey.trim() && !hasAccountKey) {
+        await setAccountSecret({
+          variables: { input: { key: "ANTHROPIC_API_KEY", value: apiKey.trim() } },
+        })
+      }
+
       const { data: result } = await createProject({
         variables: { input: { name: name.trim(), description: description.trim() } },
       })
@@ -139,6 +164,40 @@ export default function HomePage() {
                   className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
+              {/* API key — only shown if no account-level key exists */}
+              {!hasAccountKey && (
+                <div>
+                  <label htmlFor="project-api-key" className="flex items-center gap-1.5 text-xs font-medium text-secondary mb-1.5">
+                    <KeyRound className="h-3 w-3" />
+                    API Key
+                  </label>
+                  <input
+                    id="project-api-key"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-ant-..."
+                    className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm font-mono text-default placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <span className="text-[10px] text-muted/50">
+                      Saved to your account — all projects inherit it
+                    </span>
+                    {credentialHint && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium tracking-wide",
+                          credentialHint === "oauth"
+                            ? "bg-accent/10 text-accent border border-accent/20"
+                            : "bg-surface-sunken text-muted border border-border-default",
+                        )}
+                      >
+                        {credentialHint === "oauth" ? "OAuth Token" : "API Key"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
               {error && (
                 <p className="text-[11px] text-red-400">{error}</p>
               )}
@@ -152,7 +211,7 @@ export default function HomePage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowCreate(false); setName(""); setDescription(""); setError("") }}
+                  onClick={() => { setShowCreate(false); setName(""); setDescription(""); setApiKey(""); setError("") }}
                   className="text-[11px] text-muted hover:text-secondary transition-colors"
                 >
                   Cancel

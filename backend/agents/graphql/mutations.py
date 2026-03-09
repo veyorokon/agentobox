@@ -23,7 +23,7 @@ from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
-from agents.graphql.types import AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
+from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("abox.graphql")
 
@@ -100,6 +100,12 @@ class UpdateAgentConfigInput:
     mcp_registry_names: list[str] | None = None
     mcp_custom_servers: JSON | None = None
     triggers: JSON | None = None
+
+
+@strawberry.input
+class SetAccountSecretInput:
+    key: str
+    value: str
 
 
 @strawberry.input
@@ -747,6 +753,41 @@ class AgentMutation:
 
         await skill.adelete()
         return True
+
+    # --- Account Secrets ---
+
+    @strawberry.mutation
+    async def set_account_secret(self, input: SetAccountSecretInput, info: strawberry.types.Info) -> AccountSecretType:
+        """Create or update an account-level secret (upsert by user + key)."""
+        from agents.models import AccountSecret
+        from agents.services.secrets import encrypt_value
+
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        secret, created = await AccountSecret.objects.aupdate_or_create(
+            user=user,
+            key=input.key,
+            defaults={"encrypted_value": encrypt_value(input.value)},
+        )
+        return secret
+
+    @strawberry.mutation
+    async def delete_account_secret(self, key: str, info: strawberry.types.Info) -> bool:
+        """Delete an account-level secret by key."""
+        from agents.models import AccountSecret
+
+        user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        try:
+            secret = await AccountSecret.objects.aget(user=user, key=key)
+            await secret.adelete()
+            return True
+        except AccountSecret.DoesNotExist:
+            return False
 
     # --- Project Secrets ---
 

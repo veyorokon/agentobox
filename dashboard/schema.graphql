@@ -1,3 +1,10 @@
+type AccountSecretType {
+  id: UUID!
+  key: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
 type AgentFeedbackType {
   id: UUID!
   rating: Int!
@@ -45,6 +52,7 @@ type AgentType {
   workspacePath: String!
   mcpServers: [String!]!
   taskProgress: TaskProgressType
+  lifecycleAttempts: [LifecycleAttemptType!]!
   tasks: [AgentTaskType!]!
 }
 
@@ -101,6 +109,19 @@ type FeedQuestionType {
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf).
 """
 scalar JSON @specifiedBy(url: "https://ecma-international.org/wp-content/uploads/ECMA-404_2nd_edition_december_2017.pdf")
+
+type LifecycleAttemptType {
+  id: UUID!
+  kind: String!
+  status: String!
+  step: String!
+  attemptNo: Int!
+  correlationId: String!
+  errorCode: String!
+  errorDetail: String!
+  startedAt: DateTime!
+  finishedAt: DateTime
+}
 
 input LoginInput {
   username: String!
@@ -170,6 +191,8 @@ type Mutation {
   createSkill(input: CreateSkillInput!): SkillType!
   updateSkill(input: UpdateSkillInput!): SkillType!
   deleteSkill(skillId: ID!): Boolean!
+  setAccountSecret(input: SetAccountSecretInput!): AccountSecretType!
+  deleteAccountSecret(key: String!): Boolean!
   setSecret(input: SetSecretInput!): ProjectSecretType!
   deleteSecret(projectId: ID!, key: String!): Boolean!
   scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
@@ -214,6 +237,7 @@ type Query {
   mcpRegistry: [McpRegistryEntryType!]!
   searchMcpRegistry(query: String! = "", limit: Int! = 30, cursor: String = null): McpRegistrySearchResult!
   skills(projectId: ID!): [SkillType!]!
+  accountSecrets: [AccountSecretType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!
   providerStatus(projectId: ID!): [ProviderStatusType!]!
 }
@@ -240,6 +264,11 @@ input ScopeSecretInput {
   projectId: ID!
   key: String!
   agentIds: [ID!]!
+}
+
+input SetAccountSecretInput {
+  key: String!
+  value: String!
 }
 
 input SetProjectThemeInput {

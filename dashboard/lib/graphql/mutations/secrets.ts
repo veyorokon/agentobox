@@ -1,5 +1,22 @@
 import { gql } from "@apollo/client"
 
+export const SET_ACCOUNT_SECRET = gql`
+  mutation SetAccountSecret($input: SetAccountSecretInput!) {
+    setAccountSecret(input: $input) {
+      id
+      key
+      createdAt
+      updatedAt
+    }
+  }
+`
+
+export const DELETE_ACCOUNT_SECRET = gql`
+  mutation DeleteAccountSecret($key: String!) {
+    deleteAccountSecret(key: $key)
+  }
+`
+
 export const SET_SECRET = gql`
   mutation SetSecret($input: SetSecretInput!) {
     setSecret(input: $input) {

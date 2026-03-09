@@ -4,7 +4,8 @@ import type { Breakpoint } from "@/lib/types"
 
 export function BreakpointIndicator({ bp }: { bp: Breakpoint }) {
   const labels: Record<Breakpoint, { text: string; width: string }> = {
-    XL: { text: "XL", width: "\u22651920" },
+    "2XL": { text: "2XL", width: "\u22652560" },
+    XL: { text: "XL", width: "1920-2559" },
     L: { text: "L", width: "1440-1919" },
     M: { text: "M", width: "1280-1439" },
     S: { text: "S", width: "1024-1279" },

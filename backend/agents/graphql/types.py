@@ -117,6 +117,15 @@ class LifecycleAttemptType:
 # ── Model-backed types ──
 
 
+@strawberry_django.type(models.AccountSecret)
+class AccountSecretType:
+    """Account-level secret metadata — NEVER exposes decrypted values."""
+    id: auto
+    key: auto
+    created_at: auto
+    updated_at: auto
+
+
 @strawberry_django.type(models.ProjectSecret)
 class ProjectSecretType:
     """Project secret metadata — NEVER exposes decrypted values."""

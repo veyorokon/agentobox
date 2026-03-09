@@ -22,6 +22,7 @@ Key design decisions:
 """
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -85,6 +86,33 @@ class FeedItemType(models.TextChoices):
     AGENT_MESSAGE = "agent-message"
     TASK = "task"
 
+
+
+class AccountSecret(models.Model):
+    """Account-level secret. Fernet-encrypted value.
+
+    Inherited by all projects owned by this user unless overridden
+    by a ProjectSecret with the same key.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="account_secrets"
+    )
+    key = models.CharField(max_length=255)
+    encrypted_value = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "key"], name="unique_account_secret_key"
+            ),
+        ]
+        ordering = ["key"]
+
+    def __str__(self):
+        return f"{self.key} → {self.user.username} (account)"
 
 
 class ProjectSecret(models.Model):
