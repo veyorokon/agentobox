@@ -615,115 +615,11 @@ export default function GlobalPage() {
       {/* ── Secrets tab ── */}
       {globalTab === "secrets" && (
         <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="flex items-center gap-2 mb-6">
-            <h2 className="text-xs font-medium text-secondary uppercase tracking-wider">Account Secrets</h2>
-            <span className="text-[10px] text-muted/40">inherited by all projects</span>
-          </div>
-
-          {/* Provider key presets */}
-          <div className="mb-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
-              LLM Providers
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {PROVIDER_PRESETS.map((p) => {
-                const configured = accountKeySet.has(p.keyName)
-                return (
-                  <button
-                    key={p.slug}
-                    type="button"
-                    disabled={configured}
-                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
-                      configured
-                        ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
-                        : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
-                    )}
-                  >
-                    {configured && <Check className="h-2.5 w-2.5" />}
-                    {p.name}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Common app key presets */}
-          <div className="mb-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
-              Services
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {APP_PRESETS.map((p) => {
-                const configured = accountKeySet.has(p.keyName)
-                return (
-                  <button
-                    key={p.keyName}
-                    type="button"
-                    disabled={configured}
-                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
-                      configured
-                        ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
-                        : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
-                    )}
-                  >
-                    {configured && <Check className="h-2.5 w-2.5" />}
-                    {p.name}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Secrets list */}
+          {/* Single unified card */}
           <div className="rounded-lg border border-border-default bg-surface-raised/30 overflow-hidden">
-            {accountSecrets.length === 0 ? (
-              <div className="py-12 text-center">
-                <KeyRound className="h-8 w-8 text-muted/20 mx-auto mb-2" />
-                <p className="text-xs text-muted/50">No secrets configured</p>
-                <p className="text-[10px] text-muted/30 mt-1">Add API keys and tokens that all projects can use</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border-subtle">
-                {accountSecrets.map((secret) => (
-                  <div
-                    key={secret.id}
-                    className="group flex items-center gap-3 px-4 py-3"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-medium text-default truncate">
-                          {secret.key}
-                        </span>
-                        <span className="inline-flex items-center px-1 py-0.5 rounded text-[9px] font-medium tracking-wide bg-accent/8 text-accent/70 border border-accent/15 shrink-0">
-                          account
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-muted/50 font-mono">
-                        {timeAgo(secret.updatedAt)}
-                      </span>
-                    </div>
-                    <span className="text-[11px] font-mono text-muted/40">
-                      {"●".repeat(12)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleSecretTabDelete(secret.key)}
-                      className="p-1 rounded text-muted/30 hover:text-danger transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete secret"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
 
-            {/* Add secret form */}
-            <div className="px-4 py-3 border-t border-border-subtle">
+            {/* ── Input form (top, always visible) ── */}
+            <div className="px-4 pt-4 pb-3">
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -754,31 +650,118 @@ export default function GlobalPage() {
                 </button>
               </div>
 
-              {/* Credential hint + account label */}
-              <div className="flex items-center gap-3 mt-2">
-                <span className="text-[10px] text-muted/50">saved to your account — all projects inherit</span>
-                {secretCredentialHint && (
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium tracking-wide",
-                        secretCredentialHint === "oauth"
-                          ? "bg-accent/10 text-accent border border-accent/20"
-                          : "bg-surface-sunken text-muted border border-border-default",
-                      )}
-                    >
-                      {secretCredentialHint === "oauth" ? "OAuth Token" : "API Key"}
-                    </span>
-                    {secretCredentialHint === "oauth" && (
-                      <span className="text-[10px] text-muted/50">
-                        via <span className="font-mono">claude setup-token</span>
-                      </span>
+              {/* Credential hint */}
+              {secretCredentialHint && (
+                <div className="flex items-center gap-2 mt-2">
+                  <span
+                    className={cn(
+                      "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium tracking-wide",
+                      secretCredentialHint === "oauth"
+                        ? "bg-accent/10 text-accent border border-accent/20"
+                        : "bg-surface-sunken text-muted border border-border-default",
                     )}
-                  </div>
-                )}
-              </div>
+                  >
+                    {secretCredentialHint === "oauth" ? "OAuth Token" : "API Key"}
+                  </span>
+                  {secretCredentialHint === "oauth" && (
+                    <span className="text-[10px] text-muted/50">
+                      via <span className="font-mono">claude setup-token</span>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* ── Preset quick-fill buttons ── */}
+            <div className="px-4 pb-3 flex flex-wrap items-center gap-x-1 gap-y-1.5">
+              <span className="text-[9px] uppercase tracking-widest text-muted/40 mr-1">Providers</span>
+              {PROVIDER_PRESETS.map((p) => {
+                const configured = accountKeySet.has(p.keyName)
+                return (
+                  <button
+                    key={p.slug}
+                    type="button"
+                    disabled={configured}
+                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+                      configured
+                        ? "text-success/60 cursor-default"
+                        : "text-muted/50 hover:text-accent hover:bg-accent/5",
+                    )}
+                  >
+                    {configured && <Check className="h-2 w-2" />}
+                    {p.name}
+                  </button>
+                )
+              })}
+              <span className="text-border-subtle select-none mx-0.5">·</span>
+              <span className="text-[9px] uppercase tracking-widest text-muted/40 mr-1">Services</span>
+              {APP_PRESETS.map((p) => {
+                const configured = accountKeySet.has(p.keyName)
+                return (
+                  <button
+                    key={p.keyName}
+                    type="button"
+                    disabled={configured}
+                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+                      configured
+                        ? "text-success/60 cursor-default"
+                        : "text-muted/50 hover:text-accent hover:bg-accent/5",
+                    )}
+                  >
+                    {configured && <Check className="h-2 w-2" />}
+                    {p.name}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* ── Secrets list ── */}
+            {accountSecrets.length === 0 ? (
+              <div className="px-4 py-6 text-center border-t border-border-subtle">
+                <p className="text-[11px] text-muted/40">No secrets yet — click a provider above or type a key name</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border-subtle border-t border-border-subtle">
+                {accountSecrets.map((secret) => (
+                  <div
+                    key={secret.id}
+                    className="group flex items-center gap-3 px-4 py-2.5"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs font-mono font-medium text-default truncate">
+                          {secret.key}
+                        </span>
+                        <span className="text-[9px] text-muted/30 font-mono">
+                          {"●".repeat(8)}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[9px] text-muted/30 font-mono tabular-nums shrink-0">
+                      {timeAgo(secret.updatedAt)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleSecretTabDelete(secret.key)}
+                      className="p-1 rounded text-muted/20 hover:text-danger transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete secret"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+
+          {/* Subtle footer note */}
+          <p className="text-[10px] text-muted/30 mt-2 px-1">
+            Account secrets are inherited by all projects
+          </p>
         </div>
       )}
     </div>
