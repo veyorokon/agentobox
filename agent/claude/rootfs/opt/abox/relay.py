@@ -724,23 +724,34 @@ class SDKRelay:
             except Exception as e:  # intentional: awesome-client reload is best-effort cosmetic — theme still applies on next restart
                 log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "awesome_reload"})
 
-        # Poke Firefox to reload CSS — mozilla.cfg listens on loopback:9224.
-        # Connect + close = reload signal. Retry once after 2s to handle the
-        # race where Firefox accepts the poke during startup but hasn't
-        # finished rendering chrome yet.
+        # Poke Firefox to reload CSS — mozilla.cfg listens on loopback:9224
+        # only after browser-delayed-startup-finished. If refused, Firefox
+        # isn't ready yet — retry with backoff until it accepts.
         await self._poke_firefox_reload()
 
-    async def _poke_firefox_reload(self, retries: int = 2, delay: float = 2.0):
-        """Poke Firefox's loopback socket to trigger CSS reload."""
+    async def _poke_firefox_reload(self):
+        """Poke Firefox's loopback socket to trigger CSS reload.
+
+        Retries on connection refused (Firefox not ready) with 0.5s backoff,
+        up to 10s total. Once Firefox opens the socket after delayed startup,
+        the next attempt connects and the CSS reloads instantly.
+        """
         import socket as _socket
-        for attempt in range(retries):
+        delay = 0.5
+        max_elapsed = 10.0
+        elapsed = 0.0
+        while elapsed < max_elapsed:
             try:
                 with _socket.create_connection(("127.0.0.1", 9224), timeout=1):
                     pass
-                log.info("relay.theme_firefox_reloaded", extra={"attempt": attempt + 1})
+                log.info("relay.theme_firefox_reloaded")
+                return
             except OSError:
-                log.info("relay.theme_css_written", extra={"firefox_poke": "refused", "attempt": attempt + 1})
-            if attempt < retries - 1:
+                elapsed += delay
+                if elapsed >= max_elapsed:
+                    log.warning("relay.theme_firefox_poke_exhausted",
+                                extra={"elapsed": elapsed})
+                    return
                 await asyncio.sleep(delay)
 
     async def _on_state_changed(self):
