@@ -13,7 +13,7 @@ import { createLogger } from "@/lib/logger"
 
 const log = createLogger("apollo")
 
-type SecretEntry = {
+export type SecretEntry = {
   id: string
   key: string
   createdAt: string

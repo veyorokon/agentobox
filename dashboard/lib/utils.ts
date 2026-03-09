@@ -68,6 +68,34 @@ export function friendlyModelName(raw: string): string {
   return raw.replace(/^claude-/, "").replace(/-\d{8}$/, "")
 }
 
+/* ── Time helpers ────────────────────────────────────────────────── */
+
+export function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "just now"
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
+export function formatDate(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+/* ── Credential detection ────────────────────────────────────────── */
+
+/** Detect Anthropic credential type from key name + value prefix. */
+export function detectCredentialType(key: string, value: string): "oauth" | "api_key" | null {
+  if (key !== "ANTHROPIC_API_KEY" || !value.trim()) return null
+  if (value.startsWith("sk-ant-oat")) return "oauth"
+  if (value.startsWith("sk-ant-")) return "api_key"
+  return null
+}
+
 /* ── Compute time formatting ──────────────────────────────────────── */
 
 /** Format seconds into human-readable compact duration: "0s", "45s", "2m", "1h 23m", "2d 5h" */

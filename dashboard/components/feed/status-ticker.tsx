@@ -107,6 +107,9 @@ export function StatusTicker({
   }, [entries])
 
   // ── Measure overflow: how many entries fit in one line ──────────────
+  const entriesLengthRef = useRef(entries.length)
+  entriesLengthRef.current = entries.length
+
   const measureOverflow = useCallback(() => {
     const container = containerRef.current
     if (!container) return
@@ -118,19 +121,22 @@ export function StatusTicker({
     const containerTop = container.getBoundingClientRect().top
     let count = 0
     for (const child of children) {
-      // If a child wraps to a second line, stop counting
       if (child.getBoundingClientRect().top > containerTop + 4) break
       count++
     }
-    setVisibleCount(count < entries.length ? count : null)
-  }, [entries.length])
+    setVisibleCount(count < entriesLengthRef.current ? count : null)
+  }, [])
 
+  // Re-measure when entries change
   useEffect(() => {
     measureOverflow()
-    // Re-measure on resize
+  }, [measureOverflow, entries])
+
+  // Stable resize listener (registered once)
+  useEffect(() => {
     window.addEventListener("resize", measureOverflow)
     return () => window.removeEventListener("resize", measureOverflow)
-  }, [measureOverflow, entries])
+  }, [measureOverflow])
 
   // ── Visible entries (capped if overflowing) ────────────────────────
   const displayEntries = useMemo(() => {

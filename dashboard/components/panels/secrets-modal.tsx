@@ -11,7 +11,7 @@ import {
   RefreshCw,
   ArrowUpRight,
 } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, timeAgo, detectCredentialType } from "@/lib/utils"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import {
   useAccountSecrets,
@@ -20,30 +20,13 @@ import {
   useSecrets,
   useSetSecret,
   useDeleteSecret,
+  type SecretEntry,
 } from "@/lib/graphql/hooks/use-secrets"
 import { useProviderStatus } from "@/lib/graphql/hooks/use-models"
-
-type SecretEntry = {
-  id: string
-  key: string
-  createdAt: string
-  updatedAt: string
-}
 
 type MergedSecret = SecretEntry & {
   level: "account" | "project"
   overridden?: boolean // account secret shadowed by project secret
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
 }
 
 export function SecretsModal({
@@ -107,12 +90,10 @@ export function SecretsModal({
   }, [accountSecrets, projectSecrets])
 
   // Detect credential type from value prefix (Anthropic keys only)
-  const credentialHint = useMemo(() => {
-    if (newKey !== "ANTHROPIC_API_KEY" || !newValue.trim()) return null
-    if (newValue.startsWith("sk-ant-oat")) return "oauth" as const
-    if (newValue.startsWith("sk-ant-")) return "api_key" as const
-    return null
-  }, [newKey, newValue])
+  const credentialHint = useMemo(
+    () => detectCredentialType(newKey, newValue),
+    [newKey, newValue],
+  )
 
   // Escape handler
   useEffect(() => {

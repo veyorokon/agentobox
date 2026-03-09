@@ -15,16 +15,15 @@ import {
 } from "lucide-react"
 import { GET_PROJECTS } from "@/lib/graphql/queries/projects"
 import { CREATE_PROJECT } from "@/lib/graphql/mutations/projects"
-import { GET_ACCOUNT_SECRETS } from "@/lib/graphql/queries/secrets"
-import { SET_ACCOUNT_SECRET } from "@/lib/graphql/mutations/secrets"
 import { GET_AVAILABLE_MODELS } from "@/lib/graphql/queries/models"
 import {
   useAccountSecrets,
   useSetAccountSecret,
   useDeleteAccountSecret,
+  type SecretEntry,
 } from "@/lib/graphql/hooks/use-secrets"
 import { createLogger } from "@/lib/logger"
-import { cn } from "@/lib/utils"
+import { cn, timeAgo, formatDate, detectCredentialType } from "@/lib/utils"
 
 const log = createLogger("router")
 
@@ -46,14 +45,9 @@ type SecretRow = {
   value: string
 }
 
-type SecretEntry = {
-  id: string
-  key: string
-  createdAt: string
-  updatedAt: string
-}
-
 type GlobalTab = "projects" | "secrets" | "personas"
+
+const DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
 // Provider → required secret key name. Mirrors backend PROVIDER_SECRET_KEYS.
 const PROVIDER_KEY_NAMES: Record<string, string> = {
@@ -63,30 +57,6 @@ const PROVIDER_KEY_NAMES: Record<string, string> = {
   minimax: "PROVIDER_KEY_MINIMAX",
   qwen: "PROVIDER_KEY_QWEN",
   openrouter: "PROVIDER_KEY_OPENROUTER",
-}
-
-// Credential type detection from value prefix
-function detectCredentialType(key: string, value: string): "oauth" | "api_key" | null {
-  if (key !== "ANTHROPIC_API_KEY" || !value.trim()) return null
-  if (value.startsWith("sk-ant-oat")) return "oauth"
-  if (value.startsWith("sk-ant-")) return "api_key"
-  return null
-}
-
-function formatDate(iso: string) {
-  const d = new Date(iso)
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
 }
 
 /* ================================================================== */
@@ -105,8 +75,8 @@ export default function GlobalPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-5-20250929")
-  const [secrets, setSecrets] = useState<SecretRow[]>([])
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL)
+  const [pendingSecrets, setPendingSecrets] = useState<SecretRow[]>([])
   const [newKey, setNewKey] = useState("")
   const [newValue, setNewValue] = useState("")
   const [error, setError] = useState("")
@@ -131,9 +101,6 @@ export default function GlobalPage() {
   })
 
   const [createProject, { loading: creating }] = useMutation<{ createProject: { id: string } }>(CREATE_PROJECT)
-  const [setAccountSecretMutation] = useMutation(SET_ACCOUNT_SECRET, {
-    refetchQueries: [{ query: GET_ACCOUNT_SECRETS }],
-  })
 
   // Secrets hooks (for inline secrets tab)
   const { data: accountSecretsData } = useAccountSecrets(!authed)
@@ -165,7 +132,7 @@ export default function GlobalPage() {
   const requiredKeyName = PROVIDER_KEY_NAMES[selectedProvider] ?? null
 
   // Check if required key is satisfied (account-level or in pending secrets)
-  const pendingKeySet = useMemo(() => new Set(secrets.map((s) => s.key)), [secrets])
+  const pendingKeySet = useMemo(() => new Set(pendingSecrets.map((s) => s.key)), [pendingSecrets])
   const requiredKeySatisfied = requiredKeyName
     ? accountKeySet.has(requiredKeyName) || pendingKeySet.has(requiredKeyName)
     : true
@@ -173,12 +140,10 @@ export default function GlobalPage() {
   const projects = data?.projects ?? []
 
   // Credential hint for secrets tab input
-  const secretCredentialHint = useMemo(() => {
-    if (secretNewKey !== "ANTHROPIC_API_KEY" || !secretNewValue.trim()) return null
-    if (secretNewValue.startsWith("sk-ant-oat")) return "oauth" as const
-    if (secretNewValue.startsWith("sk-ant-")) return "api_key" as const
-    return null
-  }, [secretNewKey, secretNewValue])
+  const secretCredentialHint = useMemo(
+    () => detectCredentialType(secretNewKey, secretNewValue),
+    [secretNewKey, secretNewValue],
+  )
 
   // ── Secret row management (create form) ──
 
@@ -186,13 +151,13 @@ export default function GlobalPage() {
     const key = newKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "")
     const value = newValue.trim()
     if (!key || !value) return
-    setSecrets((prev) => [...prev.filter((s) => s.key !== key), { key, value }])
+    setPendingSecrets((prev) => [...prev.filter((s) => s.key !== key), { key, value }])
     setNewKey("")
     setNewValue("")
   }
 
   const handleRemoveSecret = (key: string) => {
-    setSecrets((prev) => prev.filter((s) => s.key !== key))
+    setPendingSecrets((prev) => prev.filter((s) => s.key !== key))
   }
 
   // Auto-suggest required key when model changes
@@ -224,11 +189,9 @@ export default function GlobalPage() {
     if (!name.trim()) return
     setError("")
     try {
-      // Save all pending secrets as account-level
-      for (const secret of secrets) {
-        await setAccountSecretMutation({
-          variables: { input: { key: secret.key, value: secret.value } },
-        })
+      // Save all pending secrets as account-level (parallel)
+      if (pendingSecrets.length > 0) {
+        await Promise.all(pendingSecrets.map((s) => setAccountSecret(s.key, s.value)))
       }
 
       const { data: result } = await createProject({
@@ -249,8 +212,8 @@ export default function GlobalPage() {
     setShowCreate(false)
     setName("")
     setDescription("")
-    setSelectedModel("claude-sonnet-4-5-20250929")
-    setSecrets([])
+    setSelectedModel(DEFAULT_MODEL)
+    setPendingSecrets([])
     setNewKey("")
     setNewValue("")
     setError("")
@@ -434,9 +397,9 @@ export default function GlobalPage() {
                   )}
 
                   {/* Pending secrets (to be saved on create) */}
-                  {secrets.length > 0 && (
+                  {pendingSecrets.length > 0 && (
                     <div className="mb-2 space-y-px">
-                      {secrets.map((s) => {
+                      {pendingSecrets.map((s) => {
                         const credHint = detectCredentialType(s.key, s.value)
                         return (
                           <div
