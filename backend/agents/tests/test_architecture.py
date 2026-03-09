@@ -155,6 +155,7 @@ class TestNamingConventions:
             "get", "deliver", "list", "terminate",
             "read", "exists", "status", "file", "pending", "inbox",
             "append", "initialize", "build", "is_converged",
+            "spawn", "succeed", "fail", "recover",
         )
         violations = []
 

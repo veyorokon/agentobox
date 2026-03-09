@@ -4,7 +4,7 @@ Agent lifecycle management: create, kill, remove, hard-restart.
 Orchestrates the full agent lifecycle from DB record creation through
 container provisioning to teardown. create_agent creates the Agent row
 immediately (so the dashboard sees it) then spawns _provision_agent as
-a detached asyncio.create_task for the slow container work.
+a monitored background task for the slow container work.
 
 Key invariants:
 - _provision_agent runs detached from the HTTP request — all DB writes
@@ -34,16 +34,27 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
-from agents.models import Agent, AgentStatus, StreamEvent
+from agents.models import (
+    Agent,
+    AgentLifecycleAttempt,
+    AgentLifecycleAttemptStatus,
+    AgentLifecycleKind,
+    AgentStatus,
+    StreamEvent,
+)
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.provision import provision_workspace, provision_scoped_sudo
-from agents.services.utils import create_stream_event, terminate_sandbox
+from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
+ERR_LIFECYCLE_PROVISION_FAILED = "ERR-LIFECYCLE-PROVISION-FAILED"
+ERR_LIFECYCLE_PROVISION_ORPHANED = "ERR-LIFECYCLE-PROVISION-ORPHANED"
+ERR_LIFECYCLE_STUCK_DEPLOY = "ERR-LIFECYCLE-STUCK-DEPLOY"
+ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 
 log = structlog.get_logger("abox.lifecycle")
 
@@ -156,10 +167,32 @@ async def create_agent(
         session_id="",
     )
 
+    correlation_id = secrets.token_hex(12)
+    attempt = await _create_lifecycle_attempt(
+        str(agent.id),
+        AgentLifecycleKind.CREATE,
+        correlation_id,
+        step="queued",
+        metadata={"runtime": runtime_name},
+    )
+
     op_log.info("lifecycle.agent_created", agent_id=str(agent.id))
 
-    asyncio.create_task(
-        _provision_agent(agent, project, runtime_name, op_log, secret_envs)
+    spawn_logged_task(
+        _provision_agent(
+            agent,
+            project,
+            runtime_name,
+            op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
+            secret_envs,
+            attempt_id=str(attempt.id),
+        ),
+        op_log=op_log,
+        task_name=f"agent-provision:{agent.id}",
+        event="lifecycle.provision_task",
+        agent_id=str(agent.id),
+        attempt_id=str(attempt.id),
+        correlation_id=correlation_id,
     )
 
     return agent
@@ -211,6 +244,106 @@ def _create_stream_event_sync(agent, session_id, event_type, data):
 _save_provisioned = sync_to_async(_save_agent_provisioned, thread_sensitive=False)
 _save_failed = sync_to_async(_save_agent_failed, thread_sensitive=False)
 _create_stream_event = sync_to_async(_create_stream_event_sync, thread_sensitive=False)
+
+
+def _merge_attempt_metadata(current: dict | None, update: dict | None) -> dict:
+    merged = dict(current or {})
+    if update:
+        merged.update(update)
+    return merged
+
+
+def _create_lifecycle_attempt_sync(
+    agent_id: str,
+    kind: str,
+    correlation_id: str,
+    step: str = "queued",
+    metadata: dict | None = None,
+):
+    agent = Agent.objects.get(id=agent_id)
+    attempt_no = (
+        AgentLifecycleAttempt.objects.filter(agent_id=agent_id).count() + 1
+    )
+    return AgentLifecycleAttempt.objects.create(
+        agent=agent,
+        kind=kind,
+        status=AgentLifecycleAttemptStatus.RUNNING,
+        step=step,
+        attempt_no=attempt_no,
+        correlation_id=correlation_id,
+        metadata_json=metadata or {},
+    )
+
+
+def _update_lifecycle_attempt_sync(
+    attempt_id: str,
+    *,
+    step: str | None = None,
+    status: str | None = None,
+    error_code: str = "",
+    error_detail: str = "",
+    metadata: dict | None = None,
+):
+    attempt = AgentLifecycleAttempt.objects.get(id=attempt_id)
+    if step is not None:
+        attempt.step = step
+    if status is not None:
+        attempt.status = status
+    if error_code:
+        attempt.error_code = error_code
+    if error_detail:
+        attempt.error_detail = error_detail[:4000]
+    attempt.metadata_json = _merge_attempt_metadata(attempt.metadata_json, metadata)
+    if status in (
+        AgentLifecycleAttemptStatus.SUCCEEDED,
+        AgentLifecycleAttemptStatus.FAILED,
+        AgentLifecycleAttemptStatus.CANCELLED,
+    ):
+        attempt.finished_at = timezone.now()
+    attempt.save(update_fields=[
+        "step", "status", "error_code", "error_detail",
+        "metadata_json", "finished_at", "updated_at",
+    ])
+    return attempt
+
+
+def _complete_active_attempts_for_agent_sync(
+    agent_id: str,
+    *,
+    status: str,
+    step: str,
+    error_code: str = "",
+    error_detail: str = "",
+    metadata: dict | None = None,
+) -> int:
+    attempts = list(
+        AgentLifecycleAttempt.objects.filter(
+            agent_id=agent_id,
+            status=AgentLifecycleAttemptStatus.RUNNING,
+        )
+    )
+    finished_at = timezone.now()
+    for attempt in attempts:
+        attempt.status = status
+        attempt.step = step
+        attempt.error_code = error_code
+        if error_detail:
+            attempt.error_detail = error_detail[:4000]
+        attempt.metadata_json = _merge_attempt_metadata(attempt.metadata_json, metadata)
+        attempt.finished_at = finished_at
+        attempt.save(update_fields=[
+            "status", "step", "error_code", "error_detail",
+            "metadata_json", "finished_at", "updated_at",
+        ])
+    return len(attempts)
+
+
+_create_lifecycle_attempt = sync_to_async(_create_lifecycle_attempt_sync, thread_sensitive=False)
+_update_lifecycle_attempt = sync_to_async(_update_lifecycle_attempt_sync, thread_sensitive=False)
+_complete_active_attempts_for_agent = sync_to_async(
+    _complete_active_attempts_for_agent_sync,
+    thread_sensitive=False,
+)
 
 
 def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
@@ -268,7 +401,7 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
 
 
 async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None,
-                           resume_session_id: str = ""):
+                           resume_session_id: str = "", attempt_id: str = ""):
     """
     Background task: create container, provision workspace, launch relay.
 
@@ -297,6 +430,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
     )
 
     try:
+        if attempt_id:
+            await _update_lifecycle_attempt(
+                attempt_id,
+                step="provisioning_started",
+                metadata={"runtime": runtime_name, "resume_session_id": resume_session_id},
+            )
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
 
@@ -329,6 +468,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         sandbox = await runtime.create(agent.name, env, volumes=mounts or None)
         sandbox_id = sandbox.id
+        if attempt_id:
+            await _update_lifecycle_attempt(
+                attempt_id,
+                step="container_created",
+                metadata={"sandbox_id": sandbox_id, "vnc_url": sandbox.vnc_url},
+            )
 
         # Update agent context with sandbox_id now that it's available
         bind_agent_context(
@@ -348,6 +493,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # service blocks forever waiting for its volume symlinks.
         vol = agent.volume
         vol.initialize()
+        if attempt_id:
+            await _update_lifecycle_attempt(attempt_id, step="volume_initialized")
 
         # Write shared secrets env file to volume
         from agents.services.provision import build_secrets_env_content
@@ -394,6 +541,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             model=agent.model,
             agent_tags=agent.tags or [],
         )
+        if attempt_id:
+            await _update_lifecycle_attempt(attempt_id, step="workspace_provisioned")
 
         # Write theme tokens to volume (converter generates CSS/lua at boot)
         if project.theme_tokens:
@@ -417,6 +566,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             allowed_tools=agent.allowed_tools or None,
         )
         vol.write("home/agent/.relay_env", relay_env_content)
+        if attempt_id:
+            await _update_lifecycle_attempt(attempt_id, step="relay_env_written")
 
         # Write state.json — structured state for relay poke handler.
         # Relay reads this on "poke" to apply mode/model changes.
@@ -425,6 +576,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Security hardening — still uses runtime.exec() because
         # /etc/sudoers.d/ is a system path, not on the volume.
         await provision_scoped_sudo(runtime, sandbox_id, op_log)
+        if attempt_id:
+            await _update_lifecycle_attempt(attempt_id, step="sudo_provisioned")
 
         # Save relay_token and sandbox details BEFORE launching relay.
         # The relay POSTs to /agents/<id>/stream/ immediately on startup,
@@ -434,6 +587,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             agent_id, sandbox.id, sandbox.vnc_url,
             team_name, parent_session_id, relay_token,
         )
+        if attempt_id:
+            await _update_lifecycle_attempt(
+                attempt_id,
+                step="waiting_for_relay",
+                metadata={"relay_token_set": True},
+            )
         await broadcast_agent_update(agent)
 
         # The s6-supervised relay service depends on init-volume, which
@@ -475,6 +634,15 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 agent, "", "provision_failed",
                 {"error": "Container provisioning failed"},
             )
+            if attempt_id:
+                await _update_lifecycle_attempt(
+                    attempt_id,
+                    step="failed",
+                    status=AgentLifecycleAttemptStatus.FAILED,
+                    error_code=ERR_LIFECYCLE_PROVISION_FAILED,
+                    error_detail="Container provisioning failed",
+                    metadata={"sandbox_id": sandbox_id or ""},
+                )
         except Exception:  # intentional: DB cleanup after failed provision — nothing more to do
             op_log.warning("lifecycle.provision_cleanup_failed", agent_id=agent_id, exc_info=True)
     finally:
@@ -720,17 +888,73 @@ async def hard_restart_agent(agent_id: str) -> Agent:
         agent, event_type="restarted", data={"agent_id": agent_id},
     )
 
+    correlation_id = secrets.token_hex(12)
+    attempt = await _create_lifecycle_attempt(
+        agent_id,
+        AgentLifecycleKind.RESTART,
+        correlation_id,
+        step="queued",
+        metadata={"previous_sandbox_id": old_sandbox_id, "resume_session_id": resume_session_id},
+    )
+
     op_log.info("lifecycle.agent_restarted", agent_id=agent_id)
 
     # Start provisioning in background — pass resume_session_id so the
     # new container can --resume the prior conversation.
-    asyncio.create_task(
-        _provision_agent(agent, project, runtime_name, op_log, secret_envs,
-                         resume_session_id=resume_session_id)
+    spawn_logged_task(
+        _provision_agent(
+            agent,
+            project,
+            runtime_name,
+            op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
+            secret_envs,
+            resume_session_id=resume_session_id,
+            attempt_id=str(attempt.id),
+        ),
+        op_log=op_log,
+        task_name=f"agent-restart:{agent.id}",
+        event="lifecycle.provision_task",
+        agent_id=str(agent.id),
+        attempt_id=str(attempt.id),
+        correlation_id=correlation_id,
     )
 
     clear_agent_context()
     return agent
+
+
+async def succeed_active_lifecycle_attempts(
+    agent_id: str,
+    *,
+    step: str,
+    metadata: dict | None = None,
+) -> int:
+    """Mark any running lifecycle attempts for an agent as succeeded."""
+    return await _complete_active_attempts_for_agent(
+        agent_id,
+        status=AgentLifecycleAttemptStatus.SUCCEEDED,
+        step=step,
+        metadata=metadata,
+    )
+
+
+async def fail_active_lifecycle_attempts(
+    agent_id: str,
+    *,
+    step: str,
+    error_code: str,
+    error_detail: str = "",
+    metadata: dict | None = None,
+) -> int:
+    """Mark any running lifecycle attempts for an agent as failed."""
+    return await _complete_active_attempts_for_agent(
+        agent_id,
+        status=AgentLifecycleAttemptStatus.FAILED,
+        step=step,
+        error_code=error_code,
+        error_detail=error_detail,
+        metadata=metadata,
+    )
 
 
 async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
@@ -770,6 +994,43 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         # is NOT read. BASH_ENV ensures secrets are available to all commands.
         "BASH_ENV": "/mnt/abox-state/secrets/env",
     }
+
+
+async def spawn_team_lead(project_id: str) -> None:
+    """Create and deploy a team-lead agent for a newly created project.
+
+    Uses the "solo" template from the claude-code adapter's team configs.
+    Called explicitly from the createProject mutation — not from a signal.
+    """
+    op_log = log.bind(project_id=project_id)
+    op_log.info("lifecycle.spawning_team_lead")
+
+    adapter = get_adapter("claude-code")
+    template = adapter.team_configs()["solo"]
+    lead_config = template["agents"][0]
+
+    # Resolve MCP server names to full config
+    mcp_config = None
+    if lead_config.get("mcp_servers"):
+        mcp_config = adapter.resolve_mcp_servers(lead_config["mcp_servers"])
+
+    agent = await create_agent(
+        project_id=project_id,
+        name=lead_config["name"],
+        runtime_name="docker",
+        model=lead_config["model"],
+        mcp_servers=mcp_config,
+        workspace_path="",
+        instructions=lead_config["instructions"],
+        role=lead_config["role"],
+    )
+
+    op_log.info(
+        "lifecycle.team_lead_spawned",
+        agent_id=str(agent.id),
+        agent_name=agent.name,
+        model=agent.model,
+    )
 
 
 async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:

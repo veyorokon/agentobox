@@ -8,12 +8,12 @@ FROM ${BASE_IMAGE}
 
 # --- Claude Agent SDK (relay dependency) ---
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
-    && pip3 install --break-system-packages claude-agent-sdk==0.1.47 \
+    && pip3 install --break-system-packages claude-agent-sdk==0.1.48 \
     && apt-get purge -y python3-pip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Claude Code CLI ---
-ARG CLAUDE_CODE_VERSION=2.1.70
+ARG CLAUDE_CODE_VERSION=2.1.71
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
 # --- Computer Use MCP server ---

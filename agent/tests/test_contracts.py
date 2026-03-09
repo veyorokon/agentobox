@@ -166,6 +166,49 @@ class TestUserMessageFiltering:
         assert has_tool_result
 
 
+class TestRelayStartupContracts:
+    """Startup stage markers and MCP preflight error contracts."""
+
+    def test_init_stage_event_shape(self):
+        from relay import _build_init_stage_event
+
+        event = _build_init_stage_event(
+            "relay.init.initialize_sent",
+            cli_path="claude",
+            config_path="/home/agent/.mcp.json",
+        )
+
+        assert event["type"] == "system"
+        assert event["subtype"] == "relay_init_stage"
+        assert event["stage"] == "relay.init.initialize_sent"
+        assert event["details"]["cli_path"] == "claude"
+
+    def test_preflight_rejects_invalid_json(self, tmp_path):
+        from relay import MCPConfigError, _preflight_mcp_servers
+
+        config_path = tmp_path / ".mcp.json"
+        config_path.write_text("{not-json")
+
+        with pytest.raises(MCPConfigError):
+            _preflight_mcp_servers(str(config_path))
+
+    def test_preflight_rejects_non_sse_url_transport(self, tmp_path):
+        from relay import MCPConfigError, _preflight_mcp_servers
+
+        config_path = tmp_path / ".mcp.json"
+        config_path.write_text(json.dumps({
+            "mcpServers": {
+                "team": {
+                    "type": "http",
+                    "url": "http://backend:8000/mcp",
+                }
+            }
+        }))
+
+        with pytest.raises(MCPConfigError):
+            _preflight_mcp_servers(str(config_path))
+
+
 class TestHookBridgeRouting:
     """team-bridge.py tool classification — PRE tools are intercepted,
     POST tools are forwarded after native execution, others pass through."""

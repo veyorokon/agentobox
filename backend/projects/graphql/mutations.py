@@ -75,10 +75,15 @@ class ProjectMutation:
             owner=user,
         )
 
-        # Team-lead auto-deploy is handled by the post_save signal in
-        # projects/signals.py — no need to duplicate here. The signal
-        # fires from acreate() above and schedules the agent creation
-        # asynchronously so the mutation returns immediately.
+        # Spawn team-lead agent explicitly (no hidden signal side effects).
+        # Runs in background via create_agent's spawn_logged_task so the
+        # mutation returns immediately.
+        from agents.services.lifecycle import spawn_team_lead
+
+        try:
+            await spawn_team_lead(str(project.id))
+        except Exception:
+            log.exception("create_project.team_lead_failed", project_id=str(project.id))
 
         return project
 

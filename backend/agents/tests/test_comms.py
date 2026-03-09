@@ -1,10 +1,10 @@
-"""Tests for agents.services.comms — content normalization and SSRF prevention."""
+"""Tests for agents.services.comms — content normalization and inbox durability."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.services.comms import _normalize_content, send_message
+from agents.services.comms import _normalize_content, deliver_input, send_message
 
 
 def _image_block(url, media_type=None):
@@ -146,3 +146,44 @@ async def test_send_message_pushes_to_dashboard_ws():
     assert call_args[0][0] == "dashboard_proj-456"  # group name
     assert call_args[0][1]["type"] == "dashboard.agent_update"
     assert call_args[0][1]["payload"] == fake_serialized_agent
+
+
+@pytest.mark.asyncio
+async def test_deliver_input_appends_to_inbox_before_poke():
+    """deliver_input() uses durable inbox append + poke, not raw WS input."""
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-123"
+    fake_agent.volume = MagicMock()
+
+    with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock, return_value=False) as mock_push:
+        result = await deliver_input(fake_agent, {"type": "user", "message": {"role": "user", "content": []}})
+
+    assert result is False
+    fake_agent.volume.append_inbox.assert_called_once_with({
+        "type": "input",
+        "payload": {"type": "user", "message": {"role": "user", "content": []}},
+    })
+    mock_push.assert_awaited_once_with("agent-123", {"type": "poke", "changed": "_abox/inbox.jsonl"})
+
+
+@pytest.mark.asyncio
+async def test_interagent_delivery_uses_durable_input_helper():
+    """Inter-agent delivery must use the canonical durable input helper."""
+    from agents.services.interagent import deliver_to_stdin
+
+    target = MagicMock()
+    target.id = "agent-456"
+    target.name = "worker-1"
+    target.session_id = "session-123"
+
+    with (
+        patch("agents.services.interagent.create_stream_event", new_callable=AsyncMock),
+        patch("agents.services.interagent.deliver_input", new_callable=AsyncMock, return_value=True) as mock_deliver,
+    ):
+        result = await deliver_to_stdin("lead", target, "Please review this.")
+
+    assert result is True
+    mock_deliver.assert_awaited_once()
+    delivered_payload = mock_deliver.await_args.args[1]
+    assert delivered_payload["type"] == "user"
+    assert delivered_payload["message"]["content"][0]["text"].startswith("[Team message from lead]:")

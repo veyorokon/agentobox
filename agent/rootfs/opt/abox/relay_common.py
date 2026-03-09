@@ -54,6 +54,7 @@ WS_FATAL_CLOSE_CODES = {4001, 4003, 4004}
 # "system" includes process_exit subtype (agent lifecycle).
 # "result" includes cost/usage data (session_cost_usd).
 CRITICAL_EVENT_TYPES = {"result", "system"}
+ERR_RELAY_BUFFER_OVERFLOW = "ERR-RELAY-BUFFER-OVERFLOW"
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +221,8 @@ class WSTransport:
             if code in WS_FATAL_CLOSE_CODES:
                 raise FatalWSClose(code, reason) from exc
             return False
-        except Exception as exc:
-            self._log.warning("relay.ws_connect_failed", extra={"error": str(exc)})
+        except Exception as exc:  # intentional: WS connect can fail for transient network reasons — caller retries via reconnect()
+            self._log.warning("relay.ws_connect_failed", extra={"error": str(exc), "agent_id": AGENT_ID, "operation": "ws_connect"})
             self._connected = False
             return False
 
@@ -253,8 +254,8 @@ class WSTransport:
                 "ms": round((time.monotonic() - t0) * 1000, 1),
             })
             return True
-        except Exception as exc:
-            self._log.warning("relay.ws_send_error", extra={"error": str(exc), "type": type(exc).__name__})
+        except Exception as exc:  # intentional: WS send failure marks connection down — caller will reconnect and retry
+            self._log.warning("relay.ws_send_error", extra={"error": str(exc), "type": type(exc).__name__, "agent_id": AGENT_ID, "operation": "ws_send"})
             self._connected = False
             return False
 
@@ -277,7 +278,8 @@ class WSTransport:
             if code in WS_FATAL_CLOSE_CODES:
                 raise FatalWSClose(code, reason) from exc
             return None
-        except Exception:
+        except Exception:  # intentional: WS recv failure marks connection down — caller reconnects
+            self._log.warning("relay.ws_recv_failed", extra={"agent_id": AGENT_ID, "operation": "ws_recv"})
             self._connected = False
             return None
 
@@ -303,7 +305,7 @@ class WSTransport:
         if self.ws:
             try:
                 await self.ws.close()
-            except Exception:
+            except Exception:  # intentional: WS close is best-effort cleanup — socket may already be dead
                 pass
             self._connected = False
 
@@ -327,6 +329,7 @@ class EventSender:
         self._event_buffer: deque[dict] = deque(maxlen=20)
         self._log = log or _setup_logging("abox-relay")
         self._send_seq = 0
+        self._dropped_critical = 0
 
     async def send(self, event: dict):
         """Send an event to the backend via WS.
@@ -362,7 +365,16 @@ class EventSender:
         # Buffer critical events instead of dropping
         event_type = event.get("type", "")
         if event_type in CRITICAL_EVENT_TYPES:
+            overflowed = len(self._event_buffer) == self._event_buffer.maxlen
             self._event_buffer.append(event)
+            if overflowed:
+                self._dropped_critical += 1
+                self._log.error("relay.event_buffer_overflow", extra={
+                    "error_code": ERR_RELAY_BUFFER_OVERFLOW,
+                    "type": event_type,
+                    "buffer_size": len(self._event_buffer),
+                    "dropped_critical": self._dropped_critical,
+                })
             self._log.warning("relay.event_buffered", extra={"type": event_type, "buffer_size": len(self._event_buffer)})
         else:
             self._log.warning("relay.event_dropped", extra={"type": event_type})

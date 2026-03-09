@@ -97,6 +97,23 @@ class TimelineEntryType:
     created_at: datetime
 
 
+# ── Lifecycle attempt type (model-backed) ──
+
+
+@strawberry_django.type(models.AgentLifecycleAttempt)
+class LifecycleAttemptType:
+    id: auto
+    kind: auto
+    status: auto
+    step: auto
+    attempt_no: auto
+    correlation_id: auto
+    error_code: auto
+    error_detail: auto
+    started_at: auto
+    finished_at: auto
+
+
 # ── Model-backed types ──
 
 
@@ -295,6 +312,15 @@ class AgentType:
         if result is None:
             return None
         return TaskProgressType(done=result[0], total=result[1])
+
+    @strawberry_django.field
+    async def lifecycle_attempts(self) -> list[LifecycleAttemptType]:
+        def _fetch():
+            return list(
+                models.AgentLifecycleAttempt.objects.filter(agent_id=self.id)
+                .order_by("-started_at")[:10]
+            )
+        return await sync_to_async(_fetch, thread_sensitive=False)()
 
     @strawberry_django.field
     async def tasks(self) -> list[AgentTaskType]:

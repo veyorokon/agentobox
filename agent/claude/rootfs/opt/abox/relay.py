@@ -26,11 +26,14 @@ import asyncio
 import hashlib
 import json
 import os
+from pathlib import Path
 import signal
 import socket
 import subprocess
 import sys
 import time
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 # ---------------------------------------------------------------------------
 # SDK monkey-patch: preserve raw stdout dicts on parsed messages
@@ -115,6 +118,7 @@ from abox_logging import setup as _setup_logging  # noqa: E402
 from relay_common import (  # noqa: E402
     AGENT_ID,
     CALLBACK_URL,
+    CRITICAL_EVENT_TYPES,
     VOL_ROOT,
     EventSender,
     FatalWSClose,
@@ -124,6 +128,13 @@ from relay_common import (  # noqa: E402
 )
 
 log = _setup_logging("abox-relay")
+
+STARTUP_STATUS_PATH = Path(f"{VOL_ROOT}/_abox/startup-status.json")
+STARTUP_STDERR_TAIL = 20
+
+ERR_RELAY_SDK_INIT_TIMEOUT = "ERR-RELAY-SDK-INIT-TIMEOUT"
+ERR_MCP_CONFIG_INVALID = "ERR-MCP-CONFIG-INVALID"
+ERR_MCP_COORD_CONNECTIVITY = "ERR-MCP-COORD-CONNECTIVITY"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -143,6 +154,96 @@ _MODE_MAP = {
 def _translate_mode(our_mode: str) -> str:
     """Translate backend vocabulary to SDK permission format."""
     return _MODE_MAP.get(our_mode, "bypassPermissions")
+
+
+class MCPConfigError(RuntimeError):
+    """Configured MCP server is invalid before relay startup."""
+
+    error_code = ERR_MCP_CONFIG_INVALID
+
+
+class MCPConnectivityError(RuntimeError):
+    """Configured MCP server could not be reached during preflight."""
+
+    error_code = ERR_MCP_COORD_CONNECTIVITY
+
+
+def _build_init_stage_event(stage: str, **details: object) -> dict:
+    """Build a relay startup stage event persisted to backend + volume."""
+    return {
+        "type": "system",
+        "subtype": "relay_init_stage",
+        "agent_id": AGENT_ID,
+        "stage": stage,
+        "details": details,
+    }
+
+
+def _write_startup_status(payload: dict) -> None:
+    """Persist latest startup status to the shared volume for post-mortem debugging."""
+    STARTUP_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STARTUP_STATUS_PATH.write_text(json.dumps(payload, indent=2))
+
+
+def _preflight_mcp_servers(config_path: str, timeout_s: float = 3.0) -> list[dict]:
+    """Validate configured MCP servers before spawning the SDK.
+
+    We only preflight URL-based SSE servers here. Command-backed MCP servers
+    run behind the local gateway and appear to Claude Code as HTTP/SSE URLs.
+    """
+    if not config_path:
+        return []
+
+    try:
+        raw = json.loads(Path(config_path).read_text())
+    except FileNotFoundError as exc:
+        raise MCPConfigError(f"MCP config missing: {config_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise MCPConfigError(f"MCP config is invalid JSON: {config_path}") from exc
+
+    servers = raw.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise MCPConfigError("MCP config missing top-level mcpServers object")
+
+    checked: list[dict] = []
+    for name, config in servers.items():
+        if not isinstance(config, dict):
+            raise MCPConfigError(f"MCP server '{name}' config must be an object")
+
+        server_type = config.get("type", "")
+        url = config.get("url", "")
+        headers = config.get("headers", {})
+
+        if url:
+            if server_type != "sse":
+                raise MCPConfigError(
+                    f"MCP server '{name}' uses unsupported type '{server_type}' for URL transport"
+                )
+            if headers and not isinstance(headers, dict):
+                raise MCPConfigError(f"MCP server '{name}' headers must be an object")
+
+            req = urlrequest.Request(url, headers=headers or {})
+            try:
+                with urlrequest.urlopen(req, timeout=timeout_s) as resp:
+                    status = getattr(resp, "status", resp.getcode())
+                    content_type = resp.headers.get("Content-Type", "")
+            except (urlerror.URLError, TimeoutError, ValueError) as exc:
+                raise MCPConnectivityError(
+                    f"MCP server '{name}' preflight failed for {url}: {exc}"
+                ) from exc
+
+            if status >= 400:
+                raise MCPConnectivityError(
+                    f"MCP server '{name}' preflight returned HTTP {status} for {url}"
+                )
+            if "text/event-stream" not in content_type:
+                raise MCPConnectivityError(
+                    f"MCP server '{name}' preflight expected text/event-stream, got '{content_type or 'unknown'}'"
+                )
+
+            checked.append({"name": name, "url": url, "status": status})
+
+    return checked
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +373,7 @@ class SDKRelay:
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
         self._theme_reload_task: asyncio.Task | None = None  # debounced CSS reload
         self._current_theme_uri: str = ""  # file URI of active Firefox CSS sheet
+        self._init_stage: str = ""
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
         self._redactor.load()
@@ -287,6 +389,68 @@ class SDKRelay:
             "run/mcp-gateway/config.json": self._on_gateway_changed,
             "_abox/inbox.jsonl": self._on_inbox_changed,
         }
+
+    def _startup_snapshot(self, **extra) -> dict:
+        """Build the persisted startup status payload."""
+        payload = {
+            "agent_id": AGENT_ID,
+            "stage": self._init_stage,
+            "stderr_tail": self._stderr_lines[-STARTUP_STDERR_TAIL:],
+        }
+        payload.update(extra)
+        return payload
+
+    async def _mark_init_stage(self, stage: str, **details) -> None:
+        """Persist and emit a relay startup stage marker."""
+        self._init_stage = stage
+        _write_startup_status(self._startup_snapshot(status="in_progress", details=details))
+        log.info(stage, extra=details)
+        await self._sender.send(_build_init_stage_event(stage, **details))
+
+    async def _record_startup_failure(self, error_code: str, error_message: str, **details) -> None:
+        """Persist and emit a typed startup failure artifact."""
+        payload = self._startup_snapshot(
+            status="failed",
+            error_code=error_code,
+            error_message=error_message,
+            details=details,
+        )
+        _write_startup_status(payload)
+        await self._sender.send({
+            "type": "system",
+            "subtype": "relay_init_failure",
+            "agent_id": AGENT_ID,
+            "stage": self._init_stage,
+            "error_code": error_code,
+            "error_message": error_message,
+            "details": details,
+        })
+
+    async def _preflight_mcp_servers(self) -> list[dict]:
+        """Validate MCP config before the SDK attempts its own initialize flow."""
+        config_path = os.environ.get("MCP_CONFIG", "")
+        if not config_path:
+            return []
+
+        await self._mark_init_stage("relay.init.mcp_preflight_started", config_path=config_path)
+        try:
+            servers = await asyncio.to_thread(_preflight_mcp_servers, config_path)
+        except (MCPConfigError, MCPConnectivityError) as exc:
+            error_code = getattr(exc, "error_code", ERR_MCP_CONFIG_INVALID)
+            await self._mark_init_stage(
+                "relay.init.mcp_preflight_failed",
+                config_path=config_path,
+                error_code=error_code,
+                error=str(exc),
+            )
+            raise
+
+        await self._sender.send(_build_init_stage_event(
+            "relay.init.mcp_preflight_ok",
+            config_path=config_path,
+            servers=[srv["name"] for srv in servers],
+        ))
+        return servers
 
     @staticmethod
     def _build_sdk_env() -> dict[str, str]:
@@ -452,6 +616,8 @@ class SDKRelay:
         if stripped:
             log.info("relay.claude_stderr", extra={"line": stripped})
             self._stderr_lines.append(stripped)
+            if self._init_stage and self._init_stage != "relay.init.initialize_ack":
+                _write_startup_status(self._startup_snapshot(status="in_progress"))
 
     def _get_stderr(self, error: Exception | None = None) -> str:
         """Reconstruct stderr from accumulated lines or error fallback."""
@@ -535,8 +701,8 @@ class SDKRelay:
             await self._post_exit_event(e.exit_code or 1, self._get_stderr(e))
         except (asyncio.CancelledError, FatalWSClose):
             raise  # propagate — run loop handles these
-        except Exception as e:
-            log.error("relay.forward_error", extra={"error": str(e)})
+        except Exception as e:  # intentional: unexpected SDK error during message forwarding — post exit event and let run loop decide retry
+            log.error("relay.forward_error", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "forward_messages"})
             await self._post_exit_event(1, str(e))
 
     # ── WS downstream: receive commands from backend ──
@@ -585,8 +751,8 @@ class SDKRelay:
                     yield payload
                 try:
                     await self.client.query(_raw())
-                except Exception as e:
-                    log.error("relay.command_query_failed", extra={"error": str(e)})
+                except Exception as e:  # intentional: query failure must not kill downstream listener — log and continue receiving commands
+                    log.error("relay.command_query_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "sdk_query"})
 
         elif cmd_type == "signal":
             sig = cmd.get("signal", "")
@@ -656,8 +822,8 @@ class SDKRelay:
                 env = {**os.environ, "DISPLAY": ":0", "DBUS_SESSION_BUS_ADDRESS": dbus_addr}
                 _sp.run(["awesome-client", lua_reload], env=env, timeout=5, capture_output=True)
                 log.info("relay.theme_awesome_reloaded")
-            except Exception as e:
-                log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e)})
+            except Exception as e:  # intentional: awesome-client reload is best-effort cosmetic — theme still applies on next restart
+                log.warning("relay.theme_awesome_reload_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "awesome_reload"})
 
         # Debounced Firefox CSS reload
         css_content = Path(f"{VOL_ROOT}/tmp/abox-theme/userChrome.css").read_text()
@@ -684,8 +850,8 @@ class SDKRelay:
                 try:
                     await self.client.set_permission_mode(sdk_mode)
                     log.info("relay.mode_changed", extra={"from": mode, "to": sdk_mode, "applied": "immediate"})
-                except Exception as e:
-                    log.error("relay.mode_change_failed", extra={"error": str(e)})
+                except Exception as e:  # intentional: mode change failure is recoverable — deferred to next SDK session start
+                    log.error("relay.mode_change_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "set_permission_mode"})
                     self.next_permission_mode = sdk_mode
             else:
                 self.next_permission_mode = sdk_mode
@@ -704,8 +870,8 @@ class SDKRelay:
         try:
             _sp.run(["pkill", "-HUP", "-f", "mcp-gateway.py"], timeout=5, capture_output=True)
             log.info("relay.gateway_reloaded")
-        except Exception as e:
-            log.warning("relay.gateway_reload_failed", extra={"error": str(e)})
+        except Exception as e:  # intentional: gateway SIGHUP is best-effort — gateway still serves with old config
+            log.warning("relay.gateway_reload_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "gateway_reload"})
 
     async def _on_inbox_changed(self):
         """New messages in inbox — read and send to SDK.
@@ -790,8 +956,8 @@ class SDKRelay:
                     Path(old_path).unlink(missing_ok=True)
                 except OSError:
                     pass  # intentional: best-effort cleanup of stale theme file
-        except Exception as exc:
-            log.warning("relay.theme_css_reload_failed", extra={"error": str(exc)})
+        except Exception as exc:  # intentional: CSS reload failure falls back to Firefox restart below
+            log.warning("relay.theme_css_reload_failed", extra={"error": str(exc), "agent_id": AGENT_ID, "operation": "firefox_css_reload"})
             # Fallback: restart Firefox (s6 auto-restarts the service)
             # On restart, mozilla.cfg loads /tmp/abox-theme/userChrome.css
             try:
@@ -899,19 +1065,49 @@ class SDKRelay:
 
             try:
                 self._stderr_lines.clear()
+                await self._preflight_mcp_servers()
                 log.info("relay.sdk_creating", extra={
                     "cli_path": options.cli_path, "cwd": options.cwd,
                     "perm": options.permission_mode,
                     "setting_sources": list(options.setting_sources or []),
                     "extra_args": {k: v for k, v in (options.extra_args or {}).items()},
                 })
+                await self._mark_init_stage(
+                    "relay.init.binary_spawned",
+                    cli_path=options.cli_path,
+                    cwd=options.cwd,
+                )
                 self.client = ClaudeSDKClient(options=options)
                 log.info("relay.sdk_created")
+                await self._mark_init_stage("relay.init.stdin_ready")
+                await self._mark_init_stage("relay.init.initialize_sent")
                 await self.client.connect()
+                await self._mark_init_stage("relay.init.initialize_ack")
+                _write_startup_status(self._startup_snapshot(status="connected"))
                 sdk_connect_failures = 0  # reset on success
             except CLINotFoundError:
                 log.error("relay.sdk_cli_not_found")
+                await self._record_startup_failure(
+                    "ERR-RELAY-CLI-NOT-FOUND",
+                    "claude: command not found",
+                )
                 await self._post_exit_event(127, "claude: command not found")
+                break
+            except (MCPConfigError, MCPConnectivityError) as e:
+                real_stderr = self._get_stderr(e)
+                error_code = getattr(e, "error_code", ERR_MCP_CONFIG_INVALID)
+                log.error("relay.sdk_preflight_failed", extra={
+                    "error_code": error_code,
+                    "error": str(e),
+                    "stage": self._init_stage,
+                    "stderr": real_stderr[:500],
+                })
+                await self._record_startup_failure(
+                    error_code,
+                    str(e),
+                    stderr=real_stderr[:500],
+                )
+                await self._post_exit_event(1, real_stderr or str(e))
                 break
             except ProcessError as e:
                 real_stderr = self._get_stderr(e)
@@ -919,6 +1115,7 @@ class SDKRelay:
                     "code": e.exit_code, "stderr": real_stderr,
                     "captured_lines": len(self._stderr_lines),
                     "was_resume": bool(resume_session_id),
+                    "stage": self._init_stage,
                 })
                 # If we were resuming and the process failed, the session may
                 # be poisoned (e.g. API error HTML embedded in conversation
@@ -931,16 +1128,31 @@ class SDKRelay:
                     self.session_id = ""
                     self._stderr_lines.clear()
                     continue
+                await self._record_startup_failure(
+                    "ERR-RELAY-SDK-PROCESS",
+                    real_stderr or str(e),
+                    exit_code=e.exit_code or 1,
+                )
                 await self._post_exit_event(e.exit_code or 1, real_stderr)
                 break
-            except Exception as e:
+            except Exception as e:  # intentional: SDK connect failure is retried with backoff — exhaustion posts exit event
                 sdk_connect_failures += 1
                 real_stderr = self._get_stderr(e)
+                error_code = ERR_RELAY_SDK_INIT_TIMEOUT if "initialize" in str(e).lower() else "ERR-RELAY-SDK-CONNECT"
                 log.error("relay.sdk_connect_failed", extra={
+                    "error_code": error_code,
+                    "agent_id": AGENT_ID, "operation": "sdk_connect",
                     "attempt": sdk_connect_failures, "max_attempts": SDK_MAX_CONNECT_RETRIES,
                     "error": str(e), "type": type(e).__name__,
                     "captured_lines": len(self._stderr_lines), "stderr": real_stderr[:500],
+                    "stage": self._init_stage,
                 })
+                await self._record_startup_failure(
+                    error_code,
+                    str(e),
+                    attempt=sdk_connect_failures,
+                    stderr=real_stderr[:500],
+                )
                 if sdk_connect_failures >= SDK_MAX_CONNECT_RETRIES:
                     log.error("relay.sdk_connect_exhausted", extra={"attempts": sdk_connect_failures})
                     await self._post_exit_event(1, real_stderr)
@@ -992,7 +1204,7 @@ class SDKRelay:
             # Disconnect SDK client
             try:
                 await self.client.disconnect()
-            except Exception:
+            except Exception:  # intentional: SDK disconnect is best-effort cleanup — process may already be dead
                 pass
             self.client = None
 
@@ -1142,8 +1354,8 @@ def main():
         asyncio.run(relay.run())
         log.info("relay.stopped")
         sys.exit(0)
-    except Exception as e:
-        log.error("relay.crashed", extra={"error": str(e), "type": type(e).__name__})
+    except Exception as e:  # intentional: top-level catch — log crash details before exit so s6 can restart
+        log.error("relay.crashed", extra={"error": str(e), "type": type(e).__name__, "agent_id": AGENT_ID, "operation": "main_run"})
         sys.exit(1)
 
 

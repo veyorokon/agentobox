@@ -14,6 +14,7 @@ CurrentThreadExecutor is unavailable. All ORM calls MUST use
 """
 
 import asyncio
+import os
 from datetime import timedelta
 
 import docker
@@ -22,9 +23,15 @@ from asgiref.sync import sync_to_async
 from django.db.models import F
 from django.utils import timezone
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentLifecycleAttempt, AgentLifecycleAttemptStatus, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item
+from agents.services.lifecycle import (
+    ERR_LIFECYCLE_RUNTIME_DEAD,
+    ERR_LIFECYCLE_STUCK_DEPLOY,
+    fail_active_lifecycle_attempts,
+    succeed_active_lifecycle_attempts,
+)
 from agents.services.utils import terminate_sandbox
 
 log = structlog.get_logger("abox.reconciler")
@@ -32,7 +39,7 @@ log = structlog.get_logger("abox.reconciler")
 INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
 DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container state
-ERROR_REAP_GRACE_S = 60
+ERROR_REAP_GRACE_S = int(os.environ.get("AGENT_REAP_DELAY_S", "60"))
 
 _task: asyncio.Task | None = None
 
@@ -66,6 +73,12 @@ async def reconcile_agents():
     await _detect_dead_containers()
     await _detect_stuck_deploys(now)
     await _reap_errored_agents(now)
+    await _reconcile_lifecycle_attempts(now)
+
+
+async def recover_lifecycle_attempts() -> None:
+    """Public entry point to finalize dangling lifecycle attempts once."""
+    await _reconcile_lifecycle_attempts(timezone.now())
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +129,15 @@ def _mark_stopped(agent_id):
     return agent
 
 
+@_db
+def _get_running_lifecycle_attempts():
+    return list(
+        AgentLifecycleAttempt.objects.filter(
+            status=AgentLifecycleAttemptStatus.RUNNING,
+        ).select_related("agent")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 1: Reap orphaned Docker containers
 # ---------------------------------------------------------------------------
@@ -133,7 +155,8 @@ def _reap_orphans_sync():
     client = get_runtime("docker")._client
     try:
         containers = client.containers.list(
-            filters={"label": "agentobox.managed=true"}
+            all=True,
+            filters={"label": "agentobox.managed=true"},
         )
     except docker.errors.DockerException:
         log.exception("reconciler.docker_list_failed")
@@ -201,6 +224,13 @@ async def _detect_dead_containers():
                 error_msg = "\n".join(parts)
 
             agent = await _mark_error(agent.id, error_message=error_msg)
+            await fail_active_lifecycle_attempts(
+                str(agent.id),
+                step="runtime_dead",
+                error_code=ERR_LIFECYCLE_RUNTIME_DEAD,
+                error_detail=error_msg or "Container exited unexpectedly",
+                metadata={"container_status": container_status},
+            )
             await broadcast_agent_update(agent)
 
             # Create error feed item so dashboard shows WHY the agent crashed
@@ -267,6 +297,13 @@ async def _detect_stuck_deploys(now):
 
         await terminate_sandbox(agent, agent_log)
         agent = await _mark_error(agent.id)
+        await fail_active_lifecycle_attempts(
+            str(agent.id),
+            step="stuck_deploy",
+            error_code=ERR_LIFECYCLE_STUCK_DEPLOY,
+            error_detail="Agent exceeded deploy timeout",
+            metadata={"hard_timeout": is_hard_stuck},
+        )
         await broadcast_agent_update(agent)
         agent_log.info(
             "reconciler.stuck_deploy",
@@ -301,3 +338,37 @@ async def _reap_errored_agents(now):
             agent_id=str(agent.id),
             agent_name=agent.name,
         )
+
+
+async def _reconcile_lifecycle_attempts(now):
+    """Finalize dangling lifecycle attempts based on current agent state."""
+    attempts = await _get_running_lifecycle_attempts()
+    for attempt in attempts:
+        agent = attempt.agent
+        if agent.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING):
+            await succeed_active_lifecycle_attempts(
+                str(agent.id),
+                step="agent_available",
+                metadata={"attempt_id": str(attempt.id)},
+            )
+            continue
+
+        if agent.status in (AgentStatus.ERROR, AgentStatus.STOPPED):
+            await fail_active_lifecycle_attempts(
+                str(agent.id),
+                step="agent_terminal_before_ready",
+                error_code="ERR-LIFECYCLE-TERMINAL-BEFORE-READY",
+                error_detail=agent.error_message or f"Agent entered {agent.status}",
+                metadata={"attempt_id": str(attempt.id)},
+            )
+            continue
+
+        age_s = int((now - attempt.started_at).total_seconds())
+        if agent.status == AgentStatus.DEPLOYING and age_s > DEPLOY_HARD_LIMIT_S:
+            await fail_active_lifecycle_attempts(
+                str(agent.id),
+                step="attempt_timeout",
+                error_code=ERR_LIFECYCLE_STUCK_DEPLOY,
+                error_detail="Lifecycle attempt exceeded hard deploy timeout",
+                metadata={"attempt_id": str(attempt.id), "age_s": age_s},
+            )

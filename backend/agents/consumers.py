@@ -99,6 +99,12 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             )
             self.agent.status = AgentStatus.IDLE
             self.agent.deployed_at = now
+            from agents.services.lifecycle import succeed_active_lifecycle_attempts
+            await succeed_active_lifecycle_attempts(
+                self.agent_id,
+                step="relay_connected",
+                metadata={"relay_connected_at": now.isoformat()},
+            )
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(self.agent)
 
@@ -312,7 +318,7 @@ async def _serialize_agent_for_ws(agent) -> dict:
     Strawberry's auto-conversion.
     """
     from agents.adapters import get_adapter
-    from agents.models import AgentTask
+    from agents.models import AgentLifecycleAttempt, AgentTask
 
     adapter = get_adapter(agent.agent_type)
 
@@ -356,6 +362,36 @@ async def _serialize_agent_for_ws(agent) -> dict:
         for t in tasks_raw
     ]
 
+    # Lifecycle attempts (last 10, descending)
+    def _fetch_lifecycle_attempts():
+        return list(
+            AgentLifecycleAttempt.objects.filter(agent_id=agent.id)
+            .order_by("-started_at")[:10]
+            .values(
+                "id", "kind", "status", "step", "attempt_no",
+                "correlation_id", "error_code", "error_detail",
+                "started_at", "finished_at",
+            )
+        )
+
+    attempts_raw = await sync_to_async(_fetch_lifecycle_attempts, thread_sensitive=False)()
+    lifecycle_attempts = [
+        {
+            "__typename": "LifecycleAttemptType",
+            "id": str(a["id"]),
+            "kind": a["kind"],
+            "status": a["status"],
+            "step": a["step"],
+            "attemptNo": a["attempt_no"],
+            "correlationId": a["correlation_id"],
+            "errorCode": a["error_code"],
+            "errorDetail": a["error_detail"],
+            "startedAt": a["started_at"].isoformat() if a["started_at"] else None,
+            "finishedAt": a["finished_at"].isoformat() if a["finished_at"] else None,
+        }
+        for a in attempts_raw
+    ]
+
     # MCP servers: dict → list of keys
     mcp = agent.mcp_servers
     if isinstance(mcp, dict):
@@ -394,6 +430,7 @@ async def _serialize_agent_for_ws(agent) -> dict:
         "computeSeconds": agent.compute_seconds or 0,
         "taskProgress": task_progress,
         "tasks": tasks,
+        "lifecycleAttempts": lifecycle_attempts,
     }
 
 

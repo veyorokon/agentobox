@@ -85,8 +85,22 @@ async def _send_via_inbox(agent: Agent, message: dict) -> None:
     answer_question, and broadcast_message. The message persists on the
     volume even if the poke fails — relay reads it on next wake.
     """
+    await deliver_input(agent, message)
+
+
+async def deliver_input(agent: Agent, message: dict) -> bool:
+    """Durably enqueue an input message for an agent and poke the relay.
+
+    This is the only supported transport for non-ephemeral agent input.
+    Inputs must be durable so reconnects, restarts, and relay flaps do not
+    create "looked delivered but disappeared" behavior.
+
+    Returns True when the relay poke was accepted, False when the relay is
+    known disconnected. The message is still durable either way because it
+    was appended to the inbox first.
+    """
     agent.volume.append_inbox({"type": "input", "payload": message})
-    await push_to_relay(str(agent.id), {"type": "poke", "changed": "_abox/inbox.jsonl"})
+    return await push_to_relay(str(agent.id), {"type": "poke", "changed": "_abox/inbox.jsonl"})
 
 
 async def push_to_relay(agent_id: str, command: dict) -> bool:
@@ -184,7 +198,7 @@ async def send_message(
         return True
 
     # Append to inbox and poke relay
-    await _send_via_inbox(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
+    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
 
     op_log.info("comms.message_sent")
     return True
@@ -223,7 +237,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
         return True
 
     # Append to inbox and poke relay
-    await _send_via_inbox(agent, {"type": "user", "message": {"role": "user", "content": parts}})
+    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": parts}})
 
     op_log.info("comms.question_answered")
     return True
@@ -286,7 +300,7 @@ async def broadcast_message(
             continue
 
         # Append to inbox and poke
-        await _send_via_inbox(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
+        await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
 
     op_log.info("comms.broadcast_sent", targets=target_names)
     return True

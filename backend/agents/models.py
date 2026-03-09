@@ -34,6 +34,18 @@ class AgentStatus(models.TextChoices):
     ERROR = "error"
 
 
+class AgentLifecycleKind(models.TextChoices):
+    CREATE = "create"
+    RESTART = "restart"
+
+
+class AgentLifecycleAttemptStatus(models.TextChoices):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class FeedItemType(models.TextChoices):
     SYSTEM = "system"
     USER = "user"
@@ -283,6 +295,40 @@ class Agent(models.Model):
         return segments
 
 
+class AgentLifecycleAttempt(models.Model):
+    """Durable record of a create/restart lifecycle attempt for an agent."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    agent = models.ForeignKey(
+        Agent, on_delete=models.CASCADE, related_name="lifecycle_attempts"
+    )
+    kind = models.CharField(max_length=20, choices=AgentLifecycleKind.choices)
+    status = models.CharField(
+        max_length=20,
+        choices=AgentLifecycleAttemptStatus.choices,
+        default=AgentLifecycleAttemptStatus.RUNNING,
+    )
+    step = models.CharField(max_length=64, default="queued")
+    attempt_no = models.PositiveIntegerField(default=1)
+    correlation_id = models.CharField(max_length=64, blank=True, default="")
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    error_detail = models.TextField(blank=True, default="")
+    metadata_json = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["agent", "status", "started_at"]),
+            models.Index(fields=["correlation_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.kind}:{self.status}:{self.agent.name}:{self.step}"
+
+
 
 class _CanonicalManager(models.Manager):
     """Projection: only canonical (CC-format) events for frontend rendering."""
@@ -500,5 +546,4 @@ class AgentFeedback(models.Model):
 
     def __str__(self):
         return f"rating={self.rating} → {self.agent.name} ({self.created_at:%H:%M})"
-
 

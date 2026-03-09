@@ -1,16 +1,16 @@
 """
 Inter-agent message delivery through the Agentobox backend.
 
-Messages are delivered to target agents via WebSocket relay push.
-The MCP coordination server's teammate_message and teammate_broadcast
-tools call into this module directly.
+Messages are delivered to target agents via the same durable inbox path
+used for user input. The MCP coordination server's teammate_message and
+teammate_broadcast tools call into this module directly.
 
 Flow:
     1. Agent calls teammate_message MCP tool
     2. deliver_to_stdin() formats message as stream-json input
     3. StreamEvent created for feed visibility
-    4. Command pushed to relay via WebSocket
-    5. Relay writes to Claude's stdin -> agent receives it immediately
+    4. Input appended to target inbox.jsonl
+    5. Relay gets a poke and consumes the inbox
 """
 
 import uuid
@@ -18,7 +18,7 @@ import uuid
 import structlog
 
 from agents.models import Agent, AgentStatus
-from agents.services.comms import push_to_relay
+from agents.services.comms import deliver_input
 from agents.services.utils import create_stream_event
 
 log = structlog.get_logger("abox.comms")
@@ -54,14 +54,14 @@ async def deliver_broadcast(
 
 
 async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> bool:
-    """Deliver an inter-agent message via relay WebSocket push.
+    """Deliver an inter-agent message via the durable inbox path.
 
     Formats the message as a stream-json user input so the relay writes it
     to Claude's stdin. The prefix identifies it as a team message.
 
-    Returns True if the relay accepted the push, False if disconnected.
-    The message is always persisted as a StreamEvent regardless — backfill
-    on reconnect will replay it.
+    Returns True if the relay accepted the inbox poke, False if disconnected.
+    The message is still durable either way because it was persisted to the
+    inbox before the poke.
     """
     team_msg = f"[Team message from {sender_name}]: {content}"
     parts = [{"type": "text", "text": team_msg}]
@@ -80,12 +80,12 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
         message_id=f"team_{uuid.uuid4().hex[:16]}",
     )
 
-    # Push to relay via WebSocket
+    # Enqueue via the same durable inbox path used for all other input.
     input_msg = {
         "type": "user",
         "message": {"role": "user", "content": parts},
     }
-    sent = await push_to_relay(str(target.id), {"type": "input", "payload": input_msg})
+    sent = await deliver_input(target, input_msg)
     if not sent:
         log.warning("comms.interagent_delivery_failed",
                     sender=sender_name, target=target.name)

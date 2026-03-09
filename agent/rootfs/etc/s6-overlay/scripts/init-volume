@@ -16,6 +16,12 @@ AGENT_VOL="/vol/agents/${AGENT_ID}"
 # All s6 services depend on init-volume, so nothing starts until this gate passes.
 while [ ! -d "${AGENT_VOL}/_abox" ]; do sleep 0.5; done
 
+# Fix ownership — backend creates volume files as root, but relay and
+# Claude Code run as uid 1000 (agent). Chown the entire agent subdir
+# so all services can read/write freely. This runs once at boot before
+# any s6 service starts, so there's no race.
+chown -R agent:agent "${AGENT_VOL}"
+
 # Create symlinks: mirror volume structure into container filesystem.
 # Top-level directories that map 1:1 to container paths:
 for dir in tmp/abox-theme run/secrets run/mcp-gateway mnt/abox-state; do

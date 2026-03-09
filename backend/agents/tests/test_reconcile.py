@@ -48,6 +48,7 @@ class TestDetectStuckDeploys:
             patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=agents),
             patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
             patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, side_effect=lambda aid, **kw: _make_agent(agent_id=aid)),
+            patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock),
             patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock),
             patch("agents.runtimes.get_runtime", return_value=mock_runtime),
         ):
@@ -109,6 +110,7 @@ class TestDetectStuckDeploys:
             patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
             patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
             patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, side_effect=lambda aid, **kw: agent),
+            patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock),
             patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock),
             patch("agents.runtimes.get_runtime", return_value=mock_runtime),
         ):

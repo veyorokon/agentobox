@@ -17,6 +17,7 @@ AGENTS_DIR = Path(__file__).resolve().parent.parent
 ADAPTERS_DIR = AGENTS_DIR / "adapters"
 SERVICES_DIR = AGENTS_DIR / "services"
 GRAPHQL_DIR = AGENTS_DIR / "graphql"
+PROJECTS_DIR = AGENTS_DIR.parent / "projects"
 
 failures: list[str] = []
 
@@ -31,6 +32,14 @@ def _python_files(directory: Path) -> list[Path]:
 
 def fail(msg: str) -> None:
     failures.append(msg)
+
+
+def _call_name(node: ast.Call) -> str:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return ""
 
 
 # ── Import boundaries ──
@@ -106,8 +115,9 @@ def check_service_naming():
         "restart", "interrupt", "clear", "recompute", "push", "process",
         "resolve", "provision", "ensure", "answer", "hard_restart",
         "write", "externalize", "upload", "encrypt", "decrypt",
-        "reconcile", "search", "terminate",
+        "reconcile", "search", "terminate", "recover",
         "deliver", "get", "list", "handle", "build",
+        "succeed", "fail", "spawn",
     )
     for f in _python_files(SERVICES_DIR):
         tree = ast.parse(_read_source(f))
@@ -172,6 +182,38 @@ def check_no_relay_imports_in_graphql():
             fail(f"{f.name} imports push_to_relay — use service functions instead")
 
 
+def check_no_direct_input_pushes():
+    """Agent input must go through the durable inbox helper, not raw WS push."""
+    for f in _python_files(SERVICES_DIR):
+        tree = ast.parse(_read_source(f))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func_name = ""
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                func_name = node.func.attr
+            if func_name != "push_to_relay" or len(node.args) < 2:
+                continue
+
+            payload = node.args[1]
+            if not isinstance(payload, ast.Dict):
+                continue
+
+            entries = {}
+            for key_node, value_node in zip(payload.keys, payload.values):
+                if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                    entries[key_node.value] = value_node
+
+            type_node = entries.get("type")
+            if isinstance(type_node, ast.Constant) and type_node.value == "input":
+                fail(
+                    f"{f.name} pushes relay input directly — agent input must go through "
+                    "deliver_input()/inbox durability"
+                )
+
+
 def check_no_cross_module_private_imports():
     """Service files should not import private functions from other services."""
     for f in _python_files(SERVICES_DIR):
@@ -190,6 +232,27 @@ def check_no_cross_module_private_imports():
                             f"{f.name} imports private {alias.name} from {node.module} "
                             f"— make it public or add a wrapper"
                         )
+
+
+def check_orchestrators_use_spawn_logged_task():
+    """Lifecycle background work must use the monitored task helper."""
+    targets = [
+        SERVICES_DIR / "lifecycle.py",
+    ]
+    for path in targets:
+        if not path.exists():
+            continue
+
+        tree = ast.parse(_read_source(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _call_name(node) != "create_task":
+                continue
+            fail(
+                f"{path.name} uses raw create_task — use spawn_logged_task for "
+                "background orchestration"
+            )
 
 
 # ── Model consistency ──
@@ -277,7 +340,9 @@ def main() -> int:
         check_no_display_fields_in_agent,
         check_no_agent_vocabulary_in_agent,
         check_no_relay_imports_in_graphql,
+        check_no_direct_input_pushes,
         check_no_cross_module_private_imports,
+        check_orchestrators_use_spawn_logged_task,
         check_mutable_models_have_updated_at,
     ]
 
