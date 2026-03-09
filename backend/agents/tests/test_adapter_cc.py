@@ -626,9 +626,22 @@ class TestBuildRelayEnv:
         env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
         assert "ANTHROPIC_BASE_URL" not in env
 
-    def test_without_key_empty_api_key(self, adapter):
+    def test_without_key_no_api_key_env(self, adapter):
         env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
-        assert "ANTHROPIC_API_KEY=''" in env
+        assert "ANTHROPIC_API_KEY" not in env
+
+    def test_oauth_token_sets_bearer_auth(self, adapter):
+        env = adapter.build_relay_env(**self._base_kwargs(api_key="sk-ant-oat01-real-oauth-token"))
+        assert "PROXY_AUTH_HEADER='authorization'" in env
+        assert "CLAUDE_CODE_OAUTH_TOKEN=" in env
+        # Real OAuth token must NOT appear
+        assert "sk-ant-oat01-real-oauth-token" not in env
+        # Should NOT set ANTHROPIC_API_KEY for OAuth
+        assert "ANTHROPIC_API_KEY" not in env
+
+    def test_oauth_token_still_sets_base_url(self, adapter):
+        env = adapter.build_relay_env(**self._base_kwargs(api_key="sk-ant-oat01-real-oauth-token"))
+        assert "ANTHROPIC_BASE_URL='http://localhost:9999'" in env
 
 
 # ── MCP config builders ──

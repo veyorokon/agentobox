@@ -61,6 +61,8 @@ _API_KEY_HELPER_PATH = "/run/secrets/api-key-helper.sh"
 _PROXY_PLACEHOLDER_KEY = "sk-ant-proxy00-placeholder-key-for-agentobox-validation"
 _PROXY_KEY_PATH = "/run/secrets/proxy_key"
 _PROXY_PORT = 9999
+_OAUTH_TOKEN_PREFIX = "sk-ant-oat"
+_OAUTH_PLACEHOLDER_TOKEN = "sk-ant-oat00-placeholder-oauth-for-agentobox-proxy"
 
 # Frontend mode -> Claude Code permission mode mapping
 # Internal to adapter — used by build_settings() and build_relay_env().
@@ -447,7 +449,7 @@ class ClaudeCodeAdapter:
                 ],
             },
         }
-        if api_key:
+        if api_key and not api_key.startswith(_OAUTH_TOKEN_PREFIX):
             settings["apiKeyHelper"] = _API_KEY_HELPER_PATH
         return json.dumps(settings, indent=2)
 
@@ -671,7 +673,7 @@ class ClaudeCodeAdapter:
             "hasCompletedOnboarding": True,
             "bypassPermissionsModeAccepted": True,
         }
-        if api_key:
+        if api_key and not api_key.startswith(_OAUTH_TOKEN_PREFIX):
             state["customApiKeyResponses"] = {
                 "approved": [_PROXY_PLACEHOLDER_KEY[-20:]],
                 "rejected": [],
@@ -751,20 +753,25 @@ class ClaudeCodeAdapter:
         """
         if not api_key:
             return []
-        return [
+        files = [
             {
                 "path": _PROXY_KEY_PATH,
                 "content": api_key,
                 "mode": "0600",
                 "owner": "root:root",
             },
-            {
+        ]
+        # apiKeyHelper is only needed for API key mode — CC uses it to
+        # validate the placeholder at startup. OAuth mode uses
+        # CLAUDE_CODE_OAUTH_TOKEN env var instead, no helper needed.
+        if not api_key.startswith(_OAUTH_TOKEN_PREFIX):
+            files.append({
                 "path": _API_KEY_HELPER_PATH,
                 "content": f"#!/bin/bash\necho '{_PROXY_PLACEHOLDER_KEY}'\n",
                 "mode": "0555",
                 "owner": "root:root",
-            },
-        ]
+            })
+        return files
 
     def build_relay_env(
         self,
@@ -800,7 +807,9 @@ class ClaudeCodeAdapter:
         """
         # Proxy active: relay gets a placeholder key that passes CLI validation.
         # The real key lives in /run/secrets/proxy_key, read by svc-apiproxy.
-        relay_api_key = _PROXY_PLACEHOLDER_KEY if api_key else ""
+        # OAuth tokens use CLAUDE_CODE_OAUTH_TOKEN instead of ANTHROPIC_API_KEY.
+        is_oauth = api_key.startswith(_OAUTH_TOKEN_PREFIX) if api_key else False
+        relay_api_key = "" if is_oauth else (_PROXY_PLACEHOLDER_KEY if api_key else "")
 
         lines = [
             f"export AGENT_ID={_shell_escape(agent_id)}",
@@ -809,15 +818,24 @@ class ClaudeCodeAdapter:
             f"export PARENT_SESSION_ID={_shell_escape(parent_session_id)}",
             f"export ABOX_CALLBACK_URL={_shell_escape(callback_url)}",
             f"export RELAY_AUTH_TOKEN={_shell_escape(relay_token)}",
-            f"export ANTHROPIC_API_KEY={_shell_escape(relay_api_key)}",
             f"export CLAUDE_MODEL={_shell_escape(_normalize_model_id(model))}",
             f"export AGENT_MODE={_shell_escape(mode)}",
         ]
+
+        if relay_api_key:
+            lines.append(f"export ANTHROPIC_API_KEY={_shell_escape(relay_api_key)}")
+        if is_oauth:
+            lines.append(f"export CLAUDE_CODE_OAUTH_TOKEN={_shell_escape(_OAUTH_PLACEHOLDER_TOKEN)}")
 
         if api_key:
             lines.append(
                 f"export ANTHROPIC_BASE_URL='http://localhost:{_PROXY_PORT}'"
             )
+            # OAuth tokens use Bearer auth instead of x-api-key.
+            # Provider-prefixed models set PROXY_AUTH_HEADER below via PROVIDER_CONFIGS,
+            # so this only applies to native Anthropic models (no "/" in model).
+            if api_key.startswith(_OAUTH_TOKEN_PREFIX) and "/" not in model:
+                lines.append("export PROXY_AUTH_HEADER='authorization'")
 
         # Provider-prefixed models: emit proxy env vars for svc-apiproxy.
         # The proxy uses these to route to the correct upstream and handle
