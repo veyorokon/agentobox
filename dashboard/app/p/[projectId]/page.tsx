@@ -110,23 +110,6 @@ export default function ProjectPage() {
       )}
 
       <div className="@container/main flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        {/* Breadcrumb bar (desktop) */}
-        {bp !== "mobile" && (
-          <div className="h-8 px-4 flex items-center gap-1.5 border-b border-border-subtle bg-surface shrink-0">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
-              className="text-[11px] text-muted hover:text-accent transition-colors"
-            >
-              Global
-            </button>
-            <ChevronRight className="h-2.5 w-2.5 text-muted/30" />
-            <span className="text-[11px] text-default font-medium truncate">
-              {projectName || projectId}
-            </span>
-          </div>
-        )}
-
         {/* Mobile header: project + secrets + user */}
         {bp === "mobile" && (
           <div className="h-10 px-3 flex items-center border-b border-border-default bg-surface shrink-0">
