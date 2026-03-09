@@ -59,6 +59,28 @@ const PROVIDER_KEY_NAMES: Record<string, string> = {
   openrouter: "PROVIDER_KEY_OPENROUTER",
 }
 
+// Display names for provider buttons
+const PROVIDER_PRESETS: { slug: string; name: string; keyName: string }[] = [
+  { slug: "anthropic", name: "Anthropic", keyName: "ANTHROPIC_API_KEY" },
+  { slug: "openrouter", name: "OpenRouter", keyName: "PROVIDER_KEY_OPENROUTER" },
+  { slug: "glm", name: "GLM (Z.ai)", keyName: "PROVIDER_KEY_GLM" },
+  { slug: "kimi", name: "Kimi", keyName: "PROVIDER_KEY_KIMI" },
+  { slug: "minimax", name: "MiniMax", keyName: "PROVIDER_KEY_MINIMAX" },
+  { slug: "qwen", name: "Qwen", keyName: "PROVIDER_KEY_QWEN" },
+]
+
+// Common app/service keys agents might need
+const APP_PRESETS: { name: string; keyName: string }[] = [
+  { name: "GitHub", keyName: "GITHUB_TOKEN" },
+  { name: "GitLab", keyName: "GITLAB_TOKEN" },
+  { name: "AWS Access Key", keyName: "AWS_ACCESS_KEY_ID" },
+  { name: "AWS Secret Key", keyName: "AWS_SECRET_ACCESS_KEY" },
+  { name: "Tavily", keyName: "TAVILY_API_KEY" },
+  { name: "Slack", keyName: "SLACK_BOT_TOKEN" },
+  { name: "Linear", keyName: "LINEAR_API_KEY" },
+  { name: "Sentry", keyName: "SENTRY_AUTH_TOKEN" },
+]
+
 /* ================================================================== */
 /*  GLOBAL PAGE                                                        */
 /*                                                                     */
@@ -596,6 +618,64 @@ export default function GlobalPage() {
           <div className="flex items-center gap-2 mb-6">
             <h2 className="text-xs font-medium text-secondary uppercase tracking-wider">Account Secrets</h2>
             <span className="text-[10px] text-muted/40">inherited by all projects</span>
+          </div>
+
+          {/* Provider key presets */}
+          <div className="mb-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
+              LLM Providers
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {PROVIDER_PRESETS.map((p) => {
+                const configured = accountKeySet.has(p.keyName)
+                return (
+                  <button
+                    key={p.slug}
+                    type="button"
+                    disabled={configured}
+                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+                      configured
+                        ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
+                        : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
+                    )}
+                  >
+                    {configured && <Check className="h-2.5 w-2.5" />}
+                    {p.name}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Common app key presets */}
+          <div className="mb-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
+              Services
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {APP_PRESETS.map((p) => {
+                const configured = accountKeySet.has(p.keyName)
+                return (
+                  <button
+                    key={p.keyName}
+                    type="button"
+                    disabled={configured}
+                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+                      configured
+                        ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
+                        : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
+                    )}
+                  >
+                    {configured && <Check className="h-2.5 w-2.5" />}
+                    {p.name}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Secrets list */}
