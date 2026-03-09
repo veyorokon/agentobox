@@ -321,15 +321,75 @@ class EventSender:
     Encapsulates the redact → flush buffer → send → retry → buffer pattern
     that both relays need. Critical events (result, system) are buffered
     on send failure; non-critical events are dropped with a warning.
+
+    Observability:
+        - Every outbound event gets a monotonic ``seq`` field (starts at 1,
+          never resets). The backend can detect gaps → lost events.
+        - Drop counters track sent, dropped-noncritical, and evicted-critical
+          events. Exposed via ``buffer_stats`` property and emitted as a
+          ``relay.buffer_stats`` log event periodically + on reconnect.
+        - When the critical buffer overflows, a typed
+          ``relay.buffer_overflow`` event is emitted (itself critical) so
+          the overflow is visible in the dashboard.
     """
+
+    BUFFER_MAXLEN = 20
 
     def __init__(self, ws: WSTransport, redactor: Redactor, log=None):
         self.ws = ws
         self._redactor = redactor
-        self._event_buffer: deque[dict] = deque(maxlen=20)
+        self._event_buffer: deque[dict] = deque(maxlen=self.BUFFER_MAXLEN)
         self._log = log or _setup_logging("abox-relay")
-        self._send_seq = 0
-        self._dropped_critical = 0
+
+        # Monotonic sequence counter — never resets across reconnects.
+        self._seq = 0
+
+        # Drop / send accounting
+        self.events_sent = 0
+        self.events_dropped_noncritical = 0
+        self.events_evicted_critical = 0
+
+    # ── helpers ──
+
+    def _next_seq(self) -> int:
+        """Return the next monotonic sequence number (1-based)."""
+        self._seq += 1
+        return self._seq
+
+    @property
+    def buffer_stats(self) -> dict:
+        """Current send/drop counters — used by periodic and reconnect logging."""
+        return {
+            "events_sent": self.events_sent,
+            "events_dropped_noncritical": self.events_dropped_noncritical,
+            "events_evicted_critical": self.events_evicted_critical,
+            "buffer_size": len(self._event_buffer),
+        }
+
+    def _emit_overflow_event(self, evicted_seq: int):
+        """Queue a relay.buffer_overflow event when critical buffer is full.
+
+        The overflow event is itself critical so it gets buffered (and may
+        evict further events if the buffer is saturated). This makes the
+        overflow visible in the dashboard.
+        """
+        overflow_event = {
+            "type": "system",
+            "subtype": "relay.buffer_overflow",
+            "error_code": "ERR-RELAY-BUFFER-OVERFLOW",
+            "evicted_seq": evicted_seq,
+            "buffer_size": self.BUFFER_MAXLEN,
+            "seq": self._next_seq(),
+        }
+        if len(self._event_buffer) >= self.BUFFER_MAXLEN:
+            evicted = self._event_buffer[0]
+            self.events_evicted_critical += 1
+            self._log.warning("relay.buffer_overflow_cascade", extra={
+                "evicted_seq": evicted.get("seq", "?"),
+            })
+        self._event_buffer.append(overflow_event)
+
+    # ── public API ──
 
     async def send(self, event: dict):
         """Send an event to the backend via WS.
@@ -340,7 +400,10 @@ class EventSender:
         """
         # Redact secrets before any WS send
         event = self._redactor.redact_event(event)
-        self._send_seq += 1
+
+        # Stamp monotonic sequence number
+        seq = self._next_seq()
+        event["seq"] = seq
         event_type = event.get("type", "")
 
         # Flush any previously buffered events first
@@ -348,41 +411,50 @@ class EventSender:
 
         sent = await self.ws.send(event)
         if sent:
+            self.events_sent += 1
             self._log.info("relay.event_sent", extra={
-                "seq": self._send_seq, "type": event_type,
+                "seq": seq, "type": event_type,
                 "subtype": event.get("subtype", ""),
             })
             return
 
-        self._log.warning("relay.ws_send_failed")
+        self._log.warning("relay.ws_send_failed", extra={"seq": seq})
         reconnected = await self.ws.reconnect()  # may raise FatalWSClose
         if reconnected:
             await self.flush_buffer()
             sent = await self.ws.send(event)
             if sent:
+                self.events_sent += 1
                 return
 
         # Buffer critical events instead of dropping
-        event_type = event.get("type", "")
         if event_type in CRITICAL_EVENT_TYPES:
-            overflowed = len(self._event_buffer) == self._event_buffer.maxlen
-            self._event_buffer.append(event)
-            if overflowed:
-                self._dropped_critical += 1
-                self._log.error("relay.event_buffer_overflow", extra={
-                    "error_code": ERR_RELAY_BUFFER_OVERFLOW,
-                    "type": event_type,
-                    "buffer_size": len(self._event_buffer),
-                    "dropped_critical": self._dropped_critical,
+            # Check for overflow before appending
+            if len(self._event_buffer) >= self.BUFFER_MAXLEN:
+                evicted = self._event_buffer[0]
+                evicted_seq = evicted.get("seq", 0)
+                self.events_evicted_critical += 1
+                self._log.warning("relay.critical_event_evicted", extra={
+                    "evicted_seq": evicted_seq, "new_seq": seq,
+                    "buffer_size": self.BUFFER_MAXLEN,
                 })
-            self._log.warning("relay.event_buffered", extra={"type": event_type, "buffer_size": len(self._event_buffer)})
+                self._emit_overflow_event(evicted_seq)
+            self._event_buffer.append(event)
+            self._log.warning("relay.event_buffered", extra={
+                "seq": seq, "type": event_type,
+                "buffer_size": len(self._event_buffer),
+            })
         else:
-            self._log.warning("relay.event_dropped", extra={"type": event_type})
+            self.events_dropped_noncritical += 1
+            self._log.warning("relay.event_dropped", extra={
+                "seq": seq, "type": event_type,
+            })
 
     async def flush_buffer(self):
         """Flush buffered critical events to the backend.
 
-        Called on successful WS send opportunities. Events are sent FIFO.
+        Called on successful WS send opportunities. Events are sent FIFO
+        with their original seq numbers preserved.
         Failed flushes leave events in the buffer for the next attempt.
         """
         if not self._event_buffer or not self.ws.connected:
@@ -395,10 +467,44 @@ class EventSender:
             if not sent:
                 break  # WS went down again — stop flushing
             self._event_buffer.popleft()
+            self.events_sent += 1
             flushed += 1
 
         if flushed:
-            self._log.info("relay.event_buffer_flushed", extra={"flushed": flushed, "remaining": len(self._event_buffer)})
+            self._log.info("relay.event_buffer_flushed", extra={
+                "flushed": flushed,
+                "remaining": len(self._event_buffer),
+            })
+
+    async def on_reconnect(self, buffered_critical: int | None = None, dropped_noncritical: int | None = None):
+        """Called after a successful WS reconnect.
+
+        Logs reconnect stats, flushes the buffer, and emits a
+        relay.buffer_flushed event with the count of flushed events.
+        """
+        bc = buffered_critical if buffered_critical is not None else len(self._event_buffer)
+        dn = dropped_noncritical if dropped_noncritical is not None else self.events_dropped_noncritical
+        self._log.info("relay.reconnected", extra={
+            "buffered_critical": bc,
+            "dropped_noncritical": dn,
+        })
+
+        # Log full buffer stats on reconnect
+        self._log.info("relay.buffer_stats", extra=self.buffer_stats)
+
+        # Flush buffered events
+        pre_flush = len(self._event_buffer)
+        await self.flush_buffer()
+        flushed_count = pre_flush - len(self._event_buffer)
+
+        if flushed_count > 0:
+            flush_event = {
+                "type": "system",
+                "subtype": "relay.buffer_flushed",
+                "count": flushed_count,
+                "seq": self._next_seq(),
+            }
+            await self.ws.send(flush_event)
 
 
 # ---------------------------------------------------------------------------
