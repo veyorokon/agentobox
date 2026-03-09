@@ -4,7 +4,7 @@
 
 export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
 export type AttentionLevel = "none" | "review" | "plan" | "permission"
-export type Breakpoint = "mobile" | "S" | "M" | "L" | "XL"
+export type Breakpoint = "mobile" | "S" | "M" | "L" | "XL" | "2XL"
 
 export type Agent = {
   id: string

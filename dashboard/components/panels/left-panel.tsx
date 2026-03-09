@@ -66,7 +66,11 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const collapseThreshold = Math.round(screenWidth * 0.2)
   const minPanelWidth = collapseThreshold + 20
   const maxPanelWidth = Math.round(screenWidth * 0.5)
-  const defaultWidth = bp === "S" ? Math.max(minPanelWidth, 320) : bp === "M" ? Math.max(minPanelWidth, 340) : 480
+  const defaultWidth = bp === "S" ? Math.max(minPanelWidth, 520)
+    : bp === "M" ? Math.max(minPanelWidth, 640)
+    : bp === "L" ? 720
+    : bp === "XL" ? 840
+    : 960
   const width = sidebarWidth ?? defaultWidth
 
   // Reset custom width on breakpoint change

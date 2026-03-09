@@ -75,7 +75,7 @@ export function TeamFeed() {
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       <StatusBar items={statusItems} onClickAgent={handleClickAgent} />
       <ScrollArea className="flex-1 overflow-y-auto dotted-grid">
-        <div className="max-w-3xl mx-auto w-full px-3 @[640px]/main:px-6 py-4 space-y-3">
+        <div className="max-w-3xl mx-auto w-full px-2 @[640px]/main:px-4 py-4 space-y-3">
           {nonStatusItems.map((item) => {
             switch (item.type) {
               case "system":

@@ -19,6 +19,7 @@ export function useBreakpoint(): Breakpoint {
     if (w < 1280) return "S"
     if (w < 1440) return "M"
     if (w < 1920) return "L"
-    return "XL"
+    if (w < 2560) return "XL"
+    return "2XL"
   }, [w])
 }
