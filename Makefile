@@ -24,7 +24,7 @@ agent-image-base:
 	docker build --platform $(PLATFORM) -f agent/Dockerfile.base -t agentobox-agent-base:latest ./agent
 
 agent-image-claude: agent-image-base
-	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent/claude
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent
 
 agent-image: agent-image-claude
 
@@ -65,6 +65,9 @@ test-e2e-dashboard:
 
 test-integration:
 	uv run --group e2e pytest tests/integration/ -v --timeout=30 -m "integration" -o "addopts="
+
+test-visual:
+	ABOX_VISUAL_TESTS=1 uv run pytest agent/tests/test_theme_visual.py -v --timeout=120 -s
 
 test-unit:
 	cd backend && uv run pytest -m "unit" --tb=short -q

@@ -1,10 +1,28 @@
-/* agentobox overrides — layout/typography, theme import from relay */
+/* agentobox overrides — layout/typography, theme import from relay.
+   Every --tf-* variable from textfox defaults.css must be set here or in
+   the generated userChrome.css. test_theme_chain.py enforces this — if
+   textfox adds a new variable, the test fails until we explicitly cover it. */
 @import url("file:///tmp/abox-theme/userChrome.css");
 
 :root {
+  /* Typography */
   --tf-font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  --tf-font-size: 14px;
+  --tf-text-transform: none;
+  /* Borders & rounding */
   --tf-border-width: 2px;
+  --tf-border-transition: 0.2s ease;
+  --tf-rounding: 0px;
+  --tf-margin: 0.8rem;
+  /* Display controls */
   --tf-display-horizontal-tabs: block;
   --tf-display-nav-buttons: flex;
   --tf-display-window-controls: none;
+  --tf-display-urlbar-icons: none;
+  --tf-display-sidebar-tools: flex;
+  --tf-display-titles: flex;
+  /* Navbar layout */
+  --tf-navbar-margin: 8px 8px 2px;
+  --tf-navbar-padding: 4px;
+  --tf-bookmarks-alignment: center;
 }

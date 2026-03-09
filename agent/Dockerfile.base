@@ -1,8 +1,12 @@
 # ── Agentobox Agent — Base Image ──
 #
-# Shared infrastructure for all agent types: s6-overlay, Xvfb/VNC/noVNC,
+# Stable infrastructure for all agent types: s6-overlay, Xvfb/VNC/noVNC,
 # AwesomeWM, Node.js, GitHub CLI, Firefox, fonts, Python websockets,
-# user setup, shared rootfs overlay, env vars.
+# user setup, env vars.
+#
+# IMPORTANT: This image should change RARELY. Any change here forces a full
+# rebuild of downstream images (claude/). Put frequently-edited code (python
+# scripts, configs that evolve) in the agent-type Dockerfile instead.
 #
 # Agent-type-specific images (claude/) build FROM this image
 # and add their CLI tools, SDKs, relay processes, and MCP servers.
@@ -87,15 +91,25 @@ RUN useradd -m -s /bin/bash agent \
     && echo "agent ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg" >> /etc/sudoers.d/agentobox \
     && chmod 0440 /etc/sudoers.d/agentobox
 
-# --- Shared filesystem overlay (s6 services, abox tools, browser configs) ---
-COPY rootfs/ /
+# --- Shared filesystem overlay (stable infra only) ---
+# Explicit per-directory COPY instead of blanket COPY rootfs/ / so that
+# changes to rootfs/opt/abox/ (python code) don't bust this layer.
+# Python code lives in agent-type Dockerfiles (claude/Dockerfile).
+
+# s6 services + scripts
+COPY rootfs/etc/ /etc/
 RUN chmod +x /etc/s6-overlay/scripts/* \
-    && chmod +x /etc/s6-overlay/s6-rc.d/*/run /etc/s6-overlay/s6-rc.d/*/finish 2>/dev/null || true \
-    && chmod +x /opt/abox/relay_common.py \
-    && chmod +x /opt/abox/api-proxy.py \
-    && chmod +x /opt/abox/mcp-gateway.py \
-    && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr \
-    && chown -R agent:agent /home/agent
+    && chmod +x /etc/s6-overlay/s6-rc.d/*/run /etc/s6-overlay/s6-rc.d/*/finish 2>/dev/null || true
+
+# Browser wrappers, Firefox config, noVNC viewer, textfox defaults
+COPY rootfs/usr/ /usr/
+COPY rootfs/opt/noVNC/ /opt/noVNC/
+COPY rootfs/opt/textfox/ /opt/textfox/
+RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
+
+# Home directory — AwesomeWM config, Firefox profile configs
+COPY rootfs/home/ /home/
+RUN chown -R agent:agent /home/agent
 
 # --- Environment ---
 ENV DISPLAY=:1

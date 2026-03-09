@@ -7,7 +7,7 @@ export HOME="$UHOME"
 # Firefox-ESR uses ~/.mozilla/firefox/ (not XDG ~/.config/mozilla/firefox/)
 FF_DIR="$UHOME/.mozilla/firefox"
 
-# Brief headless launch as agent to create default profile
+# Brief headless launch as agent to create default profile.
 s6-setuidgid agent /usr/bin/firefox-esr --headless &
 FF_PID=$!
 for i in $(seq 1 30); do

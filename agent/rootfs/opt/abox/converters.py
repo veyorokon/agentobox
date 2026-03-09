@@ -16,6 +16,15 @@ import json
 import sys
 from pathlib import Path
 
+# Agentobox logo for Firefox new-tab page (textfox --tf-newtab-logo).
+# CSS content property uses \A for newlines.
+_NEWTAB_LOGO_LINES = [
+    "▄████▄  ▄▄▄▄ ▄▄▄▄▄ ▄▄  ▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄▄▄   ▄▄▄  ▄▄ ▄▄",
+    "██▄▄██ ██ ▄▄ ██▄▄  ███▄██   ██  ██▀██ ██▄██ ██▀██ ▀█▄█▀",
+    "██  ██ ▀███▀ ██▄▄▄ ██ ▀██   ██  ▀███▀ ██▄█▀ ▀███▀ ██ ██",
+]
+_NEWTAB_LOGO_CSS = '"' + "\\A ".join(_NEWTAB_LOGO_LINES) + '"'
+
 
 def tokens_to_css(tokens: dict) -> str:
     """Generate CSS overrides for Firefox textfox from design tokens."""
@@ -51,6 +60,7 @@ def tokens_to_css(tokens: dict) -> str:
         f"  --tf-bg: {surface} !important;\n"
         f"  --tf-border: {border} !important;\n"
         f"  --tf-accent: {accent} !important;\n"
+        f"  --tf-newtab-logo: {_NEWTAB_LOGO_CSS} !important;\n"
         "}\n"
         "\n"
         "/* Direct element overrides — kill Firefox's default background-image\n"

@@ -26,6 +26,8 @@ if pgrep -x firefox-esr >/dev/null 2>&1; then
     exit 0
 fi
 
-# No running instance — launch normally with Marionette for CSS hot-reload
+# No running instance — launch normally
+# Theme CSS is loaded on startup via mozilla.cfg (nsIStyleSheetService).
+# Theme changes trigger a Firefox restart via relay.py (pkill + relaunch).
 [ -f /run/dbus-session ] && . /run/dbus-session && export DBUS_SESSION_BUS_ADDRESS
-exec /usr/bin/firefox-esr --marionette "$@"
+exec /usr/bin/firefox-esr "$@"

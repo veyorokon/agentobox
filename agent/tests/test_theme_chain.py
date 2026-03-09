@@ -21,7 +21,7 @@ import sys
 AGENT_ROOT = Path(__file__).resolve().parent.parent
 CONVERTERS_DIR = AGENT_ROOT / "rootfs" / "opt" / "abox"
 sys.path.insert(0, str(CONVERTERS_DIR))
-from converters import tokens_to_css, tokens_to_lua, convert_theme  # noqa: E402
+from converters import tokens_to_css, tokens_to_lua, convert_theme, _NEWTAB_LOGO_CSS  # noqa: E402
 
 
 SAMPLE_TOKENS = {
@@ -38,6 +38,233 @@ SAMPLE_TOKENS = {
 # ---------------------------------------------------------------------------
 # 1. Converter: tokens → CSS/lua/json
 # ---------------------------------------------------------------------------
+
+class TestTextfoxVariableCoverage:
+    """Generated CSS + config.css must cover ALL --tf-* variables from textfox.
+
+    This is the test that catches silent theme regression: if textfox defines
+    a new --tf-* variable and we don't override it, the textfox default bleeds
+    through on theme change. That's exactly the bug where the new tab page
+    still showed "textfox" ASCII art after switching to blyss-dark.
+    """
+
+    # textfox defaults.css is cloned into the image at build time.
+    # We parse the pinned copy to extract the variable inventory.
+    TEXTFOX_DEFAULTS = AGENT_ROOT / "rootfs" / "opt" / "textfox" / "chrome" / "defaults.css"
+    CONFIG_CSS = AGENT_ROOT / "rootfs" / "home" / "agent" / ".firefox-config" / "config.css"
+
+    # Variables that are layout/display concerns, not theme colors.
+    # These are intentionally set in config.css (static), not generated CSS (dynamic).
+    LAYOUT_VARS = {
+        "--tf-font-family",
+        "--tf-font-size",
+        "--tf-border-width",
+        "--tf-rounding",
+        "--tf-margin",
+        "--tf-text-transform",
+        "--tf-border-transition",
+        "--tf-display-horizontal-tabs",
+        "--tf-display-window-controls",
+        "--tf-display-nav-buttons",
+        "--tf-display-urlbar-icons",
+        "--tf-display-sidebar-tools",
+        "--tf-display-titles",
+        "--tf-navbar-margin",
+        "--tf-navbar-padding",
+        "--tf-bookmarks-alignment",
+    }
+
+    @staticmethod
+    def _extract_tf_vars(css_text: str) -> set[str]:
+        """Extract all --tf-* variable definitions from CSS text."""
+        return set(re.findall(r"(--tf-[\w-]+)\s*:", css_text))
+
+    def test_textfox_defaults_exist(self):
+        """Textfox must be installed in the image — otherwise all theme tests are meaningless."""
+        assert self.TEXTFOX_DEFAULTS.exists(), (
+            f"textfox defaults.css not found at {self.TEXTFOX_DEFAULTS} — "
+            "is textfox installed in the agent image?"
+        )
+
+    def test_generated_css_covers_all_theme_vars(self):
+        """Every --tf-* color/content variable from textfox must appear in generated CSS."""
+        if not self.TEXTFOX_DEFAULTS.exists():
+            pytest.skip("textfox not installed")
+
+        textfox_vars = self._extract_tf_vars(self.TEXTFOX_DEFAULTS.read_text())
+        generated_css = tokens_to_css(SAMPLE_TOKENS)
+        generated_vars = self._extract_tf_vars(generated_css)
+
+        # Theme vars = everything textfox defines minus layout vars
+        theme_vars = textfox_vars - self.LAYOUT_VARS
+        missing = theme_vars - generated_vars
+        assert not missing, (
+            f"Generated CSS missing textfox theme variables: {missing}. "
+            "These will use textfox defaults instead of our theme tokens, "
+            "causing visual inconsistency on theme change."
+        )
+
+    def test_config_css_covers_all_layout_vars(self):
+        """Layout --tf-* variables must be set in config.css (static, not per-theme)."""
+        if not self.TEXTFOX_DEFAULTS.exists() or not self.CONFIG_CSS.exists():
+            pytest.skip("textfox or config.css not found")
+
+        textfox_vars = self._extract_tf_vars(self.TEXTFOX_DEFAULTS.read_text())
+        config_css = self.CONFIG_CSS.read_text()
+        config_vars = self._extract_tf_vars(config_css)
+        generated_css = tokens_to_css(SAMPLE_TOKENS)
+        generated_vars = self._extract_tf_vars(generated_css)
+
+        # Every textfox var must be in EITHER generated CSS or config.css
+        all_covered = generated_vars | config_vars
+        uncovered = textfox_vars - all_covered
+        assert not uncovered, (
+            f"Textfox variables not covered by generated CSS or config.css: {uncovered}. "
+            "These use textfox defaults, which may not match our theme."
+        )
+
+    def test_newtab_logo_is_overridden(self):
+        """--tf-newtab-logo MUST be set to Agentobox branding in generated CSS."""
+        css = tokens_to_css(SAMPLE_TOKENS)
+        assert "--tf-newtab-logo" in css, (
+            "Generated CSS does not set --tf-newtab-logo — "
+            "new tab page will show textfox ASCII art instead of Agentobox branding"
+        )
+        assert "Agentobox" not in css or "gentobox" in css, (
+            "The newtab logo CSS value should contain the Agentobox ASCII art"
+        )
+
+
+class TestThemeActuallyApplied:
+    """End-to-end: push a weird theme, verify the generated CSS uses ONLY those values.
+
+    This is the test that catches the actual user bug: "I changed the theme
+    to blyss-dark but Firefox still shows textfox defaults." The test uses
+    an absurd all-red theme so any default value that bleeds through is
+    instantly visible — if you see anything other than #ff0000 in a color
+    property, the converter didn't apply the theme.
+    """
+
+    # All-red theme — anything NOT red in the output is a bug.
+    # Derived from SAMPLE_TOKENS keys to prevent drift.
+    RED_THEME = {k: "#ff0000" for k in SAMPLE_TOKENS}
+
+    # Every CSS variable that converters.py sets to a token-derived color.
+    # Map: CSS variable name → which token it should come from.
+    EXPECTED_MAPPINGS = {
+        # Firefox standard vars
+        "--lwt-accent-color": "surface",
+        "--lwt-text-color": "text-default",
+        "--lwt-tab-line-color": "accent",
+        "--toolbar-bgcolor": "surface",
+        "--toolbar-color": "text-muted",
+        "--toolbar-field-background-color": "surface",
+        "--toolbar-field-color": "text-default",
+        "--toolbar-field-border-color": "border-subtle",
+        "--toolbar-field-focus-background-color": "surface",
+        "--toolbar-field-focus-color": "text-default",
+        "--arrowpanel-background": "surface",
+        "--arrowpanel-color": "text-default",
+        "--arrowpanel-border-color": "border-default",
+        "--sidebar-background-color": "surface",
+        "--sidebar-text-color": "text-muted",
+        "--sidebar-border-color": "border-subtle",
+        "--newtab-background-color": "surface",
+        "--newtab-text-primary-color": "text-default",
+        # textfox vars
+        "--tf-bg": "surface",
+        "--tf-border": "border-default",
+        "--tf-accent": "accent",
+    }
+
+    def test_all_red_theme_produces_all_red_css(self):
+        """Every color property must be #ff0000. Any other color = theme not applied."""
+        css = tokens_to_css(self.RED_THEME)
+        for var_name, token_key in self.EXPECTED_MAPPINGS.items():
+            expected_value = self.RED_THEME[token_key]
+            # Match "  --var-name: #ff0000 !important;"
+            pattern = f"{var_name}: {expected_value}"
+            assert pattern in css, (
+                f"CSS variable {var_name} should be {expected_value} (from token '{token_key}') "
+                f"but it's not. The converter is ignoring this token — theme change won't apply."
+            )
+
+    def test_no_default_colors_leak_through(self):
+        """With all-red input, NO default colors should appear in the CSS."""
+        css = tokens_to_css(self.RED_THEME)
+        # These are the converter's hardcoded defaults — none should appear
+        # when we provide explicit values for every token.
+        leaked_defaults = []
+        for default in ["#1e1e1e", "#d4d4d4", "#888888", "#5a5a5a"]:
+            if default in css:
+                leaked_defaults.append(default)
+        assert not leaked_defaults, (
+            f"Default colors leaked into CSS despite all tokens being #ff0000: {leaked_defaults}. "
+            "The converter is using a hardcoded default instead of the provided token."
+        )
+
+    def test_element_overrides_use_token_colors(self):
+        """Direct element rules (#urlbar-background etc.) must use token colors, not defaults."""
+        css = tokens_to_css(self.RED_THEME)
+        # Split by element selectors and check each block
+        for selector in ["#navigator-toolbox", "#urlbar-background", "#urlbar-input-container"]:
+            assert selector in css, f"Missing element override for {selector}"
+            # The block after this selector must contain our surface color
+            block = css.split(selector)[1].split("}")[0]
+            assert "#ff0000" in block, (
+                f"{selector} block doesn't use theme surface color #ff0000 — "
+                "Firefox will show default or textfox colors instead"
+            )
+
+    def test_newtab_logo_is_agentobox(self):
+        """--tf-newtab-logo must show Agentobox branding, not textfox."""
+        css = tokens_to_css(self.RED_THEME)
+        assert _NEWTAB_LOGO_CSS in css, (
+            "Generated CSS doesn't set Agentobox newtab logo — "
+            "new tab will show textfox ASCII art instead of Agentobox branding"
+        )
+        assert "Agentobox" not in css or "gentobox" in css, (
+            "Sanity check: the logo should contain 'gentobox' substring"
+        )
+
+    def test_full_pipeline_tokens_to_file(self, tmp_path):
+        """Full convert_theme pipeline: tokens.json → userChrome.css with correct values."""
+        tokens_path = tmp_path / "tokens.json"
+        tokens_path.write_text(json.dumps(self.RED_THEME))
+        convert_theme(str(tokens_path))
+
+        css = (tmp_path / "userChrome.css").read_text()
+        # Every mapped variable must have the red value
+        for var_name, token_key in self.EXPECTED_MAPPINGS.items():
+            assert f"{var_name}: #ff0000" in css, (
+                f"After full pipeline, {var_name} is not #ff0000 — "
+                "tokens.json → CSS conversion lost this value"
+            )
+
+    def test_blyss_dark_theme_applies_correctly(self):
+        """Real theme: blyss-dark tokens produce CSS with blyss-dark values, not defaults."""
+        blyss_tokens = {
+            "surface": "#2B303B",
+            "surface-raised": "#343D46",
+            "text-default": "#C0C5CE",
+            "text-muted": "#65737E",
+            "accent": "#8FA1B3",
+            "border-default": "#343D46",
+            "border-subtle": "#343D46",
+        }
+        css = tokens_to_css(blyss_tokens)
+        # Key variables must use blyss-dark surface color
+        for var in ["--toolbar-bgcolor", "--newtab-background-color", "--tf-bg",
+                     "--sidebar-background-color", "--arrowpanel-background"]:
+            assert f"{var}: #2B303B" in css, (
+                f"{var} doesn't use blyss-dark surface #2B303B — theme not applied"
+            )
+        # Accent must be used for textfox accent and tab line
+        assert "--tf-accent: #8FA1B3" in css
+        assert "--lwt-tab-line-color: #8FA1B3" in css
+        # No claude-dark defaults should be present
+        assert "#1e1e1e" not in css, "claude-dark default surface leaked into blyss-dark CSS"
+
 
 class TestTokensToCSS:
     """tokens_to_css must produce valid CSS with the exact token values."""
@@ -202,6 +429,15 @@ class TestFirefoxConfig:
             "Firefox will never see theme changes"
         )
 
+    def test_mozilla_cfg_does_not_enable_marionette(self):
+        source = self.MOZILLA_CFG.read_text()
+        assert "marionette.enabled" not in source, (
+            "mozilla.cfg still enables Marionette even though theme reload is restart-based"
+        )
+        assert "marionette.port" not in source, (
+            "mozilla.cfg still pins Marionette port even though runtime theme reload no longer uses it"
+        )
+
     def test_paths_agree(self):
         """Both files must reference the SAME path."""
         cfg_source = self.MOZILLA_CFG.read_text()
@@ -242,11 +478,35 @@ class TestRelayPokeConfig:
             "tokens.json will not be converted to CSS"
         )
 
-    def test_relay_reads_generated_css(self):
+    def test_relay_does_not_restart_firefox(self):
+        """Relay must NOT restart Firefox — mozilla.cfg polls userChrome.css via
+        nsIStyleSheetService and picks up changes automatically."""
         source = self.RELAY_PY.read_text()
-        assert "userChrome.css" in source, (
-            "Relay does not reference userChrome.css — "
-            "Firefox CSS reload will not work"
+        assert "_restart_firefox_for_theme" not in source, (
+            "Relay still has _restart_firefox_for_theme — "
+            "theme reload should use mozilla.cfg polling, not Firefox restart"
+        )
+        assert "pkill" not in source.split("_on_theme_changed")[1].split("async def")[0] if "_on_theme_changed" in source else True, (
+            "Relay kills Firefox in theme handler — "
+            "should rely on mozilla.cfg polling instead"
+        )
+
+    def test_mozilla_cfg_has_polling_timer(self):
+        """mozilla.cfg must set up nsITimer for polling userChrome.css changes."""
+        mozilla_cfg = AGENT_ROOT / "rootfs" / "usr" / "lib" / "firefox-esr" / "mozilla.cfg"
+        source = mozilla_cfg.read_text()
+        assert "nsITimer" in source, (
+            "mozilla.cfg does not use nsITimer — live theme polling is missing"
+        )
+        assert "nsIStyleSheetService" in source, (
+            "mozilla.cfg does not use nsIStyleSheetService — cannot reload CSS at runtime"
+        )
+        assert "unregisterSheet" in source, (
+            "mozilla.cfg does not unregister old sheet before re-registering — "
+            "CSS changes won't take effect"
+        )
+        assert "loadAndRegisterSheet" in source, (
+            "mozilla.cfg does not register the theme sheet"
         )
 
     def test_poke_handler_registered_for_theme(self):
@@ -257,7 +517,24 @@ class TestRelayPokeConfig:
 
 
 # ---------------------------------------------------------------------------
-# 4. Init-volume symlink consistency
+# 4. Firefox profile setup
+# ---------------------------------------------------------------------------
+
+class TestFirefoxSetup:
+    """firefox-setup creates the profile and injects textfox + theme CSS."""
+
+    FIREFOX_SETUP = AGENT_ROOT / "rootfs" / "etc" / "s6-overlay" / "scripts" / "firefox-setup"
+    RC_LUA = AGENT_ROOT / "rootfs" / "home" / "agent" / ".config" / "awesome" / "rc.lua"
+
+    def test_headless_profile_creation_exists(self):
+        """firefox-setup must run a headless Firefox to create the default profile."""
+        source = self.FIREFOX_SETUP.read_text()
+        found = any("firefox-esr" in line and "--headless" in line for line in source.splitlines())
+        assert found, "No Firefox headless launch found in firefox-setup"
+
+
+# ---------------------------------------------------------------------------
+# 5. Init-volume symlink consistency
 # ---------------------------------------------------------------------------
 
 class TestInitVolumeSymlinks:

@@ -31,7 +31,3 @@ user_pref("app.update.auto", false);
 // Performance: disable animations for VNC streaming
 user_pref("toolkit.cosmeticAnimations.enabled", false);
 user_pref("ui.prefersReducedMotion", 1);
-
-// Enable Marionette for remote CSS reload (theme hot-swap via relay.py)
-user_pref("marionette.enabled", true);
-user_pref("marionette.port", 2828);

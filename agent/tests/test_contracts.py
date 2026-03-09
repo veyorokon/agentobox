@@ -332,6 +332,38 @@ class TestDependencyVersionCheck:
         assert payload["flags"]["verbose"] is True
 
 
+class TestFirefoxThemePolling:
+    """Theme changes rely on mozilla.cfg polling — relay must NOT restart Firefox."""
+
+    def test_no_firefox_restart_method(self):
+        """Relay must not have _restart_firefox_for_theme — polling replaces it."""
+        import relay
+        assert not hasattr(relay.SDKRelay, "_restart_firefox_for_theme"), (
+            "SDKRelay still has _restart_firefox_for_theme — "
+            "theme reload should use mozilla.cfg nsIStyleSheetService polling"
+        )
+
+    def test_no_firefox_process_constants(self):
+        """FIREFOX_WRAPPER and FIREFOX_PROCESS_NAME constants should be removed."""
+        import relay
+        assert not hasattr(relay, "FIREFOX_WRAPPER"), (
+            "relay.FIREFOX_WRAPPER still exists — dead code from restart approach"
+        )
+        assert not hasattr(relay, "FIREFOX_PROCESS_NAME"), (
+            "relay.FIREFOX_PROCESS_NAME still exists — dead code from restart approach"
+        )
+
+    def test_theme_handler_calls_converter(self):
+        """_on_theme_changed must call converters.py to regenerate CSS."""
+        import relay
+        import inspect
+        source = inspect.getsource(relay.SDKRelay._on_theme_changed)
+        assert "converters.py" in source, (
+            "_on_theme_changed does not call converters.py — "
+            "tokens.json won't be converted to userChrome.css"
+        )
+
+
 class TestHookBridgeRouting:
     """team-bridge.py tool classification — PRE tools are intercepted,
     POST tools are forwarded after native execution, others pass through."""
