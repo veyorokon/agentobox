@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useCallback, useEffect } from "react"
+import { useParams } from "next/navigation"
 import {
   Users,
   ChevronRight,
@@ -22,6 +23,7 @@ import { useBreakpoint } from "@/lib/hooks/use-breakpoint"
 import { useWindowWidth } from "@/lib/hooks/use-window-width"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents, useAcknowledgeAgent, useHardRestartAgent } from "@/lib/graphql/hooks/use-agents"
+import { useProviderStatus } from "@/lib/graphql/hooks/use-models"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentAvatar } from "@/components/agent/avatar"
 import { AgentCardRow } from "@/components/agent/card-row"
@@ -34,6 +36,7 @@ import { AgentFilterToolbar } from "@/components/shared/agent-filter-toolbar"
 import { useSelectMode } from "@/lib/hooks/use-select-mode"
 
 export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets: () => void; onCreateAgent?: () => void }) {
+  const { projectId } = useParams<{ projectId: string }>()
   const bp = useBreakpoint()
 
   // ── Sidebar store ──────────────────────────────────────────────────
@@ -55,7 +58,9 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const globalViewMode = useSidebarStore(s => s.globalViewMode)
   const setGlobalViewMode = useSidebarStore(s => s.setGlobalViewMode)
 
-  // ── Apollo (agents) ────────────────────────────────────────────────
+  // ── Apollo (agents + provider status) ─────────────────────────────
+  const { providers } = useProviderStatus(projectId ?? "")
+  const missingKeys = useMemo(() => providers.filter((p) => !p.configured), [providers])
   const { data, loading } = useAgents()
   const agents = data?.agents ?? []
   const acknowledgeAgent = useAcknowledgeAgent()
@@ -153,10 +158,13 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           <button
             type="button"
             onClick={onOpenSecrets}
-            className="p-1 rounded-md text-muted/50 hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-            title="Project secrets"
+            className="relative p-1 rounded-md text-muted/50 hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+            title={missingKeys.length > 0 ? `${missingKeys.length} key${missingKeys.length !== 1 ? "s" : ""} missing` : "Project secrets"}
           >
             <KeyRound className="h-3 w-3" />
+            {missingKeys.length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-warning animate-pulse" />
+            )}
           </button>
           <span className="text-[8px] text-muted/50 font-mono tabular-nums">
             {formatCost(totalCost)}
@@ -236,10 +244,13 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         <button
           type="button"
           onClick={onOpenSecrets}
-          className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
-          title="Project secrets"
+          className="relative p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors shrink-0"
+          title={missingKeys.length > 0 ? `${missingKeys.length} key${missingKeys.length !== 1 ? "s" : ""} missing` : "Project secrets"}
         >
           <KeyRound className="h-3.5 w-3.5" />
+          {missingKeys.length > 0 && (
+            <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-warning animate-pulse" />
+          )}
         </button>
         <ThemePicker className="shrink-0" />
         <UserMenu className="shrink-0">

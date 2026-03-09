@@ -53,9 +53,11 @@ export function SecretsModal({
   open: boolean
   onClose: () => void
 }) {
-  const { projectId } = useParams<{ projectId: string }>()
+  const params = useParams<{ projectId: string }>()
+  const projectId = params?.projectId
+  const hasProject = !!projectId
   const { data: agentsData } = useAgents()
-  const agents = agentsData?.agents ?? []
+  const agents = hasProject ? (agentsData?.agents ?? []) : []
   const { providers } = useProviderStatus(projectId ?? "")
 
   const { data: accountData } = useAccountSecrets(!open)
@@ -203,7 +205,9 @@ export function SecretsModal({
               <h2 id="secrets-title" className="text-sm font-semibold text-default">Secrets</h2>
             </div>
             <p className="text-[11px] text-muted mt-0.5 ml-6">
-              Environment variables injected into agent containers
+              {hasProject
+                ? "Environment variables injected into agent containers"
+                : "Account-level secrets inherited by all projects"}
             </p>
           </div>
           <button
@@ -352,32 +356,36 @@ export function SecretsModal({
 
           {/* Level toggle + credential detection */}
           <div className="flex items-center gap-3 mt-2">
-            <div className="flex items-center gap-1 bg-surface-sunken/40 rounded-md p-0.5">
-              <button
-                type="button"
-                onClick={() => setNewLevel("account")}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
-                  newLevel === "account"
-                    ? "bg-surface-raised text-default shadow-sm"
-                    : "text-muted hover:text-secondary",
-                )}
-              >
-                account
-              </button>
-              <button
-                type="button"
-                onClick={() => setNewLevel("project")}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
-                  newLevel === "project"
-                    ? "bg-surface-raised text-default shadow-sm"
-                    : "text-muted hover:text-secondary",
-                )}
-              >
-                project
-              </button>
-            </div>
+            {hasProject ? (
+              <div className="flex items-center gap-1 bg-surface-sunken/40 rounded-md p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setNewLevel("account")}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
+                    newLevel === "account"
+                      ? "bg-surface-raised text-default shadow-sm"
+                      : "text-muted hover:text-secondary",
+                  )}
+                >
+                  account
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewLevel("project")}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
+                    newLevel === "project"
+                      ? "bg-surface-raised text-default shadow-sm"
+                      : "text-muted hover:text-secondary",
+                  )}
+                >
+                  project
+                </button>
+              </div>
+            ) : (
+              <span className="text-[10px] text-muted/50">saved to your account — all projects inherit</span>
+            )}
 
             {credentialHint && (
               <div className="flex items-center gap-2">

@@ -17,6 +17,7 @@ import { useProjectWebSocket } from "@/lib/hooks/use-project-ws"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useFeed } from "@/lib/graphql/hooks/use-feed"
+import { useProviderStatus } from "@/lib/graphql/hooks/use-models"
 
 import { SecretsModal } from "@/components/panels/secrets-modal"
 import { CreateAgentModal } from "@/components/agent/create-agent-modal"
@@ -49,7 +50,9 @@ export default function ProjectPage() {
   const mainTab = useSidebarStore(s => s.mainTab)
   const setMainTab = useSidebarStore(s => s.setMainTab)
 
-  // ── Apollo (agents + feed) ──────────────────────────────────────
+  // ── Apollo (agents + feed + providers) ─────────────────────────
+  const { providers } = useProviderStatus(projectId ?? "")
+  const missingKeys = providers.filter((p) => !p.configured)
   const { data: agentsData } = useAgents()
   const agents = agentsData?.agents ?? []
   const { data: feedData } = useFeed()
@@ -114,10 +117,13 @@ export default function ProjectPage() {
             <button
               type="button"
               onClick={() => setSecretsOpen(true)}
-              className="p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
-              title="Project secrets"
+              className="relative p-1.5 rounded-md text-muted hover:text-secondary hover:bg-surface-raised/50 transition-colors"
+              title={missingKeys.length > 0 ? `${missingKeys.length} key${missingKeys.length !== 1 ? "s" : ""} missing` : "Project secrets"}
             >
               <KeyRound className="h-3.5 w-3.5" />
+              {missingKeys.length > 0 && (
+                <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-warning animate-pulse" />
+              )}
             </button>
             <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1.5">
               {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
