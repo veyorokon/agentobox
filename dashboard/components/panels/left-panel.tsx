@@ -1,7 +1,8 @@
 "use client"
 
 import { useMemo, useCallback, useEffect } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
+import { useQuery } from "@apollo/client/react"
 import {
   Users,
   ChevronRight,
@@ -15,7 +16,9 @@ import {
   List,
   Settings,
   RotateCcw,
+  Globe,
 } from "lucide-react"
+import { GET_PROJECT } from "@/lib/graphql/queries/projects"
 import { cn, formatCost } from "@/lib/utils"
 import type { ViewMode } from "@/lib/types"
 import { LIFECYCLE_CONFIG } from "@/lib/config"
@@ -37,7 +40,15 @@ import { useSelectMode } from "@/lib/hooks/use-select-mode"
 
 export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets: () => void; onCreateAgent?: () => void }) {
   const { projectId } = useParams<{ projectId: string }>()
+  const router = useRouter()
   const bp = useBreakpoint()
+
+  // ── Project name ────────────────────────────────────────────────────
+  const { data: projectData } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
+    variables: { id: projectId },
+    skip: !projectId,
+  })
+  const projectName = projectData?.project?.name ?? ""
 
   // ── Sidebar store ──────────────────────────────────────────────────
   const isOpen = useSidebarStore(s => s.sidebarOpen)
@@ -146,9 +157,14 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
 
         {/* Project icon + user + secrets + cost */}
         <div className="pt-3 pb-1 flex flex-col items-center gap-1.5">
-          <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent">
-            A
-          </div>
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="h-6 w-6 rounded-md bg-surface-raised/50 flex items-center justify-center hover:bg-accent/15 transition-colors"
+            title="Back to global"
+          >
+            <Globe className="h-3.5 w-3.5 text-muted hover:text-accent" />
+          </button>
           <div
             className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-on-emphasis bg-accent cursor-pointer hover:ring-2 hover:ring-accent/30 transition-shadow"
             title="vahid-eyorokon"
@@ -227,16 +243,20 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
 
       {/* Project selector + secrets + cost */}
       <div className="h-10 px-3 flex items-center border-b border-border-default shrink-0">
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors min-w-0"
-        >
-          <div className="h-6 w-6 rounded-md bg-accent/15 flex items-center justify-center text-[11px] font-bold text-accent shrink-0">
-            A
-          </div>
-          <span className="text-sm font-medium text-default truncate">agentobox</span>
-          <ChevronRight size={12} className="text-muted/40 rotate-90 shrink-0" />
-        </button>
+        <div className="inline-flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="inline-flex items-center gap-1 px-1 py-1 -ml-1 rounded-md hover:bg-surface-sunken/40 transition-colors shrink-0"
+            title="Back to global"
+          >
+            <Globe className="h-3.5 w-3.5 text-muted" />
+          </button>
+          <ChevronRight className="h-2.5 w-2.5 text-muted/30 shrink-0" />
+          <span className="text-sm font-medium text-default truncate">
+            {projectName || projectId}
+          </span>
+        </div>
         <span className="text-[10px] text-muted/60 font-mono tabular-nums ml-1 shrink-0">
           {formatCost(totalCost)}
         </span>
