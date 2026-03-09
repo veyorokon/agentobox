@@ -91,13 +91,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         # on the volume (inbox.jsonl) and the relay reads them on startup.
         # Theme is also on the volume (tokens.json), applied by init-volume.
         from agents.models import Agent, AgentStatus
+        from agents.services.lifecycle import transition_agent_status
         if self.agent.status == AgentStatus.DEPLOYING:
             now = timezone.now()
+            transition_agent_status(self.agent, AgentStatus.IDLE, reason="relay_connected")
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 status=AgentStatus.IDLE,
                 deployed_at=now,
             )
-            self.agent.status = AgentStatus.IDLE
             self.agent.deployed_at = now
             from agents.services.broadcast import broadcast_agent_update
             await broadcast_agent_update(self.agent)

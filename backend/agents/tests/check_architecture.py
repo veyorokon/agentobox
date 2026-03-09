@@ -107,7 +107,7 @@ def check_service_naming():
         "resolve", "provision", "ensure", "answer", "hard_restart",
         "write", "externalize", "upload", "encrypt", "decrypt",
         "reconcile", "search", "terminate",
-        "deliver", "get", "list", "handle", "build",
+        "deliver", "get", "list", "handle", "build", "transition",
     )
     for f in _python_files(SERVICES_DIR):
         tree = ast.parse(_read_source(f))
@@ -262,6 +262,43 @@ def check_no_agent_vocabulary_in_agent():
             fail(f"Agent model contains agent-specific vocabulary: {term!r}")
 
 
+# ── Lifecycle state machine ──
+
+
+def check_no_direct_status_writes():
+    """All agent status changes must go through transition_agent_status().
+
+    Allows: lifecycle.py (contains the transition function itself),
+    test files, and the initial acreate() in lifecycle.py which sets
+    the default status at creation time (not a transition).
+
+    Only catches attribute assignment patterns (agent.status = AgentStatus.X),
+    not queryset filter/exclude comparisons or local variable assignments.
+    """
+    import re
+    # Match: .status = AgentStatus.X (attribute assignment on an object)
+    # This catches: agent.status = AgentStatus.RUNNING, self.agent.status = AgentStatus.IDLE
+    # Does NOT catch: status=AgentStatus.X (kwarg in filter/exclude), status__in=[...],
+    #   new_status = AgentStatus.X (local var), or "status": AgentStatus.X
+    pattern = re.compile(r'\.\s*status\s*=\s*AgentStatus\.')
+
+    # Files allowed to write status directly
+    allowed_files = {"lifecycle.py"}
+
+    for f in _python_files(SERVICES_DIR):
+        if f.name in allowed_files:
+            continue
+        src = _read_source(f)
+        for match in pattern.finditer(src):
+            line_start = src.rfind("\n", 0, match.start()) + 1
+            line_end = src.find("\n", match.end())
+            line = src[line_start:line_end].strip()
+            fail(
+                f"{f.name} writes agent status directly: '{line}' "
+                f"— use transition_agent_status() from lifecycle.py"
+            )
+
+
 # ── Main ──
 
 
@@ -279,6 +316,7 @@ def main() -> int:
         check_no_relay_imports_in_graphql,
         check_no_cross_module_private_imports,
         check_mutable_models_have_updated_at,
+        check_no_direct_status_writes,
     ]
 
     for check in checks:

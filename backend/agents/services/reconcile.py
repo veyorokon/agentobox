@@ -23,6 +23,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from agents.models import Agent, AgentStatus
+from agents.services.lifecycle import transition_agent_status
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item
 from agents.services.utils import terminate_sandbox
@@ -88,7 +89,9 @@ def _mark_error(agent_id, error_message=""):
             compute_seconds=F("compute_seconds") + elapsed,
         )
 
-    agent.status = AgentStatus.ERROR
+    # Force=True: reconciler is a recovery path — it must be able to fix
+    # any stuck state, even if the transition isn't normally legal.
+    transition_agent_status(agent, AgentStatus.ERROR, reason="reconciler", force=True)
     agent.deployed_at = None
     update_fields = ["status", "deployed_at", "updated_at"]
     # Only write error_message if not already set (stream.py may have set it first)
@@ -110,7 +113,9 @@ def _mark_stopped(agent_id):
             compute_seconds=F("compute_seconds") + elapsed,
         )
 
-    agent.status = AgentStatus.STOPPED
+    # Force=True: reconciler is a recovery path — it must be able to fix
+    # any stuck state, even if the transition isn't normally legal.
+    transition_agent_status(agent, AgentStatus.STOPPED, reason="reconciler_reap", force=True)
     agent.deployed_at = None
     agent.save(update_fields=["status", "deployed_at", "updated_at"])
     return agent
