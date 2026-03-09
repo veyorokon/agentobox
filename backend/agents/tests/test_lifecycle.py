@@ -39,6 +39,8 @@ def _create_project_without_signals(*, name: str, owner: User) -> Project:
     Project.objects.bulk_create([project])
     return project
 
+pytestmark = pytest.mark.unit
+
 
 def test_shell_escape_basic():
     """Simple safe strings pass through unquoted (shlex.quote behavior)."""

@@ -9,6 +9,8 @@ Tests verify:
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from agents.adapters.claude_code import ClaudeCodeAdapter
 from agents.tests.conftest import (
     SAMPLE_SNAPSHOTS, SAMPLE_EVENTS, SEED_AGENTS,

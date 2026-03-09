@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from django.utils import timezone
 
+pytestmark = pytest.mark.unit
+
 from agents.models import AgentStatus
 from agents.services.reconcile import (
     DEPLOY_GRACE_S,

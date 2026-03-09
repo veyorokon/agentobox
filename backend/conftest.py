@@ -1,4 +1,4 @@
-"""Shared fixtures for the agentobox test suite."""
+"""Shared fixtures and marker registration for the agentobox test suite."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -9,6 +9,14 @@ from django.contrib.auth.models import AnonymousUser
 from accounts.models import User
 from agents.models import Agent, AgentStatus
 from projects.models import Project
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "unit: Fast tests with no external dependencies")
+    config.addinivalue_line("markers", "integration: Tests requiring database/redis/docker")
+    config.addinivalue_line("markers", "chaos: Failure injection tests")
+    config.addinivalue_line("markers", "e2e: End-to-end tests requiring full stack")
+    config.addinivalue_line("markers", "invariant: Architectural invariant tests (INV-* IDs)")
 
 
 @pytest.fixture(scope="session")

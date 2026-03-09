@@ -37,7 +37,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "config.settings"
+DJANGO_SETTINGS_MODULE = "config.settings_test"
 asyncio_mode = "auto"
 pythonpath = ["."]
 testpaths = [
@@ -45,4 +45,11 @@ testpaths = [
     "projects",
     "accounts",
     "config",
+]
+markers = [
+    "unit: Fast tests with no external dependencies",
+    "integration: Tests requiring database/redis/docker",
+    "chaos: Failure injection tests",
+    "e2e: End-to-end tests requiring full stack",
+    "invariant: Architectural invariant tests (INV-* IDs)",
 ]

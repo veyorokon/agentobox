@@ -6,6 +6,8 @@ tests live in test_adapter_cc.py (Claude Code).
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from agents.adapters import get_adapter, register_adapter, _REGISTRY
 from agents.adapters.base import AgentAdapter
 from agents.adapters.claude_code import ClaudeCodeAdapter

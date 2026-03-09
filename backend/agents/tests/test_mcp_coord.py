@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from agents.services.mcp_coord import (
     send_message,
     task_create,

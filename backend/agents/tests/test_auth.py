@@ -6,7 +6,7 @@ from agents.graphql.auth import authorize_agent, authorize_agents, authorize_pro
 from agents.models import Agent, AgentStatus
 from projects.models import Project
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
 
 
 # ---------------------------------------------------------------------------

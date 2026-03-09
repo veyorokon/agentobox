@@ -8,6 +8,8 @@ import pytest
 
 from agents.models import Agent, AgentStatus
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.django_db
 class TestResolverAdapterDelegation:

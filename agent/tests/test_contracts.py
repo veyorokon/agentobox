@@ -20,6 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 
 class TestProcessExitEvent:
     """process_exit synthetic event — stream.py reads exit_code as int,
