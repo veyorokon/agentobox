@@ -167,6 +167,21 @@ export default function GlobalPage() {
     [secretNewKey, secretNewValue],
   )
 
+  // Filter presets as user types in the key field
+  const secretFilter = secretNewKey.trim().toLowerCase()
+  const filteredProviders = useMemo(
+    () => secretFilter
+      ? PROVIDER_PRESETS.filter((p) => p.name.toLowerCase().includes(secretFilter) || p.keyName.toLowerCase().includes(secretFilter))
+      : PROVIDER_PRESETS,
+    [secretFilter],
+  )
+  const filteredApps = useMemo(
+    () => secretFilter
+      ? APP_PRESETS.filter((p) => p.name.toLowerCase().includes(secretFilter) || p.keyName.toLowerCase().includes(secretFilter))
+      : APP_PRESETS,
+    [secretFilter],
+  )
+
   // ── Secret row management (create form) ──
 
   const handleAddSecret = () => {
@@ -471,6 +486,8 @@ export default function GlobalPage() {
                       value={newValue}
                       onChange={(e) => setNewValue(e.target.value)}
                       placeholder="value"
+                      autoComplete="off"
+                      data-1p-ignore
                       className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
                     />
                     <button
@@ -633,6 +650,8 @@ export default function GlobalPage() {
                   value={secretNewValue}
                   onChange={(e) => setSecretNewValue(e.target.value)}
                   placeholder="value"
+                  autoComplete="off"
+                  data-1p-ignore
                   className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
                 />
                 <button
@@ -673,51 +692,60 @@ export default function GlobalPage() {
             </div>
 
             {/* ── Preset quick-fill buttons ── */}
-            <div className="px-4 pb-3 flex flex-wrap items-center gap-x-1 gap-y-1.5">
-              <span className="text-[9px] uppercase tracking-widest text-muted/40 mr-1">Providers</span>
-              {PROVIDER_PRESETS.map((p) => {
-                const configured = accountKeySet.has(p.keyName)
-                return (
-                  <button
-                    key={p.slug}
-                    type="button"
-                    disabled={configured}
-                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
-                    className={cn(
-                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
-                      configured
-                        ? "text-success/60 cursor-default"
-                        : "text-muted/50 hover:text-accent hover:bg-accent/5",
-                    )}
-                  >
-                    {configured && <Check className="h-2 w-2" />}
-                    {p.name}
-                  </button>
-                )
-              })}
-              <span className="text-border-subtle select-none mx-0.5">·</span>
-              <span className="text-[9px] uppercase tracking-widest text-muted/40 mr-1">Services</span>
-              {APP_PRESETS.map((p) => {
-                const configured = accountKeySet.has(p.keyName)
-                return (
-                  <button
-                    key={p.keyName}
-                    type="button"
-                    disabled={configured}
-                    onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
-                    className={cn(
-                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
-                      configured
-                        ? "text-success/60 cursor-default"
-                        : "text-muted/50 hover:text-accent hover:bg-accent/5",
-                    )}
-                  >
-                    {configured && <Check className="h-2 w-2" />}
-                    {p.name}
-                  </button>
-                )
-              })}
-            </div>
+            {(filteredProviders.length > 0 || filteredApps.length > 0) && (
+              <div className="px-4 pb-3 space-y-1">
+                {filteredProviders.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+                    <span className="text-[9px] uppercase tracking-widest text-muted/40 mr-1">Providers</span>
+                    {filteredProviders.map((p) => {
+                      const configured = accountKeySet.has(p.keyName)
+                      return (
+                        <button
+                          key={p.slug}
+                          type="button"
+                          disabled={configured}
+                          onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+                            configured
+                              ? "text-success/60 cursor-default"
+                              : "text-muted/50 hover:text-accent hover:bg-accent/5",
+                          )}
+                        >
+                          {configured && <Check className="h-2 w-2" />}
+                          {p.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {filteredApps.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+                    <span className="text-[9px] uppercase tracking-widest text-muted/40 mr-1">Services</span>
+                    {filteredApps.map((p) => {
+                      const configured = accountKeySet.has(p.keyName)
+                      return (
+                        <button
+                          key={p.keyName}
+                          type="button"
+                          disabled={configured}
+                          onClick={() => { if (!configured) setSecretNewKey(p.keyName) }}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+                            configured
+                              ? "text-success/60 cursor-default"
+                              : "text-muted/50 hover:text-accent hover:bg-accent/5",
+                          )}
+                        >
+                          {configured && <Check className="h-2 w-2" />}
+                          {p.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Secrets list ── */}
             {accountSecrets.length === 0 ? (

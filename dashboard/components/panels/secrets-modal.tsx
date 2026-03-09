@@ -318,6 +318,8 @@ export function SecretsModal({
               value={newValue}
               onChange={(e) => setNewValue(e.target.value)}
               placeholder="value"
+              autoComplete="off"
+              data-1p-ignore
               className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
             />
             <button
