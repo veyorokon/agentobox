@@ -5,7 +5,11 @@ quotes and handles all shell metacharacters. These tests verify the
 contract: output is a fully-quoted shell-safe string.
 """
 
+import pytest
+
 from agents.adapters.claude_code import _shell_escape
+
+pytestmark = pytest.mark.unit
 
 
 def test_shell_escape_basic():

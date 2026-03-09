@@ -12,7 +12,11 @@ import json
 import logging
 import os
 
+import pytest
+
 from abox_logging import JSONFormatter, setup
+
+pytestmark = pytest.mark.unit
 
 
 class TestJSONFormatter:

@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 from agents.models import Agent, AgentStatus
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def mock_broadcast():

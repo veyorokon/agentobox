@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.unit, pytest.mark.invariant]
+
 from agents.services.volume import MANAGED_CONFIG_FILES, SYMLINKED_PREFIXES, Volume
 
 

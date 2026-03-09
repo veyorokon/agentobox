@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.unit, pytest.mark.invariant]
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BACKEND_DIR = PROJECT_ROOT / "backend"

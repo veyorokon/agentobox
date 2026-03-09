@@ -6,6 +6,8 @@ import pytest
 
 from agents.services.comms import _normalize_content, send_message
 
+pytestmark = pytest.mark.unit
+
 
 def _image_block(url, media_type=None):
     """Helper: build an image content block with a URL source."""

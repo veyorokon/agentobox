@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local test-agent lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -65,6 +65,15 @@ test-e2e-dashboard:
 
 test-integration:
 	uv run --group e2e pytest tests/integration/ -v --timeout=30 -m "integration" -o "addopts="
+
+test-unit:
+	cd backend && uv run pytest -m "unit" --tb=short -q
+
+test-invariant:
+	cd backend && uv run pytest -m "invariant" --tb=short -q
+
+test-all:
+	docker compose exec backend uv run pytest --tb=short -q
 
 seed:
 	docker compose exec backend uv run python manage.py seed_dev_data
