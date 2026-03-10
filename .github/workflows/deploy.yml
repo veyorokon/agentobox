@@ -16,6 +16,13 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
