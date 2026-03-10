@@ -762,9 +762,11 @@ class ClaudeCodeAdapter:
                     "path": "/home/agent/.claude/.credentials.json",
                     "content": json.dumps({
                         "claudeAiOauth": {
-                            "token_type": "Bearer",
-                            "access_token": api_key,
-                            "expires_at": "9999-12-31T23:59:59.000Z",
+                            "accessToken": api_key,
+                            "expiresAt": "9999-12-31T23:59:59.000Z",
+                            "scopes": ["user:inference"],
+                            "subscriptionType": None,
+                            "rateLimitTier": None,
                         },
                     }),
                     "mode": "0600",

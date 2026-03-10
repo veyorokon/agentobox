@@ -993,7 +993,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     spawn_logged_task(
         _provision_agent(
             agent,
-            project,
+            agent.project,
             runtime_name,
             op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
             secret_envs,

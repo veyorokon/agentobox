@@ -575,8 +575,8 @@ class TestBuildApiKeyFiles:
         cred = files[0]
         assert cred["path"] == "/home/agent/.claude/.credentials.json"
         cred_data = json.loads(cred["content"])
-        assert cred_data["claudeAiOauth"]["access_token"] == "sk-ant-oat01-real-oauth-token"
-        assert cred_data["claudeAiOauth"]["token_type"] == "Bearer"
+        assert cred_data["claudeAiOauth"]["accessToken"] == "sk-ant-oat01-real-oauth-token"
+        assert cred_data["claudeAiOauth"]["scopes"] == ["user:inference"]
         assert cred["mode"] == "0600"
         assert cred["owner"] == "1000:1000"
 

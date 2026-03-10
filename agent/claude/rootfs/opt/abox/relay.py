@@ -33,6 +33,7 @@ import subprocess
 import sys
 import time
 from urllib import error as urlerror
+from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 # ---------------------------------------------------------------------------
@@ -238,8 +239,8 @@ def _preflight_mcp_servers(config_path: str, timeout_s: float = 3.0) -> list[dic
                 )
             # Skip content-type check for localhost (gateway-proxied servers).
             # The gateway health endpoint returns text/plain, not text/event-stream.
-            is_local = "localhost" in url or "127.0.0.1" in url
-            if not is_local and "text/event-stream" not in content_type:
+            parsed = urlparse.urlparse(url)
+            if parsed.hostname not in ("localhost", "127.0.0.1") and "text/event-stream" not in content_type:
                 raise MCPConnectivityError(
                     f"MCP server '{name}' preflight expected text/event-stream, got '{content_type or 'unknown'}'"
                 )
