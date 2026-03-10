@@ -53,6 +53,11 @@ variable "allowed_ssh_cidrs" {
   default = ["0.0.0.0/0"]
 }
 
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
+
 locals {
   project     = "agentobox"
   environment = "dev"
@@ -88,6 +93,25 @@ module "dns" {
   public_ip = module.compute.public_ip
 }
 
+module "database" {
+  source = "../../modules/database"
+
+  project               = local.project
+  environment           = local.environment
+  master_password       = var.db_password
+  subnet_ids            = module.networking.public_subnet_ids
+  vpc_id                = module.networking.vpc_id
+  app_security_group_id = module.networking.app_security_group_id
+}
+
+module "backup" {
+  source = "../../modules/backup"
+
+  project     = local.project
+  environment = local.environment
+  target_arns = [module.compute.instance_arn]
+}
+
 # --- Outputs ---
 
 output "public_ip" {
@@ -104,4 +128,12 @@ output "instance_id" {
 
 output "ssh_command" {
   value = "ssh ubuntu@${module.compute.public_ip}"
+}
+
+output "db_endpoint" {
+  value = module.database.endpoint
+}
+
+output "db_address" {
+  value = module.database.address
 }

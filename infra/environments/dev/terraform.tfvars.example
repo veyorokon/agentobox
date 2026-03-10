@@ -7,5 +7,7 @@ zone_id        = "Z00812024GI3ZL8BSUG3"  # Route53 hosted zone ID
 key_pair_name  = "agentobox-dev"         # EC2 key pair name
 instance_type  = "t3.small"
 
+db_password    = ""                    # RDS master password (sensitive)
+
 # Restrict SSH to your IP (recommended)
 # allowed_ssh_cidrs = ["1.2.3.4/32"]
