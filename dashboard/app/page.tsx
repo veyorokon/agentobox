@@ -197,12 +197,18 @@ export default function GlobalPage() {
     setPendingSecrets((prev) => prev.filter((s) => s.key !== key))
   }
 
-  // Auto-suggest required key when model changes
+  // Auto-suggest required key when model changes (only if key is missing)
+  const secretsLoaded = !!accountSecretsData
+  const keyMissing = secretsLoaded && !!requiredKeyName && !accountKeySet.has(requiredKeyName) && !pendingKeySet.has(requiredKeyName)
   useEffect(() => {
-    if (requiredKeyName && !accountKeySet.has(requiredKeyName) && !pendingKeySet.has(requiredKeyName)) {
-      setNewKey(requiredKeyName)
+    if (keyMissing) {
+      setNewKey(requiredKeyName!)
+      setShowSecrets(true)
     }
-  }, [requiredKeyName, accountKeySet, pendingKeySet])
+  }, [keyMissing, requiredKeyName])
+
+  // Secrets section expand/collapse — auto-expand when key is missing
+  const [showSecrets, setShowSecrets] = useState(false)
 
   // ── Secrets tab handlers ──
 
@@ -254,6 +260,7 @@ export default function GlobalPage() {
     setNewKey("")
     setNewValue("")
     setError("")
+    setShowSecrets(false)
   }
 
   // Wait for auth check
@@ -407,129 +414,148 @@ export default function GlobalPage() {
                 )}
               </div>
 
-              {/* Section 3: Secrets */}
+              {/* Section 3: Secrets — collapsed when all keys satisfied */}
               <div className="border-t border-border-subtle">
-                <div className="px-4 pt-3 pb-2">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <KeyRound className="h-3 w-3 text-muted" />
-                    <span className="text-xs font-medium text-secondary">Secrets</span>
-                    <span className="text-[10px] text-muted/50 ml-1">saved to your account — all projects inherit</span>
-                  </div>
-
-                  {/* Existing account secrets */}
+                <button
+                  type="button"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                  className="w-full px-4 py-2.5 flex items-center gap-1.5 hover:bg-surface-sunken/30 transition-colors"
+                >
+                  <KeyRound className="h-3 w-3 text-muted" />
+                  <span className="text-xs font-medium text-secondary">Secrets</span>
                   {accountSecrets.length > 0 && (
-                    <div className="mb-2 space-y-px">
-                      {accountSecrets.map((s) => (
-                        <div
-                          key={s.key}
-                          className="flex items-center gap-2 py-1.5"
-                        >
-                          <Check className="h-2.5 w-2.5 text-success/60 shrink-0" />
-                          <span className="text-[11px] font-mono text-default/70">{s.key}</span>
-                          <span className="text-[9px] text-muted/40 font-mono">{"●".repeat(8)}</span>
-                          <span className="text-[9px] text-muted/40 italic ml-auto">global</span>
-                        </div>
-                      ))}
-                    </div>
+                    <span className="text-[10px] text-muted/50 ml-0.5">
+                      {accountSecrets.length} configured
+                    </span>
                   )}
-
-                  {/* Pending secrets (to be saved on create) */}
                   {pendingSecrets.length > 0 && (
-                    <div className="mb-2 space-y-px">
-                      {pendingSecrets.map((s) => {
-                        const credHint = detectCredentialType(s.key, s.value)
-                        return (
+                    <span className="text-[10px] text-accent/60 font-medium">
+                      +{pendingSecrets.length} new
+                    </span>
+                  )}
+                  <ChevronDown className={cn(
+                    "h-3 w-3 text-muted/40 ml-auto transition-transform",
+                    showSecrets && "rotate-180",
+                  )} />
+                </button>
+
+                {showSecrets && (
+                  <div className="px-4 pb-3 space-y-2">
+                    {/* Existing account secrets */}
+                    {accountSecrets.length > 0 && (
+                      <div className="space-y-px">
+                        {accountSecrets.map((s) => (
                           <div
                             key={s.key}
-                            className="group flex items-center gap-2 py-1.5"
+                            className="flex items-center gap-2 py-1"
                           >
-                            <div className="h-2.5 w-2.5 rounded-full bg-accent/30 shrink-0" />
-                            <span className="text-[11px] font-mono text-default">{s.key}</span>
+                            <Check className="h-2.5 w-2.5 text-success/60 shrink-0" />
+                            <span className="text-[11px] font-mono text-default/70">{s.key}</span>
                             <span className="text-[9px] text-muted/40 font-mono">{"●".repeat(8)}</span>
-                            {credHint && (
-                              <span
-                                className={cn(
-                                  "inline-flex items-center px-1 py-0.5 rounded text-[9px] font-mono font-medium tracking-wide",
-                                  credHint === "oauth"
-                                    ? "bg-accent/10 text-accent border border-accent/20"
-                                    : "bg-surface-sunken text-muted border border-border-default",
-                                )}
-                              >
-                                {credHint === "oauth" ? "OAuth" : "API Key"}
-                              </span>
-                            )}
-                            <span className="text-[9px] text-accent/50 italic ml-auto mr-1">new</span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveSecret(s.key)}
-                              className="p-0.5 rounded text-muted/30 hover:text-danger transition-colors opacity-0 group-hover:opacity-100"
-                            >
-                              <Trash2 className="h-2.5 w-2.5" />
-                            </button>
+                            <span className="text-[9px] text-muted/40 italic ml-auto">global</span>
                           </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  {/* Add secret row */}
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newKey}
-                      onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-                      placeholder="KEY_NAME"
-                      className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
-                    />
-                    <input
-                      type="password"
-                      value={newValue}
-                      onChange={(e) => setNewValue(e.target.value)}
-                      placeholder="value"
-                      autoComplete="off"
-                      data-1p-ignore
-                      className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddSecret}
-                      disabled={!newKey.trim() || !newValue.trim()}
-                      className={cn(
-                        "px-3 py-1.5 rounded-md text-xs font-medium transition-colors shrink-0",
-                        newKey.trim() && newValue.trim()
-                          ? "bg-accent text-on-emphasis hover:bg-accent-hover"
-                          : "bg-surface-sunken text-muted cursor-not-allowed",
-                      )}
-                    >
-                      Add
-                    </button>
-                  </div>
-
-                  {/* Credential hint for current input */}
-                  {newKey && newValue && (() => {
-                    const hint = detectCredentialType(newKey, newValue)
-                    if (!hint) return null
-                    return (
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <span
-                          className={cn(
-                            "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium tracking-wide",
-                            hint === "oauth"
-                              ? "bg-accent/10 text-accent border border-accent/20"
-                              : "bg-surface-sunken text-muted border border-border-default",
-                          )}
-                        >
-                          {hint === "oauth" ? "OAuth Token" : "API Key"}
-                        </span>
-                        {hint === "oauth" && (
-                          <span className="text-[10px] text-muted/50">
-                            via <span className="font-mono">claude setup-token</span>
-                          </span>
-                        )}
+                        ))}
                       </div>
-                    )
-                  })()}
-                </div>
+                    )}
+
+                    {/* Pending secrets (to be saved on create) */}
+                    {pendingSecrets.length > 0 && (
+                      <div className="space-y-px">
+                        {pendingSecrets.map((s) => {
+                          const credHint = detectCredentialType(s.key, s.value)
+                          return (
+                            <div
+                              key={s.key}
+                              className="group flex items-center gap-2 py-1"
+                            >
+                              <div className="h-2.5 w-2.5 rounded-full bg-accent/30 shrink-0" />
+                              <span className="text-[11px] font-mono text-default">{s.key}</span>
+                              <span className="text-[9px] text-muted/40 font-mono">{"●".repeat(8)}</span>
+                              {credHint && (
+                                <span
+                                  className={cn(
+                                    "inline-flex items-center px-1 py-0.5 rounded text-[9px] font-mono font-medium tracking-wide",
+                                    credHint === "oauth"
+                                      ? "bg-accent/10 text-accent border border-accent/20"
+                                      : "bg-surface-sunken text-muted border border-border-default",
+                                  )}
+                                >
+                                  {credHint === "oauth" ? "OAuth" : "API Key"}
+                                </span>
+                              )}
+                              <span className="text-[9px] text-accent/50 italic ml-auto mr-1">new</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSecret(s.key)}
+                                className="p-0.5 rounded text-muted/30 hover:text-danger transition-colors opacity-0 group-hover:opacity-100"
+                              >
+                                <Trash2 className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {/* Add secret row */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={newKey}
+                        onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                        placeholder="KEY_NAME"
+                        className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
+                      />
+                      <input
+                        type="password"
+                        value={newValue}
+                        onChange={(e) => setNewValue(e.target.value)}
+                        placeholder="value"
+                        autoComplete="off"
+                        data-1p-ignore
+                        className="flex-1 min-w-0 bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default placeholder:text-muted/40 outline-none focus:border-accent/50 transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddSecret}
+                        disabled={!newKey.trim() || !newValue.trim()}
+                        className={cn(
+                          "px-3 py-1.5 rounded-md text-xs font-medium transition-colors shrink-0",
+                          newKey.trim() && newValue.trim()
+                            ? "bg-accent text-on-emphasis hover:bg-accent-hover"
+                            : "bg-surface-sunken text-muted cursor-not-allowed",
+                        )}
+                      >
+                        Add
+                      </button>
+                    </div>
+
+                    {/* Credential hint for current input */}
+                    {newKey && newValue && (() => {
+                      const hint = detectCredentialType(newKey, newValue)
+                      if (!hint) return null
+                      return (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium tracking-wide",
+                              hint === "oauth"
+                                ? "bg-accent/10 text-accent border border-accent/20"
+                                : "bg-surface-sunken text-muted border border-border-default",
+                            )}
+                          >
+                            {hint === "oauth" ? "OAuth Token" : "API Key"}
+                          </span>
+                          {hint === "oauth" && (
+                            <span className="text-[10px] text-muted/50">
+                              via <span className="font-mono">claude setup-token</span>
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
               </div>
 
               {/* Form actions */}
