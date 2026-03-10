@@ -101,10 +101,11 @@ COPY rootfs/etc/ /etc/
 RUN chmod +x /etc/s6-overlay/scripts/* \
     && chmod +x /etc/s6-overlay/s6-rc.d/*/run /etc/s6-overlay/s6-rc.d/*/finish 2>/dev/null || true
 
-# Browser wrappers, Firefox config, noVNC viewer, textfox defaults
+# Browser wrappers, Firefox config, noVNC viewer
 COPY rootfs/usr/ /usr/
 COPY rootfs/opt/noVNC/ /opt/noVNC/
-COPY rootfs/opt/textfox/ /opt/textfox/
+# Textfox: only overlay our defaults.css — don't clobber the cloned repo
+COPY rootfs/opt/textfox/chrome/defaults.css /opt/textfox/chrome/defaults.css
 RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
 
 # Home directory — AwesomeWM config, Firefox profile configs
