@@ -25,9 +25,12 @@ const RECONNECT_CAP_MS = 30_000
 
 function getWsUrl(projectId: string): string {
   if (typeof window === "undefined") return ""
-  const { protocol, hostname } = window.location
+  const { protocol, hostname, port } = window.location
   const wsProto = protocol === "https:" ? "wss:" : "ws:"
-  return `${wsProto}//${hostname}:8000/ws/dashboard/${projectId}/`
+  const host = !port || port === "80" || port === "443"
+    ? hostname
+    : `${hostname}:8000`
+  return `${wsProto}//${host}/ws/dashboard/${projectId}/`
 }
 
 function getAuthToken(): string | null {

@@ -15,11 +15,17 @@ import { createLogger } from "@/lib/logger"
 
 const log = createLogger("apollo")
 
-/** Derive GraphQL HTTP URL from the current browser hostname (same host, port 8000). */
+/** Derive GraphQL HTTP URL from the current browser location.
+ *  - NEXT_PUBLIC_API_URL override: always wins (build-time or runtime).
+ *  - SSR: falls back to localhost:8000 (dev only).
+ *  - Browser on standard port (80/443): same-origin /graphql (production behind reverse proxy).
+ *  - Browser on non-standard port: same hostname, port 8000 (local dev).
+ */
 function getApiUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL
   if (typeof window === "undefined") return "http://localhost:8000/graphql"
-  const { protocol, hostname } = window.location
+  const { protocol, hostname, port } = window.location
+  if (!port || port === "80" || port === "443") return `${protocol}//${hostname}/graphql`
   return `${protocol}//${hostname}:8000/graphql`
 }
 

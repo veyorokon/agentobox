@@ -1,12 +1,36 @@
-FROM node:22-alpine
+FROM node:22-alpine AS base
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json* ./
+RUN npm ci
 
 COPY . .
+
+# --- Dev target (used by docker-compose.yml) ---
+FROM base AS dev
 
 EXPOSE 5051
 
 CMD ["npm", "run", "dev"]
+
+# --- Production build ---
+FROM base AS builder
+
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN npm run build
+
+# --- Production image ---
+FROM node:22-alpine AS prod
+
+WORKDIR /app
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

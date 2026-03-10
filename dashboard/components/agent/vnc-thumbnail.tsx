@@ -32,9 +32,12 @@ const TRANSIENT_CODES: Set<number> = new Set([4003])
 
 /** Derive the VNC WebSocket URL from current browser hostname. */
 function buildVncWsUrl(agentId: string, token: string): string {
-  const { hostname } = window.location
-  const wsProto = window.location.protocol === "https:" ? "wss" : "ws"
-  return `${wsProto}://${hostname}:8000/ws/vnc/${agentId}/?token=${token}`
+  const { hostname, port, protocol } = window.location
+  const wsProto = protocol === "https:" ? "wss" : "ws"
+  const host = !port || port === "80" || port === "443"
+    ? hostname
+    : `${hostname}:8000`
+  return `${wsProto}://${host}/ws/vnc/${agentId}/?token=${token}`
 }
 
 /** Lifecycle states where the agent container is alive and VNC is reachable. */

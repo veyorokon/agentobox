@@ -85,7 +85,9 @@ services:
       - agent-volumes:/volumes
 
   dashboard:
-    build: ./dashboard
+    build:
+      context: ./dashboard
+      target: dev
     restart: unless-stopped
     environment:
       # Let Node use up to 8 GB heap — turbopack dev server is memory-hungry

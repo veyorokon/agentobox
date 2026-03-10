@@ -41,7 +41,19 @@ Thumbs.db
 
 # Environment
 .env
+.env.*
 !.env.example
+!.env.prod.example
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+crash.log
 
 # Docker
 pgdata/

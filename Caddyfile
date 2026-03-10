@@ -1,0 +1,47 @@
+{$DOMAIN} {
+    # GraphQL API
+    handle /graphql {
+        reverse_proxy backend:8000
+    }
+
+    # Django admin
+    handle /admin/* {
+        reverse_proxy backend:8000
+    }
+
+    # Health check
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # File uploads
+    handle /media/* {
+        reverse_proxy backend:8000
+    }
+    handle /agents/*/upload {
+        reverse_proxy backend:8000
+    }
+
+    # Hook bridge (agent callbacks)
+    handle /hook-bridge/* {
+        reverse_proxy backend:8000
+    }
+
+    # MCP coordination server
+    handle /mcp* {
+        reverse_proxy backend:8000
+    }
+    handle /messages/* {
+        reverse_proxy backend:8000
+    }
+
+    # WebSocket routes (relay, VNC proxy, dashboard)
+    handle /ws/* {
+        reverse_proxy backend:8000
+    }
+
+    # Everything else -> Next.js dashboard
+    handle {
+        reverse_proxy dashboard:3000
+    }
+}

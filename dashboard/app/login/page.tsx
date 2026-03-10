@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation"
 function getApiUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL
   if (typeof window === "undefined") return "http://localhost:8000/graphql"
-  const { protocol, hostname } = window.location
+  const { protocol, hostname, port } = window.location
+  if (!port || port === "80" || port === "443") return `${protocol}//${hostname}/graphql`
   return `${protocol}//${hostname}:8000/graphql`
 }
 

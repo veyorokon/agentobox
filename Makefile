@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -88,3 +88,89 @@ test-all:
 
 seed:
 	docker compose exec backend uv run python manage.py seed_dev_data
+
+# ── Infrastructure ─────────────────────────────────────────────────────
+
+ENV ?= dev
+TF_DIR = infra/environments/$(ENV)
+
+# All tf-* targets unset env var AWS keys so the agentobox profile is used.
+# The profile is set in the backend and provider blocks of each environment.
+
+tf-bootstrap: ## One-time: create S3 bucket + DynamoDB table for TF state
+	@. bin/lib.sh; \
+	banner "tf-bootstrap" "Create Terraform state backend" \
+		"bucket" "agentobox-tfstate" \
+		"lock table" "agentobox-tflock"; \
+	ensure_aws || exit 1; \
+	cd infra/bootstrap && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform init && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform apply
+
+tf-pull: ## Pull tfvars from GitHub environment. ENV=dev
+	@. bin/lib.sh; \
+	step "Pulling TFVARS for $(ENV)..."; \
+	gh api repos/veyorokon/agentobox/environments/$(ENV)/variables/TFVARS --jq '.value' \
+		> $(TF_DIR)/terraform.tfvars && \
+	ok "Wrote $(TF_DIR)/terraform.tfvars"
+
+tf-push: ## Push tfvars to GitHub environment. ENV=dev
+	@. bin/lib.sh; \
+	step "Pushing TFVARS for $(ENV)..."; \
+	gh api -X PATCH repos/veyorokon/agentobox/environments/$(ENV)/variables/TFVARS \
+		-f value="$$(cat $(TF_DIR)/terraform.tfvars)" && \
+	ok "Updated TFVARS for $(ENV)"
+
+tf-init: ## Terraform init. ENV=dev
+	@. bin/lib.sh; \
+	banner "tf-init" "Initialize Terraform" \
+		"environment" "$(ENV)" \
+		"directory" "$(TF_DIR)"; \
+	ensure_aws || exit 1; \
+	cd $(TF_DIR) && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform init
+
+tf-plan: ## Terraform plan. ENV=dev
+	@. bin/lib.sh; \
+	banner "tf-plan" "Plan infrastructure changes" \
+		"environment" "$(ENV)" \
+		"directory" "$(TF_DIR)"; \
+	ensure_aws || exit 1; \
+	cd $(TF_DIR) && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform plan
+
+tf-apply: ## Terraform apply. ENV=dev
+	@. bin/lib.sh; \
+	banner "tf-apply" "Apply infrastructure changes" \
+		"environment" "$(ENV)" \
+		"directory" "$(TF_DIR)"; \
+	ensure_aws || exit 1; \
+	cd $(TF_DIR) && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform apply
+
+tf-output: ## Terraform output. ENV=dev
+	@cd $(TF_DIR) && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform output
+
+tf-destroy: ## Terraform destroy. ENV=dev (USE WITH CAUTION)
+	@. bin/lib.sh; \
+	banner "tf-destroy" "DESTROY infrastructure" \
+		"environment" "$(ENV)" \
+		"directory" "$(TF_DIR)"; \
+	ensure_aws || exit 1; \
+	cd $(TF_DIR) && \
+	env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+		terraform destroy
+
+ssh: ## SSH into EC2 instance. ENV=dev
+	@cd $(TF_DIR) && \
+	ssh ubuntu@$$(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY terraform output -raw public_ip)
+
+aws-check: ## Verify AWS credentials for agentobox profile
+	@. bin/lib.sh; ensure_aws

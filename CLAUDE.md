@@ -120,6 +120,15 @@ curl -s localhost:8000/graphql -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <token>' --data-raw '{"query":"..."}'
 ```
 
+## Infrastructure
+
+- **AWS account**: `819625563092` (personal). Profile: `agentobox` in `~/.aws/credentials`.
+- **IMPORTANT**: Shell env vars (`AWS_ACCESS_KEY_ID`) point to a different account. Always use `AWS_PROFILE=agentobox` and unset env var keys for infra commands.
+- **Terraform**: `infra/modules/` (reusable) + `infra/environments/{dev,staging,prod}/` (per-env config). S3 backend for state.
+- **Config pattern**: `config/env.example` → `.env`, `config/env.{dev,staging,prod}` for overrides. `bin/lib.sh` for CLI helpers (banner/step/ok/error).
+- **Make targets**: `ENV=dev|staging|prod` selects everything — profile, domain, instance size.
+- **Deploy**: EC2 + Docker Compose + Caddy (auto TLS). Agents run on Modal (separate from platform infra).
+
 ## Debugging — Consult Logs First
 
 When debugging agent behavior, message delivery, or relay issues, **always check the actual logs** before theorizing. Every component has accessible logs:
