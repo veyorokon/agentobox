@@ -724,7 +724,11 @@ class SDKRelay:
             filename = cmd.get("changed", "")
             handler = self._poke_handlers.get(filename)
             if handler:
-                await handler()
+                try:
+                    await handler()
+                except Exception as e:
+                    log.error("relay.poke_handler_error", extra={"filename": filename, "error": str(e)})
+                    return
                 self._update_status(filename)
             else:
                 log.warning("relay.poke_handler_missing", extra={"filename": filename})
@@ -739,12 +743,19 @@ class SDKRelay:
         tokens_path = Path(f"{VOL_ROOT}/tmp/abox-theme/tokens.json")
         try:
             tokens = json.loads(tokens_path.read_text())
-        except FileNotFoundError:
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            log.warning("relay.theme_tokens_unreadable", extra={"error": str(e)})
             return
 
         # Run converter to regenerate derived files
-        _sp.run(["python3", "/opt/abox/converters.py", str(tokens_path)],
-                timeout=10, capture_output=True)
+        result = _sp.run(["python3", "/opt/abox/converters.py", str(tokens_path)],
+                         timeout=10, capture_output=True)
+        if result.returncode != 0:
+            log.error("relay.theme_converter_failed", extra={
+                "returncode": result.returncode,
+                "stderr": result.stderr.decode(errors="replace").strip()[:500],
+            })
+            return
 
         # Live-reload AwesomeWM
         surface = tokens.get("surface", "#1e1e1e")
@@ -799,7 +810,7 @@ class SDKRelay:
         while elapsed < max_elapsed:
             try:
                 await asyncio.get_event_loop().run_in_executor(None, _connect)
-                log.info("relay.theme_firefox_reloaded")
+                log.info("relay.theme_firefox_poked")
                 return
             except OSError:
                 elapsed += delay
