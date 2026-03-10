@@ -841,7 +841,7 @@ def _atomic_reset_for_restart(agent_id):
     or None if agent is already DEPLOYING (no-op).
     """
     with transaction.atomic():
-        agent = Agent.objects.select_for_update().get(id=agent_id)
+        agent = Agent.objects.select_related("project").select_for_update().get(id=agent_id)
 
         # Guard: if already deploying, another restart won the race
         if agent.status == AgentStatus.DEPLOYING:
@@ -969,9 +969,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
                 exc_info=True,
             )
 
-    # Resolve project secrets for this agent
-    from projects.models import Project
-    project = await Project.objects.aget(id=agent.project_id)
+    # Resolve project secrets for this agent (project already cached via select_related)
     secret_envs = await resolve_agent_secrets(agent, op_log)
 
     await broadcast_agent_update(agent)

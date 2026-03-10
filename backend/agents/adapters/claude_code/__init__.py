@@ -63,7 +63,6 @@ _PROXY_PLACEHOLDER_KEY = "sk-ant-proxy00-placeholder-key-for-agentobox-validatio
 _PROXY_KEY_PATH = "/run/secrets/proxy_key"
 _PROXY_PORT = 9999
 _OAUTH_TOKEN_PREFIX = "sk-ant-oat"
-_OAUTH_PLACEHOLDER_TOKEN = "sk-ant-oat00-placeholder-oauth-for-agentobox-proxy"
 
 # Frontend mode -> Claude Code permission mode mapping
 # Internal to adapter — used by build_settings() and build_relay_env().
@@ -741,38 +740,62 @@ class ClaudeCodeAdapter:
         return json.dumps({"servers": servers}, indent=2)
 
     def build_api_key_files(self, api_key: str) -> list[dict]:
-        """File specs for API key delivery via the localhost proxy.
+        """File specs for API key delivery.
 
         Returns [{path, content, mode, owner}]. Services iterate and write.
         Empty list if no key needed.
 
-        The real key is written to /run/secrets/proxy_key (0600 root:root)
-        where only the root-owned api-proxy.py can read it. The apiKeyHelper
-        script echoes a placeholder key that CC CLI validates at startup.
-        The proxy strips the placeholder and injects the real key before
-        forwarding to api.anthropic.com.
+        Three paths:
+          OAuth (sk-ant-oat*): Write .credentials.json + .claude.json so CC
+            authenticates directly — no proxy, no placeholder key.
+          API key: Write real key to /run/secrets/proxy_key + apiKeyHelper
+            script that echoes a placeholder. Proxy injects the real key.
+          Other providers: Same as API key (proxy handles routing).
         """
         if not api_key:
             return []
-        files = [
+
+        # ── OAuth path: credential files, no proxy ──
+        if api_key.startswith(_OAUTH_TOKEN_PREFIX):
+            return [
+                {
+                    "path": "/home/agent/.claude/.credentials.json",
+                    "content": json.dumps({
+                        "claudeAiOauth": {
+                            "token_type": "Bearer",
+                            "access_token": api_key,
+                            "expires_at": "9999-12-31T23:59:59.000Z",
+                        },
+                    }),
+                    "mode": "0600",
+                    "owner": "1000:1000",
+                },
+                {
+                    "path": "/home/agent/.claude.json",
+                    "content": json.dumps({
+                        "hasCompletedOnboarding": True,
+                        "bypassPermissionsModeAccepted": True,
+                    }),
+                    "mode": "0644",
+                    "owner": "1000:1000",
+                },
+            ]
+
+        # ── API key / other provider path: proxy mode ──
+        return [
             {
                 "path": _PROXY_KEY_PATH,
                 "content": api_key,
                 "mode": "0600",
                 "owner": "root:root",
             },
-        ]
-        # apiKeyHelper is only needed for API key mode — CC uses it to
-        # validate the placeholder at startup. OAuth mode uses
-        # CLAUDE_CODE_OAUTH_TOKEN env var instead, no helper needed.
-        if not api_key.startswith(_OAUTH_TOKEN_PREFIX):
-            files.append({
+            {
                 "path": _API_KEY_HELPER_PATH,
                 "content": f"#!/bin/bash\necho '{_PROXY_PLACEHOLDER_KEY}'\n",
                 "mode": "0555",
                 "owner": "root:root",
-            })
-        return files
+            },
+        ]
 
     def build_relay_env(
         self,
@@ -806,11 +829,8 @@ class ClaudeCodeAdapter:
           from /run/secrets/proxy_key before forwarding to api.anthropic.com.
           Result: the real key never appears in the relay's env, memory, or logs.
         """
-        # Proxy active: relay gets a placeholder key that passes CLI validation.
-        # The real key lives in /run/secrets/proxy_key, read by svc-apiproxy.
-        # OAuth tokens use CLAUDE_CODE_OAUTH_TOKEN instead of ANTHROPIC_API_KEY.
         is_oauth = api_key.startswith(_OAUTH_TOKEN_PREFIX) if api_key else False
-        relay_api_key = "" if is_oauth else (_PROXY_PLACEHOLDER_KEY if api_key else "")
+        needs_proxy = bool(api_key) and not is_oauth
 
         lines = [
             f"export AGENT_ID={_shell_escape(agent_id)}",
@@ -823,20 +843,14 @@ class ClaudeCodeAdapter:
             f"export AGENT_MODE={_shell_escape(mode)}",
         ]
 
-        if relay_api_key:
-            lines.append(f"export ANTHROPIC_API_KEY={_shell_escape(relay_api_key)}")
-        if is_oauth:
-            lines.append(f"export CLAUDE_CODE_OAUTH_TOKEN={_shell_escape(_OAUTH_PLACEHOLDER_TOKEN)}")
-
-        if api_key:
+        # OAuth path: CC authenticates via .credentials.json on disk.
+        # No ANTHROPIC_API_KEY, no ANTHROPIC_BASE_URL, no proxy needed.
+        # API key / other provider path: proxy placeholder + localhost proxy.
+        if needs_proxy:
+            lines.append(f"export ANTHROPIC_API_KEY={_shell_escape(_PROXY_PLACEHOLDER_KEY)}")
             lines.append(
                 f"export ANTHROPIC_BASE_URL='http://localhost:{_PROXY_PORT}'"
             )
-            # OAuth tokens use Bearer auth instead of x-api-key.
-            # Provider-prefixed models set PROXY_AUTH_HEADER below via PROVIDER_CONFIGS,
-            # so this only applies to native Anthropic models (no "/" in model).
-            if api_key.startswith(_OAUTH_TOKEN_PREFIX) and "/" not in model:
-                lines.append("export PROXY_AUTH_HEADER='authorization'")
 
         # Provider-prefixed models: emit proxy env vars for svc-apiproxy.
         # The proxy uses these to route to the correct upstream and handle

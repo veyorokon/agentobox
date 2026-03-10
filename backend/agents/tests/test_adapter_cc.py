@@ -535,7 +535,7 @@ class TestBuildInstructions:
 
 
 class TestBuildApiKeyFiles:
-    """Verify build_api_key_files produces proxy-mode file specs."""
+    """Verify build_api_key_files produces correct file specs per auth path."""
 
     @pytest.fixture
     def adapter(self):
@@ -544,7 +544,7 @@ class TestBuildApiKeyFiles:
     def test_no_key_returns_empty(self, adapter):
         assert adapter.build_api_key_files("") == []
 
-    def test_key_returns_proxy_key_and_helper(self, adapter):
+    def test_api_key_returns_proxy_key_and_helper(self, adapter):
         files = adapter.build_api_key_files("sk-ant-real-secret-key-12345")
         assert len(files) == 2
 
@@ -564,6 +564,35 @@ class TestBuildApiKeyFiles:
         assert "sk-ant-real-secret-key-12345" not in helper["content"]
         assert helper["mode"] == "0555"
         assert helper["owner"] == "root:root"
+
+    def test_oauth_returns_credential_files(self, adapter):
+        """OAuth path writes .credentials.json + .claude.json, no proxy files."""
+        import json
+        files = adapter.build_api_key_files("sk-ant-oat01-real-oauth-token")
+        assert len(files) == 2
+
+        # Credential file with OAuth token
+        cred = files[0]
+        assert cred["path"] == "/home/agent/.claude/.credentials.json"
+        cred_data = json.loads(cred["content"])
+        assert cred_data["claudeAiOauth"]["access_token"] == "sk-ant-oat01-real-oauth-token"
+        assert cred_data["claudeAiOauth"]["token_type"] == "Bearer"
+        assert cred["mode"] == "0600"
+        assert cred["owner"] == "1000:1000"
+
+        # Onboarding state
+        state = files[1]
+        assert state["path"] == "/home/agent/.claude.json"
+        state_data = json.loads(state["content"])
+        assert state_data["hasCompletedOnboarding"] is True
+        assert state["owner"] == "1000:1000"
+
+    def test_oauth_no_proxy_key(self, adapter):
+        """OAuth path must NOT write proxy_key or apiKeyHelper."""
+        files = adapter.build_api_key_files("sk-ant-oat01-real-oauth-token")
+        paths = [f["path"] for f in files]
+        assert "/run/secrets/proxy_key" not in paths
+        assert "/run/secrets/api-key-helper.sh" not in paths
 
 
 class TestBuildOnboardingState:
@@ -630,18 +659,14 @@ class TestBuildRelayEnv:
         env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
         assert "ANTHROPIC_API_KEY" not in env
 
-    def test_oauth_token_sets_bearer_auth(self, adapter):
+    def test_oauth_token_skips_proxy(self, adapter):
+        """OAuth path: no ANTHROPIC_API_KEY, no ANTHROPIC_BASE_URL, no proxy."""
         env = adapter.build_relay_env(**self._base_kwargs(api_key="sk-ant-oat01-real-oauth-token"))
-        assert "PROXY_AUTH_HEADER='authorization'" in env
-        assert "CLAUDE_CODE_OAUTH_TOKEN=" in env
-        # Real OAuth token must NOT appear
-        assert "sk-ant-oat01-real-oauth-token" not in env
-        # Should NOT set ANTHROPIC_API_KEY for OAuth
         assert "ANTHROPIC_API_KEY" not in env
-
-    def test_oauth_token_still_sets_base_url(self, adapter):
-        env = adapter.build_relay_env(**self._base_kwargs(api_key="sk-ant-oat01-real-oauth-token"))
-        assert "ANTHROPIC_BASE_URL='http://localhost:9999'" in env
+        assert "ANTHROPIC_BASE_URL" not in env
+        assert "PROXY_AUTH_HEADER" not in env
+        # Real OAuth token must NOT appear in env
+        assert "sk-ant-oat01-real-oauth-token" not in env
 
 
 # ── MCP config builders ──

@@ -68,7 +68,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     AgentStatus.IDLE: {AgentStatus.RUNNING, AgentStatus.ERROR, AgentStatus.STOPPED, AgentStatus.DEPLOYING},
     AgentStatus.RUNNING: {AgentStatus.IDLE, AgentStatus.WAITING, AgentStatus.ERROR, AgentStatus.STOPPED},
     AgentStatus.WAITING: {AgentStatus.RUNNING, AgentStatus.IDLE, AgentStatus.ERROR, AgentStatus.STOPPED},
-    AgentStatus.ERROR: {AgentStatus.DEPLOYING, AgentStatus.STOPPED},
+    AgentStatus.ERROR: {AgentStatus.DEPLOYING, AgentStatus.STOPPED, AgentStatus.ERROR},
     AgentStatus.STOPPED: {AgentStatus.DEPLOYING},
 }
 

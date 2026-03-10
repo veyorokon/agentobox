@@ -226,8 +226,15 @@ class TestValidTransitionsComplete:
                 )
 
     def test_no_self_transitions(self):
-        """No status should transition to itself."""
+        """No status should transition to itself, except idempotent ones.
+
+        error → error is allowed: relay retry loops can produce multiple
+        process_exit events for the same agent before recovery.
+        """
+        allowed_self = {AgentStatus.ERROR}
         for source, targets in VALID_TRANSITIONS.items():
+            if source in allowed_self:
+                continue
             assert source not in targets, (
                 f"VALID_TRANSITIONS[{source}] allows self-transition"
             )
