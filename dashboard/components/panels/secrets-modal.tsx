@@ -9,7 +9,8 @@ import {
   Check,
   AlertTriangle,
   RefreshCw,
-  ArrowUpRight,
+  Link2,
+  Unlink,
 } from "lucide-react"
 import { cn, timeAgo, detectCredentialType } from "@/lib/utils"
 import { useAgents } from "@/lib/graphql/hooks/use-agents"
@@ -56,13 +57,16 @@ export function SecretsModal({
 
   const [newKey, setNewKey] = useState("")
   const [newValue, setNewValue] = useState("")
-  const [newLevel, setNewLevel] = useState<"account" | "project">("account")
+  const [newLevel, setNewLevel] = useState<"account" | "project">("project")
   const [dirty, setDirty] = useState(false)
   const [restarted, setRestarted] = useState(false)
 
+  // Build lookup sets for provider resolution
+  const accountKeySet = useMemo(() => new Set(accountSecrets.map((s) => s.key)), [accountSecrets])
+  const projectKeySet = useMemo(() => new Set(projectSecrets.map((s) => s.key)), [projectSecrets])
+
   // Merge account + project secrets into a single list
   const mergedSecrets = useMemo(() => {
-    const projectKeySet = new Set(projectSecrets.map((s) => s.key))
     const merged: MergedSecret[] = []
 
     // Account secrets first (may be overridden)
@@ -87,7 +91,7 @@ export function SecretsModal({
     })
 
     return merged
-  }, [accountSecrets, projectSecrets])
+  }, [accountSecrets, projectSecrets, projectKeySet])
 
   // Detect credential type from value prefix (Anthropic keys only)
   const credentialHint = useMemo(
@@ -112,9 +116,9 @@ export function SecretsModal({
       setRestarted(false)
       setNewKey("")
       setNewValue("")
-      setNewLevel("account")
+      setNewLevel(hasProject ? "project" : "account")
     }
-  }, [open])
+  }, [open, hasProject])
 
   if (!open) return null
 
@@ -153,11 +157,25 @@ export function SecretsModal({
   const handleOverride = (key: string) => {
     setNewKey(key)
     setNewLevel("project")
-    // Focus the value input
+  }
+
+  /** "Use global" — remove the project-level override so the account key takes effect */
+  const handleUnlink = async (key: string) => {
+    if (!projectId) return
+    await deleteSecret(key)
+    setDirty(true)
+    setRestarted(false)
   }
 
   const handleRestart = () => {
     setRestarted(true)
+  }
+
+  /** Resolve how a provider key is sourced for this project */
+  const resolveProviderSource = (keyName: string): "project" | "global" | "none" => {
+    if (projectKeySet.has(keyName)) return "project"
+    if (accountKeySet.has(keyName)) return "global"
+    return "none"
   }
 
   return (
@@ -187,8 +205,8 @@ export function SecretsModal({
             </div>
             <p className="text-[11px] text-muted mt-0.5 ml-6">
               {hasProject
-                ? "Environment variables injected into agent containers"
-                : "Account-level secrets inherited by all projects"}
+                ? "Project keys override global keys with the same name"
+                : "Global secrets inherited by all projects"}
             </p>
           </div>
           <button
@@ -200,32 +218,51 @@ export function SecretsModal({
           </button>
         </div>
 
-        {/* Provider keys */}
+        {/* Provider keys — show source for each */}
         {providers.length > 0 && (
           <div className="px-5 pb-3 border-b border-border-subtle">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
               Provider Keys
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {providers.map((p) => (
-                <button
-                  key={p.slug}
-                  type="button"
-                  disabled={p.configured}
-                  onClick={() => {
-                    if (!p.configured) setNewKey(p.keyName)
-                  }}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
-                    p.configured
-                      ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
-                      : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
-                  )}
-                >
-                  {p.configured && <Check className="h-2.5 w-2.5" />}
-                  {p.name}
-                </button>
-              ))}
+              {providers.map((p) => {
+                const source = hasProject ? resolveProviderSource(p.keyName) : (p.configured ? "global" : "none")
+                return (
+                  <button
+                    key={p.slug}
+                    type="button"
+                    disabled={source !== "none"}
+                    onClick={() => {
+                      if (source === "none") {
+                        setNewKey(p.keyName)
+                        setNewLevel(hasProject ? "project" : "account")
+                      }
+                    }}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+                      source === "project"
+                        ? "bg-success-subtle/30 text-success border border-success/20 cursor-default"
+                        : source === "global"
+                          ? "bg-accent/8 text-accent/70 border border-accent/15 cursor-default"
+                          : "bg-surface-sunken/60 text-secondary border border-border-default hover:border-accent/50 hover:text-accent",
+                    )}
+                    title={
+                      source === "project" ? `${p.name} — project key`
+                        : source === "global" ? `${p.name} — using global key`
+                          : `Add ${p.name} key`
+                    }
+                  >
+                    {source === "project" && <Check className="h-2.5 w-2.5" />}
+                    {source === "global" && <Link2 className="h-2.5 w-2.5" />}
+                    {p.name}
+                    {source !== "none" && hasProject && (
+                      <span className="text-[9px] opacity-60">
+                        {source}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
@@ -254,13 +291,14 @@ export function SecretsModal({
                       </span>
                       <span
                         className={cn(
-                          "inline-flex items-center px-1 py-0.5 rounded text-[9px] font-medium tracking-wide shrink-0",
+                          "inline-flex items-center gap-1 px-1 py-0.5 rounded text-[9px] font-medium tracking-wide shrink-0",
                           secret.level === "account"
                             ? "bg-accent/8 text-accent/70 border border-accent/15"
-                            : "bg-surface-sunken text-muted border border-border-default",
+                            : "bg-success-subtle/30 text-success border border-success/20",
                         )}
                       >
-                        {secret.level}
+                        {secret.level === "account" && <Link2 className="h-2 w-2" />}
+                        {secret.level === "account" ? "global" : "project"}
                       </span>
                       {secret.overridden && (
                         <span className="text-[9px] text-muted/50 italic shrink-0">
@@ -278,21 +316,33 @@ export function SecretsModal({
                   </span>
 
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-                    {secret.level === "account" && !secret.overridden && (
+                    {/* Override: create a project-level key with the same name */}
+                    {hasProject && secret.level === "account" && !secret.overridden && (
                       <button
                         type="button"
                         onClick={() => handleOverride(secret.key)}
                         className="p-1 rounded text-muted hover:text-accent transition-colors"
-                        title="Override at project level"
+                        title="Override with project key"
                       >
-                        <ArrowUpRight className="h-3 w-3" />
+                        <Unlink className="h-3 w-3" />
+                      </button>
+                    )}
+                    {/* Unlink: remove project override, fall back to global */}
+                    {hasProject && secret.level === "project" && accountKeySet.has(secret.key) && (
+                      <button
+                        type="button"
+                        onClick={() => handleUnlink(secret.key)}
+                        className="p-1 rounded text-muted hover:text-accent transition-colors"
+                        title="Remove override — use global key"
+                      >
+                        <Link2 className="h-3 w-3" />
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => handleDelete(secret)}
                       className="p-1 rounded text-muted hover:text-danger transition-colors"
-                      title={`Delete ${secret.level} secret`}
+                      title={`Delete ${secret.level === "account" ? "global" : "project"} secret`}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -343,18 +393,6 @@ export function SecretsModal({
               <div className="flex items-center gap-1 bg-surface-sunken/40 rounded-md p-0.5">
                 <button
                   type="button"
-                  onClick={() => setNewLevel("account")}
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
-                    newLevel === "account"
-                      ? "bg-surface-raised text-default shadow-sm"
-                      : "text-muted hover:text-secondary",
-                  )}
-                >
-                  account
-                </button>
-                <button
-                  type="button"
                   onClick={() => setNewLevel("project")}
                   className={cn(
                     "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
@@ -365,9 +403,21 @@ export function SecretsModal({
                 >
                   project
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setNewLevel("account")}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
+                    newLevel === "account"
+                      ? "bg-surface-raised text-default shadow-sm"
+                      : "text-muted hover:text-secondary",
+                  )}
+                >
+                  global
+                </button>
               </div>
             ) : (
-              <span className="text-[10px] text-muted/50">saved to your account — all projects inherit</span>
+              <span className="text-[10px] text-muted/50">saved globally — all projects inherit</span>
             )}
 
             {credentialHint && (
