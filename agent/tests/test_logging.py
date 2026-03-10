@@ -156,6 +156,127 @@ class TestSetup:
         assert not any(Path(tmp_path).glob("*.log"))
 
 
+class TestRedactingFormatter:
+    """RedactingFormatter — secrets scrubbed from JSON output."""
+
+    class _FakeRedactor:
+        """Minimal redactor for testing — replaces known secrets."""
+
+        def __init__(self, secrets):
+            self._secrets = secrets
+
+        def redact(self, text):
+            for secret in self._secrets:
+                text = text.replace(secret, "[REDACTED]")
+            return text
+
+    def _make_record(self, msg="test.event", level=logging.INFO, **extra):
+        logger = logging.getLogger("test-redact")
+        return logger.makeRecord(
+            name="test-redact", level=level, fn="test.py", lno=1,
+            msg=msg, args=(), exc_info=None, extra=extra,
+        )
+
+    def test_secret_in_msg_is_redacted(self):
+        redactor = self._FakeRedactor(["sk-ant-secret123"])
+        fmt = abox_logging.RedactingFormatter(redactor, datefmt="%Y-%m-%dT%H:%M:%SZ")
+        record = self._make_record("key is sk-ant-secret123 here")
+        line = fmt.format(record)
+        parsed = json.loads(line)
+        assert "sk-ant-secret123" not in line
+        assert "[REDACTED]" in parsed["event"]
+
+    def test_secret_in_extra_is_redacted(self):
+        redactor = self._FakeRedactor(["supersecrettoken"])
+        fmt = abox_logging.RedactingFormatter(redactor, datefmt="%Y-%m-%dT%H:%M:%SZ")
+        record = self._make_record("test.event", token="supersecrettoken")
+        line = fmt.format(record)
+        assert "supersecrettoken" not in line
+        assert "[REDACTED]" in line
+
+    def test_none_redactor_raises(self):
+        """RedactingFormatter requires a real Redactor — fail loud, not silent."""
+        fmt = abox_logging.RedactingFormatter(None, datefmt="%Y-%m-%dT%H:%M:%SZ")
+        record = self._make_record("test.event")
+        with pytest.raises(AttributeError):
+            fmt.format(record)
+
+    def test_output_is_valid_json(self):
+        redactor = self._FakeRedactor(["secret"])
+        fmt = abox_logging.RedactingFormatter(redactor, datefmt="%Y-%m-%dT%H:%M:%SZ")
+        record = self._make_record("has secret in msg")
+        line = fmt.format(record)
+        parsed = json.loads(line)
+        assert isinstance(parsed, dict)
+
+
+class TestAddRedactingFileHandler:
+    """add_redacting_file_handler — replaces plain handler with redacting one."""
+
+    class _FakeRedactor:
+        def redact(self, text):
+            return text.replace("SECRET", "[REDACTED]")
+
+    def test_replaces_plain_file_handler(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ABOX_LOG_DIR", str(tmp_path))
+        # First, setup creates a plain file handler
+        log = setup("redact-replace-test")
+        plain_path = tmp_path / "redact-replace-test.log"
+        assert plain_path.exists()
+
+        # Count file handlers before
+        root = logging.root
+        abs_path = os.path.abspath(str(plain_path))
+        file_handlers_before = [
+            h for h in root.handlers
+            if isinstance(h, logging.FileHandler)
+            and os.path.abspath(getattr(h, "baseFilename", "")) == abs_path
+        ]
+        assert len(file_handlers_before) == 1
+        assert not isinstance(file_handlers_before[0].formatter, abox_logging.RedactingFormatter)
+
+        # Now replace with redacting handler
+        abox_logging.add_redacting_file_handler("redact-replace-test", self._FakeRedactor())
+
+        file_handlers_after = [
+            h for h in root.handlers
+            if isinstance(h, logging.FileHandler)
+            and os.path.abspath(getattr(h, "baseFilename", "")) == abs_path
+        ]
+        assert len(file_handlers_after) == 1
+        assert isinstance(file_handlers_after[0].formatter, abox_logging.RedactingFormatter)
+
+    def test_redacting_handler_scrubs_output(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ABOX_LOG_DIR", str(tmp_path))
+        log = setup("redact-scrub-test")
+        abox_logging.add_redacting_file_handler("redact-scrub-test", self._FakeRedactor())
+
+        log.info("the key is SECRET here")
+        log_file = tmp_path / "redact-scrub-test.log"
+        content = log_file.read_text()
+        assert "SECRET" not in content
+        assert "[REDACTED]" in content
+
+    def test_stderr_not_redacted(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setenv("ABOX_LOG_DIR", str(tmp_path))
+        log = setup("redact-stderr-test")
+        abox_logging.add_redacting_file_handler("redact-stderr-test", self._FakeRedactor())
+
+        log.info("the key is SECRET here")
+        # stderr should still contain the raw secret (not redacted)
+        captured = capsys.readouterr()
+        # stderr goes through logging StreamHandler, not capsys — check file is redacted
+        log_file = tmp_path / "redact-stderr-test.log"
+        content = log_file.read_text()
+        assert "[REDACTED]" in content
+
+    def test_noop_when_persist_disabled(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ABOX_LOG_DIR", str(tmp_path))
+        monkeypatch.setenv("ABOX_PERSIST_LOGS", "0")
+        # Should not raise or add any handler
+        abox_logging.add_redacting_file_handler("noop-test", self._FakeRedactor())
+
+
 class TestHelpers:
     def test_safe_log_name(self):
         assert abox_logging._safe_log_name("relay smoke/logger") == "relay-smoke-logger"

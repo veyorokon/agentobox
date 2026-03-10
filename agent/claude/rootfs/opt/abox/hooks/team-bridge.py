@@ -19,10 +19,10 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from abox_logging import setup as _setup_logging
+from abox_logging import setup_redacted_logging
 
 # CC captures hook stderr — also write to a file for container-level visibility
-log = _setup_logging("team-bridge", level="DEBUG")
+log, _redactor = setup_redacted_logging("team-bridge", level="DEBUG")
 _file_handler = logging.FileHandler("/tmp/team-bridge.log")
 _file_handler.setFormatter(log.root.handlers[0].formatter if log.root.handlers else logging.Formatter())
 logging.root.addHandler(_file_handler)

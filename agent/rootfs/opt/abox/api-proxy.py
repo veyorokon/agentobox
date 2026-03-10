@@ -82,9 +82,9 @@ _REAL_KEY = _load_key()
 # Reusable SSL context for upstream connections
 _SSL_CTX = ssl.create_default_context()
 
-from abox_logging import setup as _setup_logging
+from abox_logging import setup_redacted_logging
 
-_log = _setup_logging("abox-apiproxy")
+_log, _redactor = setup_redacted_logging("abox-apiproxy")
 
 
 def _rewrite_request_body(body: bytes) -> bytes:

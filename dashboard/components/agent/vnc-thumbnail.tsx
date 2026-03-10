@@ -149,10 +149,12 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     }
   }, [hasContainer]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const connectedAtRef = useRef(0)
+
   const handleConnect = useCallback(() => {
     if (!mountedRef.current) return
     connectingRef.current = false
-    retryCountRef.current = 0
+    connectedAtRef.current = Date.now()
     log("connected", { agent: agent.id, name: agent.name })
     setConnState("connected")
   }, [agent.id, agent.name])
@@ -161,6 +163,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     connectingRef.current = false
     // Null out ref immediately — RFB is already disconnected, prevent stale ops
     vncRef.current = null
+    connectedAtRef.current = 0
     if (!mountedRef.current || !hasContainer) return
 
     const detail = e?.detail ?? e
@@ -180,7 +183,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     // Always retry while the container is alive — never give up on a running agent.
     // The VNC server is running, WS drops are transient (token expiry, network blip,
     // docker compose restart). Exponential backoff caps at 30s between attempts.
+    // Only reset retry counter if connection was stable (>10s) — prevents rapid
+    // cycling when connections flap (e.g. backend restart, proxy timeout).
     if (hasContainer) {
+      const wasStable = connectedAtRef.current > 0 && (Date.now() - connectedAtRef.current) > 10_000
+      if (wasStable) retryCountRef.current = 0
       retryCountRef.current += 1
       const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
       log("reconnecting", { agent: agent.id, attempt: retryCountRef.current, code, delay })

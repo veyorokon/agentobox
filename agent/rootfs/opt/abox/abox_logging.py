@@ -82,6 +82,51 @@ def _has_handler(root: logging.Logger, *, handler_type: type, path: str | None =
     return False
 
 
+class RedactingFormatter(JSONFormatter):
+    """JSONFormatter that scrubs secrets from the final output line."""
+
+    def __init__(self, redactor: "Redactor", **kwargs):
+        super().__init__(**kwargs)
+        self._redactor = redactor
+
+    def format(self, record):
+        line = super().format(record)
+        line = self._redactor.redact(line)
+        return line
+
+
+def add_redacting_file_handler(name: str, redactor: "Redactor") -> None:
+    """Replace any existing file handler for this log name with a redacting one.
+
+    Call after Redactor.load() to ensure persistent log files have secrets
+    scrubbed. Leaves stderr handler unredacted (ephemeral tmpfs, performance).
+    """
+    if not _persist_logs_enabled():
+        return
+    log_dir = _log_dir()
+    if not log_dir:
+        return
+    root = logging.root
+    log_path = os.path.join(log_dir, f"{_safe_log_name(name)}.log")
+    abs_path = os.path.abspath(log_path)
+    # Remove existing plain file handler for this path
+    for h in root.handlers[:]:
+        if isinstance(h, logging.FileHandler) and os.path.abspath(
+            getattr(h, "baseFilename", "")
+        ) == abs_path:
+            root.removeHandler(h)
+            h.close()
+            break
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        fmt = RedactingFormatter(redactor, datefmt="%Y-%m-%dT%H:%M:%SZ")
+        fh = logging.FileHandler(log_path)
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except OSError:
+        pass
+
+
 def setup(name: str, *, level: str = "INFO") -> logging.Logger:
     """Configure the root logger with JSON output and return a named logger.
 
@@ -111,3 +156,18 @@ def setup(name: str, *, level: str = "INFO") -> logging.Logger:
 
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     return logging.getLogger(name)
+
+
+def setup_redacted_logging(name: str, *, level: str = "INFO") -> "tuple[logging.Logger, Redactor]":
+    """Setup logging + attach a redacting file handler.
+
+    Convenience wrapper: calls setup(), creates a Redactor, loads secrets,
+    and wires the redacting file handler. Returns (logger, redactor).
+    """
+    from relay_common import Redactor
+
+    log = setup(name, level=level)
+    redactor = Redactor(log=log)
+    redactor.load()
+    add_redacting_file_handler(name, redactor)
+    return log, redactor

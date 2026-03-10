@@ -35,9 +35,9 @@ import sys
 import threading
 import time
 
-from abox_logging import setup as _setup_logging
+from abox_logging import setup_redacted_logging
 
-_log = _setup_logging("abox-mcp-gateway")
+_log, _redactor = setup_redacted_logging("abox-mcp-gateway")
 
 CONFIG_PATH = "/run/mcp-gateway/config.json"
 SECRETS_BASE = "/run/secrets"
@@ -105,7 +105,7 @@ class MCPBridge:
         self._start_http()
         self._monitor_thread = threading.Thread(target=self._monitor, daemon=True)
         self._monitor_thread.start()
-        _log.info("gateway.mcp_started", extra={"name": self.name, "port": self.port, "command": self.command})
+        _log.info("gateway.mcp_started", extra={"server": self.name, "port": self.port, "command": self.command})
 
     def _spawn_process(self):
         """Spawn the MCP subprocess as the agent user."""
@@ -197,7 +197,7 @@ class MCPBridge:
                     raise IOError("MCP subprocess closed stdout")
                 return response_line.strip()
             except (BrokenPipeError, IOError, OSError) as exc:
-                _log.error("gateway.mcp_io_error", extra={"name": self.name, "error": str(exc)})
+                _log.error("gateway.mcp_io_error", extra={"server": self.name, "error": str(exc)})
                 error_resp = {
                     "jsonrpc": "2.0",
                     "error": {"code": -32603, "message": f"I/O error: {exc}"},
@@ -216,10 +216,10 @@ class MCPBridge:
             if self.process and self.process.poll() is not None:
                 exit_code = self.process.returncode
                 _log.warning("gateway.mcp_crashed", extra={
-                    "name": self.name, "exit_code": exit_code, "retries": self._retries,
+                    "server": self.name, "exit_code": exit_code, "retries": self._retries,
                 })
                 if self._retries >= MAX_RETRIES:
-                    _log.error("gateway.mcp_max_retries", extra={"name": self.name})
+                    _log.error("gateway.mcp_max_retries", extra={"server": self.name})
                     break
                 backoff = min(INITIAL_BACKOFF * (2 ** self._retries), MAX_BACKOFF)
                 self._retries += 1
@@ -227,9 +227,9 @@ class MCPBridge:
                 if not self._stopping:
                     try:
                         self._spawn_process()
-                        _log.info("gateway.mcp_restarted", extra={"name": self.name, "retry": self._retries})
+                        _log.info("gateway.mcp_restarted", extra={"server": self.name, "retry": self._retries})
                     except Exception as exc:
-                        _log.error("gateway.mcp_restart_failed", extra={"name": self.name, "error": str(exc)})
+                        _log.error("gateway.mcp_restart_failed", extra={"server": self.name, "error": str(exc)})
             else:
                 # Reset retry counter on healthy run (process alive for >30s)
                 if self._retries > 0 and self.process and self.process.poll() is None:
@@ -248,7 +248,7 @@ class MCPBridge:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=2)
-        _log.info("gateway.mcp_stopped", extra={"name": self.name})
+        _log.info("gateway.mcp_stopped", extra={"server": self.name})
 
 
 class MCPGateway:
@@ -275,7 +275,7 @@ class MCPGateway:
                 bridge.start()
                 self.bridges[name] = bridge
             except Exception as exc:
-                _log.error("gateway.mcp_start_failed", extra={"name": name, "error": str(exc)})
+                _log.error("gateway.mcp_start_failed", extra={"server": name, "error": str(exc)})
 
     def reload(self):
         """Reload config: start new servers, stop removed ones."""
@@ -303,7 +303,7 @@ class MCPGateway:
                 bridge.start()
                 self.bridges[name] = bridge
             except Exception as exc:
-                _log.error("gateway.mcp_start_failed", extra={"name": name, "error": str(exc)})
+                _log.error("gateway.mcp_start_failed", extra={"server": name, "error": str(exc)})
 
         _log.info("gateway.reloaded", extra={"active": list(self.bridges.keys())})
 

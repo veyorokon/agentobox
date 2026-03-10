@@ -236,7 +236,10 @@ def _preflight_mcp_servers(config_path: str, timeout_s: float = 3.0) -> list[dic
                 raise MCPConnectivityError(
                     f"MCP server '{name}' preflight returned HTTP {status} for {url}"
                 )
-            if "text/event-stream" not in content_type:
+            # Skip content-type check for localhost (gateway-proxied servers).
+            # The gateway health endpoint returns text/plain, not text/event-stream.
+            is_local = "localhost" in url or "127.0.0.1" in url
+            if not is_local and "text/event-stream" not in content_type:
                 raise MCPConnectivityError(
                     f"MCP server '{name}' preflight expected text/event-stream, got '{content_type or 'unknown'}'"
                 )
@@ -278,6 +281,8 @@ class SDKRelay:
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
         self._redactor.load()
+        from abox_logging import add_redacting_file_handler
+        add_redacting_file_handler("abox-relay", self._redactor)
         self._sender = EventSender(self.ws, self._redactor, log=log)
 
         # Poke handler map — backend sends {type: "poke", changed: "<path>"}
@@ -327,24 +332,54 @@ class SDKRelay:
             "details": details,
         })
 
-    async def _preflight_mcp_servers(self) -> list[dict]:
-        """Validate MCP config before the SDK attempts its own initialize flow."""
+    async def _preflight_mcp_servers(
+        self, *, max_retries: int = 5, initial_backoff: float = 1.0,
+    ) -> list[dict]:
+        """Validate MCP config before the SDK attempts its own initialize flow.
+
+        Retries on MCPConnectivityError with exponential backoff — the MCP
+        gateway (s6 longrun) may not be listening yet when the relay starts.
+        MCPConfigError (bad JSON, wrong type) fails immediately since retrying
+        won't fix a config problem.
+        """
         config_path = os.environ.get("MCP_CONFIG", "")
         if not config_path:
             return []
 
         await self._mark_init_stage("relay.init.mcp_preflight_started", config_path=config_path)
-        try:
-            servers = await asyncio.to_thread(_preflight_mcp_servers, config_path)
-        except (MCPConfigError, MCPConnectivityError) as exc:
-            error_code = getattr(exc, "error_code", ERR_MCP_CONFIG_INVALID)
-            await self._mark_init_stage(
-                "relay.init.mcp_preflight_failed",
-                config_path=config_path,
-                error_code=error_code,
-                error=str(exc),
-            )
-            raise
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                servers = await asyncio.to_thread(_preflight_mcp_servers, config_path)
+            except MCPConfigError:
+                raise  # config errors are not retryable
+            except MCPConnectivityError as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    backoff = initial_backoff * (2 ** attempt)
+                    log.warning("relay.mcp_preflight_retry", extra={
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries,
+                        "backoff_s": backoff,
+                        "error": str(exc),
+                    })
+                    await asyncio.sleep(backoff)
+                    continue
+                # exhausted retries
+                error_code = getattr(exc, "error_code", ERR_MCP_CONFIG_INVALID)
+                await self._mark_init_stage(
+                    "relay.init.mcp_preflight_failed",
+                    config_path=config_path,
+                    error_code=error_code,
+                    error=str(exc),
+                )
+                raise
+            else:
+                if attempt > 0:
+                    log.info("relay.mcp_preflight_recovered", extra={
+                        "attempts": attempt + 1,
+                    })
+                break
 
         await self._sender.send(_build_init_stage_event(
             "relay.init.mcp_preflight_ok",
@@ -357,14 +392,21 @@ class SDKRelay:
     def _build_sdk_env() -> dict[str, str]:
         """Build env dict for the SDK subprocess.
 
-        Always sets IS_SANDBOX=1. When ANTHROPIC_BASE_URL is set (proxy mode),
-        forwards it so the CC CLI sends API requests through the localhost
-        proxy instead of directly to api.anthropic.com.
+        Two auth paths:
+          Proxy mode (ANTHROPIC_BASE_URL set): Forward ANTHROPIC_API_KEY
+            (placeholder) and ANTHROPIC_BASE_URL so CC routes through the
+            localhost proxy which injects the real key.
+          OAuth mode (no ANTHROPIC_BASE_URL): CC reads ~/.claude/.credentials.json
+            directly. No API key or base URL needed — CC authenticates via
+            the credential file written at provisioning time.
         """
         env: dict[str, str] = {"IS_SANDBOX": "1"}
         base_url = os.environ.get("ANTHROPIC_BASE_URL")
         if base_url:
             env["ANTHROPIC_BASE_URL"] = base_url
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if api_key:
+                env["ANTHROPIC_API_KEY"] = api_key
         return env
 
     def _build_options(self, resume_session_id: str = "", permission_mode: str = "") -> ClaudeAgentOptions:
