@@ -54,6 +54,10 @@ interface SidebarState {
   /* Global view mode — broadcast to all expanded cards */
   globalViewMode: ViewMode | null
 
+  /* Feed tool blocks — expand depth across cards (0=collapsed, 1=chevrons, 2=results) */
+  toolsDepth: number
+  toolsDepthRev: number // bumps on cycle so mounted rows re-sync
+
   /* Attention bar — shared across 3 mobile tab instances */
   attentionStepIdx: number
   attentionExpandedFeedItemId: string | null
@@ -83,6 +87,8 @@ interface SidebarActions {
 
   setGlobalViewMode: (mode: ViewMode | null) => void
 
+  cycleToolsDepth: () => void
+
   setAttentionStepIdx: (idx: number) => void
   setAttentionExpandedFeedItemId: (id: string | null) => void
 }
@@ -102,6 +108,8 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
   skillsAllExpanded: false,
   taskSearch: "",
   globalViewMode: "terminal" as ViewMode,
+  toolsDepth: 2,
+  toolsDepthRev: 0,
   attentionStepIdx: 0,
   attentionExpandedFeedItemId: null,
 
@@ -160,6 +168,8 @@ export const useSidebarStore = create<SidebarState & SidebarActions>()(zustandLo
   setTaskSearch: (query) => set({ taskSearch: query }),
 
   setGlobalViewMode: (mode) => set({ globalViewMode: mode }),
+
+  cycleToolsDepth: () => set((s) => ({ toolsDepth: (s.toolsDepth + 1) % 3, toolsDepthRev: s.toolsDepthRev + 1 })),
 
   setAttentionStepIdx: (idx) => set({ attentionStepIdx: idx }),
   setAttentionExpandedFeedItemId: (id) => set({ attentionExpandedFeedItemId: id }),

@@ -178,9 +178,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             title={missingKeys.length > 0 ? `${missingKeys.length} key${missingKeys.length !== 1 ? "s" : ""} missing` : "Project secrets"}
           >
             <KeyRound className="h-3 w-3" />
-            {missingKeys.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-warning animate-pulse" />
-            )}
           </button>
           <span className="text-[8px] text-muted/50 font-mono tabular-nums">
             {formatCost(totalCost)}
@@ -268,9 +265,6 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           title={missingKeys.length > 0 ? `${missingKeys.length} key${missingKeys.length !== 1 ? "s" : ""} missing` : "Project secrets"}
         >
           <KeyRound className="h-3.5 w-3.5" />
-          {missingKeys.length > 0 && (
-            <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-warning animate-pulse" />
-          )}
         </button>
         <ThemePicker className="shrink-0" />
         <UserMenu className="shrink-0">

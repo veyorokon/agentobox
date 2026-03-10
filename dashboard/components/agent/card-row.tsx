@@ -133,6 +133,10 @@ export function AgentCardRow({
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
   const [composerText, setComposerText] = useState("")
 
+  // Tool depth state (for feed view icon re-click cycling)
+  const toolsDepth = useSidebarStore(s => s.toolsDepth)
+  const cycleToolsDepth = useSidebarStore(s => s.cycleToolsDepth)
+
   // Sync with global view mode broadcast
   const globalViewMode = useSidebarStore(s => s.globalViewMode)
   useEffect(() => {
@@ -444,24 +448,38 @@ export function AgentCardRow({
 
         {/* Bottom toolbar -- always present: view icons + composer + tasks */}
         <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-border-subtle bg-surface-sunken/20">
-          {/* View mode icons */}
+          {/* View mode icons — re-clicking active feed icon cycles tool depth */}
           <div className="flex items-center gap-0.5 shrink-0">
-            {VIEW_MODES.map(({ id, icon: Icon, label }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setViewMode(id)}
-                className={cn(
-                  "p-1 rounded transition-colors",
-                  viewMode === id
-                    ? "bg-surface-raised text-default"
-                    : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
-                )}
-                title={label}
-              >
-                <Icon className="h-3 w-3" />
-              </button>
-            ))}
+            {VIEW_MODES.map(({ id, icon: Icon, label }) => {
+              const isActive = viewMode === id
+              const isFeed = id === "feed"
+              const depthLabel = isFeed && isActive
+                ? `${label} (depth ${toolsDepth}/2 — click to cycle)`
+                : label
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => isActive && isFeed ? cycleToolsDepth() : setViewMode(id)}
+                  className={cn(
+                    "relative p-1 rounded transition-colors",
+                    isActive
+                      ? "bg-surface-raised text-default"
+                      : "text-muted/50 hover:text-secondary hover:bg-surface-raised/40",
+                  )}
+                  title={depthLabel}
+                >
+                  <Icon className="h-3 w-3" />
+                  {/* Depth indicator dot on active feed icon */}
+                  {isFeed && isActive && toolsDepth > 0 && (
+                    <span className={cn(
+                      "absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full",
+                      toolsDepth === 2 ? "bg-accent" : "bg-accent/40",
+                    )} />
+                  )}
+                </button>
+              )
+            })}
           </div>
 
           {/* Mini composer */}

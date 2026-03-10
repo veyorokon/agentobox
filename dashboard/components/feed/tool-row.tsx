@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { ChevronDown } from "lucide-react"
 import { cn, stripSystemReminders, summarizeSingleTool, summarizeToolGroup } from "@/lib/utils"
 import { Collapsible } from "@/components/ui/collapsible"
+import { useSidebarStore } from "@/lib/stores/sidebar"
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -221,7 +222,12 @@ function ToolEntryRow({
   tool: ToolEntryData
   isLast: boolean
 }) {
-  const [subExpanded, setSubExpanded] = useState(false)
+  const toolsDepth = useSidebarStore((s) => s.toolsDepth)
+  const depthRev = useSidebarStore((s) => s.toolsDepthRev)
+  const [subExpanded, setSubExpanded] = useState(toolsDepth >= 2)
+
+  // Re-sync when the global depth is cycled
+  useEffect(() => { setSubExpanded(toolsDepth >= 2) }, [depthRev]) // eslint-disable-line react-hooks/exhaustive-deps
   const hasResult = Boolean(tool.result?.trim())
   const hasDiff = Boolean(tool.oldString !== undefined || tool.newString !== undefined)
   const canExpand = hasResult || hasDiff
@@ -296,7 +302,12 @@ function ToolEntryRow({
 /* ── Single tool row ────────────────────────────────────────────────── */
 
 export function SingleToolRow({ tool }: { tool: ToolEntryData }) {
-  const [expanded, setExpanded] = useState(false)
+  const toolsDepth = useSidebarStore((s) => s.toolsDepth)
+  const depthRev = useSidebarStore((s) => s.toolsDepthRev)
+  const [expanded, setExpanded] = useState(toolsDepth >= 1)
+
+  // Re-sync when the global depth is cycled
+  useEffect(() => { setExpanded(toolsDepth >= 1) }, [depthRev]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -329,7 +340,12 @@ export function SingleToolRow({ tool }: { tool: ToolEntryData }) {
 /* ── Multi-tool group ───────────────────────────────────────────────── */
 
 export function MultiToolGroup({ tools }: { tools: ToolEntryData[] }) {
-  const [expanded, setExpanded] = useState(false)
+  const toolsDepth = useSidebarStore((s) => s.toolsDepth)
+  const depthRev = useSidebarStore((s) => s.toolsDepthRev)
+  const [expanded, setExpanded] = useState(toolsDepth >= 1)
+
+  // Re-sync when the global depth is cycled
+  useEffect(() => { setExpanded(toolsDepth >= 1) }, [depthRev]) // eslint-disable-line react-hooks/exhaustive-deps
   const [showAll, setShowAll] = useState(false)
 
   const overflowCount = tools.length - OVERFLOW_LIMIT

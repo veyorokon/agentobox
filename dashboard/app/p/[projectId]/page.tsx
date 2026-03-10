@@ -132,9 +132,6 @@ export default function ProjectPage() {
               title={missingKeys.length > 0 ? `${missingKeys.length} key${missingKeys.length !== 1 ? "s" : ""} missing` : "Project secrets"}
             >
               <KeyRound className="h-3.5 w-3.5" />
-              {missingKeys.length > 0 && (
-                <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-warning animate-pulse" />
-              )}
             </button>
             <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1.5">
               {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
