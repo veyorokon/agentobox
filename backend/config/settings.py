@@ -26,6 +26,21 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 
+# --- Security (reverse proxy) ---
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# Build CSRF_TRUSTED_ORIGINS from ALLOWED_HOSTS so Django 4+ POST requests
+# work behind a reverse proxy.  Wildcard "*" can't be a trusted origin, so
+# we skip it (only used in local dev where CSRF is relaxed anyway).
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+if not CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = [
+        f"https://{h}" for h in ALLOWED_HOSTS if h != "*"
+    ]
+
 # --- Apps ---
 
 INSTALLED_APPS = [
@@ -130,6 +145,7 @@ USE_TZ = True
 # --- Static ---
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -237,10 +253,10 @@ SESSION_COOKIE_NAME = "agentobox_sessionid"
 # --- CORS ---
 
 CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL", default=False)
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5051",
-]
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:3000", "http://localhost:5051"],
+)
 CORS_ALLOW_HEADERS = [
     "accept",
     "authorization",

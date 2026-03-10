@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check
+.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -174,3 +174,16 @@ ssh: ## SSH into EC2 instance. ENV=dev
 
 aws-check: ## Verify AWS credentials for agentobox profile
 	@. bin/lib.sh; ensure_aws
+
+setup-server: ## Initial server setup — SCP files + run setup script. ENV=dev
+	@. bin/lib.sh; \
+	banner "setup-server" "Set up EC2 application stack" \
+		"environment" "$(ENV)"; \
+	ensure_aws || exit 1; \
+	IP=$$(cd $(TF_DIR) && env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY terraform output -raw public_ip); \
+	step "Server IP: $$IP"; \
+	step "Copying files to server..."; \
+	scp docker-compose.prod.yml Caddyfile .env.prod.example bin/setup-server.sh ubuntu@$$IP:/tmp/; \
+	ok "Files copied"; \
+	step "Running setup script..."; \
+	ssh ubuntu@$$IP 'sudo bash /tmp/setup-server.sh'

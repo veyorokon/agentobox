@@ -31,97 +31,14 @@ env:
 
 jobs:
   # ─── Test ──────────────────────────────────────────────────────────
-  backend-unit:
-    name: Backend Unit + Invariant
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-      - name: Install dependencies
-        run: cd backend && uv sync --group dev
-      - name: Run unit and invariant tests
-        run: cd backend && uv run pytest -m "unit or invariant" --tb=short -q
-
-  backend-integration:
-    name: Backend Integration
-    runs-on: ubuntu-latest
-    needs: backend-unit
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: agentobox
-          POSTGRES_PASSWORD: agentobox
-          POSTGRES_DB: agentobox_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U agentobox"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-    env:
-      DATABASE_URL: postgres://agentobox:agentobox@localhost:5432/agentobox_test
-      REDIS_URL: redis://localhost:6379/0
-      SECRET_KEY: ci-test-secret-key-not-for-production
-      DJANGO_SETTINGS_MODULE: config.settings
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-      - name: Install dependencies
-        run: cd backend && uv sync --group dev
-      - name: Run migrations
-        run: cd backend && uv run python manage.py migrate --noinput
-      - name: Run integration tests
-        run: cd backend && uv run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
-
-  agent-unit:
-    name: Agent Unit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install agent test dependencies
-        run: |
-          SDK_VERSION=$(sed -n 's/.*claude-agent-sdk==\([^[:space:]\\]*\).*/\1/p' agent/claude/Dockerfile)
-          python -m pip install --upgrade pip
-          python -m pip install pytest==9.0.2 websockets==16.0 "claude-agent-sdk==${SDK_VERSION}"
-      - name: Run agent unit tests
-        run: cd agent && python -m pytest -q
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-      - name: Install dependencies
-        run: cd backend && uv sync --group dev
-      - name: Run ruff
-        run: cd backend && uv run ruff check agents/
+  tests:
+    uses: ./.github/workflows/test.yml
 
   # ─── Build ─────────────────────────────────────────────────────────
   build:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [backend-unit, backend-integration, agent-unit, lint]
+    needs: tests
     permissions:
       contents: read
       packages: write

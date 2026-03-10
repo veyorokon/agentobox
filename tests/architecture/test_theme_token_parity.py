@@ -16,18 +16,15 @@ from pathlib import Path
 
 import pytest
 
+from ._paths import AGENT_DIR, BACKEND_DIR, RELAY_PATH, REPO_ROOT
+
 pytestmark = [pytest.mark.unit, pytest.mark.invariant]
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
-BACKEND_DIR = PROJECT_ROOT / "backend"
-AGENT_DIR = PROJECT_ROOT / "agent"
-DASHBOARD_DIR = PROJECT_ROOT / "dashboard"
+DASHBOARD_DIR = REPO_ROOT / "dashboard"
 
 # Source files
 MUTATIONS_PY = BACKEND_DIR / "projects" / "graphql" / "mutations.py"
 THEMES_PY = BACKEND_DIR / "agents" / "services" / "themes.py"
-RELAY_PY = AGENT_DIR / "claude" / "rootfs" / "opt" / "abox" / "relay.py"
 GLOBALS_CSS = DASHBOARD_DIR / "app" / "globals.css"
 THEME_CSS_DIR = DASHBOARD_DIR / "app" / "themes"
 
@@ -123,7 +120,7 @@ def _extract_builtin_theme_keys() -> dict[str, set[str]]:
 
 def _extract_relay_token_refs() -> set[str]:
     """Extract token names from tokens.get("...") calls in relay.py."""
-    source = _read_source(RELAY_PY)
+    source = _read_source(RELAY_PATH)
     return set(re.findall(r'tokens\.get\("([^"]+)"', source))
 
 

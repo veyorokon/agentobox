@@ -1,10 +1,11 @@
 """Poke registry enforcement tests.
 
 The POKE_REGISTRY in volume.py is the single contract between backend and
-relay for mutable runtime state. These tests enforce two invariants:
+relay for mutable runtime state. These tests enforce three invariants:
 
   1. Every registered file has a matching handler in relay._poke_handlers
   2. Runtime state mutations in services use Volume.mutate(), not raw write()
+  3. Every mutate() call is paired with push_to_relay() (no silent writes)
 
 Cross-boundary: reads both backend (volume.py, services/) and agent (relay.py).
 No Django dependency — pure file reads + regex/AST.
@@ -12,14 +13,11 @@ No Django dependency — pure file reads + regex/AST.
 
 import ast
 import re
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-BACKEND_DIR = REPO_ROOT / "backend"
-AGENT_DIR = REPO_ROOT / "agent"
-RELAY_PATH = AGENT_DIR / "claude" / "rootfs" / "opt" / "abox" / "relay.py"
-SERVICES_DIR = BACKEND_DIR / "agents" / "services"
+from ._paths import RELAY_PATH, SERVICES_DIR
+
 VOLUME_PY = SERVICES_DIR / "volume.py"
+COMMS_PY = SERVICES_DIR / "comms.py"
 
 
 def _parse_poke_registry() -> dict[str, set[str]]:
@@ -108,4 +106,37 @@ class TestMutateEnforcement:
             "Raw volume writes to poke-registered paths in runtime services "
             "(should use mutate() or mutate_state()):\n"
             + "\n".join(f"  {v}" for v in violations)
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3. Every mutate() is paired with push_to_relay()
+# ---------------------------------------------------------------------------
+
+class TestMutatePushPairing:
+    """Every mutate() call in comms.py must be followed by push_to_relay."""
+
+    def test_mutate_paired_with_push(self):
+        """Every .mutate( call in comms.py must have a push_to_relay nearby."""
+        source = COMMS_PY.read_text()
+        lines = source.split('\n')
+
+        mutate_lines = []
+        push_lines = []
+        for i, line in enumerate(lines):
+            if '.mutate(' in line or '.mutate_state(' in line:
+                mutate_lines.append(i)
+            if 'push_to_relay' in line:
+                push_lines.append(i)
+
+        # Each mutate should have a push_to_relay within 5 lines after it
+        unpushed = []
+        for ml in mutate_lines:
+            has_push = any(pl > ml and pl <= ml + 5 for pl in push_lines)
+            if not has_push:
+                unpushed.append(ml + 1)  # 1-indexed
+
+        assert not unpushed, (
+            f"mutate() at lines {unpushed} in comms.py has no push_to_relay nearby. "
+            f"Every mutate() must be followed by push_to_relay() to notify the relay."
         )
