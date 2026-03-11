@@ -1,13 +1,5 @@
 /** @type {import('next').NextConfig} */
 
-const backend = process.env.BACKEND_INTERNAL_URL
-if (!backend) {
-  throw new Error(
-    "BACKEND_INTERNAL_URL is required (e.g. http://backend:8000). " +
-    "Set it in docker-compose.yml or your shell environment."
-  )
-}
-
 const nextConfig = {
   output: "standalone",
 
