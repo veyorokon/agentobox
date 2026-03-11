@@ -34,11 +34,14 @@ CSRF_COOKIE_SECURE = not DEBUG
 
 # Build CSRF_TRUSTED_ORIGINS from ALLOWED_HOSTS so Django 4+ POST requests
 # work behind a reverse proxy.  Wildcard "*" can't be a trusted origin, so
-# we skip it (only used in local dev where CSRF is relaxed anyway).
+# we skip it.  In local dev (ALLOWED_HOSTS=["*"]) the list would be empty,
+# so we fall back to the dashboard URL which is the only cross-origin POST
+# source (the OAuth provider-redirect form).
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 if not CSRF_TRUSTED_ORIGINS:
-    CSRF_TRUSTED_ORIGINS = [
-        f"https://{h}" for h in ALLOWED_HOSTS if h != "*"
+    _hosts = [f"https://{h}" for h in ALLOWED_HOSTS if h != "*"]
+    CSRF_TRUSTED_ORIGINS = _hosts or [
+        env("ABOX_DASHBOARD_URL", default="http://localhost:5051")
     ]
 
 # --- Apps ---
@@ -60,6 +63,13 @@ INSTALLED_APPS = [
     "accounts",
     "projects",
     "agents",
+    # django-allauth
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
+    "allauth.socialaccount.providers.github",
+    "allauth.headless",
 ]
 
 # --- Middleware ---
@@ -74,6 +84,7 @@ MIDDLEWARE = [
     "accounts.middleware.TokenAuthMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
     "django_structlog.middlewares.RequestMiddleware",
     "config.middleware.TraceContextMiddleware",
 ]
@@ -134,6 +145,44 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# --- django-allauth (headless social auth) ---
+
+HEADLESS_ONLY = True
+HEADLESS_TOKEN_STRATEGY = (
+    "allauth.headless.tokens.strategies.jwt.JWTTokenStrategy"
+)
+HEADLESS_JWT_ALGORITHM = "HS256"  # uses SECRET_KEY; no RSA key pair needed
+
+DASHBOARD_URL = env("ABOX_DASHBOARD_URL", default="http://localhost:5051")
+
+HEADLESS_FRONTEND_URLS = {
+    "socialaccount_login_cancelled": DASHBOARD_URL + "/auth/callback?error=cancelled",
+    "socialaccount_login_error": DASHBOARD_URL + "/auth/callback?error=provider",
+}
+
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "SCOPE": ["profile", "email"],
+        "AUTH_PARAMS": {"access_type": "online"},
+        "APP": {
+            "client_id": env("GOOGLE_CLIENT_ID", default=""),
+            "secret": env("GOOGLE_CLIENT_SECRET", default=""),
+        },
+    },
+    "github": {
+        "SCOPE": ["user:email"],
+        "APP": {
+            "client_id": env("GITHUB_SSO_CLIENT_ID", default=""),
+            "secret": env("GITHUB_SSO_CLIENT_SECRET", default=""),
+        },
+    },
+}
+
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*"]
+ACCOUNT_EMAIL_VERIFICATION = "none"  # start simple, add verification later
+SOCIALACCOUNT_AUTO_SIGNUP = True
 
 # --- i18n ---
 
@@ -257,6 +306,7 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:3000", "http://localhost:5051"],
 )
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     "accept",
     "authorization",
@@ -265,6 +315,7 @@ CORS_ALLOW_HEADERS = [
     "traceparent",
     "x-csrftoken",
     "x-requested-with",
+    "x-session-token",
 ]
 
 # --- Observability ---

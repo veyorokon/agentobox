@@ -36,6 +36,8 @@ down:
 
 docs:
 	docker compose exec -T backend uv run python manage.py generate_reference --to-stdout > docs/REFERENCE.md
+	node dashboard/scripts/generate-reference.mjs
+	python agent/scripts/generate-reference.py
 
 test:
 	docker compose exec backend uv run python -m pytest agents/tests/ -v
@@ -49,7 +51,7 @@ _test-agent:
 	uv run pytest agent/tests/ tests/architecture/ -v -o "addopts="
 
 _test-dashboard:
-	cd dashboard && npx vitest run
+	cd dashboard && pnpm vitest run
 
 test-agent:
 	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent-claude:latest \
@@ -57,7 +59,7 @@ test-agent:
 
 lint:
 	cd backend && uv run ruff check agents/
-	cd dashboard && npx next lint
+	cd dashboard && pnpm next lint
 
 test-e2e:
 	uv run --group e2e pytest tests/e2e/ -v || test $$? -eq 5

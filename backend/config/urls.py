@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
 from django.views.decorators.csrf import csrf_exempt
 from strawberry.django.views import AsyncGraphQLView
 
@@ -14,4 +14,7 @@ urlpatterns = [
     path("media/upload", upload_media, name="media-upload"),
     path("agents/<uuid:agent_id>/upload", upload_file, name="agent-upload"),
     path("hook-bridge/", hook_bridge, name="hook-bridge"),
+    # django-allauth headless + social auth
+    path("_allauth/", include("allauth.headless.urls")),
+    path("accounts/", include("allauth.urls")),
 ]

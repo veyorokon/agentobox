@@ -57,6 +57,9 @@
   --p-pro: hsl(251 84.6% 74.5%);
   --p-text-pro: hsl(251 84.6% 74.5%);
 
+  --p-text-link: hsl(210 65.5% 67.1%);
+  --p-text-link-hover: hsl(210 70.9% 75%);
+
   --p-success: hsl(97 59.1% 46.1%);
   --p-text-success: hsl(97 59.1% 46.1%);
   --p-success-subtle: hsl(127 100% 13.9% / 0.2);

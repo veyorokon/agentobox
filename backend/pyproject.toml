@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.38.0",
     "channels>=4.3.2",
+    "django-allauth[socialaccount]>=65.4.0",
     "channels-redis>=4.3.0",
     "croniter>=5.0.0",
     "cryptography>=44.0.0",

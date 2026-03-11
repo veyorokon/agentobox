@@ -2,8 +2,10 @@ FROM node:22-alpine AS base
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci
+RUN corepack enable pnpm
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
@@ -12,7 +14,7 @@ FROM base AS dev
 
 EXPOSE 5051
 
-CMD ["npm", "run", "dev"]
+CMD ["pnpm", "dev"]
 
 # --- Production build ---
 FROM base AS builder
@@ -20,7 +22,7 @@ FROM base AS builder
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
-RUN npm run build
+RUN pnpm build
 
 # --- Production image ---
 FROM node:22-alpine AS prod

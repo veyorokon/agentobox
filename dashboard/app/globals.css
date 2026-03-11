@@ -65,6 +65,10 @@
   --color-avatar-saturation: var(--p-avatar-saturation);
   --color-avatar-lightness: var(--p-avatar-lightness);
 
+  /* Links */
+  --color-text-link: var(--p-text-link);
+  --color-text-link-hover: var(--p-text-link-hover);
+
   /* Interactive */
   --color-interactive: var(--p-interactive);
   --color-interactive-active: var(--p-interactive-active);

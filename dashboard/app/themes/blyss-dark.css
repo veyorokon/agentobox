@@ -17,10 +17,10 @@
   --p-surface-backdrop: rgba(43, 48, 59, 0.85);
   --p-surface-invert: #EFF1F5;
 
-  --p-text-default: #DFE1E8;
+  --p-text-default: #C0C5CE;
   --p-text-secondary: #A7ADBA;
-  --p-text-muted: #808B96;
-  --p-text-disabled: #5C6773;
+  --p-text-muted: #65737E;
+  --p-text-disabled: #4F5B66;
   --p-text-on-emphasis: #EFF1F5;
 
   --p-border-default: rgba(168, 178, 191, 0.18);
@@ -38,6 +38,9 @@
 
   --p-pro: #B48EAD;
   --p-text-pro: #B48EAD;
+
+  --p-text-link: #B48EAD;
+  --p-text-link-hover: #C4A0BF;
 
   --p-success: #A3BE8C;
   --p-text-success: #A3BE8C;

@@ -23,7 +23,7 @@ import {
   type SecretEntry,
 } from "@/lib/graphql/hooks/use-secrets"
 import { createLogger } from "@/lib/logger"
-import { cn, timeAgo, formatDate, detectCredentialType } from "@/lib/utils"
+import { cn, timeAgo, formatDate, detectCredentialType, getBackendUrl } from "@/lib/utils"
 
 const log = createLogger("router")
 
@@ -307,6 +307,11 @@ export default function GlobalPage() {
         <button
           type="button"
           onClick={() => {
+            const backendUrl = getBackendUrl()
+            fetch(`${backendUrl}/_allauth/browser/v1/auth/session`, {
+              method: "DELETE",
+              credentials: "include",
+            }).catch(() => {})
             localStorage.removeItem("auth_token")
             router.replace("/login")
           }}

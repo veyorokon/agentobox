@@ -1,6 +1,21 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 
+/* ── Backend URL ─────────────────────────────────────────────────── */
+
+/** Derive the backend base URL (no trailing slash, no /graphql).
+ *  Uses NEXT_PUBLIC_API_URL if set (strips /graphql suffix), otherwise
+ *  infers from window.location in browser or defaults to localhost:8000. */
+export function getBackendUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/graphql\/?$/, "")
+  }
+  if (typeof window === "undefined") return "http://localhost:8000"
+  const { protocol, hostname, port } = window.location
+  if (!port || port === "80" || port === "443") return `${protocol}//${hostname}`
+  return `${protocol}//${hostname}:8000`
+}
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }

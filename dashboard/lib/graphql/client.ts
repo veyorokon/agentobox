@@ -5,6 +5,7 @@ import {
   InMemoryCache,
   Observable,
 } from "@apollo/client"
+import { onError } from "@apollo/client/link/error"
 import { createLogger } from "@/lib/logger"
 
 /* ================================================================== */
@@ -65,6 +66,19 @@ const loggingLink = new ApolloLink((operation, forward) => {
   })
 })
 
+/* ── Auth error link — catch 401/403, redirect to login ─────────── */
+
+const authErrorLink = onError(({ error }) => {
+  if (typeof window === "undefined") return
+  const status = error && "statusCode" in error ? (error as { statusCode: number }).statusCode : 0
+  if (status === 401 || status === 403) {
+    localStorage.removeItem("auth_token")
+    if (window.location.pathname !== "/login") {
+      window.location.href = "/login"
+    }
+  }
+})
+
 /* ── Network links ───────────────────────────────────────────────── */
 
 const httpLink = new HttpLink({
@@ -77,7 +91,7 @@ const httpLink = new HttpLink({
   },
 })
 
-const networkLink = httpLink
+const networkLink = ApolloLink.from([authErrorLink, httpLink])
 
 /* ── Client ──────────────────────────────────────────────────────── */
 

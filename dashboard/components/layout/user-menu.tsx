@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, type ReactNode } from "react"
 import { LogOut, FolderOpen } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, getBackendUrl } from "@/lib/utils"
 
 interface UserMenuProps {
   children: ReactNode
@@ -47,6 +47,12 @@ export function UserMenu({ children, className }: UserMenuProps) {
           <button
             type="button"
             onClick={() => {
+              // Clear server session (fire-and-forget), then clear local token
+              const backendUrl = getBackendUrl()
+              fetch(`${backendUrl}/_allauth/browser/v1/auth/session`, {
+                method: "DELETE",
+                credentials: "include",
+              }).catch(() => {})
               localStorage.removeItem("auth_token")
               window.location.href = "/login"
             }}
