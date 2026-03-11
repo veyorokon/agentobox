@@ -102,6 +102,16 @@ function useResolveFeedItem(
           id: client.cache.identify({ __typename: "TeamFeedItemType", id: feedItemId }),
           fields: { [statusField]: () => "pending" },
         })
+        // Recompute attention so the UI shows the pending action again
+        const revertFeed = client.readQuery<FeedData>({ query: GET_FEED, variables: queryVars })
+        const revertItem = (revertFeed?.feed ?? []).find(fi => fi.id === feedItemId)
+        if (revertItem && "agentId" in revertItem && revertItem.agentId) {
+          const revertAttention = deriveAttentionFromFeed(revertFeed?.feed ?? [], revertItem.agent)
+          client.cache.modify({
+            id: client.cache.identify({ __typename: "AgentType", id: revertItem.agentId }),
+            fields: { attentionLevel: () => revertAttention },
+          })
+        }
       })
     },
     [client, mutate, queryVars, statusField, itemType],

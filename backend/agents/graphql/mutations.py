@@ -830,6 +830,13 @@ class AgentMutation:
                 project_id=project_id, project__owner=user, key=key,
             )
             await secret.adelete()
+
+            # Push updated secret set to running agents (removes revoked key)
+            from projects.models import Project
+            from agents.services.secrets import push_secrets_for_project
+            project = await Project.objects.aget(id=project_id)
+            await push_secrets_for_project(project)
+
             return True
         except ProjectSecret.DoesNotExist:
             return False
@@ -861,6 +868,12 @@ class AgentMutation:
             await secret.scoped_agents.aset(agents)
         else:
             await secret.scoped_agents.aclear()
+
+        # Push updated secret set to running agents (scope change)
+        from projects.models import Project
+        from agents.services.secrets import push_secrets_for_project
+        project = await Project.objects.aget(id=input.project_id)
+        await push_secrets_for_project(project)
 
         return secret
 
