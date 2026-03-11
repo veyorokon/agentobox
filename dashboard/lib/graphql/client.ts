@@ -68,22 +68,18 @@ const loggingLink = new ApolloLink((operation, forward) => {
 
 /* ── Auth error link — catch 401/403, redirect to login ─────────── */
 
-const authErrorLink = onError(({ graphQLErrors, networkError }) => {
+const authErrorLink = onError(({ networkError }) => {
   if (typeof window === "undefined") return
 
-  // HTTP-level auth failures (e.g. middleware rejects before GraphQL)
+  // Only redirect on HTTP-level auth failures (middleware rejects before GraphQL).
+  // GraphQL-level "Authentication required" errors are handled by the WebSocket
+  // close code 4001 in use-project-ws.ts — that's the reliable signal for stale
+  // sessions. Catching GraphQL errors here causes logout loops because stale
+  // cached queries can fire before the fresh token propagates.
   const status = networkError && "statusCode" in networkError
     ? (networkError as { statusCode: number }).statusCode
     : 0
-  const isHttpAuth = status === 401 || status === 403
-
-  // GraphQL-level auth failures (resolver raises PermissionError — returns 200
-  // with errors, not an HTTP error code)
-  const isGqlAuth = graphQLErrors?.some(
-    e => e.message === "Authentication required"
-  )
-
-  if (isHttpAuth || isGqlAuth) {
+  if (status === 401 || status === 403) {
     localStorage.removeItem("auth_token")
     if (window.location.pathname !== "/login") {
       window.location.href = "/login"
