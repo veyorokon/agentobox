@@ -6,6 +6,7 @@ import {
   Observable,
 } from "@apollo/client"
 import { onError } from "@apollo/client/link/error"
+import { ServerError } from "@apollo/client/errors"
 import { createLogger } from "@/lib/logger"
 import { getAuthHeader, clearTokenAndRedirect } from "@/lib/auth"
 
@@ -62,7 +63,7 @@ const loggingLink = new ApolloLink((operation, forward) => {
 
 /* ── Auth error link — catch 401/403, redirect to login ─────────── */
 
-const authErrorLink = onError(({ networkError }) => {
+const authErrorLink = onError(({ error }) => {
   if (typeof window === "undefined") return
 
   // Only redirect on HTTP-level auth failures (middleware rejects before GraphQL).
@@ -70,10 +71,7 @@ const authErrorLink = onError(({ networkError }) => {
   // close code 4001 in use-project-ws.ts — that's the reliable signal for stale
   // sessions. Catching GraphQL errors here causes logout loops because stale
   // cached queries can fire before the fresh token propagates.
-  const status = networkError && "statusCode" in networkError
-    ? (networkError as { statusCode: number }).statusCode
-    : 0
-  if (status === 401 || status === 403) {
+  if (ServerError.is(error) && (error.statusCode === 401 || error.statusCode === 403)) {
     clearTokenAndRedirect("http_401_403")
   }
 })
