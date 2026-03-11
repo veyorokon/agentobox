@@ -48,10 +48,37 @@ Login is social-auth only (Google, GitHub). The flow is identical for all provid
 
 ## CI/CD
 
-- Agent image workflow: `.github/workflows/agent-image.yml`
+### Agent image
+
+- Workflow: `.github/workflows/agent-image.yml`
 - Dev builds: push to `main` with `agent/` changes -> `:main` + `:sha-xxx`
 - Release builds: push `v*` tag -> `:latest` + `:v1.2.3`
 - Image: `ghcr.io/veyorokon/agentobox-agent-claude` (private, Modal pulls via `ghcr-secret`)
+
+### Platform deploy (backend + dashboard)
+
+- Workflow: `.github/workflows/deploy.yml`
+- **Auto-deploys on push to `main`** — tests → build images → SSH to droplet → pull → up → migrate
+- Also triggers on `v*` tags
+- Images: `ghcr.io/veyorokon/agentobox-backend`, `ghcr.io/veyorokon/agentobox-dashboard`
+- Deploy target: DigitalOcean Droplet running `docker-compose.prod.yml` with Caddy (auto TLS)
+- GitHub environment: `dev` (holds `EC2_HOST`, `EC2_SSH_KEY`)
+
+### First-time production setup
+
+1. `make tf-init ENV=dev` then `make tf-apply ENV=dev` — provisions Droplet + Managed Postgres + Route53 DNS
+2. `make setup-server ENV=dev` — SCPs `docker-compose.prod.yml`, `Caddyfile`, `.env.prod.example` to `/opt/agentobox`, installs Docker + Caddy, starts stack
+3. SSH to server, edit `/opt/agentobox/.env` with secrets (`DATABASE_URL`, `SECRET_KEY`, `MODAL_TOKEN_*`, etc.)
+4. Subsequent pushes to `main` auto-deploy via GitHub Actions
+
+### Key deploy files
+
+- `docker-compose.prod.yml` — Production stack (backend, dashboard, redis, caddy)
+- `Caddyfile` — Reverse proxy routes (GraphQL, WebSocket, admin → backend; everything else → dashboard)
+- `.env.prod.example` — Production env var template
+- `bin/setup-server.sh` — One-time server initialization script
+- `infra/environments/dev/` — Terraform config (Droplet, Postgres, DNS)
+- `infra/modules/` — Reusable Terraform modules (compute, database, dns)
 
 ## Documentation
 
