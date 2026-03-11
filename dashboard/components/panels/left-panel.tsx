@@ -44,7 +44,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   const bp = useBreakpoint()
 
   // ── Project name ────────────────────────────────────────────────────
-  const { data: projectData } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
+  const { data: projectData, loading: projectLoading } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
     variables: { id: projectId },
     skip: !projectId,
   })
@@ -135,6 +135,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
   }, [selectedIds, hardRestartAgent, exitSelectMode])
 
   const totalCost = useMemo(() => agents.reduce((sum, a) => sum + a.cost, 0), [agents])
+  const headerReady = !projectLoading && !loading && !!projectName
 
   const filteredAgents = useMemo(() => {
     let result = agents
@@ -250,13 +251,19 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             <Globe className="h-3.5 w-3.5 text-muted" />
           </button>
           <ChevronRight className="h-2.5 w-2.5 text-muted/30 shrink-0" />
-          <span className="text-sm font-medium text-default truncate">
-            {projectName || projectId}
-          </span>
+          {headerReady ? (
+            <span className="text-sm font-medium text-default truncate">{projectName}</span>
+          ) : (
+            <span className="inline-block w-16 h-3.5 rounded bg-surface-raised/60 animate-pulse" />
+          )}
         </div>
-        <span className="text-[10px] text-secondary/70 font-mono tabular-nums ml-1 shrink-0">
-          {formatCost(totalCost)}
-        </span>
+        {headerReady ? (
+          <span className="text-[10px] text-secondary/70 font-mono tabular-nums ml-1 shrink-0">
+            {formatCost(totalCost)}
+          </span>
+        ) : (
+          <span className="inline-block w-8 h-2.5 rounded bg-surface-raised/40 animate-pulse ml-1 shrink-0" />
+        )}
         <span className="flex-1" />
         <button
           type="button"

@@ -50,7 +50,7 @@ export default function ProjectPage() {
   const bp = useBreakpoint()
 
   // ── Project name (for breadcrumb) ─────────────────────────────────
-  const { data: projectData } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
+  const { data: projectData, loading: projectLoading } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
     variables: { id: projectId },
     skip: !projectId,
   })
@@ -63,10 +63,11 @@ export default function ProjectPage() {
   // ── Apollo (agents + feed + providers) ─────────────────────────
   const { providers } = useProviderStatus(projectId ?? "")
   const missingKeys = providers.filter((p) => !p.configured)
-  const { data: agentsData } = useAgents()
+  const { data: agentsData, loading: agentsLoading } = useAgents()
   const agents = agentsData?.agents ?? []
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
+  const headerReady = !projectLoading && !agentsLoading && !!projectName
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
@@ -121,9 +122,19 @@ export default function ProjectPage() {
               Global
             </button>
             <ChevronRight className="h-2.5 w-2.5 text-muted/30 shrink-0" />
-            <span className="text-[11px] text-default font-medium truncate">
-              {projectName || projectId}
-            </span>
+            {headerReady ? (
+              <>
+                <span className="text-[11px] text-default font-medium truncate">{projectName}</span>
+                <span className="text-[10px] text-muted/60 font-mono tabular-nums ml-1.5">
+                  {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="inline-block w-14 h-3 rounded bg-surface-raised/60 animate-pulse" />
+                <span className="inline-block w-8 h-2.5 rounded bg-surface-raised/40 animate-pulse ml-1.5" />
+              </>
+            )}
             <span className="flex-1" />
             <button
               type="button"
@@ -133,9 +144,6 @@ export default function ProjectPage() {
             >
               <KeyRound className="h-3.5 w-3.5" />
             </button>
-            <span className="text-[10px] text-muted/60 font-mono tabular-nums mx-1.5">
-              {formatCost(agents.reduce((s, a) => s + a.cost, 0))}
-            </span>
             <ThemePicker className="shrink-0" />
             <UserMenu>
               <div
