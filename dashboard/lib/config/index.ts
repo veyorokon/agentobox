@@ -39,5 +39,7 @@ export const BUILT_IN_THEMES: { id: string; label: string; mode: string }[] = [
   { id: "claude", label: "Dark", mode: "dark" },
   { id: "blyss", label: "Blyss", mode: "dark" },
   { id: "rose-pine", label: "Rosé Pine", mode: "dark" },
+  { id: "ember", label: "Ember", mode: "dark" },
+  { id: "nord", label: "Nord", mode: "dark" },
 ]
 

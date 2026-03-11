@@ -1,0 +1,75 @@
+/* ============================================
+   Nord Dark Theme
+   ============================================
+
+   The Nord palette — arctic, clean, minimal. Cool blue-grays
+   with frost cyan accent. Inspired by Nordic/i3 rices.
+   "An arctic, north-bluish color palette."
+   ============================================ */
+
+[data-theme="nord"][data-mode="dark"] {
+  /* Primitives — raw values for the Nord dark palette */
+  --p-surface: #2e3440;
+  --p-surface-raised: #3b4252;
+  --p-surface-sunken: #272c36;
+  --p-surface-overlay: #434c5e;
+  --p-surface-backdrop: rgba(46, 52, 64, 0.85);
+  --p-surface-invert: #eceff4;
+
+  --p-text-default: #d8dee9;
+  --p-text-secondary: #a5b1c2;
+  --p-text-muted: #616e88;
+  --p-text-disabled: #4c566a;
+  --p-text-on-emphasis: #eceff4;
+
+  --p-border-default: rgba(76, 86, 106, 0.50);
+  --p-border-subtle: rgba(76, 86, 106, 0.25);
+  --p-border-strong: rgba(76, 86, 106, 0.75);
+
+  --p-accent: #88c0d0;
+  --p-accent-hover: #a3d4e0;
+  --p-accent-subtle: rgba(136, 192, 208, 0.15);
+  --p-text-accent: #88c0d0;
+
+  --p-info: #81a1c1;
+  --p-text-info: #81a1c1;
+  --p-text-info-hover: #9bb5d1;
+
+  --p-pro: #b48ead;
+  --p-text-pro: #b48ead;
+
+  --p-text-link: #8fbcbb;
+  --p-text-link-hover: #a9d0cf;
+
+  --p-success: #a3be8c;
+  --p-text-success: #a3be8c;
+  --p-success-subtle: rgba(163, 190, 140, 0.15);
+
+  --p-danger: #bf616a;
+  --p-text-danger: #bf616a;
+  --p-danger-subtle: rgba(191, 97, 106, 0.15);
+
+  --p-warning: #ebcb8b;
+  --p-text-warning: #ebcb8b;
+  --p-warning-subtle: rgba(235, 203, 139, 0.15);
+
+  --p-avatar-saturation: 35%;
+  --p-avatar-lightness: 55%;
+
+  --p-interactive: rgba(59, 66, 82, 0.5);
+  --p-interactive-active: rgba(59, 66, 82, 0.9);
+  --p-ring-focus: rgba(136, 192, 208, 0.5);
+
+  /* Border radius — clean and minimal */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  /* Shadows — cool-tinted for the arctic feel */
+  --shadow-sm: 0 1px 2px hsl(220 20% 0% / 0.35);
+  --shadow-md: 0 4px 6px hsl(220 20% 0% / 0.45);
+  --shadow-lg: 0 10px 15px hsl(220 20% 0% / 0.55);
+  --shadow-2xl: 0 25px 50px -12px hsl(220 20% 0% / 0.65);
+}

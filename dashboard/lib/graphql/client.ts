@@ -7,6 +7,7 @@ import {
 } from "@apollo/client"
 import { onError } from "@apollo/client/link/error"
 import { createLogger } from "@/lib/logger"
+import { getAuthHeader, clearTokenAndRedirect } from "@/lib/auth"
 
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
@@ -28,13 +29,6 @@ function getApiUrl(): string {
   const { protocol, hostname, port } = window.location
   if (!port || port === "80" || port === "443") return `${protocol}//${hostname}/graphql`
   return `${protocol}//${hostname}:8000/graphql`
-}
-
-/* ── Auth header helper ───────────────────────────────────────────── */
-
-function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null
-  return localStorage.getItem("auth_token")
 }
 
 /* ── Logging link ────────────────────────────────────────────────── */
@@ -80,10 +74,7 @@ const authErrorLink = onError(({ networkError }) => {
     ? (networkError as { statusCode: number }).statusCode
     : 0
   if (status === 401 || status === 403) {
-    localStorage.removeItem("auth_token")
-    if (window.location.pathname !== "/login") {
-      window.location.href = "/login"
-    }
+    clearTokenAndRedirect("http_401_403")
   }
 })
 
@@ -93,8 +84,7 @@ const httpLink = new HttpLink({
   uri: getApiUrl,
   headers: {
     get authorization() {
-      const token = getAuthToken()
-      return token ? `Bearer ${token}` : ""
+      return getAuthHeader()
     },
   },
 })

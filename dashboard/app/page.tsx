@@ -24,6 +24,7 @@ import {
 } from "@/lib/graphql/hooks/use-secrets"
 import { createLogger } from "@/lib/logger"
 import { cn, timeAgo, formatDate, detectCredentialType, getBackendUrl } from "@/lib/utils"
+import { getToken, clearTokenAndRedirect } from "@/lib/auth"
 
 const log = createLogger("router")
 
@@ -109,8 +110,7 @@ export default function GlobalPage() {
   const [secretNewValue, setSecretNewValue] = useState("")
 
   useEffect(() => {
-    const token = localStorage.getItem("auth_token")
-    if (!token) {
+    if (!getToken()) {
       router.replace("/login")
     } else {
       setAuthed(true)
@@ -312,8 +312,7 @@ export default function GlobalPage() {
               method: "DELETE",
               credentials: "include",
             }).catch(() => {})
-            localStorage.removeItem("auth_token")
-            router.replace("/login")
+            clearTokenAndRedirect("user_signout")
           }}
           className="text-[11px] text-muted hover:text-secondary transition-colors"
         >

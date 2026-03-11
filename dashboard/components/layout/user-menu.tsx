@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, type ReactNode } from "react"
 import { LogOut, FolderOpen } from "lucide-react"
 import { cn, getBackendUrl } from "@/lib/utils"
+import { clearTokenAndRedirect } from "@/lib/auth"
 
 interface UserMenuProps {
   children: ReactNode
@@ -53,8 +54,7 @@ export function UserMenu({ children, className }: UserMenuProps) {
                 method: "DELETE",
                 credentials: "include",
               }).catch(() => {})
-              localStorage.removeItem("auth_token")
-              window.location.href = "/login"
+              clearTokenAndRedirect("user_signout")
             }}
             className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-secondary hover:text-danger hover:bg-danger/5 transition-colors"
           >

@@ -117,7 +117,7 @@ async def session_token(request):
     def _exchange(key):
         from django.contrib.sessions.backends.db import SessionStore
         from django.contrib.auth import get_user_model
-        from allauth.headless.tokens.strategies.jwt.internal import create_access_token
+        from accounts.auth import encode_token
 
         session = SessionStore(key)
         user_id = session.get("_auth_user_id")
@@ -128,7 +128,7 @@ async def session_token(request):
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return None
-        return create_access_token(user, session, {})
+        return encode_token(user)
 
     token = await sync_to_async(_exchange, thread_sensitive=False)(session_key)
     if not token:

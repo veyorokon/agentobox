@@ -2,6 +2,8 @@
 @import "./themes/claude-dark.css";
 @import "./themes/blyss-dark.css";
 @import "./themes/rose-pine-dark.css";
+@import "./themes/ember-dark.css";
+@import "./themes/nord-dark.css";
 
 @theme {
   /* Font families */

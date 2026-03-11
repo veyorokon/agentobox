@@ -3,6 +3,7 @@ import { useApolloClient } from "@apollo/client/react"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_AGENT_FEED, GET_FEED } from "@/lib/graphql/queries/feed"
 import { createLogger } from "@/lib/logger"
+import { getToken, clearTokenAndRedirect } from "@/lib/auth"
 
 /* ================================================================== */
 /*  PROJECT WEBSOCKET HOOK                                              */
@@ -33,11 +34,6 @@ function getWsUrl(projectId: string): string {
   return `${wsProto}//${host}/ws/dashboard/${projectId}/`
 }
 
-function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null
-  return localStorage.getItem("auth_token")
-}
-
 /**
  * Project-scoped WebSocket that streams real-time updates into Apollo cache.
  * Call once at project layout level where projectId is available.
@@ -57,7 +53,7 @@ export function useProjectWebSocket(projectId: string | undefined) {
     function connect() {
       if (unmounted.current) return
 
-      const token = getAuthToken()
+      const token = getToken()
       if (!token) {
         log("ws.no_token", { projectId })
         return
@@ -107,9 +103,7 @@ export function useProjectWebSocket(projectId: string | undefined) {
         // 4001 = auth rejected (bad/expired token). Clear stale token
         // and redirect to login instead of retrying forever.
         if (event.code === 4001) {
-          log("ws.auth_rejected", { projectId }, "error")
-          localStorage.removeItem("auth_token")
-          window.location.href = "/login"
+          clearTokenAndRedirect("ws_4001")
           return
         }
 

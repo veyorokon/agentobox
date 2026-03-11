@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useSearchParams } from "next/navigation"
+import { getToken } from "@/lib/auth"
 
 const ERROR_MESSAGES: Record<string, string> = {
   cancelled: "Sign-in was cancelled",
@@ -19,10 +20,21 @@ export default function LoginPage() {
   const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
-    if (typeof window !== "undefined" && localStorage.getItem("auth_token")) {
+    if (getToken()) {
       window.location.href = "/"
       return
     }
+
+    // Dump auth breadcrumbs from previous session — survives the redirect
+    try {
+      const logoutLog = sessionStorage.getItem("auth_logout_log")
+      if (logoutLog) {
+        console.warn("[auth] logout breadcrumbs from previous session:\n" + logoutLog)
+      } else {
+        console.warn("[auth] no logout breadcrumbs — token may have been cleared outside lib/auth.ts")
+      }
+    } catch { /* private browsing */ }
+
     // Stagger the mount animation
     const t = setTimeout(() => setMounted(true), 50)
 

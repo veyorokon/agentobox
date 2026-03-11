@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { setToken } from "@/lib/auth"
 
 const ERROR_MESSAGES: Record<string, string> = {
   cancelled: "Sign-in was cancelled",
@@ -21,7 +22,7 @@ export default function AuthCallbackPage() {
     // server-side, bypassing browser cookie limitations.
     const token = params.get("token")
     if (token) {
-      localStorage.setItem("auth_token", token)
+      setToken(token)
       router.replace("/")
       return
     }

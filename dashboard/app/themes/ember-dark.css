@@ -1,0 +1,76 @@
+/* ============================================
+   Ember Dark Theme
+   ============================================
+
+   Warm earthy tones on dark charcoal. Inspired by Gruvbox-family
+   palettes — golden orange accent, muted greens, reds, and blues.
+   Feels analog and tactile vs the cold digital of other themes.
+   "A woodshop dashboard lit by warm tungsten."
+   ============================================ */
+
+[data-theme="ember"][data-mode="dark"] {
+  /* Primitives — raw values for the Ember dark palette */
+  --p-surface: #282828;
+  --p-surface-raised: #32302f;
+  --p-surface-sunken: #1d2021;
+  --p-surface-overlay: #3c3836;
+  --p-surface-backdrop: rgba(29, 32, 33, 0.85);
+  --p-surface-invert: #ebdbb2;
+
+  --p-text-default: #ebdbb2;
+  --p-text-secondary: #bdae93;
+  --p-text-muted: #928374;
+  --p-text-disabled: #665c54;
+  --p-text-on-emphasis: #ebdbb2;
+
+  --p-border-default: rgba(168, 153, 132, 0.25);
+  --p-border-subtle: rgba(168, 153, 132, 0.12);
+  --p-border-strong: rgba(168, 153, 132, 0.40);
+
+  --p-accent: #e78a4e;
+  --p-accent-hover: #f0a06a;
+  --p-accent-subtle: rgba(231, 138, 78, 0.15);
+  --p-text-accent: #e78a4e;
+
+  --p-info: #7daea3;
+  --p-text-info: #7daea3;
+  --p-text-info-hover: #9bc5bc;
+
+  --p-pro: #d3869b;
+  --p-text-pro: #d3869b;
+
+  --p-text-link: #89b482;
+  --p-text-link-hover: #a4c99e;
+
+  --p-success: #a9b665;
+  --p-text-success: #a9b665;
+  --p-success-subtle: rgba(169, 182, 101, 0.15);
+
+  --p-danger: #ea6962;
+  --p-text-danger: #ea6962;
+  --p-danger-subtle: rgba(234, 105, 98, 0.15);
+
+  --p-warning: #d8a657;
+  --p-text-warning: #d8a657;
+  --p-warning-subtle: rgba(216, 166, 87, 0.15);
+
+  --p-avatar-saturation: 45%;
+  --p-avatar-lightness: 45%;
+
+  --p-interactive: rgba(80, 73, 69, 0.4);
+  --p-interactive-active: rgba(80, 73, 69, 0.8);
+  --p-ring-focus: rgba(231, 138, 78, 0.5);
+
+  /* Border radius — slightly softer to match the warm feel */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  /* Shadows — warm-tinted for cohesion with the earthy palette */
+  --shadow-sm: 0 1px 2px hsl(20 10% 0% / 0.35);
+  --shadow-md: 0 4px 6px hsl(20 10% 0% / 0.45);
+  --shadow-lg: 0 10px 15px hsl(20 10% 0% / 0.55);
+  --shadow-2xl: 0 25px 50px -12px hsl(20 10% 0% / 0.65);
+}
