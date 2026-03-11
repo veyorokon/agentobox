@@ -53,7 +53,7 @@ async def push_secrets_for_project(project) -> None:
     import structlog
 
     from agents.models import Agent, AgentStatus
-    from agents.runtimes import get_runtime
+
     from agents.services.lifecycle import resolve_agent_secrets
     from agents.services.provision import push_secrets_to_agent
 
@@ -70,10 +70,7 @@ async def push_secrets_for_project(project) -> None:
         try:
             secret_envs = await resolve_agent_secrets(agent, op_log)
             if secret_envs:
-                runtime = get_runtime(agent.runtime)
-                await push_secrets_to_agent(
-                    runtime, agent.sandbox_id, agent, secret_envs,
-                )
+                await push_secrets_to_agent(agent, secret_envs)
         except Exception as exc:  # intentional: one agent's push failure must not block other agents' secrets
             from agents.errors import ERR_SECRETS_PUSH_FAILED
             op_log.exception(

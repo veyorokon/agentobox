@@ -225,16 +225,16 @@ async def send_message(
             exc_info=True,
         )
 
-    # Auto-restart dead agents — inbox message persists on volume
+    # Append to inbox (persists on volume even if agent is dead)
+    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
+
+    # Auto-restart dead agents — inbox message already on volume
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
         op_log.info("comms.auto_restarting", current_status=agent.status)
         await hard_restart_agent(str(agent_id))
-        op_log.info("comms.message_sent", delivery="inbox")
+        op_log.info("comms.message_sent", delivery="inbox_then_restart")
         return True
-
-    # Append to inbox and poke relay
-    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
 
     op_log.info("comms.message_sent")
     return True
@@ -264,16 +264,16 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
         message_id=f"answer_{uuid.uuid4().hex[:16]}",
     )
 
-    # Auto-restart dead agents — inbox message persists on volume
+    # Append to inbox (persists on volume even if agent is dead)
+    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": parts}})
+
+    # Auto-restart dead agents — inbox message already on volume
     if _needs_restart(agent):
         from agents.services.lifecycle import hard_restart_agent
         op_log.info("comms.auto_restarting", current_status=agent.status)
         await hard_restart_agent(str(agent_id))
-        op_log.info("comms.question_answered", delivery="inbox")
+        op_log.info("comms.question_answered", delivery="inbox_then_restart")
         return True
-
-    # Append to inbox and poke relay
-    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": parts}})
 
     op_log.info("comms.question_answered")
     return True
@@ -330,13 +330,12 @@ async def broadcast_message(
             message_id=f"user_{broadcast_id}_{agent.id}",
         )
 
+        # Append to inbox (persists on volume even if agent is dead)
+        await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
+
         if _needs_restart(agent):
             op_log.info("comms.auto_restarting", agent_id=str(agent.id))
             await hard_restart_agent(str(agent.id))
-            continue
-
-        # Append to inbox and poke
-        await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
 
     op_log.info("comms.broadcast_sent", targets=target_names)
     return True
