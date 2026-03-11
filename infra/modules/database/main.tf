@@ -1,4 +1,13 @@
-# Database module — managed Postgres RDS instance
+# Database module — DigitalOcean Managed Postgres
+
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
+  }
+}
 
 variable "project" {
   type = string
@@ -8,9 +17,18 @@ variable "environment" {
   type = string
 }
 
-variable "instance_class" {
+variable "size" {
   type    = string
-  default = "db.t3.micro"
+  default = "db-s-1vcpu-1gb"
+}
+
+variable "region" {
+  type    = string
+  default = "nyc1"
+}
+
+variable "vpc_id" {
+  type = string
 }
 
 variable "db_name" {
@@ -18,129 +36,62 @@ variable "db_name" {
   default = "agentobox"
 }
 
-variable "master_username" {
-  type    = string
-  default = "agentobox"
-}
+# --- Managed Postgres Cluster ---
 
-variable "master_password" {
-  type      = string
-  sensitive = true
-}
-
-variable "subnet_ids" {
-  type        = list(string)
-  description = "Subnet IDs for the DB subnet group (must span at least 2 AZs)"
-}
-
-variable "vpc_id" {
-  type = string
-}
-
-variable "app_security_group_id" {
-  type        = string
-  description = "Security group ID of the app layer (allowed to connect)"
-}
-
-variable "skip_final_snapshot" {
-  type    = bool
-  default = true
-}
-
-# --- DB Subnet Group ---
-
-resource "aws_db_subnet_group" "main" {
+resource "digitalocean_database_cluster" "main" {
   name       = "${var.project}-${var.environment}"
-  subnet_ids = var.subnet_ids
+  engine     = "pg"
+  version    = "16"
+  size       = var.size
+  region     = var.region
+  node_count = 1
 
-  tags = {
-    Name        = "${var.project}-${var.environment}"
-    Project     = var.project
-    Environment = var.environment
-  }
+  private_network_uuid = var.vpc_id
+
+  tags = ["${var.project}", "${var.environment}"]
 }
 
-# --- Security Group ---
-
-resource "aws_security_group" "db" {
-  name_prefix = "${var.project}-${var.environment}-db-"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [var.app_security_group_id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name        = "${var.project}-${var.environment}-db-sg"
-    Project     = var.project
-    Environment = var.environment
-  }
-
-  lifecycle {
-    create_before_destroy = true
-  }
+resource "digitalocean_database_db" "main" {
+  cluster_id = digitalocean_database_cluster.main.id
+  name       = var.db_name
 }
 
-# --- RDS Instance ---
+# --- Firewall (restrict to droplet VPC) ---
 
-resource "aws_db_instance" "main" {
-  identifier = "${var.project}-${var.environment}"
+resource "digitalocean_database_firewall" "main" {
+  cluster_id = digitalocean_database_cluster.main.id
 
-  engine         = "postgres"
-  engine_version = "16"
-  instance_class = var.instance_class
-
-  allocated_storage = 20
-  storage_type      = "gp3"
-
-  db_name  = var.db_name
-  username = var.master_username
-  password = var.master_password
-
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-  vpc_security_group_ids = [aws_security_group.db.id]
-
-  multi_az            = false
-  publicly_accessible = false
-
-  backup_retention_period = 7
-
-  skip_final_snapshot       = var.skip_final_snapshot
-  final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.project}-${var.environment}-final"
-
-  tags = {
-    Name        = "${var.project}-${var.environment}"
-    Project     = var.project
-    Environment = var.environment
+  rule {
+    type  = "tag"
+    value = var.project
   }
 }
 
 # --- Outputs ---
 
-output "endpoint" {
-  value       = aws_db_instance.main.endpoint
-  description = "hostname:port"
-}
-
-output "address" {
-  value       = aws_db_instance.main.address
-  description = "Hostname only"
+output "host" {
+  value = digitalocean_database_cluster.main.private_host
 }
 
 output "port" {
-  value = aws_db_instance.main.port
+  value = digitalocean_database_cluster.main.port
 }
 
-output "db_name" {
-  value = aws_db_instance.main.db_name
+output "database" {
+  value = digitalocean_database_db.main.name
+}
+
+output "user" {
+  value = digitalocean_database_cluster.main.user
+}
+
+output "password" {
+  value     = digitalocean_database_cluster.main.password
+  sensitive = true
+}
+
+output "uri" {
+  value     = digitalocean_database_cluster.main.private_uri
+  sensitive = true
+  description = "Full connection string (private network)"
 }

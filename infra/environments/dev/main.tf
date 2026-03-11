@@ -1,9 +1,13 @@
-# Dev environment — wires modules together
+# Dev environment — DigitalOcean compute + database, Route53 DNS
 
 terraform {
   required_version = ">= 1.5"
 
   required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
@@ -19,16 +23,25 @@ terraform {
   }
 }
 
+provider "digitalocean" {
+  token = var.do_token
+}
+
 provider "aws" {
-  region  = var.region
+  region  = "us-east-1"
   profile = "agentobox"
 }
 
 # --- Variables ---
 
+variable "do_token" {
+  type      = string
+  sensitive = true
+}
+
 variable "region" {
   type    = string
-  default = "us-east-1"
+  default = "nyc1"
 }
 
 variable "domain" {
@@ -36,26 +49,18 @@ variable "domain" {
 }
 
 variable "zone_id" {
-  type = string
+  type        = string
+  description = "Route53 hosted zone ID"
 }
 
-variable "instance_type" {
+variable "ssh_key_ids" {
+  type        = list(string)
+  description = "DO SSH key fingerprints or IDs"
+}
+
+variable "droplet_size" {
   type    = string
-  default = "t3.small"
-}
-
-variable "key_pair_name" {
-  type = string
-}
-
-variable "allowed_ssh_cidrs" {
-  type    = list(string)
-  default = ["0.0.0.0/0"]
-}
-
-variable "db_password" {
-  type      = string
-  sensitive = true
+  default = "s-2vcpu-2gb"
 }
 
 locals {
@@ -63,26 +68,34 @@ locals {
   environment = "dev"
 }
 
-# --- Modules ---
+# --- VPC ---
 
-module "networking" {
-  source = "../../modules/networking"
-
-  project           = local.project
-  environment       = local.environment
-  allowed_ssh_cidrs = var.allowed_ssh_cidrs
+resource "digitalocean_vpc" "main" {
+  name     = "${local.project}-${local.environment}"
+  region   = var.region
+  ip_range = "10.120.0.0/20"
 }
+
+# --- Modules ---
 
 module "compute" {
   source = "../../modules/compute"
 
-  project            = local.project
-  environment        = local.environment
-  instance_type      = var.instance_type
-  key_pair_name      = var.key_pair_name
-  subnet_id          = module.networking.public_subnet_id
-  security_group_ids = [module.networking.app_security_group_id]
-  domain             = var.domain
+  project     = local.project
+  environment = local.environment
+  size        = var.droplet_size
+  region      = var.region
+  vpc_id      = digitalocean_vpc.main.id
+  ssh_key_ids = var.ssh_key_ids
+}
+
+module "database" {
+  source = "../../modules/database"
+
+  project     = local.project
+  environment = local.environment
+  region      = var.region
+  vpc_id      = digitalocean_vpc.main.id
 }
 
 module "dns" {
@@ -91,25 +104,6 @@ module "dns" {
   domain    = var.domain
   zone_id   = var.zone_id
   public_ip = module.compute.public_ip
-}
-
-module "database" {
-  source = "../../modules/database"
-
-  project               = local.project
-  environment           = local.environment
-  master_password       = var.db_password
-  subnet_ids            = module.networking.public_subnet_ids
-  vpc_id                = module.networking.vpc_id
-  app_security_group_id = module.networking.app_security_group_id
-}
-
-module "backup" {
-  source = "../../modules/backup"
-
-  project     = local.project
-  environment = local.environment
-  target_arns = [module.compute.instance_arn]
 }
 
 # --- Outputs ---
@@ -122,18 +116,19 @@ output "domain" {
   value = module.dns.fqdn
 }
 
-output "instance_id" {
-  value = module.compute.instance_id
+output "droplet_id" {
+  value = module.compute.droplet_id
 }
 
 output "ssh_command" {
-  value = "ssh ubuntu@${module.compute.public_ip}"
+  value = "ssh root@${module.compute.public_ip}"
 }
 
-output "db_endpoint" {
-  value = module.database.endpoint
+output "db_host" {
+  value = module.database.host
 }
 
-output "db_address" {
-  value = module.database.address
+output "db_uri" {
+  value     = module.database.uri
+  sensitive = true
 }

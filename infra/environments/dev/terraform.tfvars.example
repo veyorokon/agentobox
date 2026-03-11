@@ -1,13 +1,13 @@
 # Dev environment variables.
 # Copy to terraform.tfvars and fill in values.
-# terraform.tfvars is gitignored — store in GitHub environment secrets.
+# terraform.tfvars is gitignored.
 
-domain         = "dev.agentobox.com"
-zone_id        = "Z00812024GI3ZL8BSUG3"  # Route53 hosted zone ID
-key_pair_name  = "agentobox-dev"         # EC2 key pair name
-instance_type  = "t3.small"
+domain       = "dev.agentobox.com"
+zone_id      = ""              # Route53 hosted zone ID
+droplet_size = "s-2vcpu-2gb"
+region       = "nyc1"
 
-db_password    = ""                    # RDS master password (sensitive)
+# DO SSH key fingerprints (get via: doctl compute ssh-key list)
+ssh_key_ids = []
 
-# Restrict SSH to your IP (recommended)
-# allowed_ssh_cidrs = ["1.2.3.4/32"]
+# Set DO token via env: export TF_VAR_do_token=$DIGITALOCEAN_TOKEN

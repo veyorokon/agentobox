@@ -1,4 +1,13 @@
-# DNS module — Route53 records
+# DNS module — Route53 records (kept on AWS, nameservers already configured)
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
 
 variable "domain" {
   type        = string
@@ -11,8 +20,7 @@ variable "zone_id" {
 }
 
 variable "public_ip" {
-  type        = string
-  description = "Elastic IP of the EC2 instance"
+  type = string
 }
 
 # --- A Record ---

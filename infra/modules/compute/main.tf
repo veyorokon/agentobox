@@ -1,4 +1,13 @@
-# Compute module — EC2 instance for running Docker Compose stack
+# Compute module — DigitalOcean Droplet for running Docker Compose stack
+
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
+  }
+}
 
 variable "project" {
   type = string
@@ -8,42 +17,23 @@ variable "environment" {
   type = string
 }
 
-variable "instance_type" {
+variable "size" {
   type    = string
-  default = "t3.small"
+  default = "s-2vcpu-2gb"
 }
 
-variable "key_pair_name" {
+variable "ssh_key_ids" {
+  type        = list(string)
+  description = "DigitalOcean SSH key IDs (fingerprints or numeric IDs)"
+}
+
+variable "vpc_id" {
   type = string
 }
 
-variable "subnet_id" {
-  type = string
-}
-
-variable "security_group_ids" {
-  type = list(string)
-}
-
-variable "domain" {
-  type = string
-}
-
-# --- AMI (latest Ubuntu 24.04) ---
-
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+variable "region" {
+  type    = string
+  default = "nyc1"
 }
 
 # --- User Data (bootstrap Docker + Caddy) ---
@@ -55,7 +45,7 @@ locals {
 
     # Docker
     curl -fsSL https://get.docker.com | sh
-    usermod -aG docker ubuntu
+    usermod -aG docker root
 
     # Docker Compose plugin
     apt-get install -y docker-compose-plugin
@@ -69,57 +59,89 @@ locals {
 
     # App directory
     mkdir -p /opt/agentobox
-    chown ubuntu:ubuntu /opt/agentobox
   EOF
 }
 
-# --- EC2 Instance ---
+# --- Droplet ---
 
-resource "aws_instance" "app" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  key_name               = var.key_pair_name
-  subnet_id              = var.subnet_id
-  vpc_security_group_ids = var.security_group_ids
-  user_data              = local.user_data
+resource "digitalocean_droplet" "app" {
+  name     = "${var.project}-${var.environment}"
+  image    = "ubuntu-24-04-x64"
+  size     = var.size
+  region   = var.region
+  vpc_uuid = var.vpc_id
+  ssh_keys = var.ssh_key_ids
 
-  root_block_device {
-    volume_size = 30
-    volume_type = "gp3"
-  }
+  user_data  = local.user_data
+  backups    = true
+  monitoring = true
 
-  tags = {
-    Name        = "${var.project}-${var.environment}"
-    Project     = var.project
-    Environment = var.environment
-  }
+  tags = ["${var.project}", "${var.environment}"]
 }
 
-# --- Elastic IP ---
+# --- Reserved IP ---
 
-resource "aws_eip" "app" {
-  instance = aws_instance.app.id
-  domain   = "vpc"
+resource "digitalocean_reserved_ip" "app" {
+  region     = var.region
+  droplet_id = digitalocean_droplet.app.id
+}
 
-  tags = {
-    Name = "${var.project}-${var.environment}-eip"
+# --- Firewall ---
+
+resource "digitalocean_firewall" "app" {
+  name        = "${var.project}-${var.environment}"
+  droplet_ids = [digitalocean_droplet.app.id]
+
+  # SSH
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  # HTTP
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "80"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  # HTTPS
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  # All outbound
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
   }
 }
 
 # --- Outputs ---
 
-output "instance_id" {
-  value = aws_instance.app.id
-}
-
-output "instance_arn" {
-  value = aws_instance.app.arn
+output "droplet_id" {
+  value = digitalocean_droplet.app.id
 }
 
 output "public_ip" {
-  value = aws_eip.app.public_ip
+  value = digitalocean_reserved_ip.app.ip_address
 }
 
-output "public_dns" {
-  value = aws_eip.app.public_dns
+output "ipv4_address" {
+  value = digitalocean_droplet.app.ipv4_address
 }
