@@ -110,7 +110,7 @@ jobs:
           python-version: "3.11"
       - name: Install agent test dependencies
         run: |
-          SDK_VERSION=$(sed -n 's/.*claude-agent-sdk==\\([^[:space:]\\\\]*\\).*/\\1/p' agent/claude/Dockerfile)
+          SDK_VERSION=$(grep -oP 'claude-agent-sdk==\K[^\s\\]+' agent/claude/Dockerfile)
           python -m pip install --upgrade pip
           python -m pip install pytest==9.0.2 websockets==16.0 "claude-agent-sdk==${SDK_VERSION}"
       - name: Run agent unit tests

@@ -490,7 +490,7 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         # Create error feed item so users see WHY the agent crashed
         if is_error:
             # Use last line of stderr as summary, full stderr as text
-            lines = [l for l in stderr.splitlines() if l.strip()] if stderr else []
+            lines = [line for line in stderr.splitlines() if line.strip()] if stderr else []
             summary_line = lines[-1][:200] if lines else f"Process exited with code {exit_code}"
             await create_feed_item(
                 project_id=str(agent.project_id),

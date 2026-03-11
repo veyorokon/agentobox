@@ -23,7 +23,6 @@ Container provisioning sequence:
     provision_workspace → write .relay_env → save relay_token →
     relay self-starts (polls for .relay_env) → spawn tmux log tail
 """
-import asyncio
 import json
 import secrets
 
@@ -62,8 +61,6 @@ from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
 CONTAINER_WORKSPACE = "/home/agent/workspace"
-ERR_LIFECYCLE_PROVISION_FAILED = "ERR-LIFECYCLE-PROVISION-FAILED"
-ERR_LIFECYCLE_PROVISION_ORPHANED = "ERR-LIFECYCLE-PROVISION-ORPHANED"
 ERR_LIFECYCLE_STUCK_DEPLOY = "ERR-LIFECYCLE-STUCK-DEPLOY"
 ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 
@@ -141,7 +138,6 @@ async def create_agent(
     triggers: list | None = None,
 ) -> Agent:
     """Create agent record immediately, provision container in background."""
-    from config.telemetry import bind_agent_context
     from projects.models import Project
 
     name = _sanitize_name(name)
@@ -566,7 +562,6 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
-        work_dir = CONTAINER_WORKSPACE if agent.workspace_path else "/home/agent"
         callback_url = env.get("ABOX_CALLBACK_URL", "")
 
         # Build team roster for CLAUDE.md
@@ -814,8 +809,6 @@ async def remove_agent(agent_id: str) -> bool:
     # Safety: terminate sandbox if somehow still running
     await terminate_sandbox(agent, op_log)
 
-    project_id = agent.project_id
-    agent_name = agent.name
 
     # Broadcast before delete -- the event FK needs the agent row to exist
     await create_stream_event(

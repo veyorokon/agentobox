@@ -1,0 +1,12 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F"]
+ignore = ["E501"]
+fixable = ["ALL"]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+"agents/tests/**" = ["E402", "F405", "F403"]
+"conftest.py" = ["F841"]
