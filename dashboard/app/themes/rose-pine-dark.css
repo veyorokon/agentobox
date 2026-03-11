@@ -1,0 +1,76 @@
+/* ============================================
+   Rosé Pine Dark Theme
+   ============================================
+
+   Inspired by the Rosé Pine color system and emera1dd's Hyprland rice.
+   Deep purples, muted overlays, rose and gold accents.
+   The signature color is rose pink (#eb6f92).
+   "All natural pine, faux fur and a bit of soho vibes for the late night."
+   ============================================ */
+
+[data-theme="rose-pine"][data-mode="dark"] {
+  /* Primitives — raw values for the Rosé Pine dark palette */
+  --p-surface: #191724;
+  --p-surface-raised: #26233a;
+  --p-surface-sunken: #131020;
+  --p-surface-overlay: #403d52;
+  --p-surface-backdrop: rgba(25, 23, 36, 0.85);
+  --p-surface-invert: #e0def4;
+
+  --p-text-default: #e0def4;
+  --p-text-secondary: #908caa;
+  --p-text-muted: #6e6a86;
+  --p-text-disabled: #524f67;
+  --p-text-on-emphasis: #e0def4;
+
+  --p-border-default: rgba(82, 79, 103, 0.50);
+  --p-border-subtle: rgba(82, 79, 103, 0.25);
+  --p-border-strong: rgba(82, 79, 103, 0.75);
+
+  --p-accent: #eb6f92;
+  --p-accent-hover: #f09bae;
+  --p-accent-subtle: rgba(235, 111, 146, 0.15);
+  --p-text-accent: #eb6f92;
+
+  --p-info: #c4a7e7;
+  --p-text-info: #c4a7e7;
+  --p-text-info-hover: #d4bdf7;
+
+  --p-pro: #c4a7e7;
+  --p-text-pro: #c4a7e7;
+
+  --p-text-link: #9ccfd8;
+  --p-text-link-hover: #b4dde4;
+
+  --p-success: #31748f;
+  --p-text-success: #31748f;
+  --p-success-subtle: rgba(49, 116, 143, 0.15);
+
+  --p-danger: #eb6f92;
+  --p-text-danger: #eb6f92;
+  --p-danger-subtle: rgba(235, 111, 146, 0.15);
+
+  --p-warning: #f6c177;
+  --p-text-warning: #f6c177;
+  --p-warning-subtle: rgba(246, 193, 119, 0.15);
+
+  --p-avatar-saturation: 40%;
+  --p-avatar-lightness: 50%;
+
+  --p-interactive: rgba(64, 61, 82, 0.4);
+  --p-interactive-active: rgba(64, 61, 82, 0.8);
+  --p-ring-focus: rgba(235, 111, 146, 0.5);
+
+  /* Border radius — soft rounding to match the organic feel */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  /* Shadows — deep for the very dark base */
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.40);
+  --shadow-md: 0 4px 6px hsl(0 0% 0% / 0.50);
+  --shadow-lg: 0 10px 15px hsl(0 0% 0% / 0.60);
+  --shadow-2xl: 0 25px 50px -12px hsl(0 0% 0% / 0.70);
+}

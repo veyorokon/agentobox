@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "./themes/claude-dark.css";
 @import "./themes/blyss-dark.css";
+@import "./themes/rose-pine-dark.css";
 
 @theme {
   /* Font families */
