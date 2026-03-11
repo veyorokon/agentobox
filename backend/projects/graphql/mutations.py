@@ -18,6 +18,7 @@ VALID_THEME_KEYS = frozenset({
     "accent", "accent-hover", "accent-subtle", "text-accent",
     "info", "text-info", "text-info-hover",
     "pro", "text-pro",
+    "text-link", "text-link-hover",
     "success", "text-success", "success-subtle",
     "danger", "text-danger", "danger-subtle",
     "warning", "text-warning", "warning-subtle",
