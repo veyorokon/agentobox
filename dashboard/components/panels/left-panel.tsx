@@ -179,7 +179,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           >
             <KeyRound className="h-3 w-3" />
           </button>
-          <span className="text-[8px] text-muted/50 font-mono tabular-nums">
+          <span className="text-[8px] text-secondary/70 font-mono tabular-nums">
             {formatCost(totalCost)}
           </span>
         </div>
@@ -254,7 +254,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             {projectName || projectId}
           </span>
         </div>
-        <span className="text-[10px] text-muted/60 font-mono tabular-nums ml-1 shrink-0">
+        <span className="text-[10px] text-secondary/70 font-mono tabular-nums ml-1 shrink-0">
           {formatCost(totalCost)}
         </span>
         <span className="flex-1" />

@@ -27,10 +27,10 @@
   --p-border-subtle: rgba(168, 178, 191, 0.10);
   --p-border-strong: rgba(168, 178, 191, 0.35);
 
-  --p-accent: #8FA1B3;
-  --p-accent-hover: #A3B5C7;
-  --p-accent-subtle: rgba(143, 161, 179, 0.15);
-  --p-text-accent: #8FA1B3;
+  --p-accent: #B48EAD;
+  --p-accent-hover: #C4A0BF;
+  --p-accent-subtle: rgba(180, 142, 173, 0.15);
+  --p-text-accent: #B48EAD;
 
   --p-info: #96B5B4;
   --p-text-info: #96B5B4;
