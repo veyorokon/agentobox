@@ -29,19 +29,21 @@ ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 # --- Security (reverse proxy) ---
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True  # Trust X-Forwarded-Host from reverse proxy (Next.js / Caddy)
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
 # Build CSRF_TRUSTED_ORIGINS from ALLOWED_HOSTS so Django 4+ POST requests
 # work behind a reverse proxy.  Wildcard "*" can't be a trusted origin, so
 # we skip it.  In local dev (ALLOWED_HOSTS=["*"]) the list would be empty,
-# so we fall back to the dashboard URL which is the only cross-origin POST
-# source (the OAuth provider-redirect form).
+# so we fall back to localhost origins for the dashboard (the browser origin
+# for OAuth form POSTs).  In production, set CSRF_TRUSTED_ORIGINS explicitly.
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 if not CSRF_TRUSTED_ORIGINS:
     _hosts = [f"https://{h}" for h in ALLOWED_HOSTS if h != "*"]
     CSRF_TRUSTED_ORIGINS = _hosts or [
-        env("ABOX_DASHBOARD_URL", default="http://localhost:5051")
+        "http://localhost:5051",
+        "http://localhost:3000",
     ]
 
 # --- Apps ---
@@ -183,6 +185,8 @@ ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*"]
 ACCOUNT_EMAIL_VERIFICATION = "none"  # start simple, add verification later
 SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 
 # --- i18n ---
 

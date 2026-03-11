@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useSearchParams } from "next/navigation"
-import { getBackendUrl } from "@/lib/utils"
 
 const ERROR_MESSAGES: Record<string, string> = {
   cancelled: "Sign-in was cancelled",
@@ -26,14 +25,23 @@ export default function LoginPage() {
     }
     // Stagger the mount animation
     const t = setTimeout(() => setMounted(true), 50)
-    return () => clearTimeout(t)
+
+    // Reset loading state on back-navigation (bfcache restore)
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setRedirecting(null)
+    }
+    window.addEventListener("pageshow", onPageShow)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener("pageshow", onPageShow)
+    }
   }, [])
 
   const handleProvider = useCallback(async (provider: "google" | "github") => {
     setRedirecting(provider)
     try {
-      const backendUrl = getBackendUrl()
-      await fetch(`${backendUrl}/_allauth/browser/v1/config`, {
+      // Fetch config to get CSRF cookie — same-origin via Next.js rewrite
+      await fetch("/_allauth/browser/v1/config", {
         credentials: "include",
       })
 
@@ -45,7 +53,8 @@ export default function LoginPage() {
       const form = formRef.current
       if (!form) return
 
-      form.action = `${backendUrl}/_allauth/browser/v1/auth/provider/redirect`
+      // POST through same-origin rewrite — no cross-origin cookie issues
+      form.action = "/_allauth/browser/v1/auth/provider/redirect"
       form.method = "POST"
       form.innerHTML = ""
 

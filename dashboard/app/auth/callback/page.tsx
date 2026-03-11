@@ -2,51 +2,39 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { getBackendUrl } from "@/lib/utils"
+
+const ERROR_MESSAGES: Record<string, string> = {
+  cancelled: "Sign-in was cancelled",
+  no_session: "Could not establish a session — please try again",
+  unknown: "Authentication failed — please try again",
+}
 
 export default function AuthCallbackPage() {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    let cancelled = false
+    const params = new URLSearchParams(window.location.search)
 
-    async function exchangeSession() {
-      try {
-        const backendUrl = getBackendUrl()
-        const res = await fetch(
-          `${backendUrl}/_allauth/browser/v1/auth/session`,
-          { credentials: "include" },
-        )
-
-        if (!res.ok) {
-          if (!cancelled) setError("Failed to verify session")
-          return
-        }
-
-        const json = await res.json()
-
-        const token =
-          json?.meta?.access_token ??
-          json?.meta?.session_token ??
-          json?.data?.meta?.access_token ??
-          json?.data?.meta?.session_token ??
-          null
-
-        if (!token) {
-          if (!cancelled) setError("No session token returned")
-          return
-        }
-
-        localStorage.setItem("auth_token", token)
-        if (!cancelled) router.replace("/")
-      } catch {
-        if (!cancelled) setError("Something went wrong — please try again")
-      }
+    // Token delivered via URL from the server-side route handler.
+    // The route handler completes the OAuth exchange and JWT retrieval
+    // server-side, bypassing browser cookie limitations.
+    const token = params.get("token")
+    if (token) {
+      localStorage.setItem("auth_token", token)
+      router.replace("/")
+      return
     }
 
-    exchangeSession()
-    return () => { cancelled = true }
+    // Error from OAuth provider or route handler
+    const errorParam = params.get("error")
+    if (errorParam) {
+      setError(ERROR_MESSAGES[errorParam] ?? "Authentication failed — please try again")
+      return
+    }
+
+    // Fallback: no token and no error — shouldn't happen
+    setError("Something went wrong — please try again")
   }, [router])
 
   if (error) {
@@ -72,7 +60,7 @@ export default function AuthCallbackPage() {
           </div>
           <a
             href="/login"
-            className="inline-flex items-center gap-1.5 text-[13px] text-accent hover:text-accent-hover transition-colors"
+            className="inline-flex items-center gap-1.5 text-[13px] text-text-link hover:text-text-link-hover transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M19 12H5M12 19l-7-7 7-7" />

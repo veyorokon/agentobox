@@ -17,13 +17,21 @@ def encode_token(user: User) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def _extract_user_id(payload: dict) -> str | int | None:
+    """Extract user ID from JWT payload — supports both our tokens and allauth's."""
+    return payload.get("user_id") or payload.get("sub")
+
+
 def decode_token(token: str) -> User | None:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.InvalidTokenError:
         return None
+    uid = _extract_user_id(payload)
+    if not uid:
+        return None
     try:
-        return User.objects.get(pk=payload["user_id"])
+        return User.objects.get(pk=uid)
     except User.DoesNotExist:
         return None
 
@@ -33,8 +41,11 @@ async def adecode_token(token: str) -> User | None:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.InvalidTokenError:
         return None
+    uid = _extract_user_id(payload)
+    if not uid:
+        return None
     try:
-        return await User.objects.aget(pk=payload["user_id"])
+        return await User.objects.aget(pk=uid)
     except User.DoesNotExist:
         return None
 

@@ -97,6 +97,47 @@ async def upload_media(request):
 
 
 # ---------------------------------------------------------------------------
+# Internal session → JWT exchange (server-to-server only)
+# ---------------------------------------------------------------------------
+
+@csrf_exempt
+async def session_token(request):
+    """Exchange a valid Django session for a JWT access token.
+
+    Called by the Next.js route handler after OAuth callback completes.
+    The route handler has the session cookie from the callback response
+    but can't forward it to the browser (Next.js strips Set-Cookie on
+    redirects). Instead it calls this endpoint to get a JWT, then
+    redirects the browser with the token in the URL.
+    """
+    session_key = request.headers.get("X-Session-Key", "")
+    if not session_key:
+        return JsonResponse({"error": "missing X-Session-Key"}, status=400)
+
+    def _exchange(key):
+        from django.contrib.sessions.backends.db import SessionStore
+        from django.contrib.auth import get_user_model
+        from allauth.headless.tokens.strategies.jwt.internal import create_access_token
+
+        session = SessionStore(key)
+        user_id = session.get("_auth_user_id")
+        if not user_id:
+            return None
+        User = get_user_model()
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return None
+        return create_access_token(user, session, {})
+
+    token = await sync_to_async(_exchange, thread_sensitive=False)(session_key)
+    if not token:
+        return JsonResponse({"error": "invalid or expired session"}, status=401)
+
+    return JsonResponse({"token": token})
+
+
+# ---------------------------------------------------------------------------
 # Hook bridge — CC native team tools routed through backend
 # ---------------------------------------------------------------------------
 
