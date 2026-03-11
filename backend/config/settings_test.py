@@ -142,6 +142,44 @@ MEDIA_CDN_URL = ""
 
 SESSION_COOKIE_NAME = "agentobox_sessionid"
 
+# --- django-allauth (headless social auth) ---
+
+HEADLESS_ONLY = True
+HEADLESS_TOKEN_STRATEGY = (
+    "allauth.headless.tokens.strategies.jwt.JWTTokenStrategy"
+)
+HEADLESS_JWT_ALGORITHM = "HS256"
+
+HEADLESS_FRONTEND_URLS = {
+    "socialaccount_login_cancelled": "http://localhost:5051/auth/callback?error=cancelled",
+    "socialaccount_login_error": "http://localhost:5051/auth/callback?error=provider",
+}
+
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "SCOPE": ["profile", "email"],
+        "AUTH_PARAMS": {"access_type": "online"},
+        "APP": {
+            "client_id": "test-google-client-id",
+            "secret": "test-google-client-secret",
+        },
+    },
+    "github": {
+        "SCOPE": ["user:email"],
+        "APP": {
+            "client_id": "test-github-client-id",
+            "secret": "test-github-client-secret",
+        },
+    },
+}
+
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*"]
+ACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+
 # --- CORS ---
 
 CORS_ALLOW_ALL_ORIGINS = True

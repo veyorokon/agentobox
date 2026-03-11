@@ -69,6 +69,8 @@ services:
       LOG_FORMAT: json
       GITHUB_SSO_CLIENT_ID: ${GITHUB_SSO_CLIENT_ID:-Ov23liepIxqWhVqlNg3i}
       GITHUB_SSO_CLIENT_SECRET: ${GITHUB_SSO_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -92,6 +94,7 @@ services:
       target: dev
     restart: unless-stopped
     environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
       # Let Node use up to 8 GB heap — turbopack dev server is memory-hungry
       NODE_OPTIONS: "--max-old-space-size=8192"
     ports:

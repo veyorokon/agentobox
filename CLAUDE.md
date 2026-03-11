@@ -14,6 +14,38 @@ docker compose up -d          # postgres, redis, backend, dashboard
 - Username: `demo`
 - Password: `demo`
 
+## Social Auth (OAuth)
+
+Login is social-auth only (Google, GitHub). The flow is identical for all providers — only external configuration differs.
+
+### How it works
+
+1. Login page POSTs to `/_allauth/browser/v1/auth/provider/redirect` (Next.js proxies to backend)
+2. allauth redirects to the provider's consent screen
+3. Provider redirects back to `/accounts/<provider>/login/callback/`
+4. `dashboard/app/accounts/[...path]/route.ts` catches it, forwards to Django, extracts session cookie, exchanges for JWT via `/_internal/session-token`
+5. Redirects to `/auth/callback?token=<jwt>` — stored in localStorage
+
+### Adding a new OAuth provider
+
+1. Install the allauth provider app (e.g. `allauth.socialaccount.providers.apple`)
+2. Add it to `INSTALLED_APPS` in `settings.py` and `settings_test.py`
+3. Add provider config to `SOCIALACCOUNT_PROVIDERS` in `settings.py` with `APP.client_id` and `APP.secret` from env vars
+4. Add the env vars to `.env` and `docker-compose.yml` (backend service environment)
+5. Register the OAuth app with the provider:
+   - **JS origin**: `http://localhost:5051` (dashboard)
+   - **Redirect URI**: `http://localhost:5051/accounts/<provider>/login/callback/`
+6. No dashboard code changes needed — the login page and callback are provider-agnostic
+
+### Key files
+
+- `backend/config/settings.py` — `SOCIALACCOUNT_PROVIDERS`, allauth config
+- `backend/agents/views.py` — `session_token()` endpoint (session-to-JWT exchange)
+- `dashboard/app/accounts/[...path]/route.ts` — OAuth callback proxy + token exchange
+- `dashboard/app/login/page.tsx` — Login UI (add button for new provider)
+- `dashboard/app/auth/callback/page.tsx` — Token storage after redirect
+- `dashboard/proxy.ts` — `/_allauth/*` rewrite to backend
+
 ## CI/CD
 
 - Agent image workflow: `.github/workflows/agent-image.yml`
