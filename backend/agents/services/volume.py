@@ -314,11 +314,19 @@ class Volume:
         return self.mutate("_abox/state.json", json.dumps(state))
 
     def initialize(self) -> None:
-        """Create empty control plane files for a new agent.
+        """Create empty control plane files and directory structure for a new agent.
 
         Called during provisioning before any other volume writes.
         Creates the _abox/ directory with empty inbox/outbox files
-        and zero-offset cursors. Idempotent — safe to call multiple times.
+        and zero-offset cursors, PLUS all directories that init-volume
+        will symlink into the container.
+
+        This must run before the container starts so that init-volume's
+        existence checks pass. Without this, there's a race: init-volume
+        checks for directories before the backend finishes writing to them,
+        skips the symlinks, and the container never sees the files.
+
+        Idempotent — safe to call multiple times.
         """
         abox = self.root / "_abox"
         abox.mkdir(parents=True, exist_ok=True)
@@ -331,3 +339,11 @@ class Volume:
         status = abox / "status.json"
         if not status.exists():
             status.write_text("{}")
+
+        # Pre-create all directories that init-volume symlinks into the
+        # container. This eliminates the race between init-volume's
+        # [ -e "$dir" ] checks and backend's subsequent writes.
+        for prefix in SYMLINKED_PREFIXES:
+            if prefix == "_abox/":
+                continue  # already created above
+            (self.root / prefix.rstrip("/")).mkdir(parents=True, exist_ok=True)

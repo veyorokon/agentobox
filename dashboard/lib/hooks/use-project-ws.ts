@@ -103,6 +103,16 @@ export function useProjectWebSocket(projectId: string | undefined) {
       ws.onclose = (event) => {
         log("ws.closed", { projectId, code: event.code })
         wsRef.current = null
+
+        // 4001 = auth rejected (bad/expired token). Clear stale token
+        // and redirect to login instead of retrying forever.
+        if (event.code === 4001) {
+          log("ws.auth_rejected", { projectId }, "error")
+          localStorage.removeItem("auth_token")
+          window.location.href = "/login"
+          return
+        }
+
         scheduleReconnect()
       }
 

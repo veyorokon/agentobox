@@ -14,6 +14,8 @@ class ProjectQuery:
         from projects.models import Project
 
         user = info.context["request"].user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
         qs = Project.objects.filter(owner=user)
         if not include_archived:
             qs = qs.filter(archived_at__isnull=True)
