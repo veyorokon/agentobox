@@ -6,7 +6,6 @@ No Django ORM needed (except schema contract test which needs Strawberry).
 """
 
 import ast
-import inspect
 import json
 import re
 from pathlib import Path
@@ -832,7 +831,7 @@ class TestExplicitErrorHandling:
                     violations.append(f"{rel}:{lineno}")
 
         assert not violations, (
-            f"Broad except blocks without # intentional: annotation:\n"
+            "Broad except blocks without # intentional: annotation:\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nAdd '# intentional: <reason>' on the except line or the line above."
         )
@@ -896,7 +895,7 @@ class TestTechDebtAnnotations:
                         violations.append(f"{rel}:{i}")
 
         assert not violations, (
-            f"tech-debt annotations without explanation:\n"
+            "tech-debt annotations without explanation:\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nAdd a description after '# tech-debt:' — e.g. "
             "'# tech-debt: SDK monkey-patch — remove when SDK adds .to_dict()'"
@@ -955,7 +954,7 @@ class TestSyncToAsyncExplicit:
     def test_sync_to_async_has_explicit_thread_sensitive(self):
         violations = self._find_violations()
         assert not violations, (
-            f"sync_to_async() calls without explicit thread_sensitive= kwarg:\n"
+            "sync_to_async() calls without explicit thread_sensitive= kwarg:\n"
             + "\n".join(f"  {v}" for v in violations)
             + "\n\nAlways specify thread_sensitive=True or thread_sensitive=False "
             "to prevent accidental single-thread serialization."

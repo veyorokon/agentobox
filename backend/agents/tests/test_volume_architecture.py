@@ -12,7 +12,6 @@ These are structural tests — they exercise the Volume class directly against
 a tmp_path filesystem. No Django ORM, no containers, no network.
 """
 
-import hashlib
 import json
 import re
 from pathlib import Path

@@ -22,7 +22,7 @@ import strawberry
 from strawberry import ID
 from strawberry.scalars import JSON
 
-from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
+from agents.graphql.auth import authorize_agent, authorize_project
 from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("abox.graphql")
@@ -441,7 +441,7 @@ class AgentMutation:
 
     @strawberry.mutation
     async def rate_agent(self, input: RateFeedbackInput, info: strawberry.types.Info) -> AgentFeedbackType | None:
-        from agents.models import Agent, AgentFeedback
+        from agents.models import AgentFeedback
 
         if input.rating not in (1, 2, 3):
             raise ValueError("rating must be 1, 2, or 3")
@@ -470,7 +470,6 @@ class AgentMutation:
     @strawberry.mutation
     async def update_agent_config(self, input: UpdateAgentConfigInput, info: strawberry.types.Info) -> AgentType:
         from agents.adapters import get_adapter
-        from agents.models import Agent
         from agents.services.lifecycle import hard_restart_agent
 
         agent = await authorize_agent(info, input.agent_id)

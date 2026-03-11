@@ -24,7 +24,6 @@ is negligible compared to the value of having complete agent telemetry.
 import structlog
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
-from channels.layers import get_channel_layer
 from django.utils import timezone
 
 from agents.errors import (
@@ -36,7 +35,6 @@ from agents.errors import (
     ERR_CONSUMER_VNC_UPSTREAM_CLOSED,
     ERR_CONSUMER_VNC_UPSTREAM_FAILED,
 )
-from agents.models import StreamEvent
 
 log = structlog.get_logger("abox.relay")
 

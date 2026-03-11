@@ -79,7 +79,7 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
     # AND patch agent.volume to use our tmp_path volume
     with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock) as mock_push:
         # Patch Volume.__init__ so the agent's volume points at tmp_path
-        original_init = type(vol).__init__
+        type(vol).__init__
 
         def patched_init(self, project_id, agent_id):
             self.root = tmp_path
@@ -139,7 +139,7 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     await project.asave(update_fields=["theme_tokens"])
 
     with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock):
-        original_init = type(vol).__init__
+        type(vol).__init__
 
         def patched_init(self, project_id, agent_id):
             self.root = tmp_path

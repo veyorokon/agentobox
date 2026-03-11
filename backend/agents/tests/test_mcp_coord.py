@@ -25,8 +25,6 @@ from agents.services.mcp_coord import (
     task_get,
     task_list,
     task_update,
-    team_status,
-    teammate_spawn,
 )
 
 

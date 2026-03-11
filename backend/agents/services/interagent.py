@@ -68,7 +68,7 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
 
     # Store as StreamEvent so the dashboard feed shows inbound team messages.
     # team_message_from lets the frontend render sender separately from content.
-    stream_event = await create_stream_event(
+    await create_stream_event(
         target,
         event_type="user",
         data={

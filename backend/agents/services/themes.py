@@ -50,7 +50,61 @@ _BLYSS_DARK: dict[str, str] = {
     "pro": "#B48EAD",
 }
 
+_ROSE_PINE_DARK: dict[str, str] = {
+    "surface": "#191724",
+    "surface-raised": "#1f1d2e",
+    "surface-sunken": "#13111e",
+    "surface-overlay": "#26233a",
+    "text-default": "#e0def4",
+    "text-secondary": "#c4b9d4",
+    "text-muted": "#6e6a86",
+    "accent": "#eb6f92",
+    "accent-hover": "#f0869f",
+    "danger": "#eb6f92",
+    "success": "#9ccfd8",
+    "warning": "#f6c177",
+    "info": "#c4a7e7",
+    "pro": "#c4a7e7",
+}
+
+_EMBER_DARK: dict[str, str] = {
+    "surface": "#282828",
+    "surface-raised": "#32302f",
+    "surface-sunken": "#1d2021",
+    "surface-overlay": "#3c3836",
+    "text-default": "#ebdbb2",
+    "text-secondary": "#d5c4a1",
+    "text-muted": "#7c6f64",
+    "accent": "#e78a4e",
+    "accent-hover": "#f0a06a",
+    "danger": "#ea6962",
+    "success": "#a9b665",
+    "warning": "#d8a657",
+    "info": "#7daea3",
+    "pro": "#d3869b",
+}
+
+_NORD_DARK: dict[str, str] = {
+    "surface": "#2e3440",
+    "surface-raised": "#3b4252",
+    "surface-sunken": "#272c36",
+    "surface-overlay": "#434c5e",
+    "text-default": "#d8dee9",
+    "text-secondary": "#a5b1c2",
+    "text-muted": "#616e88",
+    "accent": "#88c0d0",
+    "accent-hover": "#a3d4e0",
+    "danger": "#bf616a",
+    "success": "#a3be8c",
+    "warning": "#ebcb8b",
+    "info": "#81a1c1",
+    "pro": "#b48ead",
+}
+
 BUILTIN_THEMES: dict[str, dict[str, str]] = {
     "claude-dark": _CLAUDE_DARK,
     "blyss-dark": _BLYSS_DARK,
+    "rose-pine-dark": _ROSE_PINE_DARK,
+    "ember-dark": _EMBER_DARK,
+    "nord-dark": _NORD_DARK,
 }

@@ -56,7 +56,7 @@ async def _authenticate():
 
 async def deliver_message(agent, *, type: str, content: str = "", recipient: str = "", summary: str = "") -> dict:
     """Core send_message logic. Called by MCP tool and hook bridge."""
-    from agents.models import Agent, AgentStatus
+    from agents.models import Agent
 
     if type == "message":
         if not recipient:

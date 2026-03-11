@@ -259,7 +259,7 @@ class TestRealEventParity:
         first_assistant = events["assistant"][0]
         snapshot = {"assistant": first_assistant}
 
-        output = adapter.last_output(snapshot)
+        adapter.last_output(snapshot)
         action = adapter.live_action(snapshot)
         # First assistant in tool_use fixture has a Read tool_use with file_path
         assert action == "Read base.py"  # tool name + basename from input
