@@ -7,10 +7,9 @@
 # Required GitHub Secrets (per environment):
 #   DEPLOY_HOST     — Server IP or domain
 #   DEPLOY_SSH_KEY  — SSH private key for ubuntu user
-#
-# The .env file with app secrets (SECRET_KEY, DATABASE_URL, etc.) must already
-# exist on the server at /opt/agentobox/.env — placed manually during initial
-# setup or managed via GitHub environment secrets.
+#   APP_SECRETS     — JSON object of all app env vars (DATABASE_URL, SECRET_KEY,
+#                     GOOGLE_CLIENT_ID, etc.). Written to /opt/agentobox/.env on
+#                     each deploy. One secret per environment = zero server config.
 
 name: Deploy
 
@@ -102,6 +101,21 @@ jobs:
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Write .env from APP_SECRETS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            mkdir -p /opt/agentobox
+            echo '${{ secrets.APP_SECRETS }}' | python3 -c "
+            import json, sys
+            d = json.load(sys.stdin)
+            print('\n'.join(f'{k}={v}' for k, v in d.items()))
+            " > /opt/agentobox/.env
+
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
         with:

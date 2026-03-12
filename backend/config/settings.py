@@ -175,8 +175,8 @@ SOCIALACCOUNT_PROVIDERS = {
     "github": {
         "SCOPE": ["user:email"],
         "APP": {
-            "client_id": env("GITHUB_SSO_CLIENT_ID", default=""),
-            "secret": env("GITHUB_SSO_CLIENT_SECRET", default=""),
+            "client_id": env("GITHUB_CLIENT_ID", default=""),
+            "secret": env("GITHUB_CLIENT_SECRET", default=""),
         },
     },
 }
