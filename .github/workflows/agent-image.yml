@@ -2,7 +2,7 @@ name: Agent Image
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
     paths: ["agent/**"]
     tags: ["v*"]
   workflow_dispatch: {}

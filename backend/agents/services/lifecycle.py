@@ -693,7 +693,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await broadcast_agent_update(agent)
             await _create_stream_event(
                 agent, "", "provision_failed",
-                {"error": "Container provisioning failed"},
+                {"error": f"Container provisioning failed: {exc}"},
             )
             if attempt_id:
                 await _update_lifecycle_attempt(
@@ -701,7 +701,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                     step="failed",
                     status=AgentLifecycleAttemptStatus.FAILED,
                     error_code=ERR_LIFECYCLE_PROVISION_FAILED,
-                    error_detail="Container provisioning failed",
+                    error_detail=f"Container provisioning failed: {exc}",
                     metadata={"sandbox_id": sandbox_id or ""},
                 )
         except Exception as db_exc:  # intentional: DB cleanup after failed provision — nothing more to do

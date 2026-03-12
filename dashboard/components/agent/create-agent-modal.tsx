@@ -18,6 +18,16 @@ const MODE_OPTIONS = [
   { value: "supervised", label: "Supervised" },
 ] as const
 
+const RUNTIME_OPTIONS = [
+  { value: "docker", label: "Docker" },
+  { value: "modal", label: "Modal" },
+] as const
+
+function getDefaultRuntime(): string {
+  if (typeof window !== "undefined" && window.location.hostname === "localhost") return "docker"
+  return "modal"
+}
+
 export function CreateAgentModal({
   open,
   onClose,
@@ -33,6 +43,7 @@ export function CreateAgentModal({
   const [model, setModel] = useState<string>("")
   const [role, setRole] = useState<string>(ROLE_OPTIONS[0].value)
   const [mode, setMode] = useState<string>(MODE_OPTIONS[0].value)
+  const [runtime, setRuntime] = useState<string>(getDefaultRuntime())
   const [instructions, setInstructions] = useState("")
   const [tags, setTags] = useState<string[]>([])
 
@@ -62,6 +73,7 @@ export function CreateAgentModal({
       setModel(models.length > 0 ? models[0].value : "")
       setRole(ROLE_OPTIONS[0].value)
       setMode(MODE_OPTIONS[0].value)
+      setRuntime(getDefaultRuntime())
       setInstructions("")
       setTags([])
     }
@@ -78,7 +90,7 @@ export function CreateAgentModal({
         model,
         role,
         mode,
-        runtime: "docker",
+        runtime,
         instructions: instructions.trim() || undefined,
         tags: tags.length > 0 ? tags : undefined,
       })
@@ -180,21 +192,38 @@ export function CreateAgentModal({
             </div>
           </div>
 
-          {/* Mode */}
-          <div>
-            <label htmlFor="agent-mode" className="block text-xs font-medium text-secondary mb-1.5">
-              Mode
-            </label>
-            <select
-              id="agent-mode"
-              value={mode}
-              onChange={(e) => setMode(e.target.value)}
-              className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              {MODE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+          {/* Mode + Runtime row */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="agent-mode" className="block text-xs font-medium text-secondary mb-1.5">
+                Mode
+              </label>
+              <select
+                id="agent-mode"
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+                className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {MODE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="agent-runtime" className="block text-xs font-medium text-secondary mb-1.5">
+                Runtime
+              </label>
+              <select
+                id="agent-runtime"
+                value={runtime}
+                onChange={(e) => setRuntime(e.target.value)}
+                className="w-full rounded-md border border-border-default bg-surface-sunken px-3 py-2 text-sm text-default focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {RUNTIME_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Instructions */}
