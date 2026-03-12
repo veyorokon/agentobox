@@ -58,18 +58,57 @@ Login is social-auth only (Google, GitHub). The flow is identical for all provid
 ### Platform deploy (backend + dashboard)
 
 - Workflow: `.github/workflows/deploy.yml`
-- **Auto-deploys on push to `main`** — tests → build images → SSH to droplet → pull → up → migrate
-- Also triggers on `v*` tags
+- **Auto-deploys on push to `dev` or `main`** — tests → build images → write .env → pull → up → migrate
+- Branch → environment: `dev` → `dev` (dev.agentobox.com), `main` → `prod` (agentobox.com)
+- Also triggers on `v*` tags and `workflow_dispatch`
 - Images: `ghcr.io/veyorokon/agentobox-backend`, `ghcr.io/veyorokon/agentobox-dashboard`
 - Deploy target: DigitalOcean Droplet running `docker-compose.prod.yml` with Caddy (auto TLS)
-- GitHub environment: `dev` (holds `EC2_HOST`, `EC2_SSH_KEY`)
+
+### Deploy order of operations
+
+Each deploy does these steps in order:
+
+1. **Tests** — all 6 test jobs run in parallel (unit, chaos, integration, architecture, agent, lint)
+2. **Build** — backend + dashboard Docker images pushed to GHCR, tagged with branch name (`:dev`, `:main`)
+3. **Write .env** — `APP_SECRETS` GitHub environment secret (JSON object) is parsed into `/opt/agentobox/.env` on the server. This is the single source of truth for all app config per environment.
+4. **Pull** — `docker compose pull` with `VERSION=<branch>` to get the new images
+5. **Up** — `docker compose up -d --remove-orphans` to deploy
+6. **Migrate** — `manage.py migrate --noinput` inside the backend container
+7. **Prune** — `docker image prune -f` to clean up old images
+
+### Secrets management
+
+All secrets live in **GitHub environment secrets**, not on the server.
+
+- **Per-environment secrets** (GitHub Settings → Environments):
+  - `DEPLOY_HOST` — server IP or domain
+  - `DEPLOY_SSH_KEY` — SSH private key for ubuntu user
+  - `APP_SECRETS` — JSON object with all app env vars:
+    ```json
+    {
+      "DOMAIN": "dev.agentobox.com",
+      "DATABASE_URL": "postgres://...",
+      "SECRET_KEY": "...",
+      "GOOGLE_CLIENT_ID": "...",
+      "GOOGLE_CLIENT_SECRET": "...",
+      "GITHUB_CLIENT_ID": "...",
+      "GITHUB_CLIENT_SECRET": "...",
+      "ABOX_ENCRYPTION_KEY": "...",
+      "MODAL_TOKEN_ID": "...",
+      "MODAL_TOKEN_SECRET": "...",
+      ...
+    }
+    ```
+
+- **Adding a new env var**: add the key to `APP_SECRETS` JSON in the GitHub environment, add it to `docker-compose.prod.yml` environment block. No server SSH needed.
+- **Adding a new environment**: create a GitHub environment, set `DEPLOY_HOST`, `DEPLOY_SSH_KEY`, and `APP_SECRETS`. The deploy workflow selects the environment automatically from the branch name.
 
 ### First-time production setup
 
-1. `make tf-init ENV=dev` then `make tf-apply ENV=dev` — provisions Droplet + Managed Postgres + Route53 DNS
-2. `make setup-server ENV=dev` — SCPs `docker-compose.prod.yml`, `Caddyfile`, `.env.prod.example` to `/opt/agentobox`, installs Docker + Caddy, starts stack
-3. SSH to server, edit `/opt/agentobox/.env` with secrets (`DATABASE_URL`, `SECRET_KEY`, `MODAL_TOKEN_*`, etc.)
-4. Subsequent pushes to `main` auto-deploy via GitHub Actions
+1. Provision infrastructure (Droplet, Managed Postgres, DNS)
+2. `make setup-server ENV=dev` — SCPs `docker-compose.prod.yml`, `Caddyfile` to `/opt/agentobox`, installs Docker + Caddy
+3. Create GitHub environment (`dev` or `prod`), set `DEPLOY_HOST`, `DEPLOY_SSH_KEY`, and `APP_SECRETS`
+4. Push to the corresponding branch — CI handles everything from there
 
 ### Key deploy files
 
