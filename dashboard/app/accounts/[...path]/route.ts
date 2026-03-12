@@ -21,10 +21,20 @@ async function handler(request: Request) {
   const url = new URL(request.url)
   const destination = new URL(`${url.pathname}${url.search}`, BACKEND_URL)
 
+  // Resolve the original public host — request.url inside Docker is the
+  // container-internal URL (e.g. f1d23837b6d4:3000), not the public domain.
+  // Caddy sets x-forwarded-host to the real domain before proxying.
+  // request.url inside Docker resolves to the container-internal address
+  // (e.g. http://f1d23837b6d4:3000). Caddy sets x-forwarded-host/proto to
+  // the real public domain. Use those to build the public origin for redirects.
+  const originalHost = request.headers.get("x-forwarded-host") ?? url.host
+  const originalProto = request.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "")
+  const publicOrigin = `${originalProto}://${originalHost}`
+
   // Forward request to Django backend
   const headers = new Headers(request.headers)
-  headers.set("x-forwarded-host", url.host)
-  headers.set("x-forwarded-proto", url.protocol.replace(":", ""))
+  headers.set("x-forwarded-host", originalHost)
+  headers.set("x-forwarded-proto", originalProto)
   headers.set("host", new URL(BACKEND_URL).host)
 
   const backendRes = await fetch(destination.toString(), {
@@ -43,8 +53,8 @@ async function handler(request: Request) {
     const location = backendRes.headers.get("location")
     if (location && backendRes.status === 302) {
       let loc = location
-      loc = loc.replace(BACKEND_URL, url.origin)
-      loc = loc.replace(/https?:\/\/dashboard:\d+/, url.origin)
+      loc = loc.replace(BACKEND_URL, publicOrigin)
+      loc = loc.replace(/https?:\/\/dashboard:\d+/, publicOrigin)
       return Response.redirect(loc, 302)
     }
     return new Response(backendRes.body, {
@@ -58,7 +68,7 @@ async function handler(request: Request) {
 
   if (!sessionValue || sessionValue === '""' || sessionValue === "") {
     // Empty session = failed auth
-    return Response.redirect(`${url.origin}/auth/callback?error=no_session`, 302)
+    return Response.redirect(`${publicOrigin}/auth/callback?error=no_session`, 302)
   }
 
   // Exchange the session key for a JWT via the internal endpoint.
@@ -73,18 +83,18 @@ async function handler(request: Request) {
   console.log(`[route-proxy] token endpoint: ${tokenRes.status}`)
 
   if (!tokenRes.ok) {
-    return Response.redirect(`${url.origin}/auth/callback?error=no_session`, 302)
+    return Response.redirect(`${publicOrigin}/auth/callback?error=no_session`, 302)
   }
 
   const json = await tokenRes.json()
   const token = json?.token ?? null
 
   if (!token) {
-    return Response.redirect(`${url.origin}/auth/callback?error=no_session`, 302)
+    return Response.redirect(`${publicOrigin}/auth/callback?error=no_session`, 302)
   }
 
   // Redirect to callback page with token — the page stores it in localStorage
-  return Response.redirect(`${url.origin}/auth/callback?token=${encodeURIComponent(token)}`, 302)
+  return Response.redirect(`${publicOrigin}/auth/callback?token=${encodeURIComponent(token)}`, 302)
 }
 
 export const GET = handler

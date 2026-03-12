@@ -24,6 +24,10 @@ services:
       AWS_DEFAULT_REGION: us-east-1
       MEDIA_BUCKET: ${MEDIA_BUCKET:-agentobox-media}
       MEDIA_CDN_URL: ${MEDIA_CDN_URL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       VOLUME_ROOT: /volumes
       LOG_FORMAT: json
     depends_on:
