@@ -11,7 +11,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY}
-      ALLOWED_HOSTS: ${DOMAIN}
+      ALLOWED_HOSTS: ${DOMAIN},backend
       CORS_ALLOWED_ORIGINS: https://${DOMAIN}
       ABOX_CALLBACK_URL: http://backend:8000
       ABOX_DASHBOARD_URL: https://${DOMAIN}
