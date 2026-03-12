@@ -1,10 +1,8 @@
 # Deploy pipeline: test → build → deploy
 #
-# Required GitHub Secrets:
-#   EC2_HOST     — EC2 public IP or domain
-#   EC2_SSH_KEY  — SSH private key for ubuntu user
-#
-# Required GitHub Environment: "dev"
+# Required GitHub Secrets (in "dev" environment):
+#   DEPLOY_HOST     — Server IP or domain
+#   DEPLOY_SSH_KEY  — SSH private key for ubuntu user
 #
 # The .env file with app secrets (SECRET_KEY, DATABASE_URL, etc.) must already
 # exist on the server at /opt/agentobox/.env — placed manually during initial
@@ -94,19 +92,19 @@ jobs:
 
   # ─── Deploy ────────────────────────────────────────────────────────
   deploy:
-    name: Deploy to EC2
+    name: Deploy to Server
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     environment: dev
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy to EC2
+      - name: Deploy to Server
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.DEPLOY_HOST }}
           username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/agentobox
 
