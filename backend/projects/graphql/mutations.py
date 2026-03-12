@@ -85,6 +85,9 @@ class ProjectMutation:
             await spawn_team_lead(str(project.id))
         except Exception:
             log.exception("create_project.team_lead_failed", project_id=str(project.id))
+            # Don't silently return a half-initialized project
+            await project.adelete()
+            raise Exception("Failed to initialize project — team lead could not be created")
 
         return project
 

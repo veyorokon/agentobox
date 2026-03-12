@@ -43,10 +43,11 @@ async function handler(request: Request) {
   const destination = new URL(`${url.pathname}${url.search}`, BACKEND_URL)
   const publicOrigin = resolvePublicOrigin(request)
 
-  // Forward request to Django backend
+  // Forward request to Django backend — use validated origin for forwarded headers
+  const originUrl = new URL(publicOrigin)
   const headers = new Headers(request.headers)
-  headers.set("x-forwarded-host", originalHost)
-  headers.set("x-forwarded-proto", originalProto)
+  headers.set("x-forwarded-host", originUrl.host)
+  headers.set("x-forwarded-proto", originUrl.protocol.replace(":", ""))
   headers.set("host", new URL(BACKEND_URL).host)
 
   const backendRes = await fetch(destination.toString(), {
