@@ -28,6 +28,7 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      AGENT_RUNTIME: modal
       VOLUME_ROOT: /volumes
       LOG_FORMAT: json
     depends_on:

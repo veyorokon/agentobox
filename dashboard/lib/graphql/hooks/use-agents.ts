@@ -192,7 +192,6 @@ type CreateAgentInput = {
   model: string
   role: string
   mode: string
-  runtime: string
   instructions?: string
   tags?: string[]
 }

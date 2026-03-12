@@ -215,6 +215,7 @@ AGENT_ROOTFS_PATH = env("AGENT_ROOTFS_PATH")
 MODAL_APP_NAME = env("MODAL_APP_NAME")
 MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
 VOLUME_ROOT = env("VOLUME_ROOT")
+AGENT_RUNTIME = env("AGENT_RUNTIME")
 
 # Per-agent-type image selection. Runtimes look up agent_type in these maps;
 # if missing, they fall back to AGENT_IMAGE / MODAL_AGENT_IMAGE.

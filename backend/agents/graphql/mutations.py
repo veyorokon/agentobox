@@ -18,6 +18,7 @@ Key mutation groups:
 """
 import structlog
 
+from django.conf import settings
 import strawberry
 from strawberry import ID
 from strawberry.scalars import JSON
@@ -51,7 +52,7 @@ class VolumeMountInput:
 class CreateAgentInput:
     project_id: ID
     name: str
-    runtime: str = "modal"
+    runtime: str = ""
     model: str = "claude-sonnet-4-5-20250929"
     mcp_servers: JSON | None = None
     workspace_path: str = ""
@@ -198,10 +199,12 @@ class AgentMutation:
                 for vm in input.volume_mounts
             ]
 
+        runtime_name = input.runtime or settings.AGENT_RUNTIME
+
         return await create_agent(
             project_id=input.project_id,
             name=input.name,
-            runtime_name=input.runtime,
+            runtime_name=runtime_name,
             model=input.model,
             mcp_servers=mcp_config,
             workspace_path=input.workspace_path,

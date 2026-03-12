@@ -125,6 +125,7 @@ AGENT_ROOTFS_PATH = ""
 MODAL_APP_NAME = "agentobox"
 MODAL_AGENT_IMAGE = "ghcr.io/veyorokon/agentobox-agent-claude:latest"
 VOLUME_ROOT = ""
+AGENT_RUNTIME = "docker"
 
 AGENT_IMAGE_MAP = {
     "claude-code": "agentobox-agent-claude:latest",
