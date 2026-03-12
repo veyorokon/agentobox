@@ -1104,7 +1104,7 @@ async def spawn_team_lead(project_id: str) -> None:
     agent = await create_agent(
         project_id=project_id,
         name=lead_config["name"],
-        runtime_name="docker",
+        runtime_name=settings.AGENT_RUNTIME,
         model=lead_config["model"],
         mcp_servers=mcp_config,
         workspace_path="",
