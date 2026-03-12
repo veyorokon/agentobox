@@ -69,7 +69,7 @@ jobs:
             --build-arg BASE_IMAGE=agentobox-agent-base:ci \
             agent
       - name: Run relay runtime smoke test
-        run: docker run --rm agentobox-agent-claude:ci python3 /opt/abox/relay.py --smoke-runtime
+        run: docker run --rm --entrypoint python3 agentobox-agent-claude:ci /opt/abox/relay.py --smoke-runtime
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
