@@ -17,19 +17,31 @@ export const runtime = "nodejs"
 
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL ?? "http://backend:8000"
 
+// Allowed hosts for redirect targets. Prevents open-redirect via spoofed
+// x-forwarded-host. Includes localhost variants for local dev.
+const ALLOWED_HOSTS = new Set([
+  ...(process.env.DOMAIN ? [process.env.DOMAIN] : []),
+  "localhost:5051",
+  "localhost",
+])
+
+function resolvePublicOrigin(request: Request): string {
+  const url = new URL(request.url)
+  const forwardedHost = request.headers.get("x-forwarded-host")
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "")
+
+  // Validate forwarded host against allowlist — reject spoofed headers
+  const host = forwardedHost && ALLOWED_HOSTS.has(forwardedHost)
+    ? forwardedHost
+    : url.host
+
+  return `${forwardedProto}://${host}`
+}
+
 async function handler(request: Request) {
   const url = new URL(request.url)
   const destination = new URL(`${url.pathname}${url.search}`, BACKEND_URL)
-
-  // Resolve the original public host — request.url inside Docker is the
-  // container-internal URL (e.g. f1d23837b6d4:3000), not the public domain.
-  // Caddy sets x-forwarded-host to the real domain before proxying.
-  // request.url inside Docker resolves to the container-internal address
-  // (e.g. http://f1d23837b6d4:3000). Caddy sets x-forwarded-host/proto to
-  // the real public domain. Use those to build the public origin for redirects.
-  const originalHost = request.headers.get("x-forwarded-host") ?? url.host
-  const originalProto = request.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "")
-  const publicOrigin = `${originalProto}://${originalHost}`
+  const publicOrigin = resolvePublicOrigin(request)
 
   // Forward request to Django backend
   const headers = new Headers(request.headers)

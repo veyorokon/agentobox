@@ -113,7 +113,11 @@ jobs:
             echo '${{ secrets.APP_SECRETS }}' | python3 -c "
             import json, sys
             d = json.load(sys.stdin)
-            print('\n'.join(f'{k}={v}' for k, v in d.items()))
+            lines = []
+            for k, v in d.items():
+                safe = v.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))
+                lines.append(k + '=' + chr(39) + safe + chr(39))
+            print(chr(10).join(lines))
             " > /opt/agentobox/.env
 
       - name: Deploy to Server
