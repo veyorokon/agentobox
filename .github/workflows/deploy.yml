@@ -108,16 +108,16 @@ jobs:
           script: |
             cd /opt/agentobox
 
-            # Pull latest images
+            # Pull latest images (tagged :main on every push to main)
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            VERSION=${{ github.sha }} docker compose -f docker-compose.prod.yml pull
+            VERSION=main docker compose -f docker-compose.prod.yml pull
 
             # Deploy
-            VERSION=${{ github.sha }} docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            VERSION=main docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
             # Run migrations
-            VERSION=${{ github.sha }} docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
+            VERSION=main docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
 
             # Cleanup old images
             docker image prune -f
