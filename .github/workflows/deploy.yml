@@ -138,3 +138,11 @@ jobs:
 
             # Cleanup old images
             docker image prune -f
+
+      - name: Wait for backend startup
+        run: sleep 20
+
+      - name: Smoke test
+        run: |
+          DOMAIN=$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
+          bash bin/smoke-test.sh "https://${DOMAIN}"
