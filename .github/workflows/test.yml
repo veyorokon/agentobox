@@ -180,7 +180,7 @@ jobs:
       - name: Start backend stack
         if: env.SKIP_SMOKE != 'true'
         run: |
-          docker compose -f docker-compose.ci-smoke.yml up -d --build --wait
+          docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml up -d --build --wait
           # Wait for backend to be ready (migrations + seed run in entrypoint)
           for i in $(seq 1 60); do
             curl -sf http://localhost:8000/graphql -H 'Content-Type: application/json' \
@@ -198,8 +198,8 @@ jobs:
 
       - name: Dump backend logs on failure
         if: failure() && env.SKIP_SMOKE != 'true'
-        run: docker compose -f docker-compose.ci-smoke.yml logs backend --tail=100
+        run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml logs backend --tail=500
 
       - name: Cleanup
         if: always() && env.SKIP_SMOKE != 'true'
-        run: docker compose -f docker-compose.ci-smoke.yml down -v
+        run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml down -v
