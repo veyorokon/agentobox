@@ -189,34 +189,14 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: docker/setup-buildx-action@v4
-        if: env.SKIP_SMOKE != 'true'
-
-      # Build agent image
+      # Build agent images (plain docker build — test-only, never pushed)
       - name: Build agent base image
         if: env.SKIP_SMOKE != 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: agent
-          file: agent/Dockerfile.base
-          push: false
-          load: true
-          tags: agentobox-agent-base:latest
-          cache-from: type=gha,scope=agent-base
-          cache-to: type=gha,scope=agent-base,mode=max
+        run: docker build -t agentobox-agent-base:latest -f agent/Dockerfile.base agent/
 
       - name: Build agent claude image
         if: env.SKIP_SMOKE != 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: agent
-          file: agent/claude/Dockerfile
-          push: false
-          load: true
-          tags: agentobox-agent-claude:latest
-          build-args: BASE_IMAGE=agentobox-agent-base:latest
-          cache-from: type=gha,scope=agent-claude
-          cache-to: type=gha,scope=agent-claude,mode=max
+        run: docker build -t agentobox-agent-claude:latest --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile agent/
 
       # Start backend
       - name: Install backend dependencies
