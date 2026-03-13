@@ -175,7 +175,7 @@ jobs:
       AGENT_RUNTIME: docker
       DJANGO_SETTINGS_MODULE: config.settings
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ABOX_ENCRYPTION_KEY: ci-test-encryption-key-not-for-production
+      ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
     steps:
       - uses: actions/checkout@v5
 
