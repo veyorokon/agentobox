@@ -19,7 +19,7 @@ from pydantic_settings import BaseSettings
 
 
 class AgentConfig(BaseSettings):
-    runtime: Literal["docker", "modal"] = Field(alias="AGENT_RUNTIME")
+    runtime: Literal["docker", "modal"] = Field(default="modal", alias="AGENT_RUNTIME")
     image: str = Field(default="agentobox-agent-claude:latest", alias="AGENT_IMAGE")
     image_map: dict[str, str] = Field(
         default={"claude-code": "agentobox-agent-claude:latest"},
