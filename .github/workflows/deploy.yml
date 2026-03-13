@@ -37,6 +37,36 @@ env:
   DASHBOARD_IMAGE: ghcr.io/veyorokon/agentobox-dashboard
 
 jobs:
+  # ─── Validate Secrets ─────────────────────────────────────────────
+  # Runs in parallel with tests. Fails fast (<5s) if APP_SECRETS is
+  # missing required keys — no wasted build/deploy time.
+  validate-secrets:
+    name: Validate Secrets
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    steps:
+      - name: Check required keys in APP_SECRETS
+        run: |
+          echo '${{ secrets.APP_SECRETS }}' | python3 -c "
+          import json, sys
+          try:
+              secrets = json.load(sys.stdin)
+          except json.JSONDecodeError:
+              print('ERROR: APP_SECRETS is not valid JSON')
+              sys.exit(1)
+
+          required = [
+              'SECRET_KEY',
+              'DATABASE_URL',
+              'DOMAIN',
+          ]
+          missing = [k for k in required if k not in secrets]
+          if missing:
+              print(f'ERROR: APP_SECRETS missing required keys: {missing}')
+              sys.exit(1)
+          print(f'APP_SECRETS OK — {len(secrets)} keys, all required present')
+          "
+
   # ─── Test ──────────────────────────────────────────────────────────
   tests:
     uses: ./.github/workflows/test.yml
@@ -46,7 +76,7 @@ jobs:
   build:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: tests
+    needs: [tests, validate-secrets]
     permissions:
       contents: read
       packages: write
