@@ -910,6 +910,17 @@ def _atomic_reset_for_restart(agent_id):
             "volume_mounts", "instructions", "role", "mode", "updated_at",
         ])
 
+    config = {
+        "runtime": runtime_name,
+        "model": model,
+        "mcp_servers": mcp_servers,
+        "workspace_path": workspace_path,
+        "volume_mounts": volume_mounts,
+        "instructions": instructions,
+        "role": role,
+        "mode": mode,
+    }
+
     return agent, old_sandbox_id, old_runtime, resume_session_id, config
 
 
