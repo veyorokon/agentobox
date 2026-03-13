@@ -179,6 +179,9 @@ jobs:
             # Run migrations
             VERSION=${{ github.ref_name }} docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
 
+            # Ensure smoke test user exists (for CI agent-smoke job)
+            VERSION=${{ github.ref_name }} docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
+
             # Cleanup old images
             docker image prune -f
 
