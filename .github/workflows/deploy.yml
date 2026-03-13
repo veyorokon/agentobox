@@ -150,7 +150,14 @@ jobs:
             docker image prune -f
 
       - name: Wait for backend startup
-        run: sleep 20
+        run: |
+          DOMAIN=$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
+          for i in $(seq 1 30); do
+            curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' \
+              -d '{"query":"{ __typename }"}' && break
+            echo "  Waiting for backend... attempt $i/30"
+            sleep 5
+          done
 
       - name: Smoke test (HTTP surface)
         run: |
