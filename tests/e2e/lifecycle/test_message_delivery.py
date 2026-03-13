@@ -61,7 +61,7 @@ class TestMessageDelivery:
         agent = gql.create_agent(
             test_project["id"],
             name=agent_name,
-            runtime="docker",
+
             instructions="You are an e2e test agent by Vahid Eyorokon. When you receive a message, respond briefly.",
         )
         ready_agent = poll_agent_status(
@@ -159,7 +159,7 @@ class TestMessageDelivery:
         agent = gql.create_agent(
             test_project["id"],
             name=agent_name,
-            runtime="docker",
+
             instructions="You are an e2e test agent by Vahid Eyorokon. Wait for instructions.",
         )
         agent_id = agent["id"]

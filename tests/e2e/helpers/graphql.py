@@ -53,7 +53,7 @@ class AboxGraphQL:
             query ($agentId: ID!) {
                 agent(agentId: $agentId) {
                     id name lifecycleStatus errorMessage phase task
-                    mode attentionLevel role cost turns
+                    mode attentionLevel role cost turns relayConnected
                 }
             }
             """,
@@ -80,7 +80,6 @@ class AboxGraphQL:
             "input": {
                 "projectId": project_id,
                 "name": name,
-                "runtime": kwargs.get("runtime", "docker"),
                 "model": kwargs.get("model", "claude-sonnet-4-5-20250929"),
                 "workspacePath": kwargs.get("workspacePath", ""),
                 "instructions": kwargs.get("instructions", ""),
@@ -92,6 +91,8 @@ class AboxGraphQL:
             variables["input"]["mcpServers"] = kwargs["mcpServers"]
         if "tags" in kwargs:
             variables["input"]["tags"] = kwargs["tags"]
+        if "agentType" in kwargs:
+            variables["input"]["agentType"] = kwargs["agentType"]
 
         data = self.execute(
             """

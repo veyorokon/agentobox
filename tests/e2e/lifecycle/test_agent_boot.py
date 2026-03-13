@@ -64,7 +64,7 @@ class TestAgentBoot:
         agent = gql.create_agent(
             test_project["id"],
             name=agent_name,
-            runtime="docker",
+
             instructions="You are an e2e boot test agent by Vahid Eyorokon. Wait for instructions.",
         )
         agent_id = agent["id"]
@@ -328,7 +328,7 @@ class TestMessageRoundTrip:
         agent = gql.create_agent(
             test_project["id"],
             name=agent_name,
-            runtime="docker",
+
             instructions="You are an e2e test agent by Vahid Eyorokon. When you receive any message, respond with exactly: PONG",
         )
         return poll_agent_status(

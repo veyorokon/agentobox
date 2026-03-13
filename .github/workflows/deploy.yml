@@ -1,8 +1,13 @@
-# Deploy pipeline: test → build → deploy
+# Deploy pipeline: test → build → deploy → modal smoke
 #
 # Branch → environment mapping:
 #   dev  branch → dev  environment (dev.agentobox.com)
-#   main branch → prod environment (agentobox.com) [future]
+#   main branch → prod environment (agentobox.com)
+#
+# Flow:
+#   PR → dev:  unit + docker smoke (test.yml)
+#   merge dev: deploy to dev → modal smoke against dev.agentobox.com
+#   merge main: deploy to prod → modal smoke against agentobox.com
 #
 # Required GitHub Secrets (per environment):
 #   DEPLOY_HOST     — Server IP or domain
@@ -146,7 +151,35 @@ jobs:
       - name: Wait for backend startup
         run: sleep 20
 
-      - name: Smoke test
+      - name: Smoke test (HTTP surface)
         run: |
           DOMAIN=$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           bash bin/smoke-test.sh "https://${DOMAIN}"
+
+  # ─── Agent Smoke (Modal) ───────────────────────────────────────────
+  # Runs a real agent end-to-end against the deployed environment.
+  # Creates agent → waits for relay → sends message → asserts response.
+  #
+  # Runs on both dev and main after deploy. Uses the environment's
+  # Modal credentials (dev Modal env for dev, prod Modal env for main).
+  agent-smoke:
+    name: Agent Smoke (${{ github.ref_name }})
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install test dependencies
+        run: uv sync --group e2e
+
+      - name: Run agent smoke test
+        env:
+          ABOX_API_URL: https://${{ fromJson(secrets.APP_SECRETS).DOMAIN }}/graphql
+          ABOX_TEST_USER: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_USER || 'demo' }}
+          ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
+          SMOKE_RUNTIME: ${{ fromJson(secrets.APP_SECRETS).AGENT_RUNTIME || 'modal' }}
+        run: uv run pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="

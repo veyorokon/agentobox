@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-smoke tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -95,6 +95,12 @@ test-invariant:
 
 test-all:
 	docker compose exec backend uv run pytest --tb=short -q
+
+test-smoke:
+	uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+
+test-smoke-modal:
+	SMOKE_RUNTIME=modal uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
 
 seed:
 	docker compose exec backend uv run python manage.py seed_dev_data
