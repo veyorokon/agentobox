@@ -17,7 +17,7 @@ services:
       ABOX_DASHBOARD_URL: https://${DOMAIN}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude:${AGENT_VERSION:-latest}
+      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude:${AGENT_VERSION:-${VERSION:-latest}}
       MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-main}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY}
       DOCKER_NETWORK: agentobox_default

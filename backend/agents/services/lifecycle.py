@@ -274,11 +274,13 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
     return agent
 
 
-def _save_agent_failed(agent_id):
-    """Sync helper: mark agent as error."""
+def _save_agent_failed(agent_id, error_message=""):
+    """Sync helper: mark agent as error with reason."""
     agent = Agent.objects.get(id=agent_id)
     transition_agent_status(agent, AgentStatus.ERROR, reason="provision_failed")
-    agent.save(update_fields=["status", "updated_at"])
+    if error_message:
+        agent.error_message = error_message[:2000]
+    agent.save(update_fields=["status", "error_message", "updated_at"])
     return agent
 
 
@@ -697,7 +699,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 )
 
         try:
-            agent = await _save_failed(agent_id)
+            error_msg = f"{type(exc).__name__}: {exc}"
+            agent = await _save_failed(agent_id, error_message=error_msg)
             await broadcast_agent_update(agent)
             await _create_stream_event(
                 agent, "", "provision_failed",
