@@ -40,6 +40,7 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Lives in base context but copied here so base image stays frozen.
 # Split by change frequency: stable utils first, then hot code.
 COPY rootfs/opt/abox/abox_logging.py /opt/abox/abox_logging.py
+COPY rootfs/opt/abox/preflight.py /opt/abox/preflight.py
 COPY rootfs/opt/abox/api-proxy.py /opt/abox/api-proxy.py
 COPY rootfs/opt/abox/mcp-gateway.py /opt/abox/mcp-gateway.py
 COPY rootfs/opt/abox/converters.py /opt/abox/converters.py

@@ -12,7 +12,6 @@ hook subprocesses so we cannot rely on env var inheritance).
 """
 
 import json
-import logging
 import os
 import sys
 import urllib.error
@@ -21,11 +20,8 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from abox_logging import setup_redacted_logging
 
-# CC captures hook stderr — also write to a file for container-level visibility
+# setup_redacted_logging handles both stderr + persistent file logging
 log, _redactor = setup_redacted_logging("team-bridge", level="DEBUG")
-_file_handler = logging.FileHandler("/tmp/team-bridge.log")
-_file_handler.setFormatter(log.root.handlers[0].formatter if log.root.handlers else logging.Formatter())
-logging.root.addHandler(_file_handler)
 
 # Structure is the grouping — no per-tool "phase" attribute needed.
 PRE = {"TaskList", "TaskGet"}

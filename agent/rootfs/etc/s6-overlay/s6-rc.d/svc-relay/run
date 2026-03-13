@@ -1,10 +1,10 @@
 #!/command/with-contenv bash
 exec 2>&1
+source /etc/s6-overlay/scripts/preflight
 
-# .relay_env is available via volume symlink (init-volume runs first).
-# No polling needed — s6-rc dependency ensures init-volume completes first.
+[ -f /home/agent/.relay_env ] && source /home/agent/.relay_env
 
-source /home/agent/.relay_env
+preflight --service svc-relay --env ABOX_CALLBACK_URL
 
 # Reset crash counter
 rm -f /tmp/svc-relay-crashes
@@ -15,4 +15,4 @@ WORK_DIR="/home/agent/workspace"
 # s6-setuidgid drops privileges but does NOT update HOME
 export HOME=/home/agent
 
-exec s6-setuidgid agent python3 /opt/abox/relay.py
+exec s6-setuidgid agent abox-exec --service svc-relay -- python3 /opt/abox/relay.py

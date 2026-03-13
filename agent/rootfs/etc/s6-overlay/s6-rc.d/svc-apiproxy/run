@@ -1,15 +1,10 @@
 #!/command/with-contenv bash
 exec 2>&1
+source /etc/s6-overlay/scripts/preflight
 
-# OAuth mode: no proxy key, no proxy needed — CC authenticates directly.
-# Sleep forever so s6 doesn't restart-loop this service.
-if [ ! -f /run/secrets/proxy_key ]; then
-  echo "api-proxy: no proxy key found (OAuth mode) — skipping"
-  exec sleep infinity
-fi
+# OAuth mode: no proxy key, no proxy needed.
+preflight --service svc-apiproxy --file /run/secrets/proxy_key
 
-# Source relay env for PROXY_* vars (auth header, upstream config).
-# api-proxy needs these to know how to forward requests.
 [ -f /home/agent/.relay_env ] && source /home/agent/.relay_env
 
-exec python3 /opt/abox/api-proxy.py
+exec abox-exec --service svc-apiproxy -- python3 /opt/abox/api-proxy.py

@@ -1,5 +1,7 @@
 #!/command/with-contenv bash
 exec 2>&1
+source /etc/s6-overlay/scripts/preflight
 
-# config.json is available via volume symlink (init-volume runs first).
-exec python3 /opt/abox/mcp-gateway.py
+preflight --service svc-mcp-gateway --file /home/agent/.mcp.json
+
+exec abox-exec --service svc-mcp-gateway -- python3 /opt/abox/mcp-gateway.py

@@ -65,7 +65,7 @@ class ModalRuntime:
         if modal_volumes:
             create_kwargs["volumes"] = modal_volumes
 
-        sb = await modal.Sandbox.create.aio("/init", **create_kwargs)
+        sb = await modal.Sandbox.create.aio(**create_kwargs)
         agent_id = env.get("AGENT_ID", "")
         await sb.set_tags.aio(
             {"agentobox.managed": "true", "agentobox.agent": name, "agentobox.agent.id": agent_id}

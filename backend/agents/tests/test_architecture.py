@@ -1291,6 +1291,57 @@ class TestNoStaleSettingsRefs:
                 )
 
 
+class TestS6ServicePreflight:
+    """Principle: every s6 service must validate config before starting.
+
+    All longrun service run scripts must source the preflight helper and
+    call preflight with --service. This ensures structured JSON logging
+    on missing config and immediate clean exit (no crash-loop noise).
+    """
+
+    def _longrun_run_scripts(self) -> list[tuple[str, str]]:
+        """Return (service_name, run_script_content) for all longrun services."""
+        results = []
+        for rootfs_dir in AGENT_ROOTFS_DIRS:
+            s6_rc = rootfs_dir / "etc" / "s6-overlay" / "s6-rc.d"
+            if not s6_rc.is_dir():
+                continue
+            for svc_dir in sorted(s6_rc.iterdir()):
+                if not svc_dir.name.startswith("svc-"):
+                    continue
+                type_file = svc_dir / "type"
+                run_file = svc_dir / "run"
+                if type_file.exists() and type_file.read_text().strip() == "longrun" and run_file.exists():
+                    results.append((svc_dir.name, run_file.read_text()))
+        return results
+
+    def test_all_services_source_preflight(self):
+        """Every longrun service must source the preflight helper."""
+        for name, content in self._longrun_run_scripts():
+            assert "source /etc/s6-overlay/scripts/preflight" in content, (
+                f"{name}/run does not source preflight helper"
+            )
+
+    def test_all_services_call_preflight(self):
+        """Every longrun service must call preflight with --service."""
+        for name, content in self._longrun_run_scripts():
+            assert f"preflight --service {name}" in content, (
+                f"{name}/run does not call preflight --service {name}"
+            )
+
+    def test_all_services_use_abox_exec(self):
+        """Every longrun service must wrap its process with abox-exec.
+
+        abox-exec ensures ALL output (stdout + stderr) is structured JSON,
+        regardless of what language or binary the service runs. This is the
+        universal log normalization layer — no exceptions.
+        """
+        for name, content in self._longrun_run_scripts():
+            assert f"abox-exec --service {name} --" in content, (
+                f"{name}/run does not wrap its process with abox-exec"
+            )
+
+
 class TestRuntimeValidation:
     """Principle: fail loud on startup, not on first request."""
 

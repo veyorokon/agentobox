@@ -106,7 +106,7 @@ COPY rootfs/usr/ /usr/
 COPY rootfs/opt/noVNC/ /opt/noVNC/
 # Textfox: only overlay our defaults.css — don't clobber the cloned repo
 COPY rootfs/opt/textfox/chrome/defaults.css /opt/textfox/chrome/defaults.css
-RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
+RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr /usr/local/bin/abox-init /usr/local/bin/abox-exec
 
 # Home directory — AwesomeWM config, Firefox profile configs
 COPY rootfs/home/ /home/
@@ -122,4 +122,4 @@ ENV XCURSOR_SIZE=24
 
 EXPOSE 6080
 
-ENTRYPOINT ["/init"]
+ENTRYPOINT ["/usr/local/bin/abox-init"]

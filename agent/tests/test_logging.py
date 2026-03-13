@@ -46,14 +46,14 @@ class TestJSONFormatter:
         assert isinstance(parsed, dict)
 
     def test_required_fields_present(self):
+        """All fields from the OTEL-aligned contract must be present."""
         fmt = JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ")
         record = self._make_record("relay.ws_connected")
         parsed = json.loads(fmt.format(record))
-        assert "timestamp" in parsed
-        assert "level" in parsed
-        assert "logger" in parsed
-        assert "agent_id" in parsed
-        assert "event" in parsed
+        for field in ("timestamp", "level", "logger", "event",
+                       "service.name", "service.version", "environment", "agent_id"):
+            assert field in parsed, f"missing required field: {field}"
+        assert parsed["service.name"] == "agentobox-agent"
 
     def test_event_is_raw_msg_not_formatted(self):
         """Event field must be the domain.action string, not printf-expanded."""
@@ -86,7 +86,8 @@ class TestJSONFormatter:
         assert parsed["event"] == "relay.ws_connected"
         assert parsed["timestamp"] != "hacked"
 
-    def test_exception_included(self):
+    def test_exception_otel_fields(self):
+        """Exception must use OTEL semantic convention fields, not flat string."""
         fmt = JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%SZ")
         try:
             raise ValueError("test error")
@@ -96,9 +97,13 @@ class TestJSONFormatter:
         record = self._make_record("relay.crashed")
         record.exc_info = exc_info
         parsed = json.loads(fmt.format(record))
-        assert "exception" in parsed
-        assert "ValueError" in parsed["exception"]
-        assert "test error" in parsed["exception"]
+        # Old flat "exception" field must NOT be present
+        assert "exception" not in parsed
+        # OTEL fields
+        assert parsed["exception.type"] == "builtins.ValueError"
+        assert parsed["exception.message"] == "test error"
+        assert "ValueError: test error" in parsed["exception.stacktrace"]
+        assert "Traceback" in parsed["exception.stacktrace"]
 
     def test_non_serializable_extras_use_str(self):
         """default=str should handle non-JSON-serializable values."""

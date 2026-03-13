@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""abox-exec — universal process wrapper for structured logging.
+
+Wraps any child process and guarantees ALL output (stdout + stderr) is
+structured JSON matching the abox_logging contract. Lines that are already
+valid JSON pass through unchanged. Non-JSON lines (tracebacks, bash errors,
+segfaults, npm warnings, etc.) are wrapped in the standard envelope.
+
+Usage in s6 run scripts::
+
+    exec abox-exec --service svc-relay -- python3 /opt/abox/relay.py
+    exec abox-exec --service svc-xvfb -- Xvfb :1 -screen 0 1920x1080x24
+
+The wrapper:
+  1. Spawns the child process
+  2. Reads stdout/stderr line by line
+  3. JSON lines → pass through unchanged
+  4. Non-JSON lines → wrap in envelope: {event: "raw_output", raw: "...", stream: "stdout"|"stderr"}
+  5. On child exit → emit {event: "process_exited", exit_code: N}
+  6. On signal → forward signal to child, emit {event: "process_signaled", signal: N}
+
+Uses abox_logging.py for the envelope so the field shape is automatically
+correct and OTEL-aligned.
+"""
+
+import json
+import os
+import select
+import signal
+import subprocess
+import sys
+
+sys.path.insert(0, "/opt/abox")
+from abox_logging import setup
+
+
+def _is_json(line: str) -> bool:
+    """Check if a line is valid JSON. Fast-reject non-JSON before parsing."""
+    if not line or line[0] != "{":
+        return False
+    try:
+        json.loads(line)
+        return True
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+
+def main():
+    # Parse --service <name> and -- <cmd...>
+    args = sys.argv[1:]
+    service = "unknown"
+    cmd_start = 0
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--service" and i + 1 < len(args):
+            service = args[i + 1]
+            i += 2
+        elif args[i] == "--":
+            cmd_start = i + 1
+            break
+        else:
+            i += 1
+
+    cmd = args[cmd_start:]
+    if not cmd:
+        print(json.dumps({
+            "event": "abox_exec.no_command",
+            "level": "error",
+            "logger": service,
+            "service.name": "agentobox-agent",
+            "agent_id": os.environ.get("AGENT_ID", ""),
+        }), file=sys.stderr)
+        sys.exit(1)
+
+    log = setup(service)
+
+    # Spawn child with piped stdout/stderr
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        log.error("process_not_found", extra={"cmd": cmd[0], "full_cmd": " ".join(cmd)})
+        sys.exit(127)
+    except PermissionError:
+        log.error("process_permission_denied", extra={"cmd": cmd[0], "full_cmd": " ".join(cmd)})
+        sys.exit(126)
+
+    # Forward signals to child
+    def _forward_signal(signum, _frame):
+        try:
+            proc.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _forward_signal)
+
+    # Read stdout/stderr concurrently via select
+    streams = {}
+    if proc.stdout:
+        streams[proc.stdout.fileno()] = ("stdout", proc.stdout)
+    if proc.stderr:
+        streams[proc.stderr.fileno()] = ("stderr", proc.stderr)
+
+    while streams:
+        readable, _, _ = select.select(list(streams.keys()), [], [])
+        for fd in readable:
+            stream_name, stream = streams[fd]
+            raw = stream.readline()
+            if not raw:
+                # EOF on this stream
+                del streams[fd]
+                continue
+
+            # Decode, handling binary garbage gracefully
+            try:
+                line = raw.decode("utf-8", errors="replace").rstrip("\n\r")
+            except Exception:
+                line = repr(raw)
+
+            if not line:
+                continue
+
+            if _is_json(line):
+                # Already structured — pass through to stderr (s6 convention)
+                sys.stderr.write(line + "\n")
+            else:
+                # Wrap in structured envelope
+                log.info("raw_output", extra={"raw": line, "stream": stream_name})
+
+    # Wait for child to finish
+    exit_code = proc.wait()
+
+    if exit_code < 0:
+        # Killed by signal
+        sig_num = -exit_code
+        log.warning("process_signaled", extra={
+            "signal": sig_num,
+            "signal_name": signal.Signals(sig_num).name if sig_num in signal.Signals._value2member_map_ else str(sig_num),
+            "cmd": cmd[0],
+        })
+    elif exit_code != 0:
+        log.error("process_exited", extra={"exit_code": exit_code, "cmd": cmd[0]})
+    else:
+        log.info("process_exited", extra={"exit_code": 0, "cmd": cmd[0]})
+
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""abox-init — container entrypoint replacing s6-overlay's /init.
+
+s6-overlay requires PID 1 (enforced by s6-overlay-suexec). Modal and other
+serverless runtimes inject their own init process, so s6-overlay can never
+be PID 1 there. This script bypasses s6-overlay's init chain and drives
+s6 tools directly:
+
+  1. Prepare scandir from s6-rc service definitions
+  2. Run oneshot init scripts (init-volume, init-firefox)
+  3. exec s6-svscan to supervise all longrun services
+
+Works identically on Docker (PID 1) and Modal (not PID 1).
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+
+sys.path.insert(0, "/opt/abox")
+from abox_logging import setup
+
+log = setup("abox-init")
+
+S6_RC_SOURCE = "/etc/s6-overlay/s6-rc.d"
+SCANDIR = "/run/abox-services"
+
+
+def prepare_scandir():
+    """Build s6-svscan scandir from s6-rc.d longrun service definitions."""
+    if os.path.exists(SCANDIR):
+        shutil.rmtree(SCANDIR)
+
+    svscan_dir = os.path.join(SCANDIR, ".s6-svscan")
+    os.makedirs(svscan_dir)
+
+    # Finish script for s6-svscan (container shutdown)
+    finish = os.path.join(svscan_dir, "finish")
+    with open(finish, "w") as f:
+        f.write("#!/bin/bash\nexec /command/s6-svscanctl -t /run/abox-services 2>/dev/null\n")
+    os.chmod(finish, 0o755)
+
+    count = 0
+    for entry in sorted(os.listdir(S6_RC_SOURCE)):
+        svc_dir = os.path.join(S6_RC_SOURCE, entry)
+        if not entry.startswith("svc-") or not os.path.isdir(svc_dir):
+            continue
+
+        type_file = os.path.join(svc_dir, "type")
+        if not os.path.exists(type_file):
+            continue
+        with open(type_file) as f:
+            if f.read().strip() != "longrun":
+                continue
+
+        target = os.path.join(SCANDIR, entry)
+        os.makedirs(target)
+
+        # Copy run script — replace s6-overlay shebang with plain bash
+        run_src = os.path.join(svc_dir, "run")
+        if os.path.exists(run_src):
+            with open(run_src) as f:
+                content = f.read()
+            content = content.replace("#!/command/with-contenv bash", "#!/bin/bash", 1)
+            run_dst = os.path.join(target, "run")
+            with open(run_dst, "w") as f:
+                f.write(content)
+            os.chmod(run_dst, 0o755)
+
+        # Copy finish script if present (e.g., svc-relay crash handler)
+        finish_src = os.path.join(svc_dir, "finish")
+        if os.path.exists(finish_src):
+            with open(finish_src) as f:
+                content = f.read()
+            content = content.replace("#!/command/with-contenv bash", "#!/bin/bash", 1)
+            content = content.replace("/run/s6/basedir/bin/halt", "kill -TERM 1 2>/dev/null; kill -TERM $$")
+            content = content.replace(f"/run/service/{entry}", f"{SCANDIR}/{entry}")
+            finish_dst = os.path.join(target, "finish")
+            with open(finish_dst, "w") as f:
+                f.write(content)
+            os.chmod(finish_dst, 0o755)
+
+        # Copy notification-fd if present (e.g., svc-xvfb readiness)
+        notif_src = os.path.join(svc_dir, "notification-fd")
+        if os.path.exists(notif_src):
+            shutil.copy2(notif_src, os.path.join(target, "notification-fd"))
+
+        count += 1
+        log.info("service_registered", extra={"service": entry})
+
+    return count
+
+
+def run_oneshots():
+    """Run synchronous oneshot init scripts."""
+    script = "/etc/s6-overlay/scripts/init-volume"
+    if os.path.isfile(script) and os.access(script, os.X_OK) and os.path.isdir("/vol"):
+        log.info("oneshot_starting", extra={"script": "init-volume"})
+        result = subprocess.run(["bash", script], capture_output=True, text=True)
+        if result.returncode != 0:
+            log.error("oneshot_failed", extra={
+                "script": "init-volume",
+                "exit_code": result.returncode,
+                "stderr": result.stderr[:500],
+            })
+        else:
+            log.info("oneshot_done", extra={"script": "init-volume"})
+    else:
+        log.info("oneshot_skipped", extra={"script": "init-volume", "reason": "no /vol mount"})
+
+
+def run_deferred_init():
+    """Run init scripts that need running services (X11, dbus)."""
+    script = "/etc/s6-overlay/scripts/firefox-setup"
+    if not (os.path.isfile(script) and os.access(script, os.X_OK)):
+        return
+
+    # Wait for Xvfb
+    for _ in range(30):
+        ret = subprocess.run(
+            ["xdpyinfo", "-display", ":1"],
+            capture_output=True,
+        )
+        if ret.returncode == 0:
+            break
+        time.sleep(0.5)
+
+    log.info("oneshot_starting", extra={"script": "firefox-setup"})
+    result = subprocess.run(["bash", script], capture_output=True, text=True)
+    if result.returncode != 0:
+        log.warning("oneshot_failed", extra={
+            "script": "firefox-setup",
+            "exit_code": result.returncode,
+            "stderr": result.stderr[:500],
+        })
+    else:
+        log.info("oneshot_done", extra={"script": "firefox-setup"})
+
+
+def main():
+    log.info("init_starting", extra={"pid": os.getpid()})
+
+    # Ensure /command is on PATH (s6 tools)
+    os.environ["PATH"] = f"/command:{os.environ.get('PATH', '')}"
+
+    # Prepare service scandir
+    count = prepare_scandir()
+    log.info("scandir_ready", extra={"service_count": count})
+
+    # Run synchronous oneshots
+    run_oneshots()
+
+    # Start deferred init in background (needs X11)
+    t = threading.Thread(target=run_deferred_init, daemon=True)
+    t.start()
+
+    # exec s6-svscan — replaces this process
+    log.info("exec_svscan", extra={"scandir": SCANDIR, "service_count": count})
+    os.execv("/command/s6-svscan", ["s6-svscan", SCANDIR])
+
+
+if __name__ == "__main__":
+    main()

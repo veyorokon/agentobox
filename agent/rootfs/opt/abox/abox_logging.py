@@ -1,9 +1,21 @@
 """Shared JSON logging for all agent-side Python processes.
 
 Stdlib-only (no pip dependencies). Produces JSON lines on stderr matching
-the backend structlog output shape so all logs are greppable with the same
-tooling. Each process calls ``setup()`` once at import time to configure
-the root logger.
+the backend structlog output shape — identical field names so all logs are
+greppable with the same tooling and OTEL-compatible without field remapping.
+
+Field contract (matches backend telemetry.py):
+    timestamp         ISO 8601 (e.g. "2026-03-13T12:00:00Z")
+    level             "info" | "warning" | "error" | "debug" | "critical"
+    logger            Logger name (e.g. "abox-relay", "svc-relay")
+    event             Event name (e.g. "relay.ws_connected")
+    service.name      "agentobox-agent"
+    service.version   From ABOX_AGENT_VERSION env or "unknown"
+    environment       From ABOX_ENVIRONMENT env or "local"
+    agent_id          From AGENT_ID env
+    exception.type    Fully qualified exception class (OTEL semantic convention)
+    exception.message Exception message string
+    exception.stacktrace Full traceback string
 
 Usage::
 
@@ -20,6 +32,7 @@ import logging
 import os
 import re
 import sys
+import traceback
 
 
 class JSONFormatter(logging.Formatter):
@@ -38,15 +51,24 @@ class JSONFormatter(logging.Formatter):
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname.lower(),
             "logger": record.name,
-            "agent_id": os.environ.get("AGENT_ID", ""),
             "event": record.msg if isinstance(record.msg, str) else str(record.msg),
+            "service.name": "agentobox-agent",
+            "service.version": os.environ.get("ABOX_AGENT_VERSION", "unknown"),
+            "environment": os.environ.get("ABOX_ENVIRONMENT", "local"),
+            "agent_id": os.environ.get("AGENT_ID", ""),
         }
         # Merge extra kwargs from log calls into the JSON entry
         for key, val in record.__dict__.items():
             if key not in self._BUILTIN and key not in entry:
                 entry[key] = val
+        # OTEL semantic convention: split exception into type/message/stacktrace
         if record.exc_info and record.exc_info[0]:
-            entry["exception"] = self.formatException(record.exc_info)
+            exc_type, exc_value, exc_tb = record.exc_info
+            entry["exception.type"] = f"{exc_type.__module__}.{exc_type.__name__}"
+            entry["exception.message"] = str(exc_value)
+            entry["exception.stacktrace"] = "".join(
+                traceback.format_exception(exc_type, exc_value, exc_tb)
+            ).rstrip()
         return json.dumps(entry, default=str)
 
 

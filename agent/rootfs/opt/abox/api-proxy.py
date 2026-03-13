@@ -59,19 +59,24 @@ _STRIP_HEADERS = frozenset({
 })
 
 
+from abox_logging import setup_redacted_logging
+
+_log, _redactor = setup_redacted_logging("abox-apiproxy")
+
+
 def _load_key() -> str:
     """Read the real API key from the secrets file. Crash if missing."""
     try:
         with open(KEY_PATH) as f:
             key = f.read().strip()
     except FileNotFoundError:
-        print(f"FATAL: {KEY_PATH} not found — cannot start without API key", file=sys.stderr)
+        _log.critical("proxy.startup_fatal", extra={"reason": "missing_key_file", "path": KEY_PATH})
         sys.exit(1)
     except PermissionError:
-        print(f"FATAL: cannot read {KEY_PATH} — check file permissions", file=sys.stderr)
+        _log.critical("proxy.startup_fatal", extra={"reason": "permission_denied", "path": KEY_PATH})
         sys.exit(1)
     if not key:
-        print(f"FATAL: {KEY_PATH} is empty", file=sys.stderr)
+        _log.critical("proxy.startup_fatal", extra={"reason": "empty_key_file", "path": KEY_PATH})
         sys.exit(1)
     return key
 
@@ -81,10 +86,6 @@ _REAL_KEY = _load_key()
 
 # Reusable SSL context for upstream connections
 _SSL_CTX = ssl.create_default_context()
-
-from abox_logging import setup_redacted_logging
-
-_log, _redactor = setup_redacted_logging("abox-apiproxy")
 
 
 def _rewrite_request_body(body: bytes) -> bytes:
