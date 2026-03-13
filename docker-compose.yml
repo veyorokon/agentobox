@@ -46,7 +46,7 @@ services:
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
-      AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent-claude:dev}
+      AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent-claude:latest}
       CORS_ALLOW_ALL: "true"
       ABOX_CALLBACK_URL: http://backend:8000
       ABOX_DASHBOARD_URL: http://dashboard:5051
