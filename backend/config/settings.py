@@ -1,22 +1,13 @@
-from pathlib import Path
+from config.app_config import app_config
 
-import environ
+_django = app_config.django
+_oauth = app_config.oauth
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# --- Core ---
 
-env = environ.Env(
-    DEBUG=(bool, False),
-    ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
-    REDIS_URL=(str, "redis://localhost:6379/0"),
-)
-environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
-
-# Import AFTER read_env so pydantic_settings sees .env values in os.environ.
-from config.app_config import app_config  # noqa: E402
-
-SECRET_KEY = env("SECRET_KEY")
-DEBUG = env("DEBUG")
-ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+SECRET_KEY = _django.secret_key
+DEBUG = _django.debug
+ALLOWED_HOSTS = _django.parse_allowed_hosts()
 
 # --- Security (reverse proxy) ---
 
@@ -30,7 +21,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # we skip it.  In local dev (ALLOWED_HOSTS=["*"]) the list would be empty,
 # so we fall back to localhost origins for the dashboard (the browser origin
 # for OAuth form POSTs).  In production, set CSRF_TRUSTED_ORIGINS explicitly.
-CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+CSRF_TRUSTED_ORIGINS = _django.parse_csrf_trusted_origins()
 if not CSRF_TRUSTED_ORIGINS:
     _hosts = [f"https://{h}" for h in ALLOWED_HOSTS if h != "*"]
     CSRF_TRUSTED_ORIGINS = _hosts or [
@@ -108,7 +99,7 @@ ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {
     "default": {
-        **env.db("DATABASE_URL", default="sqlite:///db.sqlite3"),
+        **_django.parse_database(),
         "CONN_MAX_AGE": 0,  # Close after each request — ASGI/Daphne dispatches ORM
         # calls to threads; CONN_MAX_AGE > 0 keeps each thread's connection alive,
         # causing unbounded idle connection growth under polling load.
@@ -123,7 +114,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [env("REDIS_URL")],
+            "hosts": [_django.redis_url],
             "group_expiry": 86400,
         },
     },
@@ -160,15 +151,15 @@ SOCIALACCOUNT_PROVIDERS = {
         "SCOPE": ["profile", "email"],
         "AUTH_PARAMS": {"access_type": "online"},
         "APP": {
-            "client_id": env("GOOGLE_CLIENT_ID", default=""),
-            "secret": env("GOOGLE_CLIENT_SECRET", default=""),
+            "client_id": _oauth.google_client_id,
+            "secret": _oauth.google_client_secret,
         },
     },
     "github": {
         "SCOPE": ["user:email"],
         "APP": {
-            "client_id": env("GITHUB_CLIENT_ID", default=""),
-            "secret": env("GITHUB_CLIENT_SECRET", default=""),
+            "client_id": _oauth.github_client_id,
+            "secret": _oauth.github_client_secret,
         },
     },
 }
@@ -190,6 +181,10 @@ USE_TZ = True
 # --- Static ---
 
 STATIC_URL = "static/"
+
+from pathlib import Path  # noqa: E402
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -270,11 +265,8 @@ SESSION_COOKIE_NAME = "agentobox_sessionid"
 
 # --- CORS ---
 
-CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL", default=False)
-CORS_ALLOWED_ORIGINS = env.list(
-    "CORS_ALLOWED_ORIGINS",
-    default=["http://localhost:3000", "http://localhost:5051"],
-)
+CORS_ALLOW_ALL_ORIGINS = _django.cors_allow_all
+CORS_ALLOWED_ORIGINS = _django.parse_cors_allowed_origins()
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     "accept",

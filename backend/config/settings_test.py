@@ -9,7 +9,12 @@ Imports from the main settings module but overrides:
 Integration tests use the real config.settings (which reads from env/docker).
 """
 
+import os
 from pathlib import Path
+
+# Set env vars before any module imports app_config (pydantic validates on import).
+os.environ.setdefault("SECRET_KEY", "test-only-not-for-production")
+os.environ.setdefault("AGENT_RUNTIME", "docker")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -114,11 +119,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- App Config ---
 # Policy/runtime config lives in config.app_config (pydantic-settings).
-# Tests set AGENT_RUNTIME env var; all other policy vars use defaults.
+# Env vars set at top of file before any imports.
 # See conftest.py for monkeypatching app_config in tests that need
 # non-default values.
-import os
-os.environ.setdefault("AGENT_RUNTIME", "docker")
 
 # --- Session ---
 

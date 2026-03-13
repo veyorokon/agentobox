@@ -38,34 +38,37 @@ env:
 
 jobs:
   # ─── Validate Secrets ─────────────────────────────────────────────
-  # Runs in parallel with tests. Fails fast (<5s) if APP_SECRETS is
-  # missing required keys — no wasted build/deploy time.
+  # Runs in parallel with tests. Fails fast if APP_SECRETS is missing
+  # required keys. Uses pydantic AppConfig as the schema — no hardcoded
+  # key list to maintain. If app_config imports, all required vars exist.
   validate-secrets:
     name: Validate Secrets
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
-      - name: Check required keys in APP_SECRETS
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install backend deps
+        run: cd backend && uv sync --no-dev
+      - name: Validate APP_SECRETS against AppConfig schema
         run: |
           echo '${{ secrets.APP_SECRETS }}' | python3 -c "
-          import json, sys
+          import json, sys, os
           try:
               secrets = json.load(sys.stdin)
           except json.JSONDecodeError:
               print('ERROR: APP_SECRETS is not valid JSON')
               sys.exit(1)
-
-          required = [
-              'SECRET_KEY',
-              'DATABASE_URL',
-              'DOMAIN',
-          ]
-          missing = [k for k in required if k not in secrets]
-          if missing:
-              print(f'ERROR: APP_SECRETS missing required keys: {missing}')
+          for k, v in secrets.items():
+              os.environ[k] = str(v)
+          # DOMAIN is required by docker-compose.prod.yml (not Python)
+          if 'DOMAIN' not in secrets:
+              print('ERROR: APP_SECRETS missing DOMAIN (required by docker-compose.prod.yml)')
               sys.exit(1)
-          print(f'APP_SECRETS OK — {len(secrets)} keys, all required present')
           "
+          cd backend && uv run python -c "from config.app_config import app_config; print(f'AppConfig OK — all required vars present')"
 
   # ─── Test ──────────────────────────────────────────────────────────
   tests:
