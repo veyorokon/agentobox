@@ -54,21 +54,21 @@ jobs:
         run: cd backend && uv sync --no-dev
       - name: Validate APP_SECRETS against AppConfig schema
         run: |
-          echo '${{ secrets.APP_SECRETS }}' | python3 -c "
-          import json, sys, os
+          # Export APP_SECRETS as env vars so pydantic can read them
+          eval "$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "
+          import json, sys
           try:
               secrets = json.load(sys.stdin)
           except json.JSONDecodeError:
-              print('ERROR: APP_SECRETS is not valid JSON')
-              sys.exit(1)
+              print('echo ERROR: APP_SECRETS is not valid JSON; exit 1')
+              sys.exit(0)
           for k, v in secrets.items():
-              os.environ[k] = str(v)
-          # DOMAIN is required by docker-compose.prod.yml (not Python)
+              safe = v.replace(\"'\", \"'\\\\''\" )
+              print(f\"export {k}='{safe}'\")
           if 'DOMAIN' not in secrets:
-              print('ERROR: APP_SECRETS missing DOMAIN (required by docker-compose.prod.yml)')
-              sys.exit(1)
-          "
-          cd backend && uv run python -c "from config.app_config import app_config; print(f'AppConfig OK — all required vars present')"
+              print('echo ERROR: APP_SECRETS missing DOMAIN; exit 1')
+          ")"
+          cd backend && uv run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
 
   # ─── Test ──────────────────────────────────────────────────────────
   tests:
