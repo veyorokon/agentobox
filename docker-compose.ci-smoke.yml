@@ -1,0 +1,73 @@
+# CI smoke test stack — minimal backend + infra for docker smoke tests.
+#
+# Usage (in GitHub Actions):
+#   docker compose -f docker-compose.ci-smoke.yml up -d
+#   uv run pytest tests/smoke/ ...
+#
+# This runs the backend inside Docker (same as local dev) so that:
+#   - Docker socket is available for agent container creation
+#   - Named volumes are shared between backend and agent containers
+#   - Docker network DNS resolves container names
+#   - ABOX_CALLBACK_URL uses container DNS (http://backend:8000)
+#
+# No dashboard, no localstack — just what's needed for smoke tests.
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: agentobox
+      POSTGRES_USER: agentobox
+      POSTGRES_PASSWORD: agentobox
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "agentobox"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ci-smoke-secret-key-not-for-production
+      AGENT_RUNTIME: docker
+      DJANGO_SETTINGS_MODULE: config.settings
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}
+      ABOX_CALLBACK_URL: http://backend:8000
+      DOCKER_NETWORK: agentobox-ci-smoke_default
+      VOLUME_ROOT: /volumes
+      AGENT_VOLUME_NAME: agentobox-ci-smoke_agent-volumes
+      LOG_FORMAT: json
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-volumes:/volumes
+    command: >
+      bash -c "
+        uv run python manage.py migrate --noinput &&
+        uv run python manage.py seed_dev_data &&
+        uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
+      "
+
+volumes:
+  agent-volumes:

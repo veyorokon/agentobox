@@ -136,47 +136,23 @@ jobs:
         run: cd backend && uv run ruff check agents/
 
   # ─── Docker Smoke ─────────────────────────────────────────────────
-  # Builds agent image, spins up full stack, deploys a real agent,
-  # sends a message, asserts response. Proves the Docker runtime
-  # works end-to-end before merge.
+  # Builds agent image, spins up full stack via docker compose, deploys
+  # a real agent, sends a message, asserts response. Proves the Docker
+  # runtime works end-to-end before merge.
+  #
+  # Uses docker-compose.ci-smoke.yml — a minimal stack (postgres, redis,
+  # backend) that matches local dev networking: shared docker network,
+  # named volumes, container DNS. This avoids the bare-metal pitfalls
+  # (no docker socket access, no shared volumes, no container DNS).
   #
   # Requires: ANTHROPIC_API_KEY repo secret
   docker-smoke:
     name: Docker Smoke
     runs-on: ubuntu-latest
     needs: [backend-unit, agent-unit]
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: agentobox
-          POSTGRES_PASSWORD: agentobox
-          POSTGRES_DB: agentobox
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U agentobox"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
     env:
-      DATABASE_URL: postgres://agentobox:agentobox@localhost:5432/agentobox
-      REDIS_URL: redis://localhost:6379/0
-      SECRET_KEY: ci-smoke-secret-key-not-for-production
-      AGENT_RUNTIME: docker
-      DJANGO_SETTINGS_MODULE: config.settings
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
-      # ABOX_CALLBACK_URL set dynamically in "Create agent network" step
     steps:
       - uses: actions/checkout@v5
 
@@ -191,14 +167,6 @@ jobs:
         with:
           enable-cache: true
 
-      # Create docker network and resolve host gateway for agent→backend connectivity
-      - name: Create agent network
-        if: env.SKIP_SMOKE != 'true'
-        run: |
-          docker network create agentobox_default || true
-          GATEWAY=$(docker network inspect agentobox_default --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
-          echo "ABOX_CALLBACK_URL=http://${GATEWAY}:8000" >> $GITHUB_ENV
-
       # Build agent images (plain docker build — test-only, never pushed)
       - name: Build agent base image
         if: env.SKIP_SMOKE != 'true'
@@ -208,28 +176,16 @@ jobs:
         if: env.SKIP_SMOKE != 'true'
         run: docker build -t agentobox-agent-claude:latest --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile agent/
 
-      # Start backend
-      - name: Install backend dependencies
-        if: env.SKIP_SMOKE != 'true'
-        run: cd backend && uv sync --group dev
-
-      - name: Run migrations + seed
+      # Start backend stack via compose
+      - name: Start backend stack
         if: env.SKIP_SMOKE != 'true'
         run: |
-          cd backend
-          uv run python manage.py migrate --noinput
-          uv run python manage.py seed_dev_data
-
-      - name: Start backend
-        if: env.SKIP_SMOKE != 'true'
-        run: |
-          cd backend
-          uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application &
-          # Wait for backend to be ready
-          for i in $(seq 1 30); do
+          docker compose -f docker-compose.ci-smoke.yml up -d --build --wait
+          # Wait for backend to be ready (migrations + seed run in entrypoint)
+          for i in $(seq 1 60); do
             curl -sf http://localhost:8000/graphql -H 'Content-Type: application/json' \
               -d '{"query":"{ __typename }"}' && break
-            sleep 2
+            sleep 3
           done
 
       # Run smoke tests
@@ -239,3 +195,11 @@ jobs:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
         run: uv run --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+
+      - name: Dump backend logs on failure
+        if: failure() && env.SKIP_SMOKE != 'true'
+        run: docker compose -f docker-compose.ci-smoke.yml logs backend --tail=100
+
+      - name: Cleanup
+        if: always() && env.SKIP_SMOKE != 'true'
+        run: docker compose -f docker-compose.ci-smoke.yml down -v
