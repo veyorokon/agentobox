@@ -223,6 +223,15 @@ jobs:
             sleep 2
           done
 
+      - name: Verify login works
+        if: env.SKIP_SMOKE != 'true'
+        run: |
+          # Debug: verify demo user can login before running tests
+          RESULT=$(curl -sf http://localhost:8000/graphql -H 'Content-Type: application/json' \
+            -d '{"query":"mutation { login(input: { username: \"demo\", password: \"demo\" }) { token } }"}')
+          echo "Login result: $RESULT"
+          echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'errors' not in d, f'Login failed: {d}'; print('Login OK')"
+
       # Run smoke tests
       - name: Run docker smoke tests
         if: env.SKIP_SMOKE != 'true'
