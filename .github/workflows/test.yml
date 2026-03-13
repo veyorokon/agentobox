@@ -176,6 +176,7 @@ jobs:
       DJANGO_SETTINGS_MODULE: config.settings
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
+      # ABOX_CALLBACK_URL set dynamically in "Create agent network" step
     steps:
       - uses: actions/checkout@v5
 
@@ -189,6 +190,14 @@ jobs:
         if: env.SKIP_SMOKE != 'true'
         with:
           enable-cache: true
+
+      # Create docker network and resolve host gateway for agent→backend connectivity
+      - name: Create agent network
+        if: env.SKIP_SMOKE != 'true'
+        run: |
+          docker network create agentobox_default || true
+          GATEWAY=$(docker network inspect agentobox_default --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
+          echo "ABOX_CALLBACK_URL=http://${GATEWAY}:8000" >> $GITHUB_ENV
 
       # Build agent images (plain docker build — test-only, never pushed)
       - name: Build agent base image
