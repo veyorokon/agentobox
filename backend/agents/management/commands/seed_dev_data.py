@@ -53,9 +53,8 @@ class Command(BaseCommand):
             username="demo",
             defaults={"email": "demo@agentobox.dev"},
         )
-        if not user.has_usable_password():
-            user.set_password("demo")
-            user.save()
+        user.set_password("demo")
+        user.save()
 
         # Get or create project
         project, created = Project.objects.get_or_create(
