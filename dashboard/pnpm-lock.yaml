@@ -51,6 +51,9 @@ importers:
       '@graphql-codegen/client-preset':
         specifier: ^5.2.4
         version: 5.2.4(graphql@16.13.1)
+      '@graphql-typed-document-node/core':
+        specifier: ^3.2.0
+        version: 3.2.0(graphql@16.13.1)
       '@tailwindcss/postcss':
         specifier: ^4.2.1
         version: 4.2.1
