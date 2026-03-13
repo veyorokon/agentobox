@@ -11,7 +11,7 @@ FROM ${BASE_IMAGE}
 
 # --- Claude Agent SDK (relay dependency) ---
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
-    && pip3 install --break-system-packages claude-agent-sdk==0.1.48 \
+    && pip3 install --break-system-packages claude-agent-sdk==0.1.48 fastapi uvicorn[standard] \
     && apt-get purge -y python3-pip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,6 +44,7 @@ COPY rootfs/opt/abox/api-proxy.py /opt/abox/api-proxy.py
 COPY rootfs/opt/abox/mcp-gateway.py /opt/abox/mcp-gateway.py
 COPY rootfs/opt/abox/converters.py /opt/abox/converters.py
 COPY rootfs/opt/abox/relay_common.py /opt/abox/relay_common.py
+COPY rootfs/opt/abox/relay_http.py /opt/abox/relay_http.py
 RUN chmod +x /opt/abox/relay_common.py \
     && chmod +x /opt/abox/api-proxy.py \
     && chmod +x /opt/abox/mcp-gateway.py

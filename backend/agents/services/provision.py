@@ -350,7 +350,6 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
     Replaces the old runtime.write_file + runtime.exec approach.
     Writes secrets to volume, rebuilds MCP config, then pokes the relay.
     """
-    from django.conf import settings as django_settings
     from agents.services.comms import push_to_relay
 
     vol = agent.volume
@@ -361,7 +360,8 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
     # Rebuild coord server config if agent has a relay_token
     coord_server = None
     if agent.relay_token:
-        callback_url = getattr(django_settings, "ABOX_CALLBACK_URL", "")
+        from config.app_config import app_config as _cfg
+        callback_url = _cfg.callback_url
         if callback_url:
             coord_server = _build_coord_server_config(callback_url, agent.relay_token)
 

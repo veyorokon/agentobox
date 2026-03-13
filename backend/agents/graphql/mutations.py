@@ -18,7 +18,7 @@ Key mutation groups:
 """
 import structlog
 
-from django.conf import settings
+from config.app_config import app_config
 import strawberry
 from strawberry import ID
 from strawberry.scalars import JSON
@@ -201,7 +201,7 @@ class AgentMutation:
         return await create_agent(
             project_id=input.project_id,
             name=input.name,
-            runtime_name=settings.AGENT_RUNTIME,
+            runtime_name=app_config.agent.runtime,
             model=input.model,
             mcp_servers=mcp_config,
             workspace_path=input.workspace_path,

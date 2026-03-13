@@ -273,7 +273,8 @@ class TestErrorReapDebugMode:
     """Failure-injection coverage for errored-agent cleanup behavior."""
 
     async def test_keep_failed_containers_skips_reap(self, monkeypatch):
-        monkeypatch.setenv("KEEP_FAILED_AGENT_CONTAINERS", "1")
+        from config.app_config import app_config
+        monkeypatch.setattr(app_config.reconciler, "keep_failed_containers", True)
         agent = _make_agent(agent_id="error-agent-1")
 
         with (
@@ -289,7 +290,8 @@ class TestErrorReapDebugMode:
         mock_broadcast.assert_not_awaited()
 
     async def test_default_mode_reaps_failed_agents(self, monkeypatch):
-        monkeypatch.delenv("KEEP_FAILED_AGENT_CONTAINERS", raising=False)
+        from config.app_config import app_config
+        monkeypatch.setattr(app_config.reconciler, "keep_failed_containers", False)
         agent = _make_agent(agent_id="error-agent-2")
 
         with (

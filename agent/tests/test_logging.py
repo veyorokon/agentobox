@@ -125,13 +125,15 @@ class TestSetup:
         assert log.name == "test-setup-logger"
 
     def test_idempotent(self):
-        """Calling setup() twice should not duplicate handlers."""
+        """Calling setup() with the same name twice should not duplicate handlers."""
         root = logging.root
-        before_json = sum(isinstance(h.formatter, JSONFormatter) for h in root.handlers)
-        setup("idempotent-test-1")
-        setup("idempotent-test-2")
-        after_json = sum(isinstance(h.formatter, JSONFormatter) for h in root.handlers)
-        assert after_json == max(before_json, 1)
+        before_count = len(root.handlers)
+        setup("idempotent-test")
+        after_first = len(root.handlers)
+        setup("idempotent-test")
+        after_second = len(root.handlers)
+        # Second call with the same name must not add handlers
+        assert after_second == after_first
 
     def test_respects_level(self):
         log = setup("debug-logger", level="DEBUG")

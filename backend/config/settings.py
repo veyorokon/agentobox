@@ -8,19 +8,11 @@ env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     REDIS_URL=(str, "redis://localhost:6379/0"),
-    AGENT_IMAGE=(str, "agentobox-agent-claude:latest"),
-    ABOX_CALLBACK_URL=(str, "http://backend:8000"),
-    ABOX_DASHBOARD_URL=(str, ""),
-    ANTHROPIC_API_KEY=(str, ""),
-    ABOX_ENCRYPTION_KEY=(str, ""),
-    DOCKER_NETWORK=(str, "agentobox_default"),
-    AGENT_VOLUME_NAME=(str, "agentobox_agent-volumes"),
-    AGENT_ROOTFS_PATH=(str, ""),
-    MODAL_APP_NAME=(str, "agentobox"),
-    MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent-claude:latest"),
-    VOLUME_ROOT=(str, ""),
 )
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
+
+# Import AFTER read_env so pydantic_settings sees .env values in os.environ.
+from config.app_config import app_config  # noqa: E402
 
 SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
@@ -156,7 +148,7 @@ HEADLESS_TOKEN_STRATEGY = (
 )
 HEADLESS_JWT_ALGORITHM = "HS256"  # uses SECRET_KEY; no RSA key pair needed
 
-DASHBOARD_URL = env("ABOX_DASHBOARD_URL", default="http://localhost:5051")
+DASHBOARD_URL = app_config.dashboard_url or "http://localhost:5051"
 
 HEADLESS_FRONTEND_URLS = {
     "socialaccount_login_cancelled": DASHBOARD_URL + "/auth/callback?error=cancelled",
@@ -202,34 +194,6 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- Agent Runtime ---
-
-AGENT_IMAGE = env("AGENT_IMAGE")
-ABOX_CALLBACK_URL = env("ABOX_CALLBACK_URL")
-ABOX_DASHBOARD_URL = env("ABOX_DASHBOARD_URL")
-ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
-ABOX_ENCRYPTION_KEY = env("ABOX_ENCRYPTION_KEY")
-DOCKER_NETWORK = env("DOCKER_NETWORK")
-AGENT_VOLUME_NAME = env("AGENT_VOLUME_NAME")
-AGENT_ROOTFS_PATH = env("AGENT_ROOTFS_PATH")
-MODAL_APP_NAME = env("MODAL_APP_NAME")
-MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
-VOLUME_ROOT = env("VOLUME_ROOT")
-AGENT_RUNTIME = env("AGENT_RUNTIME")
-
-# Per-agent-type image selection. Runtimes look up agent_type in these maps;
-# if missing, they fall back to AGENT_IMAGE / MODAL_AGENT_IMAGE.
-AGENT_IMAGE_MAP = {
-    "claude-code": "agentobox-agent-claude:latest",
-}
-MODAL_AGENT_IMAGE_MAP = {
-    "claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest",
-}
-
-# --- Media / S3 ---
-
-MEDIA_BUCKET = env("MEDIA_BUCKET", default="agentobox-media")
-MEDIA_CDN_URL = env("MEDIA_CDN_URL", default="")
 
 # --- Logging ---
 

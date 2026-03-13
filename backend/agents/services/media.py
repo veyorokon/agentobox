@@ -12,7 +12,7 @@ import uuid
 
 import boto3
 import structlog
-from django.conf import settings
+from config.app_config import app_config
 
 log = structlog.get_logger("abox.comms")
 
@@ -39,15 +39,15 @@ def upload_raw(data: bytes, media_type: str, prefix: str = "media") -> str:
     ext = _ext_from_media_type(media_type)
     key = f"{prefix}/{uuid.uuid4()}{ext}"
     client.put_object(
-        Bucket=settings.MEDIA_BUCKET,
+        Bucket=app_config.media.bucket,
         Key=key,
         Body=data,
         ContentType=media_type,
     )
-    if settings.MEDIA_CDN_URL:
-        return f"{settings.MEDIA_CDN_URL}/{key}"
+    if app_config.media.cdn_url:
+        return f"{app_config.media.cdn_url}/{key}"
     endpoint = client.meta.endpoint_url
-    return f"{endpoint}/{settings.MEDIA_BUCKET}/{key}"
+    return f"{endpoint}/{app_config.media.bucket}/{key}"
 
 
 def upload_base64_image(data_b64: str, media_type: str, prefix: str = "media") -> str:
@@ -62,18 +62,18 @@ def upload_base64_image(data_b64: str, media_type: str, prefix: str = "media") -
     key = f"{prefix}/{uuid.uuid4()}{ext}"
 
     client.put_object(
-        Bucket=settings.MEDIA_BUCKET,
+        Bucket=app_config.media.bucket,
         Key=key,
         Body=raw,
         ContentType=media_type or "image/png",
     )
 
-    if settings.MEDIA_CDN_URL:
-        return f"{settings.MEDIA_CDN_URL}/{key}"
+    if app_config.media.cdn_url:
+        return f"{app_config.media.cdn_url}/{key}"
 
     # LocalStack / direct S3 URL
     endpoint = client.meta.endpoint_url
-    return f"{endpoint}/{settings.MEDIA_BUCKET}/{key}"
+    return f"{endpoint}/{app_config.media.bucket}/{key}"
 
 
 def externalize_image_block(block: dict, prefix: str = "media") -> dict:
@@ -93,7 +93,7 @@ def externalize_image_block(block: dict, prefix: str = "media") -> dict:
     media_type = source.get("media_type", "image/png")
     try:
         url = upload_base64_image(source["data"], media_type, prefix)
-        if not settings.MEDIA_CDN_URL:
+        if not app_config.media.cdn_url:
             # No public URL available — keep base64 for the API
             return block
         return {

@@ -14,7 +14,6 @@ CurrentThreadExecutor is unavailable. All ORM calls MUST use
 """
 
 import asyncio
-import os
 from datetime import timedelta
 
 import docker
@@ -44,18 +43,11 @@ log = structlog.get_logger("abox.reconciler")
 INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
 DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container state
-ERROR_REAP_GRACE_S = int(os.environ.get("AGENT_REAP_DELAY_S", "60"))
 
 _task: asyncio.Task | None = None
 
 # Decorator for sync DB operations in background tasks
 _db = sync_to_async(thread_sensitive=False)
-
-
-def _keep_failed_agent_containers() -> bool:
-    """Return whether failed agent sandboxes should be preserved for debugging."""
-    raw = os.environ.get("KEEP_FAILED_AGENT_CONTAINERS", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
 
 
 def ensure_running():
@@ -347,11 +339,13 @@ async def _reap_errored_agents(now):
     keeping dead containers alive wastes resources. The grace period ensures
     final relay events have time to flush before cleanup.
     """
-    if _keep_failed_agent_containers():
+    from config.app_config import app_config
+
+    if app_config.reconciler.keep_failed_containers:
         log.info("reconciler.error_reap_skipped", keep_failed_containers=True)
         return
 
-    reap_cutoff = now - timedelta(seconds=ERROR_REAP_GRACE_S)
+    reap_cutoff = now - timedelta(seconds=app_config.reconciler.reap_delay_s)
     errored_agents = await _get_agents(
         status=AgentStatus.ERROR,
         updated_at__lt=reap_cutoff,

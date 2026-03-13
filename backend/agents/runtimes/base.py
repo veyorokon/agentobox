@@ -19,6 +19,7 @@ from typing import Protocol
 class SandboxInstance:
     id: str
     vnc_url: str
+    health_url: str = ""
 
 
 @dataclass

@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack -p 5051",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "codegen": "graphql-codegen --config codegen.ts"
   },
   "dependencies": {
     "@apollo/client": "^4.1.6",
@@ -23,6 +24,8 @@
     "zustand": "^5"
   },
   "devDependencies": {
+    "@graphql-codegen/cli": "^6.2.1",
+    "@graphql-codegen/client-preset": "^5.2.4",
     "@tailwindcss/postcss": "^4.2.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",

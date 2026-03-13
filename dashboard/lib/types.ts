@@ -1,6 +1,23 @@
 /* ================================================================== */
 /*  SHARED TYPES                                                       */
+/*                                                                      */
+/*  Domain types with richer semantics than raw GraphQL codegen output. */
+/*  Generated types (inputs, scalars) live in graphql/__generated__.   */
+/*  These domain types add discriminated unions, literal types, and    */
+/*  defaults that the flat GraphQL schema cannot express.              */
 /* ================================================================== */
+
+// Re-export generated GraphQL input/scalar types for use at the boundary
+export type {
+  CreateAgentInput,
+  CreateProjectInput,
+  CreateSkillInput,
+  UpdateAgentConfigInput,
+  UpdateAgentInstructionsInput,
+  UpdateProjectInput,
+  UpdateSkillInput,
+  VolumeMountInput,
+} from "@/lib/graphql/__generated__/graphql"
 
 export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
 export type AttentionLevel = "none" | "review" | "plan" | "permission"

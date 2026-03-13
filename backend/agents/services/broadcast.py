@@ -75,9 +75,10 @@ async def broadcast_agent_update(agent: Agent) -> None:
     # Push agent state to dashboard WebSocket group (runs on every call,
     # not just status changes — phase, attention, snapshot updates too).
     try:
-        from agents.consumers import _serialize_agent_for_ws
+        from agents.serializers import serialize_agent
         channel_layer = get_channel_layer()
-        payload = await _serialize_agent_for_ws(agent)
+        payload = await serialize_agent(agent)
+        payload["_t"] = "agent"
         await channel_layer.group_send(
             f"dashboard_{agent.project_id}",
             {"type": "dashboard.agent_update", "payload": payload},

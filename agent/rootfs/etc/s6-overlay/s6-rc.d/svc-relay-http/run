@@ -1,0 +1,3 @@
+#!/command/with-contenv bash
+exec 2>&1
+exec s6-setuidgid agent uvicorn relay_http:app --host 0.0.0.0 --port 8080 --app-dir /opt/abox --log-level warning

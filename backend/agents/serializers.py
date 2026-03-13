@@ -1,0 +1,207 @@
+"""Canonical serialization for Agent and TeamFeedItem.
+
+Both GraphQL resolvers and WS consumers derive from these views.
+This is the single source of truth for field computation — no transport
+layer should duplicate task counting, lifecycle fetching, or adapter calls.
+
+WS consumers add transport markers (_t, __typename) on top of these dicts.
+GraphQL types delegate computed fields to shared helpers here.
+"""
+
+from asgiref.sync import sync_to_async
+
+
+# ---------------------------------------------------------------------------
+# Shared query helpers — used by both WS serialize and GraphQL resolvers
+# ---------------------------------------------------------------------------
+
+
+def _count_task_progress_sync(agent_id) -> dict | None:
+    from agents.models import AgentTask
+
+    qs = AgentTask.objects.filter(agent_id=agent_id)
+    total = qs.count()
+    if not total:
+        return None
+    done = qs.filter(status="completed").count()
+    return {"done": done, "total": total}
+
+
+async def count_task_progress(agent_id) -> dict | None:
+    return await sync_to_async(_count_task_progress_sync, thread_sensitive=False)(agent_id)
+
+
+def _fetch_tasks_sync(agent_id) -> list[dict]:
+    from agents.models import AgentTask
+
+    return list(
+        AgentTask.objects.filter(agent_id=agent_id)
+        .exclude(status="deleted")
+        .order_by("created_at")
+        .values(
+            "task_id", "title", "description", "status",
+            "assignee", "active_form", "blocked_by", "created_at", "updated_at",
+        )
+    )
+
+
+async def fetch_tasks(agent_id) -> list[dict]:
+    return await sync_to_async(_fetch_tasks_sync, thread_sensitive=False)(agent_id)
+
+
+def _fetch_lifecycle_attempts_sync(agent_id) -> list[dict]:
+    from agents.models import AgentLifecycleAttempt
+
+    return list(
+        AgentLifecycleAttempt.objects.filter(agent_id=agent_id)
+        .order_by("-started_at")[:10]
+        .values(
+            "id", "kind", "status", "step", "attempt_no",
+            "correlation_id", "error_code", "error_detail",
+            "started_at", "finished_at",
+        )
+    )
+
+
+async def fetch_lifecycle_attempts(agent_id) -> list[dict]:
+    return await sync_to_async(_fetch_lifecycle_attempts_sync, thread_sensitive=False)(agent_id)
+
+
+# ---------------------------------------------------------------------------
+# Agent serialization — canonical view
+# ---------------------------------------------------------------------------
+
+
+async def serialize_agent(agent) -> dict:
+    """Canonical agent view — internal representation.
+
+    Returns camelCase dict with all computed fields.
+    Both GraphQL resolvers and WS consumers adapt from this.
+    """
+    from agents.adapters import get_adapter
+
+    adapter = get_adapter(agent.agent_type)
+
+    task_progress = await count_task_progress(agent.id)
+    tasks_raw = await fetch_tasks(agent.id)
+    attempts_raw = await fetch_lifecycle_attempts(agent.id)
+
+    tasks = [
+        {
+            "__typename": "AgentTaskType",
+            "taskId": t["task_id"],
+            "title": t["title"],
+            "description": t["description"],
+            "status": t["status"],
+            "assignee": t["assignee"],
+            "activeForm": t["active_form"],
+            "blockedBy": t["blocked_by"],
+            "createdAt": t["created_at"].isoformat(),
+            "updatedAt": t["updated_at"].isoformat(),
+        }
+        for t in tasks_raw
+    ]
+
+    lifecycle_attempts = [
+        {
+            "__typename": "LifecycleAttemptType",
+            "id": str(a["id"]),
+            "kind": a["kind"],
+            "status": a["status"],
+            "step": a["step"],
+            "attemptNo": a["attempt_no"],
+            "correlationId": a["correlation_id"],
+            "errorCode": a["error_code"],
+            "errorDetail": a["error_detail"],
+            "startedAt": a["started_at"].isoformat() if a["started_at"] else None,
+            "finishedAt": a["finished_at"].isoformat() if a["finished_at"] else None,
+        }
+        for a in attempts_raw
+    ]
+
+    # MCP servers: dict → list of keys
+    mcp = agent.mcp_servers
+    if isinstance(mcp, dict):
+        mcp_list = list(mcp.keys())
+    elif isinstance(mcp, list):
+        mcp_list = mcp
+    else:
+        mcp_list = []
+
+    if task_progress:
+        task_progress["__typename"] = "TaskProgressType"
+
+    return {
+        "__typename": "AgentType",
+        "id": str(agent.id),
+        "name": agent.name,
+        "model": agent.model,
+        "role": agent.role,
+        "instructions": agent.instructions,
+        "runtime": agent.runtime,
+        "phase": agent.phase,
+        "tags": agent.tags,
+        "mode": agent.mode,
+        "attentionLevel": agent.attention_level,
+        "relayConnected": agent.relay_connected,
+        "task": agent.task,
+        "errorMessage": agent.error_message or "",
+        "lifecycleStatus": agent.status,
+        "lastOutput": adapter.last_output(agent.latest_snapshot),
+        "liveAction": adapter.live_action(agent.latest_snapshot) or None,
+        "cost": float(agent.session_cost_usd),
+        "duration": adapter.duration(agent.latest_snapshot),
+        "turns": adapter.turns(agent.latest_snapshot),
+        "allowedTools": agent.allowed_tools if isinstance(agent.allowed_tools, list) else [],
+        "workspacePath": agent.workspace_path,
+        "mcpServers": mcp_list,
+        "triggers": agent.triggers if isinstance(agent.triggers, list) else [],
+        "computeSeconds": agent.compute_seconds or 0,
+        "taskProgress": task_progress,
+        "tasks": tasks,
+        "lifecycleAttempts": lifecycle_attempts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Feed item serialization — canonical view
+# ---------------------------------------------------------------------------
+
+
+def serialize_feed_item(item) -> dict:
+    """Canonical feed item view — internal representation.
+
+    Returns camelCase dict matching TeamFeedItemType GraphQL shape.
+    """
+    questions = None
+    if item.questions:
+        questions = [
+            {"__typename": "FeedQuestionType", "text": q.get("text", ""), "options": q.get("options", [])}
+            for q in item.questions
+        ]
+
+    return {
+        "__typename": "TeamFeedItemType",
+        "id": str(item.id),
+        "type": item.type,
+        "agent": item.agent_name or None,
+        "agentId": str(item.agent_record_id) if item.agent_record_id else None,
+        "text": item.text or None,
+        "command": item.command or None,
+        "risk": item.risk or None,
+        "permStatus": item.perm_status or None,
+        "title": item.title or None,
+        "plan": item.plan or None,
+        "planStatus": item.plan_status or None,
+        "summary": item.summary or None,
+        "cost": float(item.cost) if item.cost is not None else None,
+        "turns": item.turns,
+        "duration": item.duration or None,
+        "isError": item.is_error,
+        "target": item.target or None,
+        "question": item.question or None,
+        "options": item.options if item.options else None,
+        "questions": questions,
+        "from": item.from_value or None,
+        "to": item.to_value or None,
+    }

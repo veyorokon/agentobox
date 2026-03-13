@@ -24,6 +24,8 @@ Synthetic events (not from Claude):
 
 import asyncio
 import argparse
+from collections import deque
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -186,6 +188,37 @@ def _write_startup_status(payload: dict) -> None:
     STARTUP_STATUS_PATH.write_text(json.dumps(payload, indent=2))
 
 
+STATE_FILE = Path("/tmp/relay-state.json")
+
+
+@dataclass
+class RelayState:
+    """Serializable snapshot of relay state for HTTP health surface."""
+
+    session_id: str = ""
+    permission_mode: str = "bypassPermissions"
+    next_permission_mode: str = ""
+    restart_requested: bool = False
+    clear_requested: bool = False
+    exit_posted: bool = False
+    init_stage: str = ""
+    client_active: bool = False
+    ws_connected: bool = False
+    started_at: float = field(default_factory=time.monotonic)
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "permission_mode": self.permission_mode,
+            "restart_requested": self.restart_requested,
+            "clear_requested": self.clear_requested,
+            "init_stage": self.init_stage,
+            "client_active": self.client_active,
+            "ws_connected": self.ws_connected,
+            "uptime_s": round(time.monotonic() - self.started_at, 1),
+        }
+
+
 def _preflight_mcp_servers(config_path: str, timeout_s: float = 3.0) -> list[dict]:
     """Validate configured MCP servers before spawning the SDK.
 
@@ -268,17 +301,11 @@ class SDKRelay:
 
     def __init__(self):
         self.client: ClaudeSDKClient | None = None
-        self.session_id: str = ""
-        self.restart_requested = False
-        self.clear_requested = False
-        self.next_permission_mode: str = ""
-        self.permission_mode: str = "bypassPermissions"  # live mode, read by can_use_tool callback
+        self.state = RelayState()
         self.allowed_tools: set[str] = set()  # tools auto-allowed without prompting (updated via state.json poke)
-        self._exit_posted = False  # guards against double process_exit events
-        self._stderr_lines: list[str] = []  # accumulated CLI stderr for exit event
+        self._stderr_lines: deque[str] = deque(maxlen=100)  # bounded CLI stderr for exit event
         self._pending_input: dict | None = None  # buffered input from idle wait
         self._pending_callbacks: dict[str, asyncio.Future] = {}  # request_id → Future
-        self._init_stage: str = ""
         self.ws = WSTransport(log=log)
         self._redactor = Redactor(log=log)
         self._redactor.load()
@@ -301,15 +328,21 @@ class SDKRelay:
         """Build the persisted startup status payload."""
         payload = {
             "agent_id": AGENT_ID,
-            "stage": self._init_stage,
-            "stderr_tail": self._stderr_lines[-STARTUP_STDERR_TAIL:],
+            "stage": self.state.init_stage,
+            "stderr_tail": list(self._stderr_lines)[-STARTUP_STDERR_TAIL:],
         }
         payload.update(extra)
         return payload
 
+    def _write_state(self):
+        """Persist relay state for HTTP health surface."""
+        state = self.state.to_dict()
+        state["buffer_stats"] = self._sender.buffer_stats
+        STATE_FILE.write_text(json.dumps(state))
+
     async def _mark_init_stage(self, stage: str, **details) -> None:
         """Persist and emit a relay startup stage marker."""
-        self._init_stage = stage
+        self.state.init_stage = stage
         _write_startup_status(self._startup_snapshot(status="in_progress", details=details))
         log.info(stage, extra=details)
         await self._sender.send(_build_init_stage_event(stage, **details))
@@ -327,7 +360,7 @@ class SDKRelay:
             "type": "system",
             "subtype": "relay_init_failure",
             "agent_id": AGENT_ID,
-            "stage": self._init_stage,
+            "stage": self.state.init_stage,
             "error_code": error_code,
             "error_message": error_message,
             "details": details,
@@ -528,7 +561,7 @@ class SDKRelay:
         routes through the backend approval flow.
         """
         async def _can_use_tool(tool_name, tool_input, context):
-            if self.permission_mode == "bypassPermissions":
+            if self.state.permission_mode == "bypassPermissions":
                 return PermissionResultAllow()
             if tool_name in self.allowed_tools:
                 return PermissionResultAllow()
@@ -564,7 +597,7 @@ class SDKRelay:
         if stripped:
             log.info("relay.claude_stderr", extra={"line": stripped})
             self._stderr_lines.append(stripped)
-            if self._init_stage and self._init_stage != "relay.init.initialize_ack":
+            if self.state.init_stage and self.state.init_stage != "relay.init.initialize_ack":
                 _write_startup_status(self._startup_snapshot(status="in_progress"))
 
     def _get_stderr(self, error: Exception | None = None) -> str:
@@ -616,7 +649,7 @@ class SDKRelay:
         # can resume the correct session.
         sid = raw.get("session_id", "")
         if sid:
-            self.session_id = sid
+            self.state.session_id = sid
 
         return raw
 
@@ -670,9 +703,13 @@ class SDKRelay:
 
             if cmd is None:
                 if not self.ws.connected:
+                    self.state.ws_connected = False
+                    self._write_state()
                     log.warning("relay.ws_disconnected")
                     try:
                         if await self.ws.reconnect():
+                            self.state.ws_connected = True
+                            self._write_state()
                             await self._sender.on_reconnect()
                     except FatalWSClose:
                         raise  # propagate to run loop
@@ -707,11 +744,11 @@ class SDKRelay:
                 return
             if sig == "clear":
                 log.info("relay.command_clear")
-                self.clear_requested = True
+                self.state.clear_requested = True
                 await self.client.interrupt()
             elif sig == "restart":
                 log.info("relay.command_restart")
-                self.restart_requested = True
+                self.state.restart_requested = True
                 await self.client.interrupt()
             elif sig == "SIGINT":
                 log.info("relay.command_sigint")
@@ -837,16 +874,17 @@ class SDKRelay:
         mode = state.get("mode", "")
         if mode:
             sdk_mode = _translate_mode(mode)
-            self.permission_mode = sdk_mode
             if self.client:
                 try:
                     await self.client.set_permission_mode(sdk_mode)
+                    self.state.permission_mode = sdk_mode
                     log.info("relay.mode_changed", extra={"from": mode, "to": sdk_mode, "applied": "immediate"})
                 except Exception as e:  # intentional: mode change failure is recoverable — deferred to next SDK session start
                     log.error("relay.mode_change_failed", extra={"error": str(e), "agent_id": AGENT_ID, "operation": "set_permission_mode"})
-                    self.next_permission_mode = sdk_mode
+                    self.state.next_permission_mode = sdk_mode
             else:
-                self.next_permission_mode = sdk_mode
+                self.state.next_permission_mode = sdk_mode
+            self._write_state()
 
     async def _on_mcp_changed(self):
         """MCP config changed — CC reads from filesystem, no action needed."""
@@ -917,6 +955,7 @@ class SDKRelay:
         while True:
             await asyncio.sleep(60)
             self._log_buffer_stats()
+            self._write_state()
 
     def _log_buffer_stats(self):
         """Log current buffer stats."""
@@ -931,15 +970,15 @@ class SDKRelay:
         ProcessError is caught in _forward_messages AND the run loop
         falls through to the normal exit path.
         """
-        if self._exit_posted:
+        if self.state.exit_posted:
             return
-        self._exit_posted = True
+        self.state.exit_posted = True
         event = {
             "type": "system",
             "subtype": "process_exit",
             "exit_code": exit_code,
             "stderr": stderr[:4096],
-            "session_id": self.session_id,
+            "session_id": self.state.session_id,
             "agent_id": AGENT_ID,
         }
         log.info("relay.process_exit", extra={"code": exit_code})
@@ -977,7 +1016,7 @@ class SDKRelay:
         # Read our vocabulary, translate to SDK format
         agent_mode = os.environ.get("AGENT_MODE", "auto")
         permission_mode = _translate_mode(agent_mode)
-        self.permission_mode = permission_mode
+        self.state.permission_mode = permission_mode
         sdk_connect_failures = 0
         SDK_MAX_CONNECT_RETRIES = 3
         SDK_CONNECT_RETRY_DELAY_S = 5.0
@@ -991,6 +1030,9 @@ class SDKRelay:
         except FatalWSClose as exc:
             log.error("relay.ws_rejected_fatal", extra={"code": exc.code, "reason": exc.reason})
             return
+
+        self.state.ws_connected = True
+        self._write_state()
 
         # Flush any events buffered from a previous connection attempt
         if self._sender._event_buffer:
@@ -1058,7 +1100,7 @@ class SDKRelay:
                 log.error("relay.sdk_preflight_failed", extra={
                     "error_code": error_code,
                     "error": str(e),
-                    "stage": self._init_stage,
+                    "stage": self.state.init_stage,
                     "stderr": real_stderr[:500],
                 })
                 await self._record_startup_failure(
@@ -1074,7 +1116,7 @@ class SDKRelay:
                     "code": e.exit_code, "stderr": real_stderr,
                     "captured_lines": len(self._stderr_lines),
                     "was_resume": bool(resume_session_id),
-                    "stage": self._init_stage,
+                    "stage": self.state.init_stage,
                 })
                 # If we were resuming and the process failed, the session may
                 # be poisoned (e.g. API error HTML embedded in conversation
@@ -1084,7 +1126,7 @@ class SDKRelay:
                         "poisoned_session": resume_session_id,
                     })
                     resume_session_id = ""
-                    self.session_id = ""
+                    self.state.session_id = ""
                     self._stderr_lines.clear()
                     continue
                 await self._record_startup_failure(
@@ -1104,7 +1146,7 @@ class SDKRelay:
                     "attempt": sdk_connect_failures, "max_attempts": SDK_MAX_CONNECT_RETRIES,
                     "error": str(e), "type": type(e).__name__,
                     "captured_lines": len(self._stderr_lines), "stderr": real_stderr[:500],
-                    "stage": self._init_stage,
+                    "stage": self.state.init_stage,
                 })
                 await self._record_startup_failure(
                     error_code,
@@ -1122,6 +1164,8 @@ class SDKRelay:
                 continue
 
             log.info("relay.sdk_connected", extra={"perm": permission_mode, "resume": resume_session_id or "fresh"})
+            self.state.client_active = True
+            self._write_state()
 
             # Three tasks: forward upstream, receive downstream, periodic stats
             forward_task = asyncio.create_task(self._forward_messages(), name="forward")
@@ -1167,6 +1211,8 @@ class SDKRelay:
             except Exception:  # intentional: SDK disconnect is best-effort cleanup — process may already be dead
                 pass
             self.client = None
+            self.state.client_active = False
+            self._write_state()
 
             # Cancel any pending callback Futures — the SDK process that
             # would consume the response is gone.
@@ -1176,44 +1222,44 @@ class SDKRelay:
             self._pending_callbacks.clear()
 
             log.info("relay.sdk_disconnected", extra={
-                "fatal": fatal, "restart": self.restart_requested,
-                "clear": self.clear_requested, "exit_posted": self._exit_posted,
+                "fatal": fatal, "restart": self.state.restart_requested,
+                "clear": self.state.clear_requested, "exit_posted": self.state.exit_posted,
             })
 
             if fatal:
                 break
 
             # Check restart/clear flags (set by _handle_command before interrupt)
-            if self.clear_requested:
-                self.clear_requested = False
-                self.restart_requested = False
-                self._exit_posted = False
+            if self.state.clear_requested:
+                self.state.clear_requested = False
+                self.state.restart_requested = False
+                self.state.exit_posted = False
                 self._stderr_lines.clear()
                 resume_session_id = ""
-                self.session_id = ""
+                self.state.session_id = ""
                 log.info("relay.sdk_clear_respawn")
                 continue
 
-            if self.restart_requested:
-                self.restart_requested = False
-                self._exit_posted = False
+            if self.state.restart_requested:
+                self.state.restart_requested = False
+                self.state.exit_posted = False
                 self._stderr_lines.clear()
-                if self.session_id:
-                    resume_session_id = self.session_id
-                    log.info("relay.sdk_soft_restart", extra={"resume": self.session_id})
+                if self.state.session_id:
+                    resume_session_id = self.state.session_id
+                    log.info("relay.sdk_soft_restart", extra={"resume": self.state.session_id})
                 else:
                     log.info("relay.sdk_soft_restart_fresh")
-                if self.next_permission_mode:
-                    permission_mode = self.next_permission_mode
-                    self.permission_mode = permission_mode
-                    self.next_permission_mode = ""
+                if self.state.next_permission_mode:
+                    permission_mode = self.state.next_permission_mode
+                    self.state.permission_mode = permission_mode
+                    self.state.next_permission_mode = ""
                     log.info("relay.mode_queued", extra={"mode": permission_mode})
-                self.session_id = ""
+                self.state.session_id = ""
                 continue
 
             # If process_exit was already posted (Claude crashed/errored in
             # _forward_messages), don't stay alive — agent is already ERROR/STOPPED.
-            if self._exit_posted:
+            if self.state.exit_posted:
                 break
 
             # Normal exit — Claude finished processing a turn. Stay alive and
@@ -1221,34 +1267,45 @@ class SDKRelay:
             # multiple messages over their lifetime; the relay must persist
             # between turns. The agent is already IDLE (set by the result event
             # handler in stream.py).
-            self._exit_posted = False
+            self.state.exit_posted = False
             self._stderr_lines.clear()
-            if self.session_id:
-                resume_session_id = self.session_id
-            self.session_id = ""
+            if self.state.session_id:
+                resume_session_id = self.state.session_id
+            self.state.session_id = ""
 
             # Apply deferred mode change (set during active session)
-            if self.next_permission_mode:
-                permission_mode = self.next_permission_mode
-                self.permission_mode = permission_mode
-                self.next_permission_mode = ""
+            if self.state.next_permission_mode:
+                permission_mode = self.state.next_permission_mode
+                self.state.permission_mode = permission_mode
+                self.state.next_permission_mode = ""
                 log.info("relay.mode_applied", extra={"mode": permission_mode})
 
             log.info("relay.idle_waiting", extra={"resume": resume_session_id, "mode": permission_mode})
+            self._write_state()
 
             idle_fatal = False
             while True:
                 try:
-                    cmd = await self.ws.recv()
+                    # Timeout so we loop back and refresh state file periodically.
+                    # Without this, recv() blocks indefinitely and the state file
+                    # goes stale, causing /readyz to report 503 for healthy idle agents.
+                    cmd = await asyncio.wait_for(self.ws.recv(), timeout=60)
+                except asyncio.TimeoutError:
+                    self._write_state()
+                    continue
                 except FatalWSClose:
                     idle_fatal = True
                     break
 
                 if cmd is None:
                     if not self.ws.connected:
+                        self.state.ws_connected = False
+                        self._write_state()
                         log.warning("relay.idle_ws_disconnected")
                         try:
                             if await self.ws.reconnect():
+                                self.state.ws_connected = True
+                                self._write_state()
                                 await self._sender.on_reconnect()
                         except FatalWSClose:
                             idle_fatal = True
@@ -1285,6 +1342,9 @@ class SDKRelay:
 
             continue
 
+        self.state.ws_connected = False
+        self.state.client_active = False
+        self._write_state()
         await self.ws.close()
 
 

@@ -13,7 +13,7 @@ import time
 
 import modal
 import structlog
-from django.conf import settings
+from config.app_config import app_config
 
 from agents.runtimes.base import SandboxInstance, VolumeMount
 
@@ -32,13 +32,12 @@ class ModalRuntime:
         t0 = time.monotonic()
 
         app = await modal.App.lookup.aio(
-            settings.MODAL_APP_NAME, create_if_missing=True
+            app_config.modal.app_name, create_if_missing=True
         )
         # Select image based on agent_type. The env dict carries AGENT_TYPE
         # (set by lifecycle.py from the Agent model field).
         agent_type = env.get("AGENT_TYPE", "claude-code")
-        modal_image_map = getattr(settings, "MODAL_AGENT_IMAGE_MAP", {})
-        image_ref = modal_image_map.get(agent_type, settings.MODAL_AGENT_IMAGE)
+        image_ref = app_config.modal.agent_image_map.get(agent_type, app_config.modal.agent_image)
         image = modal.Image.from_registry(
             image_ref,
             secret=modal.Secret.from_name("ghcr-secret"),
@@ -58,7 +57,7 @@ class ModalRuntime:
             app=app,
             image=image,
             secrets=[env_secret],
-            encrypted_ports=[6080],
+            encrypted_ports=[6080, 8080],
             timeout=3600,
             cpu=2.0,
             memory=4096,
@@ -73,14 +72,16 @@ class ModalRuntime:
         )
         tunnels = await sb.tunnels.aio()
         vnc_url = tunnels[6080].url if 6080 in tunnels else ""
+        health_url = tunnels[8080].url if 8080 in tunnels else ""
 
         op.info(
             "runtime.sandbox_created",
             sandbox_id=sb.object_id,
             vnc_url=vnc_url,
+            health_url=health_url,
             elapsed_s=round(time.monotonic() - t0, 2),
         )
-        return SandboxInstance(id=sb.object_id, vnc_url=vnc_url)
+        return SandboxInstance(id=sb.object_id, vnc_url=vnc_url, health_url=health_url)
 
     async def exec(
         self, sandbox_id: str, cmd: list[str], user: str = "agent"
@@ -133,7 +134,7 @@ class ModalRuntime:
         op.info("runtime.list_start")
         t0 = time.monotonic()
 
-        app = await modal.App.lookup.aio(settings.MODAL_APP_NAME)
+        app = await modal.App.lookup.aio(app_config.modal.app_name)
         results = []
         async for sb in modal.Sandbox.list.aio(app_id=app.app_id):
             tunnels = await sb.tunnels.aio()

@@ -113,7 +113,7 @@ jobs:
         run: |
           SDK_VERSION=$(grep -oP 'claude-agent-sdk==\K[^\s\\]+' agent/claude/Dockerfile)
           python -m pip install --upgrade pip
-          python -m pip install pytest==9.0.2 websockets==16.0 "claude-agent-sdk==${SDK_VERSION}"
+          python -m pip install pytest==9.0.2 websockets==16.0 "claude-agent-sdk==${SDK_VERSION}" fastapi httpx
       - name: Run agent unit tests
         run: cd agent && python -m pytest -q
 

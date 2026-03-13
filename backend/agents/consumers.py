@@ -22,7 +22,6 @@ is negligible compared to the value of having complete agent telemetry.
 """
 
 import structlog
-from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from django.utils import timezone
 
@@ -360,167 +359,6 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
 dashboard_log = structlog.get_logger("abox.dashboard")
 
 
-async def _serialize_agent_for_ws(agent) -> dict:
-    """Serialize an Agent model instance to match AgentType GraphQL shape.
-
-    Includes __typename for Apollo cache normalization and _t for WS
-    message type discrimination. Field names are camelCase to match
-    Strawberry's auto-conversion.
-    """
-    from agents.adapters import get_adapter
-    from agents.models import AgentLifecycleAttempt, AgentTask
-
-    adapter = get_adapter(agent.agent_type)
-
-    # Task progress (sync ORM → thread)
-    def _count_tasks():
-        qs = AgentTask.objects.filter(agent_id=agent.id)
-        total = qs.count()
-        if not total:
-            return None
-        done = qs.filter(status="completed").count()
-        return {"__typename": "TaskProgressType", "done": done, "total": total}
-
-    task_progress = await sync_to_async(_count_tasks, thread_sensitive=False)()
-
-    # Task list (sync ORM → thread)
-    def _fetch_tasks():
-        return list(
-            AgentTask.objects.filter(agent_id=agent.id)
-            .exclude(status="deleted")
-            .order_by("created_at")
-            .values(
-                "task_id", "title", "description", "status",
-                "assignee", "active_form", "blocked_by", "created_at", "updated_at",
-            )
-        )
-
-    tasks_raw = await sync_to_async(_fetch_tasks, thread_sensitive=False)()
-    tasks = [
-        {
-            "__typename": "AgentTaskType",
-            "taskId": t["task_id"],
-            "title": t["title"],
-            "description": t["description"],
-            "status": t["status"],
-            "assignee": t["assignee"],
-            "activeForm": t["active_form"],
-            "blockedBy": t["blocked_by"],
-            "createdAt": t["created_at"].isoformat(),
-            "updatedAt": t["updated_at"].isoformat(),
-        }
-        for t in tasks_raw
-    ]
-
-    # Lifecycle attempts (last 10, descending)
-    def _fetch_lifecycle_attempts():
-        return list(
-            AgentLifecycleAttempt.objects.filter(agent_id=agent.id)
-            .order_by("-started_at")[:10]
-            .values(
-                "id", "kind", "status", "step", "attempt_no",
-                "correlation_id", "error_code", "error_detail",
-                "started_at", "finished_at",
-            )
-        )
-
-    attempts_raw = await sync_to_async(_fetch_lifecycle_attempts, thread_sensitive=False)()
-    lifecycle_attempts = [
-        {
-            "__typename": "LifecycleAttemptType",
-            "id": str(a["id"]),
-            "kind": a["kind"],
-            "status": a["status"],
-            "step": a["step"],
-            "attemptNo": a["attempt_no"],
-            "correlationId": a["correlation_id"],
-            "errorCode": a["error_code"],
-            "errorDetail": a["error_detail"],
-            "startedAt": a["started_at"].isoformat() if a["started_at"] else None,
-            "finishedAt": a["finished_at"].isoformat() if a["finished_at"] else None,
-        }
-        for a in attempts_raw
-    ]
-
-    # MCP servers: dict → list of keys
-    mcp = agent.mcp_servers
-    if isinstance(mcp, dict):
-        mcp_list = list(mcp.keys())
-    elif isinstance(mcp, list):
-        mcp_list = mcp
-    else:
-        mcp_list = []
-
-    return {
-        "__typename": "AgentType",
-        "_t": "agent",
-        "id": str(agent.id),
-        "name": agent.name,
-        "model": agent.model,
-        "role": agent.role,
-        "instructions": agent.instructions,
-        "runtime": agent.runtime,
-        "phase": agent.phase,
-        "tags": agent.tags,
-        "mode": agent.mode,
-        "attentionLevel": agent.attention_level,
-        "relayConnected": agent.relay_connected,
-        "task": agent.task,
-        "errorMessage": agent.error_message or "",
-        "lifecycleStatus": agent.status,
-        "lastOutput": adapter.last_output(agent.latest_snapshot),
-        "liveAction": adapter.live_action(agent.latest_snapshot) or None,
-        "cost": float(agent.session_cost_usd),
-        "duration": adapter.duration(agent.latest_snapshot),
-        "turns": adapter.turns(agent.latest_snapshot),
-        "allowedTools": agent.allowed_tools if isinstance(agent.allowed_tools, list) else [],
-        "workspacePath": agent.workspace_path,
-        "mcpServers": mcp_list,
-        "triggers": agent.triggers if isinstance(agent.triggers, list) else [],
-        "computeSeconds": agent.compute_seconds or 0,
-        "taskProgress": task_progress,
-        "tasks": tasks,
-        "lifecycleAttempts": lifecycle_attempts,
-    }
-
-
-def _serialize_feed_item_for_ws(item) -> dict:
-    """Serialize a TeamFeedItem model instance to match TeamFeedItemType GraphQL shape."""
-    questions = None
-    if item.questions:
-        questions = [
-            {"__typename": "FeedQuestionType", "text": q.get("text", ""), "options": q.get("options", [])}
-            for q in item.questions
-        ]
-
-    return {
-        "__typename": "TeamFeedItemType",
-        "_t": "feed",
-        "id": str(item.id),
-        "type": item.type,
-        "agent": item.agent_name or None,
-        "agentId": str(item.agent_record_id) if item.agent_record_id else None,
-        "text": item.text or None,
-        "command": item.command or None,
-        "risk": item.risk or None,
-        "permStatus": item.perm_status or None,
-        "title": item.title or None,
-        "plan": item.plan or None,
-        "planStatus": item.plan_status or None,
-        "summary": item.summary or None,
-        "cost": float(item.cost) if item.cost is not None else None,
-        "turns": item.turns,
-        "duration": item.duration or None,
-        "isError": item.is_error,
-        "target": item.target or None,
-        "question": item.question or None,
-        "options": item.options if item.options else None,
-        "questions": questions,
-        "from": item.from_value or None,
-        "to": item.to_value or None,
-    }
-
-
 class DashboardConsumer(AsyncJsonWebsocketConsumer):
     """Project-scoped WebSocket for real-time dashboard updates.
 
@@ -582,16 +420,25 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
     async def _send_snapshot(self):
         """Send full project state: all agents + recent feed items."""
         from agents.models import Agent, TeamFeedItem
+        from agents.serializers import serialize_agent, serialize_feed_item
 
         agents = [a async for a in Agent.objects.filter(project_id=self.project_id)]
-        agent_dicts = [await _serialize_agent_for_ws(a) for a in agents]
+        agent_dicts = []
+        for a in agents:
+            d = await serialize_agent(a)
+            d["_t"] = "agent"
+            agent_dicts.append(d)
 
         items = [
             item async for item in TeamFeedItem.objects.filter(
                 project_id=self.project_id,
             ).order_by("created_at")[:500]
         ]
-        feed_dicts = [_serialize_feed_item_for_ws(item) for item in items]
+        feed_dicts = []
+        for item in items:
+            d = serialize_feed_item(item)
+            d["_t"] = "feed"
+            feed_dicts.append(d)
 
         await self.send_json({
             "_t": "snapshot",

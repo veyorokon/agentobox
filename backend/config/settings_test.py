@@ -112,32 +112,13 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- Agent Runtime (stubs — unit tests mock these) ---
-
-AGENT_IMAGE = "agentobox-agent-claude:latest"
-ABOX_CALLBACK_URL = "http://backend:8000"
-ABOX_DASHBOARD_URL = ""
-ANTHROPIC_API_KEY = ""
-ABOX_ENCRYPTION_KEY = ""
-DOCKER_NETWORK = "agentobox_default"
-AGENT_VOLUME_NAME = "agentobox_agent-volumes"
-AGENT_ROOTFS_PATH = ""
-MODAL_APP_NAME = "agentobox"
-MODAL_AGENT_IMAGE = "ghcr.io/veyorokon/agentobox-agent-claude:latest"
-VOLUME_ROOT = ""
-AGENT_RUNTIME = "docker"
-
-AGENT_IMAGE_MAP = {
-    "claude-code": "agentobox-agent-claude:latest",
-}
-MODAL_AGENT_IMAGE_MAP = {
-    "claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest",
-}
-
-# --- Media ---
-
-MEDIA_BUCKET = "agentobox-media"
-MEDIA_CDN_URL = ""
+# --- App Config ---
+# Policy/runtime config lives in config.app_config (pydantic-settings).
+# Tests set AGENT_RUNTIME env var; all other policy vars use defaults.
+# See conftest.py for monkeypatching app_config in tests that need
+# non-default values.
+import os
+os.environ.setdefault("AGENT_RUNTIME", "docker")
 
 # --- Session ---
 

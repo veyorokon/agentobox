@@ -135,7 +135,7 @@ async def test_send_message_pushes_to_dashboard_ws():
         patch("agents.services.comms.create_stream_event", new_callable=AsyncMock, return_value=fake_stream_event),
         patch("agents.services.comms.push_to_relay", new_callable=AsyncMock),
         patch("agents.services.comms.get_channel_layer", return_value=mock_channel_layer),
-        patch("agents.consumers._serialize_agent_for_ws", new_callable=AsyncMock, return_value=fake_serialized_agent),
+        patch("agents.serializers.serialize_agent", new_callable=AsyncMock, return_value=fake_serialized_agent),
     ):
         result = await send_message("agent-123", "Hello agent!")
 

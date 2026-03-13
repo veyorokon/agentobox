@@ -5,7 +5,7 @@ Secrets are stored as individually Fernet-encrypted values in the database.
 Decrypted only during agent provisioning (to inject into MCP env blocks
 or write to tmpfs).
 
-The encryption key is read from settings.ABOX_ENCRYPTION_KEY. If not set,
+The encryption key is read from app_config.encryption_key. If not set,
 secret creation raises an error rather than silently falling back.
 
 Usage:
@@ -16,7 +16,7 @@ Usage:
 """
 
 from cryptography.fernet import Fernet
-from django.conf import settings
+from config.app_config import app_config
 
 
 class EncryptionKeyMissing(Exception):
@@ -25,7 +25,7 @@ class EncryptionKeyMissing(Exception):
 
 def _get_fernet() -> Fernet:
     """Return a Fernet instance using the configured encryption key."""
-    key = getattr(settings, "ABOX_ENCRYPTION_KEY", "")
+    key = app_config.encryption_key
     if not key:
         raise EncryptionKeyMissing(
             "ABOX_ENCRYPTION_KEY is not set. Configure it in your environment "

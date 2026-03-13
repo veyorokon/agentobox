@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -17,6 +17,9 @@ check:
 
 schema:
 	docker compose exec -T backend uv run python -c "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); import django; django.setup(); from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
+
+codegen: schema
+	cd dashboard && pnpm codegen
 
 PLATFORM ?= linux/amd64
 
@@ -54,7 +57,12 @@ _test-dashboard:
 	cd dashboard && pnpm vitest run
 
 test-agent:
-	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent-claude:latest \
+	docker run --rm --entrypoint python3 \
+		-v ./agent/tests:/opt/abox/tests \
+		-v ./agent/rootfs:/opt/abox/rootfs \
+		-v ./agent/claude/rootfs:/opt/abox/claude/rootfs \
+		-v ./agent/rootfs/opt/abox/relay_http.py:/opt/abox/relay_http.py \
+		agentobox-agent-claude:latest \
 		-m pytest /opt/abox/tests -v
 
 lint:

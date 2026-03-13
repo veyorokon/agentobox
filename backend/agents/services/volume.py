@@ -81,7 +81,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from django.conf import settings
+from config.app_config import app_config
 
 # Directories that init-volume symlinks into the container.
 # Every volume write path MUST start with one of these prefixes.
@@ -165,7 +165,7 @@ class Volume:
     """
 
     def __init__(self, project_id: str, agent_id: str):
-        self.root = Path(settings.VOLUME_ROOT) / "agents" / agent_id
+        self.root = Path(app_config.volume_root) / "agents" / agent_id
 
     @staticmethod
     def _validate_path(path: str) -> None:

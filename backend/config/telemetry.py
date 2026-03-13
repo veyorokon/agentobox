@@ -20,11 +20,11 @@ _queue_listener = None
 
 def _get_version():
     """Get version from environment or pyproject.toml."""
-    # 1. Try environment variable first (for Docker/k8s)
-    if version := os.getenv("VERSION"):
-        return version
+    from config.app_config import app_config
+    if app_config.version != "unknown":
+        return app_config.version
 
-    # 2. Try reading from pyproject.toml
+    # Fallback: read from pyproject.toml
     try:
         pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
         with open(pyproject_path, "rb") as f:
@@ -41,7 +41,8 @@ def add_service_metadata(logger, method_name, event_dict):
     """Add service metadata to every log entry (OTel semantic convention keys)."""
     event_dict["service.name"] = "agentobox-backend"
     event_dict["service.version"] = _VERSION
-    event_dict["environment"] = os.getenv("ENVIRONMENT", "dev")
+    from config.app_config import app_config
+    event_dict["environment"] = app_config.environment
     return event_dict
 
 

@@ -28,7 +28,7 @@ import secrets
 
 import structlog
 from asgiref.sync import sync_to_async
-from django.conf import settings
+from config.app_config import app_config
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
@@ -54,6 +54,7 @@ from agents.models import (
 )
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
+from agents.schemas import ConfigSnapshot
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.provision import provision_workspace, provision_scoped_sudo
 from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
@@ -117,7 +118,7 @@ def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
     if secret_envs and key_name and key_name in secret_envs:
         return secret_envs[key_name]
     if provider == "anthropic":
-        return getattr(settings, "ANTHROPIC_API_KEY", "")
+        return app_config.anthropic_api_key
     return ""
 
 
@@ -125,7 +126,7 @@ def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
 async def create_agent(
     project_id: str,
     name: str,
-    runtime_name: str = "modal",
+    runtime_name: str,
     model: str = "claude-sonnet-4-5-20250929",
     mcp_servers: dict | None = None,
     workspace_path: str = "",
@@ -174,16 +175,16 @@ async def create_agent(
         resolved_mcps = mcp_servers
 
     # Build config snapshot for future restarts
-    config_snapshot = {
-        "runtime": runtime_name,
-        "model": model,
-        "agent_type": agent_type,
-        "mcp_servers": resolved_mcps,
-        "workspace_path": workspace_path,
-        "instructions": instructions,
-        "role": role,
-        "volume_mounts": volume_mounts or [],
-    }
+    config_snapshot = ConfigSnapshot(
+        runtime=runtime_name,
+        model=model,
+        agent_type=agent_type,
+        mcp_servers=resolved_mcps,
+        workspace_path=workspace_path,
+        instructions=instructions,
+        role=role,
+        volume_mounts=volume_mounts or [],
+    ).to_dict()
 
     agent = await Agent.objects.acreate(
         name=name,
@@ -246,7 +247,7 @@ async def create_agent(
     return agent
 
 
-def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id="", relay_token=""):
+def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id="", relay_token="", health_url=""):
     """Sync helper: save sandbox details. Agent stays DEPLOYING until relay connects.
 
     Status transitions to IDLE in RelayConsumer.connect() — the agent isn't
@@ -260,10 +261,16 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
     agent.relay_token = relay_token
-    agent.save(update_fields=[
+    # Store health_url in config_snapshot (ephemeral, changes per deploy)
+    if health_url and agent.config_snapshot:
+        agent.config_snapshot["health_url"] = health_url
+    update_fields = [
         "sandbox_id", "vnc_url", "team_name",
         "parent_session_id", "relay_token", "updated_at",
-    ])
+    ]
+    if health_url and agent.config_snapshot:
+        update_fields.append("config_snapshot")
+    agent.save(update_fields=update_fields)
     return agent
 
 
@@ -434,7 +441,7 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     # Name must match the actual volume name on the platform (e.g. Docker
     # Compose prefixes with project name: "agentobox_agent-volumes").
     mounts.append(VolumeMount(
-        name=settings.AGENT_VOLUME_NAME,
+        name=app_config.agent.volume_name,
         mount_path="/vol",
     ))
 
@@ -494,7 +501,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         mounts = _build_volume_mounts(agent)
 
         # Dev: bind-mount relay files so changes don't require image rebuild.
-        rootfs_path = getattr(settings, "AGENT_ROOTFS_PATH", "")
+        rootfs_path = app_config.agent.rootfs_path
         if rootfs_path:
             import os as _os
             # rootfs_path = agent/claude/rootfs (per-adapter)
@@ -520,7 +527,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await _update_lifecycle_attempt(
                 attempt_id,
                 step="container_created",
-                metadata={"sandbox_id": sandbox_id, "vnc_url": sandbox.vnc_url},
+                metadata={"sandbox_id": sandbox_id, "vnc_url": sandbox.vnc_url, "health_url": sandbox.health_url},
             )
 
         # Update agent context with sandbox_id now that it's available
@@ -531,7 +538,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             project_id=str(project.id),
         )
 
-        op_log.info("lifecycle.container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
+        op_log.info("lifecycle.container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url, health_url=sandbox.health_url)
 
         # Initialize the agent's volume control plane (_abox/ directory).
         # This MUST happen before any other volume writes. The init-volume
@@ -634,6 +641,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         agent = await _save_provisioned(
             agent_id, sandbox.id, sandbox.vnc_url,
             team_name, parent_session_id, relay_token,
+            health_url=sandbox.health_url,
         )
         if attempt_id:
             await _update_lifecycle_attempt(
@@ -849,15 +857,15 @@ def _atomic_reset_for_restart(agent_id):
         # Live fields reflect post-creation mutations (mode change, model
         # swap). config_snapshot is creation-time only — used as fallback
         # for old agent rows that may be missing newer fields.
-        config = agent.config_snapshot or {}
-        runtime_name = agent.runtime or config.get("runtime", "docker")
-        model = agent.model or config.get("model", "")
-        mcp_servers = agent.mcp_servers if agent.mcp_servers is not None else config.get("mcp_servers", [])
-        workspace_path = agent.workspace_path or config.get("workspace_path", "")
-        volume_mounts = agent.volume_mounts if agent.volume_mounts is not None else config.get("volume_mounts", [])
-        instructions = agent.instructions or config.get("instructions", "")
-        role = agent.role or config.get("role", "")
-        mode = agent.mode or config.get("mode", "auto")
+        snap = ConfigSnapshot.from_dict(agent.config_snapshot) if agent.config_snapshot else None
+        runtime_name = agent.runtime or (snap.runtime if snap else "docker")
+        model = agent.model or (snap.model if snap else "")
+        mcp_servers = agent.mcp_servers if agent.mcp_servers is not None else (snap.mcp_servers if snap else [])
+        workspace_path = agent.workspace_path or (snap.workspace_path if snap else "")
+        volume_mounts = agent.volume_mounts if agent.volume_mounts is not None else (snap.volume_mounts if snap else [])
+        instructions = agent.instructions or (snap.instructions if snap else "")
+        role = agent.role or (snap.role if snap else "")
+        mode = agent.mode or "auto"
 
         # Accumulate compute time before resetting deployed_at
         if agent.deployed_at:
@@ -1070,8 +1078,8 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         "AGENT_TYPE": agent.agent_type,
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
-        "ABOX_CALLBACK_URL": getattr(settings, "ABOX_CALLBACK_URL", ""),
-        "ABOX_DASHBOARD_URL": getattr(settings, "ABOX_DASHBOARD_URL", ""),
+        "ABOX_CALLBACK_URL": app_config.callback_url,
+        "ABOX_DASHBOARD_URL": app_config.dashboard_url,
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         # DO NOT set CLAUDECODE=1 — the CLI treats it as a nested session
         # marker and refuses to start. The SDK sets its own entrypoint env var
@@ -1104,7 +1112,7 @@ async def spawn_team_lead(project_id: str) -> None:
     agent = await create_agent(
         project_id=project_id,
         name=lead_config["name"],
-        runtime_name=settings.AGENT_RUNTIME,
+        runtime_name=app_config.agent.runtime,
         model=lead_config["model"],
         mcp_servers=mcp_config,
         workspace_path="",

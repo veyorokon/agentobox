@@ -22,7 +22,7 @@ from pathlib import PurePosixPath
 
 import docker
 import structlog
-from django.conf import settings
+from config.app_config import app_config
 
 from agents.runtimes.base import SandboxInstance, VolumeMount
 
@@ -48,9 +48,8 @@ class DockerRuntime:
         # Select image based on agent_type. The env dict carries AGENT_TYPE
         # (set by lifecycle.py from the Agent model field).
         agent_type = env.get("AGENT_TYPE", "claude-code")
-        image_map = getattr(settings, "AGENT_IMAGE_MAP", {})
-        image = image_map.get(agent_type, getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest"))
-        network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
+        image = app_config.agent.image_map.get(agent_type, app_config.agent.image)
+        network = app_config.docker_network
 
         op = log.bind(op="create", agent_name=name, image=image)
         op.info("runtime.container_creating", volumes=[m.name for m in volumes] if volumes else [])
@@ -83,7 +82,7 @@ class DockerRuntime:
                 detach=True,
                 name=container_name,
                 environment=env,
-                ports={"6080/tcp": None},
+                ports={"6080/tcp": None, "8080/tcp": None},
                 labels={
                     "agentobox.managed": "true",
                     "agentobox.agent": name,
@@ -102,13 +101,15 @@ class DockerRuntime:
             # Both containers share the Docker network, so container name
             # DNS works. Same pattern as Guacamole / Kasm Workspaces.
             vnc_url = f"http://{container_name}:6080"
-            return SandboxInstance(id=container.id, vnc_url=vnc_url)
+            health_url = f"http://{container_name}:8080"
+            return SandboxInstance(id=container.id, vnc_url=vnc_url, health_url=health_url)
 
         result = await self._run_sync(_create)
         op.info(
             "runtime.container_created",
             container_id=result.id[:12],
             vnc_url=result.vnc_url,
+            health_url=result.health_url,
             elapsed_s=round(time.monotonic() - t0, 2),
         )
         return result

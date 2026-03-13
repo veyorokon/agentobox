@@ -48,9 +48,10 @@ async def create_feed_item(project_id, source_event=None, agent_record=None, **k
 
     # Push to dashboard WebSocket group
     try:
-        from agents.consumers import _serialize_feed_item_for_ws
+        from agents.serializers import serialize_feed_item
         channel_layer = get_channel_layer()
-        payload = _serialize_feed_item_for_ws(item)
+        payload = serialize_feed_item(item)
+        payload["_t"] = "feed"
         await channel_layer.group_send(
             f"dashboard_{item.project_id}",
             {"type": "dashboard.feed_item", "payload": payload},
@@ -79,9 +80,10 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
 
     # Push updated item to dashboard WebSocket group
     try:
-        from agents.consumers import _serialize_feed_item_for_ws
+        from agents.serializers import serialize_feed_item
         channel_layer = get_channel_layer()
-        payload = _serialize_feed_item_for_ws(item)
+        payload = serialize_feed_item(item)
+        payload["_t"] = "feed"
         await channel_layer.group_send(
             f"dashboard_{item.project_id}",
             {"type": "dashboard.feed_item", "payload": payload},
