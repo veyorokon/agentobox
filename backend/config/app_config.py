@@ -88,9 +88,9 @@ class OAuthConfig(_EnvSettings):
 
 class AgentConfig(_EnvSettings):
     runtime: Literal["docker", "modal"] = Field(default="modal", alias="AGENT_RUNTIME")
-    image: str = Field(default="agentobox-agent-claude:latest", alias="AGENT_IMAGE")
+    image: str = Field(alias="AGENT_IMAGE")
     image_map: dict[str, str] = Field(
-        default={"claude-code": "agentobox-agent-claude:latest"},
+        default_factory=dict,
     )
     volume_name: str = Field(default="agentobox_agent-volumes", alias="AGENT_VOLUME_NAME")
     rootfs_path: str = Field(default="", alias="AGENT_ROOTFS_PATH")
@@ -98,12 +98,9 @@ class AgentConfig(_EnvSettings):
 
 class ModalConfig(_EnvSettings):
     app_name: str = Field(default="agentobox", alias="MODAL_APP_NAME")
-    agent_image: str = Field(
-        default="ghcr.io/veyorokon/agentobox-agent-claude:latest",
-        alias="MODAL_AGENT_IMAGE",
-    )
+    agent_image: str = Field(alias="MODAL_AGENT_IMAGE")
     agent_image_map: dict[str, str] = Field(
-        default={"claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest"},
+        default_factory=dict,
     )
 
 

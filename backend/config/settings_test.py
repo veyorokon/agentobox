@@ -15,6 +15,8 @@ from pathlib import Path
 # Set env vars before any module imports app_config (pydantic validates on import).
 os.environ.setdefault("SECRET_KEY", "test-only-not-for-production")
 os.environ.setdefault("AGENT_RUNTIME", "docker")
+os.environ.setdefault("AGENT_IMAGE", "agentobox-agent-claude:test")
+os.environ.setdefault("MODAL_AGENT_IMAGE", "ghcr.io/veyorokon/agentobox-agent-claude:test")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
