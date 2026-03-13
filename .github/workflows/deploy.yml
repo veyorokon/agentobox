@@ -171,16 +171,19 @@ jobs:
             # Pull images tagged with branch name (dev → :dev, main → :main)
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            VERSION=${{ github.ref_name }} docker compose -f docker-compose.prod.yml pull
+            export VERSION=${{ github.ref_name }}
+            export MODAL_ENVIRONMENT=${{ github.ref_name }}
+
+            docker compose -f docker-compose.prod.yml pull
 
             # Deploy
-            VERSION=${{ github.ref_name }} docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
             # Run migrations
-            VERSION=${{ github.ref_name }} docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
+            docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
 
             # Ensure smoke test user exists (for CI agent-smoke job)
-            VERSION=${{ github.ref_name }} docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
+            docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
 
             # Cleanup old images
             docker image prune -f
