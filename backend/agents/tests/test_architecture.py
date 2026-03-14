@@ -189,7 +189,9 @@ class TestNamingConventions:
             "get_absolute_url", "get_queryset", "natural_key", "from_db",
         }
         # Properties that act as computed accessors — not verb-prefixed methods
-        exempt_properties = {"volume"}
+        exempt_properties = {"volume", "needs_reconcile"}
+        # QuerySet subclasses follow Django's queryset conventions (filter-style names)
+        exempt_classes = {"AgentQuerySet"}
         allowed_prefixes = (
             "get_", "set_", "has_", "is_", "can_",  # accessors / predicates
         )
@@ -202,6 +204,8 @@ class TestNamingConventions:
         violations = []
         for cls_node in ast.walk(tree):
             if not isinstance(cls_node, ast.ClassDef):
+                continue
+            if cls_node.name in exempt_classes:
                 continue
             for node in cls_node.body:
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1239,7 +1243,7 @@ class TestSerializationOwnership:
 
     def test_broadcast_imports_from_serializers(self):
         """broadcast.py and feed.py must import from agents.serializers, not consumers."""
-        for filename in ("broadcast.py", "feed.py", "comms.py"):
+        for filename in ("broadcast.py", "feed.py", "relay.py"):
             src = _read_source(SERVICES_DIR / filename)
             assert "from agents.consumers import _serialize" not in src, (
                 f"{filename} imports serializers from consumers.py. "

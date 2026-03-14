@@ -1,12 +1,105 @@
-"""Tests for agents.services.comms — content normalization and inbox durability."""
+"""Tests for agents.services.relay — content normalization, inbox durability, and wire payloads."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.services.comms import _normalize_content, deliver_input, send_message
+from agents.services.relay import _normalize_content, deliver_input, send_message
+from agents.services.relay_commands import (
+    CallbackBehavior,
+    CallbackResponseCommand,
+    CommandType,
+    ReloadCommand,
+    SignalAction,
+    SignalCommand,
+)
 
 pytestmark = pytest.mark.unit
+
+
+# ---------------------------------------------------------------------------
+# Enum value locking — prevent accidental renames that break the wire protocol
+# ---------------------------------------------------------------------------
+
+
+def test_command_type_values_are_locked():
+    """CommandType string values are part of the wire protocol. Never rename."""
+    assert CommandType.RELOAD.value == "reload"
+    assert CommandType.SIGNAL.value == "signal"
+    assert CommandType.CALLBACK_RESPONSE.value == "callback_response"
+
+
+def test_signal_action_values_are_locked():
+    """SignalAction string values are part of the wire protocol. Never rename."""
+    assert SignalAction.INTERRUPT.value == "interrupt"
+    assert SignalAction.RESTART.value == "restart"
+    assert SignalAction.CLEAR.value == "clear"
+
+
+def test_callback_behavior_values_are_locked():
+    """CallbackBehavior string values are part of the wire protocol. Never rename."""
+    assert CallbackBehavior.ALLOW.value == "allow"
+    assert CallbackBehavior.DENY.value == "deny"
+    assert CallbackBehavior.ALLOWALL.value == "allowall"
+
+
+# ---------------------------------------------------------------------------
+# Wire format round-trip — construct → to_wire → verify exact shape
+# ---------------------------------------------------------------------------
+
+
+def test_reload_command_wire_format():
+    """ReloadCommand produces exact wire dict and round-trips cleanly."""
+    cmd = ReloadCommand(path="_abox/state.json")
+    wire = cmd.to_wire()
+    assert wire == {"type": "reload", "path": "_abox/state.json"}
+    # Reconstruct from wire and verify equality
+    assert ReloadCommand(path=wire["path"]) == cmd
+
+
+def test_signal_command_wire_format():
+    """SignalCommand produces exact wire dict for each action."""
+    for action in SignalAction:
+        cmd = SignalCommand(action=action)
+        wire = cmd.to_wire()
+        assert wire == {"type": "signal", "action": action.value}
+        assert SignalCommand(action=SignalAction(wire["action"])) == cmd
+
+
+def test_callback_response_wire_format_without_message():
+    """CallbackResponseCommand omits message when empty."""
+    cmd = CallbackResponseCommand(request_id="req-1", behavior=CallbackBehavior.ALLOW)
+    wire = cmd.to_wire()
+    assert wire == {"type": "callback_response", "request_id": "req-1", "behavior": "allow"}
+    assert "message" not in wire
+    # Round-trip
+    reconstructed = CallbackResponseCommand(
+        request_id=wire["request_id"],
+        behavior=CallbackBehavior(wire["behavior"]),
+    )
+    assert reconstructed == cmd
+
+
+def test_callback_response_wire_format_with_message():
+    """CallbackResponseCommand includes message when non-empty."""
+    cmd = CallbackResponseCommand(
+        request_id="req-2",
+        behavior=CallbackBehavior.DENY,
+        message="Not allowed",
+    )
+    wire = cmd.to_wire()
+    assert wire == {
+        "type": "callback_response",
+        "request_id": "req-2",
+        "behavior": "deny",
+        "message": "Not allowed",
+    }
+    reconstructed = CallbackResponseCommand(
+        request_id=wire["request_id"],
+        behavior=CallbackBehavior(wire["behavior"]),
+        message=wire.get("message", ""),
+    )
+    assert reconstructed == cmd
 
 
 def _image_block(url, media_type=None):
@@ -131,10 +224,10 @@ async def test_send_message_pushes_to_dashboard_ws():
     fake_agent.volume = fake_volume
 
     with (
-        patch("agents.services.comms.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
-        patch("agents.services.comms.create_stream_event", new_callable=AsyncMock, return_value=fake_stream_event),
-        patch("agents.services.comms.push_to_relay", new_callable=AsyncMock),
-        patch("agents.services.comms.get_channel_layer", return_value=mock_channel_layer),
+        patch("agents.services.relay.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
+        patch("agents.services.relay.create_stream_event", new_callable=AsyncMock, return_value=fake_stream_event),
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock),
+        patch("agents.services.relay.get_channel_layer", return_value=mock_channel_layer),
         patch("agents.serializers.serialize_agent", new_callable=AsyncMock, return_value=fake_serialized_agent),
     ):
         result = await send_message("agent-123", "Hello agent!")
@@ -151,13 +244,13 @@ async def test_send_message_pushes_to_dashboard_ws():
 
 
 @pytest.mark.asyncio
-async def test_deliver_input_appends_to_inbox_before_poke():
-    """deliver_input() uses durable inbox append + poke, not raw WS input."""
+async def test_deliver_input_appends_to_inbox_then_reloads():
+    """deliver_input() uses durable inbox append + typed reload command."""
     fake_agent = MagicMock()
     fake_agent.id = "agent-123"
     fake_agent.volume = MagicMock()
 
-    with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock, return_value=False) as mock_push:
+    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=False) as mock_push:
         result = await deliver_input(fake_agent, {"type": "user", "message": {"role": "user", "content": []}})
 
     assert result is False
@@ -165,7 +258,12 @@ async def test_deliver_input_appends_to_inbox_before_poke():
         "type": "input",
         "payload": {"type": "user", "message": {"role": "user", "content": []}},
     })
-    mock_push.assert_awaited_once_with("agent-123", {"type": "poke", "changed": "_abox/inbox.jsonl"})
+    # Assert exact typed command — not a raw dict
+    mock_push.assert_awaited_once()
+    cmd = mock_push.await_args.args[1]
+    assert isinstance(cmd, ReloadCommand)
+    assert cmd.path == "_abox/inbox.jsonl"
+    assert cmd.to_wire() == {"type": "reload", "path": "_abox/inbox.jsonl"}
 
 
 @pytest.mark.asyncio

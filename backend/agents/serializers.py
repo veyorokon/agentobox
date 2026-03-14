@@ -147,6 +147,8 @@ async def serialize_agent(agent) -> dict:
         "task": agent.task,
         "errorMessage": agent.error_message or "",
         "lifecycleStatus": agent.status,
+        "desiredStatus": agent.desired_status,
+        "isConverged": agent.is_converged,
         "lastOutput": adapter.last_output(agent.latest_snapshot),
         "liveAction": adapter.live_action(agent.latest_snapshot) or None,
         "cost": float(agent.session_cost_usd),

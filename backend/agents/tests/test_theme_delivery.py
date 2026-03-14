@@ -4,7 +4,7 @@ This is the test that catches the actual bug: user changes the theme via
 the set_project_theme mutation, but the agent container never sees it.
 
 The bug was: mutations.py had a stale _push_theme_for_project() that sent
-old {"type": "theme"} WS payloads. The relay only handles {"type": "poke"},
+old {"type": "theme"} WS payloads. The relay only handles {"type": "reload"},
 so the theme silently never updated. This test would have caught it because
 it checks the ACTUAL FILE on the volume, not the WS message.
 
@@ -23,6 +23,7 @@ import pytest
 
 from accounts.models import User
 from agents.models import Agent, AgentStatus
+from agents.services.relay_commands import ReloadCommand
 from projects.models import Project
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.asyncio]
@@ -77,7 +78,7 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
 
     # Patch push_to_relay (we dont have a real WS connection in tests)
     # AND patch agent.volume to use our tmp_path volume
-    with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock) as mock_push:
+    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push:
         # Patch Volume.__init__ so the agent's volume points at tmp_path
         type(vol).__init__
 
@@ -85,7 +86,7 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
             self.root = tmp_path
 
         with patch("agents.services.volume.Volume.__init__", patched_init):
-            from agents.services.comms import push_theme_to_agents
+            from agents.services.relay import push_theme_to_agents
             await push_theme_to_agents(project)
 
     # THE ACTUAL CHECK: does the file exist with the right content?
@@ -101,12 +102,13 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
         f"Got: {written_tokens}"
     )
 
-    # Verify poke was sent (so relay knows to reload)
+    # Verify reload command was sent with exact wire payload
     mock_push.assert_called_once()
     call_args = mock_push.call_args
-    poke_msg = call_args[0][1]
-    assert poke_msg["type"] == "poke", f"Expected poke, got: {poke_msg['type']}"
-    assert poke_msg["changed"] == "tmp/abox-theme/tokens.json"
+    cmd = call_args[0][1]
+    assert isinstance(cmd, ReloadCommand), f"Expected ReloadCommand, got: {type(cmd)}"
+    assert cmd.path == "tmp/abox-theme/tokens.json"
+    assert cmd.to_wire() == {"type": "reload", "path": "tmp/abox-theme/tokens.json"}
 
 
 async def test_push_theme_no_running_agents_no_crash(setup_project_with_agent, theme_tokens):
@@ -120,11 +122,11 @@ async def test_push_theme_no_running_agents_no_crash(setup_project_with_agent, t
     project.theme_tokens = theme_tokens
     await project.asave(update_fields=["theme_tokens"])
 
-    with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock) as mock_push:
-        from agents.services.comms import push_theme_to_agents
+    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push:
+        from agents.services.relay import push_theme_to_agents
         await push_theme_to_agents(project)
 
-    # No file written, no poke sent
+    # No file written, no reload sent
     tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
     assert not tokens_path.exists(), "tokens.json written to stopped agent — should skip"
     mock_push.assert_not_called()
@@ -138,14 +140,14 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     project.theme_tokens = {}
     await project.asave(update_fields=["theme_tokens"])
 
-    with patch("agents.services.comms.push_to_relay", new_callable=AsyncMock):
+    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock):
         type(vol).__init__
 
         def patched_init(self, project_id, agent_id):
             self.root = tmp_path
 
         with patch("agents.services.volume.Volume.__init__", patched_init):
-            from agents.services.comms import push_theme_to_agents
+            from agents.services.relay import push_theme_to_agents
             await push_theme_to_agents(project)
 
     tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
@@ -155,8 +157,8 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     assert len(written) > 0, "Default theme is empty — BUILTIN_THEMES broken"
 
 
-async def test_mutation_calls_comms_not_inline():
-    """set_project_theme must call comms.push_theme_to_agents, not an inline function.
+async def test_mutation_calls_relay_not_inline():
+    """set_project_theme must call relay.push_theme_to_agents, not an inline function.
 
     This is a code-path test: we verify the mutation imports and calls the
     correct function. If someone replaces it with an inline function that
@@ -171,13 +173,13 @@ async def test_mutation_calls_comms_not_inline():
     found_correct_import = False
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.module == "agents.services.comms":
+            if node.module == "agents.services.relay":
                 for alias in node.names:
                     if alias.name == "push_theme_to_agents":
                         found_correct_import = True
 
     assert found_correct_import, (
-        "set_project_theme does not import push_theme_to_agents from agents.services.comms — "
+        "set_project_theme does not import push_theme_to_agents from agents.services.relay — "
         "theme changes will NOT reach agent containers"
     )
 
@@ -187,5 +189,5 @@ async def test_mutation_calls_comms_not_inline():
             if "push_theme" in node.name and node.name != "push_theme_to_agents":
                 pytest.fail(
                     f"Stale inline function '{node.name}' in mutations.py — "
-                    f"theme push must go through agents.services.comms.push_theme_to_agents"
+                    f"theme push must go through agents.services.relay.push_theme_to_agents"
                 )

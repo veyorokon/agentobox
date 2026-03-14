@@ -48,6 +48,7 @@ from agents.models import (
     Agent,
     AgentLifecycleAttempt,
     AgentLifecycleAttemptStatus,
+    DesiredStatus,
     AgentLifecycleKind,
     AgentStatus,
     IllegalTransitionError,
@@ -198,6 +199,7 @@ async def create_agent(
         sandbox_id="",
         vnc_url="",
         status=AgentStatus.DEPLOYING,
+        desired_status=DesiredStatus.DEPLOYED,
         mcp_servers=resolved_mcps,
         workspace_path=workspace_path,
         volume_mounts=volume_mounts or [],
@@ -706,7 +708,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await _update_lifecycle_attempt(attempt_id, step="relay_env_written")
 
         # Write state.json — initial state for relay boot.
-        # At provision time relay isn't running, so no poke needed (use write, not mutate).
+        # At provision time relay isn't running, so no reload needed (use write, not mutate).
         state = json.dumps({"model": agent.model, "mode": agent.mode or "auto", "allowed_tools": agent.allowed_tools or []})
         vol.write("_abox/state.json", state)
 
@@ -874,7 +876,11 @@ async def kill_agent(agent_id: str) -> bool:
 
     # Accumulate compute time atomically (F-expression avoids races)
     # then set terminal status in a single update.
-    update_kwargs = {"status": AgentStatus.STOPPED, "deployed_at": None}
+    update_kwargs = {
+        "status": AgentStatus.STOPPED,
+        "desired_status": DesiredStatus.STOPPED,
+        "deployed_at": None,
+    }
     if agent.deployed_at:
         elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
         update_kwargs["compute_seconds"] = F("compute_seconds") + elapsed
@@ -981,6 +987,7 @@ def _atomic_reset_for_restart(agent_id):
         # relay_* fields reset because the old WS connection dies with
         # the old container. deployed_at resets for compute tracking.
         transition_agent_status(agent, AgentStatus.DEPLOYING, reason="hard_restart")
+        agent.desired_status = DesiredStatus.DEPLOYED
         agent.sandbox_id = ""
         agent.vnc_url = ""
         agent.session_id = ""
@@ -1002,9 +1009,9 @@ def _atomic_reset_for_restart(agent_id):
         agent.role = role
         agent.mode = mode
         agent.save(update_fields=[
-            "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-            "relay_connected", "relay_disconnected_at", "deployed_at",
-            "latest_snapshot",
+            "status", "desired_status", "sandbox_id", "vnc_url", "session_id",
+            "relay_token", "relay_connected", "relay_disconnected_at",
+            "deployed_at", "latest_snapshot",
             "task", "phase", "attention_level", "error_message",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "mode", "updated_at",

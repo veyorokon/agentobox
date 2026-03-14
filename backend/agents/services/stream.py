@@ -267,7 +267,7 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
             plan_status="approved",
             tool_use_id=tool_use_id,
         )
-        from agents.services.comms import send_message
+        from agents.services.relay import send_message
         await send_message(str(agent.id), "Plan approved. Proceed with the implementation.")
         log.info("stream.plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
         return

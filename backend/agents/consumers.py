@@ -168,12 +168,13 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 # instead of hanging for the 300s timeout.
                 request_id = content.get("request_id", "")
                 if request_id:
-                    await self.send_json({
-                        "type": "callback_response",
-                        "request_id": request_id,
-                        "behavior": "deny",
-                        "message": "Internal error processing callback",
-                    })
+                    from agents.services.relay_commands import CallbackBehavior, CallbackResponseCommand
+                    cmd = CallbackResponseCommand(
+                        request_id=request_id,
+                        behavior=CallbackBehavior.DENY,
+                        message="Internal error processing callback",
+                    )
+                    await self.send_json(cmd.to_wire())
             return
 
         from agents.services.stream import process_stream_event

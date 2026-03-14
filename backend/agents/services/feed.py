@@ -166,17 +166,20 @@ async def resolve_permission(
     # If relay is disconnected, revert feed item to pending — the agent's
     # callback Future is gone anyway (relay disconnect kills the process).
     if item.tool_use_id and item.agent_record_id:
-        from agents.services.comms import push_to_relay
-        result = (
-            {"behavior": "allow"}
-            if verdict == "allowed"
-            else {"behavior": "deny", "message": "Denied by user"}
-        )
-        sent = await push_to_relay(str(item.agent_record_id), {
-            "type": "callback_response",
-            "request_id": item.tool_use_id,
-            "result": result,
-        })
+        from agents.services.relay import push_to_relay
+        from agents.services.relay_commands import CallbackBehavior, CallbackResponseCommand
+        if verdict == "allowed":
+            cmd = CallbackResponseCommand(
+                request_id=item.tool_use_id,
+                behavior=CallbackBehavior.ALLOW,
+            )
+        else:
+            cmd = CallbackResponseCommand(
+                request_id=item.tool_use_id,
+                behavior=CallbackBehavior.DENY,
+                message="Denied by user",
+            )
+        sent = await push_to_relay(str(item.agent_record_id), cmd)
         if not sent:
             # Revert — agent didn't receive the verdict
             item = await update_feed_item(item, perm_status="pending")
@@ -238,12 +241,12 @@ async def _persist_allowed_tool(item: TeamFeedItem) -> None:
         str(item.agent_record_id), tool_name
     )
     if agent is not None:
-        # Poke relay so allowed_tools take effect immediately (no redeploy needed).
-        poke = agent.volume.mutate_state(
+        # Reload relay so allowed_tools take effect immediately (no redeploy needed).
+        reload_cmd = agent.volume.mutate_state(
             agent.model or "", agent.mode or "auto", agent.allowed_tools or []
         )
-        from agents.services.comms import push_to_relay
-        await push_to_relay(str(agent.id), poke)
+        from agents.services.relay import push_to_relay
+        await push_to_relay(str(agent.id), reload_cmd)
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
 
@@ -273,7 +276,7 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
         # Don't restart a dead agent just to tell it "rejected"
         is_dead = agent and agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
         if not (verdict == "rejected" and is_dead):
-            from agents.services.comms import send_message
+            from agents.services.relay import send_message
             msg = (
                 "Plan approved. Proceed with the implementation."
                 if verdict == "approved"

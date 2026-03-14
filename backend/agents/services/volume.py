@@ -3,8 +3,8 @@ Volume-based state management for agent containers.
 
 Replaces the three separate sync paths (provision-time file writes, live
 WebSocket push, theme-specialized WS handling) with one: filesystem on a
-shared volume. Backend writes files, sends a tiny WS poke. Relay reads
-the file and reloads the relevant process.
+shared volume. Backend writes files, sends a WS reload command. Relay
+reads the file and reloads the relevant process.
 
 ## Storage hierarchy
 
@@ -58,14 +58,14 @@ the file and reloads the relevant process.
 
 ## Convergence protocol
 
-    Backend writes a config file → sends WS poke {"type": "poke", "changed": "path"}.
+    Backend writes a config file → sends WS reload {"type": "reload", "path": "..."}.
     Relay reads the file, applies it, then writes the file's SHA-256 hash
     to _abox/status.json. Backend can check is_converged() to verify the
     relay has applied all pending changes.
 
 ## Delivery guarantee (inbox/outbox)
 
-    Backend appends to inbox.jsonl, sends a poke. Relay reads from
+    Backend appends to inbox.jsonl, sends a reload. Relay reads from
     inbox.pos offset, processes messages, advances the cursor. Messages
     survive relay crashes — unread lines persist on the volume. No
     backfill logic needed in consumers.py.
@@ -81,6 +81,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from agents.services.relay_commands import ReloadCommand
 from config.app_config import app_config
 
 # Directories that init-volume symlinks into the container.
@@ -120,7 +121,7 @@ MANAGED_CONFIG_FILES = [
     "_abox/state.json",
 ]
 
-# ── Poke registry ──────────────────────────────────────────────────────
+# ── Reload registry ───────────────────────────────────────────────────
 #
 # The single contract between backend and relay for mutable runtime state.
 # Keys = volume file paths that the backend writes and the relay handles.
@@ -131,13 +132,13 @@ MANAGED_CONFIG_FILES = [
 #   - Is NOT in this registry → it's metadata (DB) or immutable config
 #
 # Architectural tests enforce:
-#   1. Every key has a matching handler in relay._poke_handlers
+#   1. Every key has a matching handler in the relay
 #   2. Every write to a registered path goes through Volume.mutate()
 #   3. No Agent model save() touches fields owned by this registry
 #
 # To add new runtime state: add the file + fields here, add a relay handler,
 # add a Volume helper method if needed. The arch tests will guide you.
-POKE_REGISTRY: dict[str, set[str]] = {
+RELOAD_REGISTRY: dict[str, set[str]] = {
     "_abox/state.json": {"mode", "allowed_tools", "model"},
     "_abox/inbox.jsonl": {"messages"},
     "tmp/abox-theme/tokens.json": {"theme_tokens"},
@@ -148,7 +149,7 @@ POKE_REGISTRY: dict[str, set[str]] = {
 
 # Flattened set of all state fields owned by the volume.
 # Used by arch tests to verify no DB dual-writes.
-VOLUME_OWNED_FIELDS: set[str] = set().union(*POKE_REGISTRY.values())
+VOLUME_OWNED_FIELDS: set[str] = set().union(*RELOAD_REGISTRY.values())
 
 
 class Volume:
@@ -291,28 +292,27 @@ class Volume:
         with open(path, "a") as f:
             f.write(json.dumps(message) + "\n")
 
-    def mutate(self, path: str, content: str | bytes) -> dict:
-        """Write a poke-registered file and return the poke message.
+    def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
+        """Write a reload-registered file and return the reload command.
 
         This is the ONLY way to write mutable runtime state. The caller
-        must send the returned poke dict via push_to_relay(). Using raw
-        write() for poke-registered paths is an architectural violation
+        must send the returned command via push_to_relay(). Using raw
+        write() for reload-registered paths is an architectural violation
         caught by tests.
 
-        Returns: {"type": "poke", "changed": path}
-        Raises: ValueError if path is not in POKE_REGISTRY.
+        Raises: ValueError if path is not in RELOAD_REGISTRY.
         """
-        if path not in POKE_REGISTRY:
+        if path not in RELOAD_REGISTRY:
             raise ValueError(
                 f"Volume.mutate() called with unregistered path '{path}'. "
-                f"Registered paths: {sorted(POKE_REGISTRY.keys())}. "
+                f"Registered paths: {sorted(RELOAD_REGISTRY.keys())}. "
                 f"Use write() for provision-time config, mutate() for runtime state."
             )
         self.write(path, content)
-        return {"type": "poke", "changed": path}
+        return ReloadCommand(path=path)
 
-    def mutate_state(self, model: str, mode: str, allowed_tools: list) -> dict:
-        """Write _abox/state.json and return the poke message.
+    def mutate_state(self, model: str, mode: str, allowed_tools: list) -> ReloadCommand:
+        """Write _abox/state.json and return the reload command.
 
         Convenience wrapper around mutate() that centralizes the state
         schema so callers dont construct the dict themselves.

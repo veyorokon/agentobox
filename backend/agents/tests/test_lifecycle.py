@@ -22,6 +22,7 @@ from agents.models import (
     AgentLifecycleAttemptStatus,
     AgentLifecycleKind,
     AgentStatus,
+    DesiredStatus,
     IllegalTransitionError,
     VALID_TRANSITIONS,
 )
@@ -384,4 +385,68 @@ class TestNoDirectStatusWrites:
             "Direct agent status writes found in consumers.py:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
+
+
+# ---------------------------------------------------------------------------
+# State ownership: desired vs reported
+# ---------------------------------------------------------------------------
+
+
+class TestDesiredStatusEnum:
+    """Enum values are part of the wire/DB contract. Never rename."""
+
+    def test_desired_status_values_are_locked(self):
+        assert DesiredStatus.DEPLOYED.value == "deployed"
+        assert DesiredStatus.STOPPED.value == "stopped"
+
+    def test_desired_status_has_exactly_two_values(self):
+        assert len(DesiredStatus.choices) == 2
+
+
+class TestConvergence:
+    """is_converged / needs_reconcile reflect desired vs reported state."""
+
+    @staticmethod
+    def _converged(desired, status):
+        """Evaluate Agent.is_converged property logic without a DB instance."""
+        return Agent.is_converged.fget(
+            SimpleNamespace(desired_status=desired, status=status)
+        )
+
+    def test_deployed_and_running_is_converged(self):
+        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.RUNNING) is True
+
+    def test_deployed_and_idle_is_converged(self):
+        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.IDLE) is True
+
+    def test_deployed_and_waiting_is_converged(self):
+        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.WAITING) is True
+
+    def test_deployed_but_stopped_needs_reconcile(self):
+        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.STOPPED) is False
+
+    def test_deployed_but_error_needs_reconcile(self):
+        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.ERROR) is False
+
+    def test_deployed_and_deploying_not_converged(self):
+        """Deploying is in-progress — not yet converged."""
+        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.DEPLOYING) is False
+
+    def test_stopped_and_stopped_is_converged(self):
+        assert self._converged(DesiredStatus.STOPPED, AgentStatus.STOPPED) is True
+
+    def test_stopped_but_running_needs_reconcile(self):
+        assert self._converged(DesiredStatus.STOPPED, AgentStatus.RUNNING) is False
+
+    def test_needs_reconcile_is_inverse_of_converged(self):
+        """needs_reconcile is always the inverse of is_converged."""
+        for desired in DesiredStatus:
+            for status in AgentStatus:
+                converged = self._converged(desired, status)
+                ns = SimpleNamespace(desired_status=desired, status=status)
+                reconcile = Agent.needs_reconcile.fget(ns)
+                assert reconcile == (not converged), (
+                    f"desired={desired}, status={status}: "
+                    f"is_converged={converged}, needs_reconcile={reconcile}"
+                )
 

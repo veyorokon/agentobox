@@ -263,6 +263,16 @@ class AgentType:
         return self.status
 
     @strawberry.field
+    def desired_status(self) -> str:
+        """Backend-owned intent — deployed or stopped."""
+        return self.desired_status
+
+    @strawberry.field
+    def is_converged(self) -> bool:
+        """True when desired state matches reported runtime state."""
+        return self.is_converged
+
+    @strawberry.field
     def last_output(self) -> str:
         from agents.adapters import get_adapter
         adapter = get_adapter(self.agent_type)

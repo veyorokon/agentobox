@@ -3,13 +3,13 @@ Agent communication: send messages, signals, and mode changes.
 
 Commands are delivered to agents via two paths:
 
-    1. State changes: write to volume → WS poke {"type": "poke", "changed": "path"}
+    1. State changes: write to volume → WS reload {"type": "reload", "path": "..."}
        Relay reads the file, applies it, updates status.json.
 
-    2. Ephemeral signals: WS push {"type": "signal", "signal": "SIGINT|restart|clear"}
+    2. Ephemeral signals: WS push {"type": "signal", "action": "interrupt|restart|clear"}
        No state — just a control signal. Relay acts immediately.
 
-Messages to agents go through the inbox (volume + poke). Signals
+Messages to agents go through the inbox (volume + reload). Signals
 (interrupt, restart, clear) go directly over WS since they're ephemeral
 control signals, not state.
 """
@@ -33,6 +33,12 @@ from agents.errors import (
 )
 from agents.models import Agent, AgentStatus
 from agents.services.broadcast import broadcast_agent_update
+from agents.services.relay_commands import (
+    ReloadCommand,
+    RelayCommand,
+    SignalAction,
+    SignalCommand,
+)
 from agents.services.utils import create_stream_event
 from agents.utils import sanitize_skill_name
 
@@ -94,35 +100,35 @@ def _normalize_content(content: list) -> list:
 
 
 async def _send_via_inbox(agent: Agent, message: dict) -> None:
-    """Append a message to the agent's volume inbox and poke the relay.
+    """Append a message to the agent's volume inbox and reload the relay.
 
-    Centralizes the inbox-append + poke pattern used by send_message,
+    Centralizes the inbox-append + reload pattern used by send_message,
     answer_question, and broadcast_message. The message persists on the
-    volume even if the poke fails — relay reads it on next wake.
+    volume even if the reload fails — relay reads it on next wake.
     """
     await deliver_input(agent, message)
 
 
 async def deliver_input(agent: Agent, message: dict) -> bool:
-    """Durably enqueue an input message for an agent and poke the relay.
+    """Durably enqueue an input message for an agent and notify the relay.
 
     This is the only supported transport for non-ephemeral agent input.
     Inputs must be durable so reconnects, restarts, and relay flaps do not
     create "looked delivered but disappeared" behavior.
 
-    Returns True when the relay poke was accepted, False when the relay is
+    Returns True when the relay reload was accepted, False when the relay is
     known disconnected. The message is still durable either way because it
     was appended to the inbox first.
     """
     agent.volume.append_inbox({"type": "input", "payload": message})
-    return await push_to_relay(str(agent.id), {"type": "poke", "changed": "_abox/inbox.jsonl"})
+    return await push_to_relay(str(agent.id), ReloadCommand(path="_abox/inbox.jsonl"))
 
 
-async def push_to_relay(agent_id: str, command: dict) -> bool:
-    """Push a command to the relay via Channels group_send.
+async def push_to_relay(agent_id: str, command: RelayCommand) -> bool:
+    """Push a typed command to the relay via Channels group_send.
 
-    Used for both poke messages and ephemeral signals. Poke payloads
-    are tiny: {"type": "poke", "changed": "filename"}. No state data.
+    Used for reload commands and ephemeral signals. Payloads are tiny
+    notifications — no state data crosses the wire.
 
     Returns False if the relay is known to be disconnected.
     """
@@ -142,15 +148,25 @@ async def push_to_relay(agent_id: str, command: dict) -> bool:
         connected = None
 
     if connected is False:
-        log.warning("comms.relay_push_failed", agent_id=agent_id, command_type=command.get("type", ""))
+        log.warning("comms.relay_push_failed", agent_id=agent_id, command_type=command.to_wire()["type"])
         return False
 
     channel_layer = get_channel_layer()
     await channel_layer.group_send(
         f"relay_{agent_id}",
-        {"type": "relay.command", "command": command},
+        {"type": "relay.command", "command": command.to_wire()},
     )
     return True
+
+
+async def update_volume_and_reload(agent, path: str, content: str | bytes) -> bool:
+    """Write to the agent volume and notify the relay to re-read.
+
+    Combines volume.mutate() + push_to_relay in a single service call
+    so callers outside the service layer dont need to import push_to_relay.
+    """
+    reload_cmd = agent.volume.mutate(path, content)
+    return await push_to_relay(str(agent.id), reload_cmd)
 
 
 async def send_message(
@@ -158,12 +174,12 @@ async def send_message(
     source: str = "user",
     correlation_id: str = "",
 ) -> bool:
-    """Send a message to an agent via volume inbox + poke.
+    """Send a message to an agent via volume inbox + reload.
 
     The message is:
     1. Stored as a StreamEvent (audit log, never lost)
     2. Appended to the agent's inbox.jsonl on the volume
-    3. Poked to the relay so it reads the inbox
+    3. Reload sent to the relay so it reads the inbox
 
     If the agent is dead, it's auto-restarted. The inbox message
     survives on the volume — no backfill logic needed.
@@ -343,10 +359,10 @@ async def broadcast_message(
 
 
 async def set_agent_mode(agent_id: str, mode: str) -> Agent:
-    """Change an agent's permission mode via volume state.json + poke.
+    """Change an agent's permission mode via volume state.json + reload.
 
     Writes mode to DB (source of truth for GraphQL) and to state.json
-    on the volume. Relay reads state.json on poke and applies via SDK.
+    on the volume. Relay reads state.json on reload and applies via SDK.
     No revert-on-failure — file is on volume, will be read eventually.
     """
     from agents.adapters import get_adapter
@@ -384,18 +400,18 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
-    # Write state.json and poke relay
-    poke = agent.volume.mutate_state(agent.model, frontend_mode, agent.allowed_tools or [])
-    await push_to_relay(agent_id, poke)
+    # Write state.json and reload relay
+    reload_cmd = agent.volume.mutate_state(agent.model, frontend_mode, agent.allowed_tools or [])
+    await push_to_relay(agent_id, reload_cmd)
 
     op_log.info("comms.mode_changed")
     return agent
 
 
 async def push_theme_to_agents(project) -> None:
-    """Push theme tokens to all running agents via volume write + poke.
+    """Push theme tokens to all running agents via volume write + reload.
 
-    Writes tokens.json to each agent's volume. The relay's poke handler
+    Writes tokens.json to each agent's volume. The relay's reload handler
     runs converters.py to generate CSS/lua and reloads AwesomeWM + Firefox.
     """
     from agents.models import Agent, AgentStatus
@@ -419,8 +435,8 @@ async def push_theme_to_agents(project) -> None:
 
     for agent in running_agents:
         try:
-            poke = agent.volume.mutate("tmp/abox-theme/tokens.json", tokens_json)
-            await push_to_relay(str(agent.id), poke)
+            reload_cmd = agent.volume.mutate("tmp/abox-theme/tokens.json", tokens_json)
+            await push_to_relay(str(agent.id), reload_cmd)
         except Exception as exc:  # intentional: theme push is best-effort — one agent failure must not block others
             log.exception(
                 "comms.theme_push_failed",
@@ -447,7 +463,7 @@ async def interrupt_agent(agent_id: str) -> bool:
 
     await create_stream_event(agent, event_type="interrupted", data={})
 
-    sent = await push_to_relay(agent_id, {"type": "signal", "signal": "SIGINT"})
+    sent = await push_to_relay(agent_id, SignalCommand(action=SignalAction.INTERRUPT))
     if not sent:
         op_log.warning("comms.interrupt_failed")
         return False
@@ -472,7 +488,7 @@ async def restart_agent(agent_id: str) -> bool:
 
     await create_stream_event(agent, event_type="restarting", data={})
 
-    sent = await push_to_relay(agent_id, {"type": "signal", "signal": "restart"})
+    sent = await push_to_relay(agent_id, SignalCommand(action=SignalAction.RESTART))
     if not sent:
         op_log.warning("comms.restart_failed")
         return False
@@ -485,7 +501,7 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
     """Push a skill write/delete to all matching running agents.
 
     Skills are written directly to the volume — CC discovers them via
-    filesystem. No poke needed; CC reads .claude/skills/ at startup and
+    filesystem. No reload needed; CC reads .claude/skills/ at startup and
     picks up changes on the next invocation.
     """
     import shutil
@@ -592,7 +608,7 @@ async def clear_agent_session(agent_id: str) -> bool:
     )
 
     # Ephemeral signal — relay handles clear by discarding session
-    sent = await push_to_relay(agent_id, {"type": "signal", "signal": "clear"})
+    sent = await push_to_relay(agent_id, SignalCommand(action=SignalAction.CLEAR))
     if not sent:
         op_log.warning("comms.clear_session_lost")
 

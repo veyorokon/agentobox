@@ -345,12 +345,13 @@ def build_secrets_env_content(secret_envs: dict[str, str] | None) -> str:
 
 
 async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
-    """Hot-reload secrets on a running agent via volume write + poke.
+    """Hot-reload secrets on a running agent via volume write + reload.
 
     Replaces the old runtime.write_file + runtime.exec approach.
-    Writes secrets to volume, rebuilds MCP config, then pokes the relay.
+    Writes secrets to volume, rebuilds MCP config, then reloads the relay.
     """
-    from agents.services.comms import push_to_relay
+    from agents.services.relay import push_to_relay
+    from agents.services.relay_commands import ReloadCommand
 
     vol = agent.volume
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
@@ -387,8 +388,8 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
             for key in needed:
                 if key in secret_envs:
                     vol.write_secret(f"run/secrets/mcp-{name}/{key}", secret_envs[key])
-        # Poke gateway to reload
-        await push_to_relay(str(agent.id), {"type": "poke", "changed": "run/mcp-gateway/config.json"})
+        # Reload gateway config
+        await push_to_relay(str(agent.id), ReloadCommand(path="run/mcp-gateway/config.json"))
 
     log.info(
         "lifecycle.secrets_pushed",

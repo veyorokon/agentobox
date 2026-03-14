@@ -214,6 +214,6 @@ class ProjectMutation:
         project.theme_tokens = tokens
         await project.asave(update_fields=["theme_tokens"])
 
-        from agents.services.comms import push_theme_to_agents
+        from agents.services.relay import push_theme_to_agents
         await push_theme_to_agents(project)
         return True

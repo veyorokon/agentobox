@@ -26,7 +26,14 @@ from django.conf import settings
 from django.db import models
 
 
+class DesiredStatus(models.TextChoices):
+    """Backend-owned intent — what the user wants this agent to be doing."""
+    DEPLOYED = "deployed"
+    STOPPED = "stopped"
+
+
 class AgentStatus(models.TextChoices):
+    """Runtime-reported state — cached projection of what the agent reports."""
     DEPLOYING = "deploying"
     RUNNING = "running"
     WAITING = "waiting"
@@ -177,8 +184,33 @@ class Skill(models.Model):
         return f"{self.name} → {self.project.name}"
 
 
+class AgentQuerySet(models.QuerySet):
+    """Domain queries for agents. Use Agent.objects.<method>()."""
+
+    def alive(self):
+        """Agents that are not in a terminal state."""
+        return self.exclude(status__in=(AgentStatus.STOPPED, AgentStatus.ERROR))
+
+    def for_project(self, project_id):
+        return self.filter(project_id=project_id)
+
+    def needing_reconcile(self):
+        """Agents where desired state != reported state."""
+        from django.db.models import Q
+        return self.filter(
+            Q(desired_status=DesiredStatus.DEPLOYED) & Q(status__in=(AgentStatus.STOPPED, AgentStatus.ERROR))
+            | Q(desired_status=DesiredStatus.STOPPED) & ~Q(status=AgentStatus.STOPPED)
+        )
+
+    def stuck_deploys(self, threshold):
+        """Agents stuck in DEPLOYING past the given datetime threshold."""
+        return self.filter(status=AgentStatus.DEPLOYING, updated_at__lt=threshold)
+
+
 class Agent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    objects = AgentQuerySet.as_manager()
 
     @classmethod
     def from_db(cls, db, field_names, values):
@@ -198,6 +230,9 @@ class Agent(models.Model):
 
     status = models.CharField(
         max_length=20, choices=AgentStatus.choices, default=AgentStatus.DEPLOYING
+    )
+    desired_status = models.CharField(
+        max_length=20, choices=DesiredStatus.choices, default=DesiredStatus.DEPLOYED
     )
     team_name = models.CharField(max_length=100, blank=True)
     parent_session_id = models.CharField(max_length=255, blank=True)
@@ -300,6 +335,20 @@ class Agent(models.Model):
     def volume(self):
         from agents.services.volume import Volume
         return Volume(str(self.project_id), str(self.id))
+
+    @property
+    def is_converged(self):
+        """Desired state matches reported state — no action needed."""
+        if self.desired_status == DesiredStatus.DEPLOYED:
+            return self.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
+        return self.status == AgentStatus.STOPPED
+
+    @property
+    def needs_reconcile(self):
+        """Desired state does not match reported state — drift detected."""
+        if self.desired_status == DesiredStatus.DEPLOYED:
+            return self.status not in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
+        return self.status != AgentStatus.STOPPED
 
     @property
     def compute_seconds_live(self):

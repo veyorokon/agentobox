@@ -10,7 +10,7 @@ Flow:
     2. deliver_to_stdin() formats message as stream-json input
     3. StreamEvent created for feed visibility
     4. Input appended to target inbox.jsonl
-    5. Relay gets a poke and consumes the inbox
+    5. Relay gets a reload and consumes the inbox
 """
 
 import uuid
@@ -18,7 +18,7 @@ import uuid
 import structlog
 
 from agents.models import Agent, AgentStatus
-from agents.services.comms import deliver_input
+from agents.services.relay import deliver_input
 from agents.services.utils import create_stream_event
 
 log = structlog.get_logger("abox.comms")
@@ -59,9 +59,9 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
     Formats the message as a stream-json user input so the relay writes it
     to Claude's stdin. The prefix identifies it as a team message.
 
-    Returns True if the relay accepted the inbox poke, False if disconnected.
+    Returns True if the relay accepted the inbox reload, False if disconnected.
     The message is still durable either way because it was persisted to the
-    inbox before the poke.
+    inbox before the reload.
     """
     team_msg = f"[Team message from {sender_name}]: {content}"
     parts = [{"type": "text", "text": team_msg}]
