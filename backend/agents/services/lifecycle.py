@@ -496,10 +496,17 @@ async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, 
     op_log.info("lifecycle.volume_sync_start", file_count=file_count, tar_size=len(tar_bytes))
 
     await runtime.write_file(sandbox_id, tar_bytes, "/tmp/vol-sync.tar.gz")
+    # Extract with _abox/ excluded first, then extract _abox/ last.
+    # init-volume blocks on _abox/ existing — if we extract it before
+    # the other files, init-volume runs its glob before .relay_env etc.
+    # are in place and the symlinks are never created.
     await runtime.exec(sandbox_id, [
         "bash", "-c",
-        "cd /vol && tar xzf /tmp/vol-sync.tar.gz && "
+        "cd /vol && "
+        "tar xzf /tmp/vol-sync.tar.gz --exclude='*/_abox/*' --exclude='*/_abox' && "
         f"chown -R agent:agent /vol/agents/{agent_id} && "
+        "tar xzf /tmp/vol-sync.tar.gz --wildcards '*/_abox/*' '*/_abox' 2>/dev/null; "
+        f"chown -R agent:agent /vol/agents/{agent_id}/_abox && "
         "rm -f /tmp/vol-sync.tar.gz"
     ], user="root")
 
