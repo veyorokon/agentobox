@@ -12,9 +12,15 @@
 # Required GitHub Secrets (per environment):
 #   DEPLOY_HOST     — Server IP or domain
 #   DEPLOY_SSH_KEY  — SSH private key for ubuntu user
-#   APP_SECRETS     — JSON object of all app env vars (DATABASE_URL, SECRET_KEY,
-#                     GOOGLE_CLIENT_ID, etc.). Written to /opt/agentobox/.env on
-#                     each deploy. One secret per environment = zero server config.
+#   APP_SECRETS     — JSON object of actual secrets (DATABASE_URL, SECRET_KEY,
+#                     ABOX_ENCRYPTION_KEY, MODAL_TOKEN_*, OAuth secrets, etc.)
+#
+# Required GitHub Variables (per environment):
+#   APP_CONFIG      — JSON object of non-secret config (DOMAIN, OAuth client IDs,
+#                     MEDIA_BUCKET, MEDIA_CDN_URL, SMOKE_TEST_USER, etc.)
+#
+# Both are merged into /opt/agentobox/.env on each deploy. Secrets are write-only
+# in GitHub; config is readable and individually editable.
 
 name: Deploy
 
@@ -52,21 +58,36 @@ jobs:
           enable-cache: true
       - name: Install backend deps
         run: cd backend && uv sync --no-dev
-      - name: Validate APP_SECRETS against AppConfig schema
+      - name: Validate APP_SECRETS + APP_CONFIG against AppConfig schema
         run: |
-          # Export APP_SECRETS as env vars so pydantic can read them
-          eval "$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "
+          # Merge APP_CONFIG (non-secret) + APP_SECRETS (secret) into env vars
+          eval "$(python3 -c "
           import json, sys
-          try:
-              secrets = json.load(sys.stdin)
-          except json.JSONDecodeError:
-              print('echo ERROR: APP_SECRETS is not valid JSON; exit 1')
-              sys.exit(0)
-          for k, v in secrets.items():
+
+          merged = {}
+
+          config_raw = '''${{ vars.APP_CONFIG }}'''
+          if config_raw.strip():
+              try:
+                  merged.update(json.loads(config_raw))
+              except json.JSONDecodeError:
+                  print('echo ERROR: APP_CONFIG is not valid JSON; exit 1')
+                  sys.exit(0)
+
+          secrets_raw = '''${{ secrets.APP_SECRETS }}'''
+          if secrets_raw.strip():
+              try:
+                  merged.update(json.loads(secrets_raw))
+              except json.JSONDecodeError:
+                  print('echo ERROR: APP_SECRETS is not valid JSON; exit 1')
+                  sys.exit(0)
+
+          if 'DOMAIN' not in merged:
+              print('echo ERROR: DOMAIN missing from APP_CONFIG; exit 1')
+
+          for k, v in merged.items():
               safe = v.replace(\"'\", \"'\\\\''\" )
               print(f\"export {k}='{safe}'\")
-          if 'DOMAIN' not in secrets:
-              print('echo ERROR: APP_SECRETS missing DOMAIN; exit 1')
           ")"
           cd backend && uv run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
 
@@ -141,7 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Write .env from APP_SECRETS
+      - name: Write .env from APP_SECRETS + APP_CONFIG
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -149,11 +170,23 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             mkdir -p /opt/agentobox
-            echo '${{ secrets.APP_SECRETS }}' | python3 -c "
+            python3 -c "
             import json, sys
-            d = json.load(sys.stdin)
+
+            merged = {}
+
+            # APP_CONFIG (non-secret, readable in GitHub UI)
+            config_raw = '''${{ vars.APP_CONFIG }}'''
+            if config_raw.strip():
+                merged.update(json.loads(config_raw))
+
+            # APP_SECRETS (write-only, overrides config if keys overlap)
+            secrets_raw = '''${{ secrets.APP_SECRETS }}'''
+            if secrets_raw.strip():
+                merged.update(json.loads(secrets_raw))
+
             lines = []
-            for k, v in d.items():
+            for k, v in sorted(merged.items()):
                 safe = v.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))
                 lines.append(k + '=' + chr(39) + safe + chr(39))
             print(chr(10).join(lines))
@@ -190,7 +223,7 @@ jobs:
 
       - name: Wait for backend startup
         run: |
-          DOMAIN=$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
+          DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           for i in $(seq 1 30); do
             curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' \
               -d '{"query":"{ __typename }"}' && break
@@ -200,7 +233,7 @@ jobs:
 
       - name: Smoke test (HTTP surface)
         run: |
-          DOMAIN=$(echo '${{ secrets.APP_SECRETS }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
+          DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           bash bin/smoke-test.sh "https://${DOMAIN}"
 
   # ─── Agent Smoke (Modal) ───────────────────────────────────────────
@@ -225,8 +258,8 @@ jobs:
 
       - name: Run agent smoke test
         env:
-          ABOX_API_URL: https://${{ fromJson(secrets.APP_SECRETS).DOMAIN }}/graphql
-          ABOX_TEST_USER: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_USER || 'demo' }}
+          ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
+          ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
-          SMOKE_RUNTIME: ${{ fromJson(secrets.APP_SECRETS).AGENT_RUNTIME || 'modal' }}
+          SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
         run: uv run pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
