@@ -23,8 +23,10 @@ Container provisioning sequence:
     provision_workspace → write .relay_env → save relay_token →
     relay self-starts (polls for .relay_env) → spawn tmux log tail
 """
+import io
 import json
 import secrets
+import tarfile
 
 import structlog
 from asgiref.sync import sync_to_async
@@ -457,6 +459,53 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     return mounts
 
 
+async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, op_log):
+    """Copy provisioning files from local volume into Modal sandbox.
+
+    Docker volumes are shared between backend and agent containers —
+    vol.write() writes to the same filesystem the container reads.
+    Modal volumes are separate — the backend writes to a local Docker
+    volume, but the Modal sandbox mounts its own Modal volume at /vol.
+    This function bridges the gap by tarring local files and extracting
+    them inside the sandbox.
+    """
+    root = vol.root
+    if not root.exists():
+        op_log.warning("lifecycle.volume_sync_skip", reason="root_missing", root=str(root))
+        return
+
+    buf = io.BytesIO()
+    file_count = 0
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            arcname = f"agents/{path.relative_to(root.parent)}"
+            info = tarfile.TarInfo(name=arcname)
+            info.size = path.stat().st_size
+            info.uid = 1000
+            info.gid = 1000
+            # Preserve restrictive permissions for secrets
+            info.mode = path.stat().st_mode & 0o777
+            with open(path, "rb") as f:
+                tar.addfile(info, f)
+            file_count += 1
+    buf.seek(0)
+    tar_bytes = buf.read()
+
+    op_log.info("lifecycle.volume_sync_start", file_count=file_count, tar_size=len(tar_bytes))
+
+    await runtime.write_file(sandbox_id, tar_bytes, "/tmp/vol-sync.tar.gz")
+    await runtime.exec(sandbox_id, [
+        "bash", "-c",
+        "cd /vol && tar xzf /tmp/vol-sync.tar.gz && "
+        f"chown -R agent:agent /vol/agents/{agent_id} && "
+        "rm -f /tmp/vol-sync.tar.gz"
+    ], user="root")
+
+    op_log.info("lifecycle.volume_sync_done", file_count=file_count)
+
+
 async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None,
                            resume_session_id: str = "", attempt_id: str = ""):
     """
@@ -629,6 +678,15 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # At provision time relay isn't running, so no poke needed (use write, not mutate).
         state = json.dumps({"model": agent.model, "mode": agent.mode or "auto", "allowed_tools": agent.allowed_tools or []})
         vol.write("_abox/state.json", state)
+
+        # Modal volume sync: the backend wrote all provisioning files to
+        # a local Docker volume, but Modal sandboxes mount their own
+        # Modal volume at /vol. Copy files into the sandbox so init-volume
+        # can find them and create symlinks.
+        if runtime_name == "modal":
+            await _sync_volume_to_sandbox(runtime, sandbox_id, vol, agent_id, op_log)
+            if attempt_id:
+                await _update_lifecycle_attempt(attempt_id, step="volume_synced_to_sandbox")
 
         # Security hardening — still uses runtime.exec() because
         # /etc/sudoers.d/ is a system path, not on the volume.
