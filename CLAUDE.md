@@ -78,36 +78,53 @@ Each deploy does these steps in order:
 
 ### Secrets management
 
-All secrets live in **GitHub environment secrets**, not on the server.
+All config lives in **GitHub environment settings** (Settings → Environments), split into two:
 
-- **Per-environment secrets** (GitHub Settings → Environments):
+- **Per-environment secrets** (write-only, encrypted):
   - `DEPLOY_HOST` — server IP or domain
   - `DEPLOY_SSH_KEY` — SSH private key for ubuntu user
-  - `APP_SECRETS` — JSON object with all app env vars:
+  - `APP_SECRETS` — JSON object of actual secrets only:
     ```json
     {
-      "DOMAIN": "dev.agentobox.com",
       "DATABASE_URL": "postgres://...",
       "SECRET_KEY": "...",
-      "GOOGLE_CLIENT_ID": "...",
-      "GOOGLE_CLIENT_SECRET": "...",
-      "GITHUB_CLIENT_ID": "...",
-      "GITHUB_CLIENT_SECRET": "...",
       "ABOX_ENCRYPTION_KEY": "...",
       "MODAL_TOKEN_ID": "...",
       "MODAL_TOKEN_SECRET": "...",
-      ...
+      "GOOGLE_CLIENT_SECRET": "...",
+      "GITHUB_CLIENT_SECRET": "...",
+      "SMOKE_TEST_PASS": "..."
     }
     ```
 
-- **Adding a new env var**: add the key to `APP_SECRETS` JSON in the GitHub environment, add it to `docker-compose.prod.yml` environment block. No server SSH needed.
-- **Adding a new environment**: create a GitHub environment, set `DEPLOY_HOST`, `DEPLOY_SSH_KEY`, and `APP_SECRETS`. The deploy workflow selects the environment automatically from the branch name.
+- **Per-environment variables** (readable, individually editable):
+  - `APP_CONFIG` — JSON object of non-secret config:
+    ```json
+    {
+      "DOMAIN": "dev.agentobox.com",
+      "VERSION": "dev",
+      "AGENT_VERSION": "dev",
+      "MODAL_ENVIRONMENT": "dev",
+      "MEDIA_BUCKET": "agentobox-media",
+      "MEDIA_CDN_URL": "",
+      "GOOGLE_CLIENT_ID": "...",
+      "GITHUB_CLIENT_ID": "...",
+      "AGENT_RUNTIME": "modal",
+      "SMOKE_TEST_USER": "demo"
+    }
+    ```
+
+Both are merged into `/opt/agentobox/.env` on deploy. Secrets override config if keys overlap.
+
+- **Adding a new secret**: add to `APP_SECRETS` JSON in the GitHub environment.
+- **Adding a new config var**: add to `APP_CONFIG` JSON in the GitHub environment (readable, no need to reconstruct).
+- **Adding a new environment**: create a GitHub environment, set `DEPLOY_HOST`, `DEPLOY_SSH_KEY`, `APP_SECRETS`, and `APP_CONFIG`. The deploy workflow selects the environment automatically from the branch name.
 
 ### First-time production setup
 
 1. Provision infrastructure (Droplet, Managed Postgres, DNS)
 2. `make setup-server ENV=dev` — SCPs `docker-compose.prod.yml`, `Caddyfile` to `/opt/agentobox`, installs Docker + Caddy
-3. Create GitHub environment (`dev` or `prod`), set `DEPLOY_HOST`, `DEPLOY_SSH_KEY`, and `APP_SECRETS`
+3. Create GitHub environment (`dev` or `prod`), set `DEPLOY_HOST`, `DEPLOY_SSH_KEY`, `APP_SECRETS`, and `APP_CONFIG`
 4. Push to the corresponding branch — CI handles everything from there
 
 ### Key deploy files
