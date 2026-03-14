@@ -59,28 +59,24 @@ jobs:
       - name: Install backend deps
         run: cd backend && uv sync --no-dev
       - name: Validate APP_SECRETS + APP_CONFIG against AppConfig schema
+        env:
+          _APP_CONFIG: ${{ vars.APP_CONFIG }}
+          _APP_SECRETS: ${{ secrets.APP_SECRETS }}
         run: |
           # Merge APP_CONFIG (non-secret) + APP_SECRETS (secret) into env vars
           eval "$(python3 -c "
-          import json, sys
+          import json, os, sys
 
           merged = {}
 
-          config_raw = '''${{ vars.APP_CONFIG }}'''
-          if config_raw.strip():
-              try:
-                  merged.update(json.loads(config_raw))
-              except json.JSONDecodeError:
-                  print('echo ERROR: APP_CONFIG is not valid JSON; exit 1')
-                  sys.exit(0)
-
-          secrets_raw = '''${{ secrets.APP_SECRETS }}'''
-          if secrets_raw.strip():
-              try:
-                  merged.update(json.loads(secrets_raw))
-              except json.JSONDecodeError:
-                  print('echo ERROR: APP_SECRETS is not valid JSON; exit 1')
-                  sys.exit(0)
+          for name, env_key in [('APP_CONFIG', '_APP_CONFIG'), ('APP_SECRETS', '_APP_SECRETS')]:
+              raw = os.environ.get(env_key, '')
+              if raw.strip():
+                  try:
+                      merged.update(json.loads(raw))
+                  except json.JSONDecodeError:
+                      print(f'echo ERROR: {name} is not valid JSON; exit 1')
+                      sys.exit(0)
 
           if 'DOMAIN' not in merged:
               print('echo ERROR: DOMAIN missing from APP_CONFIG; exit 1')
@@ -168,22 +164,18 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ubuntu
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: _APP_CONFIG,_APP_SECRETS
           script: |
             mkdir -p /opt/agentobox
             python3 -c "
-            import json, sys
+            import json, os
 
             merged = {}
 
-            # APP_CONFIG (non-secret, readable in GitHub UI)
-            config_raw = '''${{ vars.APP_CONFIG }}'''
-            if config_raw.strip():
-                merged.update(json.loads(config_raw))
-
-            # APP_SECRETS (write-only, overrides config if keys overlap)
-            secrets_raw = '''${{ secrets.APP_SECRETS }}'''
-            if secrets_raw.strip():
-                merged.update(json.loads(secrets_raw))
+            for env_key in ('_APP_CONFIG', '_APP_SECRETS'):
+                raw = os.environ.get(env_key, '')
+                if raw.strip():
+                    merged.update(json.loads(raw))
 
             lines = []
             for k, v in sorted(merged.items()):
@@ -191,6 +183,9 @@ jobs:
                 lines.append(k + '=' + chr(39) + safe + chr(39))
             print(chr(10).join(lines))
             " > /opt/agentobox/.env
+        env:
+          _APP_CONFIG: ${{ vars.APP_CONFIG }}
+          _APP_SECRETS: ${{ secrets.APP_SECRETS }}
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
