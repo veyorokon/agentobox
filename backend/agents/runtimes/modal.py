@@ -99,6 +99,9 @@ class ModalRuntime:
         if process.returncode and process.returncode != 0:
             op.warning("runtime.exec_failed", exit_code=process.returncode, elapsed_s=elapsed,
                        output=output[:200] if output else "")
+            raise RuntimeError(
+                f"Modal exec failed (exit_code={process.returncode}): {output[:200] if output else ''}"
+            )
         else:
             op.info("runtime.exec_done", elapsed_s=elapsed)
         return output

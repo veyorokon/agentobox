@@ -99,6 +99,13 @@ SYMLINKED_PREFIXES = (
     "_abox/",            # control plane — accessed directly via /vol/, not symlinked
 )
 
+# Provision-time readiness sentinel.
+# init-volume waits for this file before creating symlinks and releasing
+# longrun services. This is stronger than checking for _abox/ alone because
+# _abox is created early by initialize(), before the rest of provisioning
+# files necessarily exist.
+PROVISIONING_SENTINEL = "_abox/provisioned.ready"
+
 # Config files the backend manages. The relay tracks convergence by
 # comparing file hashes against _abox/status.json. When a file's hash
 # doesn't match, the relay hasn't applied the latest version yet.
@@ -340,6 +347,13 @@ class Volume:
         if not status.exists():
             status.write_text("{}")
 
+        # Clear any stale "provisioning complete" marker from a previous boot.
+        # Re-provisioning must re-establish readiness only after the new config
+        # set has been fully written.
+        sentinel = abox / "provisioned.ready"
+        if sentinel.exists():
+            sentinel.unlink()
+
         # Pre-create all directories that init-volume symlinks into the
         # container. This eliminates the race between init-volume's
         # [ -e "$dir" ] checks and backend's subsequent writes.
@@ -347,3 +361,11 @@ class Volume:
             if prefix == "_abox/":
                 continue  # already created above
             (self.root / prefix.rstrip("/")).mkdir(parents=True, exist_ok=True)
+
+    def mark_provisioned(self) -> None:
+        """Write the provisioning-ready sentinel.
+
+        The container boot oneshot (init-volume) waits for this file before it
+        creates symlinks and allows services like svc-relay to start.
+        """
+        self.write(PROVISIONING_SENTINEL, "")

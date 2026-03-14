@@ -231,14 +231,14 @@ jobs:
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           bash bin/smoke-test.sh "https://${DOMAIN}"
 
-  # ─── Agent Smoke (Modal) ───────────────────────────────────────────
-  # Runs a real agent end-to-end against the deployed environment.
-  # Creates agent → waits for relay → sends message → asserts response.
+  # ─── Agent Bootstrap (Modal) ───────────────────────────────────────
+  # Runs a real agent against the deployed environment and verifies the
+  # provisioning contract: create → relay connect → idle.
   #
   # Runs on both dev and main after deploy. Uses the environment's
   # Modal credentials (dev Modal env for dev, prod Modal env for main).
-  agent-smoke:
-    name: Agent Smoke (${{ github.ref_name }})
+  agent-bootstrap:
+    name: Agent Bootstrap (${{ github.ref_name }})
     needs: deploy
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
@@ -251,6 +251,29 @@ jobs:
       - name: Install test dependencies
         run: uv sync --group e2e
 
+      - name: Run agent bootstrap test
+        env:
+          ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
+          ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
+          ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
+          SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
+        run: uv run pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+
+  # ─── Agent Smoke (Modal) ───────────────────────────────────────────
+  # Final deploy confidence: a fully booted agent can complete one
+  # deterministic round-trip message.
+  agent-smoke:
+    name: Agent Smoke (${{ github.ref_name }})
+    needs: agent-bootstrap
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install test dependencies
+        run: uv sync --group e2e
       - name: Run agent smoke test
         env:
           ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql

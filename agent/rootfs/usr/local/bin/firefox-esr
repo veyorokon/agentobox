@@ -1,3 +1,0 @@
-#!/bin/bash
-# Redirect to the firefox wrapper which handles the "already running" case.
-exec /usr/local/bin/firefox "$@"

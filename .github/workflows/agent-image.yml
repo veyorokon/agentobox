@@ -70,6 +70,8 @@ jobs:
             agent
       - name: Run relay runtime smoke test
         run: docker run --rm --entrypoint python3 agentobox-agent-claude:ci /opt/abox/relay.py --smoke-runtime
+      - name: Run agent runtime contract
+        run: bash bin/agent-runtime-contract.sh agentobox-agent-claude:ci
       - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}

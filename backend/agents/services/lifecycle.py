@@ -60,6 +60,7 @@ from agents.schemas import ConfigSnapshot
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.provision import provision_workspace, provision_scoped_sudo
 from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
+from agents.services.volume import PROVISIONING_SENTINEL
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
@@ -496,21 +497,44 @@ async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, 
     op_log.info("lifecycle.volume_sync_start", file_count=file_count, tar_size=len(tar_bytes))
 
     await runtime.write_file(sandbox_id, tar_bytes, "/tmp/vol-sync.tar.gz")
-    # Extract with _abox/ excluded first, then extract _abox/ last.
-    # init-volume blocks on _abox/ existing — if we extract it before
-    # the other files, init-volume runs its glob before .relay_env etc.
-    # are in place and the symlinks are never created.
     await runtime.exec(sandbox_id, [
         "bash", "-c",
-        "cd /vol && "
-        "tar xzf /tmp/vol-sync.tar.gz --exclude='*/_abox/*' --exclude='*/_abox' && "
+        "cd /vol && tar xzf /tmp/vol-sync.tar.gz && "
         f"chown -R agent:agent /vol/agents/{agent_id} && "
-        "tar xzf /tmp/vol-sync.tar.gz --wildcards '*/_abox/*' '*/_abox' 2>/dev/null; "
-        f"chown -R agent:agent /vol/agents/{agent_id}/_abox && "
         "rm -f /tmp/vol-sync.tar.gz"
     ], user="root")
 
     op_log.info("lifecycle.volume_sync_done", file_count=file_count)
+
+
+async def _mark_provisioned_ready(
+    runtime_name: str,
+    runtime,
+    sandbox_id: str,
+    vol,
+    agent_id: str,
+    op_log,
+) -> None:
+    """Release init-volume only after provisioning files are fully present."""
+    vol.mark_provisioned()
+
+    if runtime_name != "modal":
+        op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
+        return
+
+    sentinel_path = f"/vol/agents/{agent_id}/{PROVISIONING_SENTINEL}"
+    await runtime.exec(
+        sandbox_id,
+        [
+            "bash",
+            "-c",
+            f"mkdir -p /vol/agents/{agent_id}/_abox && "
+            f"touch {sentinel_path} && "
+            f"chown agent:agent {sentinel_path}",
+        ],
+        user="root",
+    )
+    op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
 
 
 async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None,
@@ -695,6 +719,14 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             if attempt_id:
                 await _update_lifecycle_attempt(attempt_id, step="volume_synced_to_sandbox")
 
+        # Release the init-volume gate only after all provisioned files are
+        # present. Waiting on _abox/ alone is too weak because initialize()
+        # creates that directory before .relay_env, workspace files, and
+        # other boot-critical config necessarily exist.
+        await _mark_provisioned_ready(runtime_name, runtime, sandbox_id, vol, agent_id, op_log)
+        if attempt_id:
+            await _update_lifecycle_attempt(attempt_id, step="provisioning_ready")
+
         # Security hardening — still uses runtime.exec() because
         # /etc/sudoers.d/ is a system path, not on the volume.
         await provision_scoped_sudo(runtime, sandbox_id, op_log)
@@ -719,9 +751,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         await broadcast_agent_update(agent)
 
         # The s6-supervised relay service depends on init-volume, which
-        # waits for /vol/_abox to appear. Volume.initialize() created it
-        # above, so init-volume proceeds, creates symlinks, and relay
-        # sources .relay_env and starts. No polling needed.
+        # waits for the provisioning-ready sentinel before it creates
+        # symlinks. That ensures .relay_env and the rest of the boot config
+        # exist before relay startup.
 
         # Spawn a tmux session tailing relay logs for VNC debug visibility.
         # S6_LOGGING=1 routes service stdout/stderr through s6-log to the

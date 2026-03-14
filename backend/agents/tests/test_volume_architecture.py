@@ -20,7 +20,12 @@ import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.invariant]
 
-from agents.services.volume import MANAGED_CONFIG_FILES, SYMLINKED_PREFIXES, Volume
+from agents.services.volume import (
+    MANAGED_CONFIG_FILES,
+    PROVISIONING_SENTINEL,
+    SYMLINKED_PREFIXES,
+    Volume,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +69,19 @@ class TestVolumeCompleteness:
         vol = _make_vol(tmp_path)
         vol.write("home/agent/.claude/settings.json", '{"key": "val"}')
         assert (tmp_path / "home/agent/.claude/settings.json").read_text() == '{"key": "val"}'
+
+    def test_initialize_clears_stale_provisioning_sentinel(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.write(PROVISIONING_SENTINEL, "")
+        assert (tmp_path / PROVISIONING_SENTINEL).exists()
+        vol.initialize()
+        assert not (tmp_path / PROVISIONING_SENTINEL).exists()
+
+    def test_mark_provisioned_creates_sentinel(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.initialize()
+        vol.mark_provisioned()
+        assert (tmp_path / PROVISIONING_SENTINEL).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +528,36 @@ class TestPathParity:
         vol.write("run/secrets/proxy_key", "key")
         vol.write("_abox/state.json", "{}")
         # No exceptions = all paths accepted
+
+
+class TestProvisioningGate:
+    """Boot readiness must wait for explicit provisioning completion."""
+
+    INIT_VOLUME = (
+        Path(__file__).parent.parent.parent.parent
+        / "agent" / "rootfs" / "etc" / "s6-overlay" / "scripts" / "init-volume"
+    )
+    LIFECYCLE = Path(__file__).parent.parent / "services" / "lifecycle.py"
+
+    def test_init_volume_waits_for_provisioning_sentinel(self):
+        source = self.INIT_VOLUME.read_text()
+        assert PROVISIONING_SENTINEL in source, (
+            "init-volume does not wait for the provisioning sentinel — "
+            "services can start before .relay_env and other boot files exist"
+        )
+        assert 'while [ ! -f "${AGENT_VOL}/_abox/provisioned.ready" ]' in source, (
+            "init-volume gate is not file-based on provisioned.ready"
+        )
+
+    def test_lifecycle_marks_provisioning_ready(self):
+        source = self.LIFECYCLE.read_text()
+        assert "mark_provisioned()" in source, (
+            "lifecycle.py never marks provisioning complete — "
+            "init-volume would block forever"
+        )
+        assert "_mark_provisioned_ready(" in source, (
+            "lifecycle.py does not release the provisioning gate explicitly"
+        )
 
 
 # ---------------------------------------------------------------------------

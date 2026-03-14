@@ -1,7 +1,0 @@
-#!/command/with-contenv bash
-exec 2>&1
-source /etc/s6-overlay/scripts/preflight
-
-preflight --service svc-xvfb --env RESOLUTION
-
-exec abox-exec --service svc-xvfb -- Xvfb :1 -screen 0 "${RESOLUTION}x24"

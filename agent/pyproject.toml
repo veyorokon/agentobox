@@ -1,0 +1,16 @@
+[project]
+name = "agentobox-agent"
+version = "0.1.0"
+description = "Standalone and managed runtime for Agentobox agents"
+requires-python = ">=3.12"
+dependencies = [
+    "websockets>=15.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

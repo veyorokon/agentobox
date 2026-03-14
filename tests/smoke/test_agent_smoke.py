@@ -1,16 +1,13 @@
 """
 Agent deployment smoke tests.
 
-Mechanical yes/no signal that the full agent lifecycle works:
+Mechanical yes/no signal that the full agent round-trip works:
   create → provision → relay connect → health ready →
   send message → LLM response → teardown
 
-Three layers, run sequentially on the same agent:
-  1. Runtime smoke  — agent boots, services healthy, relay connected
-  2. Health smoke   — relay HTTP /readyz returns 200
-  3. Round-trip smoke — send deterministic prompt, assert exact response
-
-This is the final deploy gate. Runs against the real runtime (Docker or
+Bootstrap-to-idle is covered separately in tests/bootstrap/.
+This suite assumes bootstrap succeeds and focuses on the actual
+message round-trip contract. It runs against the real runtime (Docker or
 Modal) with a real API key. Not for every PR — only pre-deploy to main.
 
 Run:
@@ -39,14 +36,11 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "e2e"))
 from helpers.polling import poll_agent_status, poll_until
 
-SMOKE_RUNTIME = os.environ.get("SMOKE_RUNTIME", "docker")
-
 # Timeouts — generous because cold boot + LLM inference can be slow.
 BOOT_TIMEOUT_S = 120
-HEALTH_TIMEOUT_S = 30
 RESPONSE_TIMEOUT_S = 180
 
-pytestmark = [pytest.mark.smoke]
+pytestmark = [pytest.mark.e2e, pytest.mark.smoke]
 
 
 # ---------------------------------------------------------------------------
@@ -155,94 +149,7 @@ class TestAgentSmoke:
         except Exception:
             pass
 
-    # -- Layer 1: Runtime smoke --
-
-    def test_agent_booted_and_idle(self, smoke_agent):
-        """Agent reached idle status — container running, relay connected."""
-        assert smoke_agent["agent"]["lifecycleStatus"] == "idle"
-
-    def test_relay_connected(self, gql, smoke_agent):
-        """Relay WebSocket is connected to backend."""
-        agent = gql.query_agent(smoke_agent["agent_id"])
-        assert agent is not None, "Agent not found"
-        assert agent.get("relayConnected") is True, (
-            f"Relay not connected. Agent state: {agent}"
-        )
-
-    def test_services_healthy(self, smoke_agent, docker_ops):
-        """Relay process must be running inside the container.
-
-        The relay connection (test_relay_connected) already proves the
-        full chain works — relay + api-proxy + SDK. This test verifies
-        the relay process itself is still alive (not a zombie/crashed).
-        """
-        if docker_ops is None:
-            pytest.skip("Docker-only test (SMOKE_RUNTIME != docker)")
-
-        container = docker_ops.find_agent_container(
-            smoke_agent["agent_name"], agent_id=smoke_agent["agent_id"]
-        )
-        assert container is not None, "Container not found"
-
-        # relay process must be running
-        exit_code, output = docker_ops.exec_in_container(
-            container.id, ["pgrep", "-f", "relay.py"],
-        )
-        assert exit_code == 0, f"relay.py not running: {output}"
-
-    # -- Layer 2: Health smoke --
-
-    def test_health_readyz(self, smoke_agent, docker_ops):
-        """Relay HTTP /readyz returns 200 with ws_connected=true."""
-        if docker_ops is None:
-            pytest.skip("Docker-only test (SMOKE_RUNTIME != docker)")
-
-        container = docker_ops.find_agent_container(
-            smoke_agent["agent_name"], agent_id=smoke_agent["agent_id"]
-        )
-        assert container is not None, "Container not found"
-
-        # Hit /readyz from inside the container (port 8080 not mapped to host)
-        def check_readyz():
-            exit_code, output = docker_ops.exec_in_container(
-                container.id,
-                ["curl", "-sf", "http://localhost:8080/readyz"],
-            )
-            if exit_code != 0:
-                return None
-            try:
-                return json.loads(output)
-            except json.JSONDecodeError:
-                return None
-
-        state = poll_until(
-            check_readyz,
-            lambda s: s is not None and s.get("status") == "ready",
-            timeout_s=HEALTH_TIMEOUT_S,
-            interval_s=2,
-            description="/readyz returns ready",
-        )
-        assert state["ws_connected"] is True
-
-    def test_health_livez(self, smoke_agent, docker_ops):
-        """/livez always returns 200."""
-        if docker_ops is None:
-            pytest.skip("Docker-only test (SMOKE_RUNTIME != docker)")
-
-        container = docker_ops.find_agent_container(
-            smoke_agent["agent_name"], agent_id=smoke_agent["agent_id"]
-        )
-        assert container is not None, "Container not found"
-
-        exit_code, output = docker_ops.exec_in_container(
-            container.id,
-            ["curl", "-sf", "http://localhost:8080/livez"],
-        )
-        assert exit_code == 0, f"/livez failed: {output}"
-        data = json.loads(output)
-        assert data["status"] == "ok"
-
-    # -- Layer 3: Round-trip smoke --
+    # -- Round-trip smoke --
 
     def test_message_round_trip(self, gql, smoke_agent, docker_ops):
         """Send a deterministic prompt, assert exact response in feed.

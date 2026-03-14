@@ -50,6 +50,7 @@ SERVICE_CHECK_TIMEOUT_S = 30
 MESSAGE_TIMEOUT_S = 120
 
 
+@pytest.mark.bootstrap
 class TestAgentBoot:
     """Verify an agent boots correctly with all services healthy."""
 

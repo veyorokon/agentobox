@@ -132,6 +132,9 @@ class DockerRuntime:
         if exit_code != 0:
             op.warning("runtime.exec_failed", exit_code=exit_code, elapsed_s=elapsed,
                        output=result[:200] if result else "")
+            raise RuntimeError(
+                f"Docker exec failed (exit_code={exit_code}): {result[:200] if result else ''}"
+            )
         else:
             op.info("runtime.exec_done", elapsed_s=elapsed)
         return result

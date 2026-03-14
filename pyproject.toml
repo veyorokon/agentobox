@@ -3,6 +3,9 @@ name = "agentobox-e2e"
 version = "0.0.1"
 requires-python = ">=3.12"
 
+[tool.uv.workspace]
+members = ["backend", "agent"]
+
 [dependency-groups]
 e2e = [
     "pytest>=9.0",
@@ -21,6 +24,7 @@ markers = [
     "e2e: end-to-end tests requiring docker compose stack",
     "integration: integration tests against live services (no mocks)",
     "agent: tests that spawn real Claude Code agents (costs money)",
+    "bootstrap: agent bootstrap contract tests (create -> relay connect -> idle)",
     "dashboard: tests requiring Playwright browser",
     "slow: tests with >30s execution time",
     "smoke: deploy gate smoke tests (real agent round-trip)",

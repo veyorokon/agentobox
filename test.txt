@@ -1,0 +1,14 @@
+  ◻ Discuss: Relay auth token via MCP remote transport instead of env var    
+  ◻ Research: Study autoresearch repo patterns for workflow formalization                                                                                                                   
+  ◻ Feature: Project as an API — projects as dynamic endpoints                                                                                                                              
+  ◻ Feature: Platform-provided API keys — zero-setup onboarding              
+  ◻ Chore: Reverse proxy + TLS + DNS for public access                                                                                                                                      
+  ◻ Chore: Django production settings (CORS, CSRF, ALLOWED_HOSTS, secrets)                                                                                                                
+  ◻ Chore: Dashboard Dockerfile — production build instead of dev server                                                                                                                    
+  ◻ Chore: Choose hosting and deploy (VPS or PaaS)                                                                                                                                        
+  ◻ Feature: Social auth onboarding — Google, Apple, GitHub login                                                                                                                           
+  ◻ Feature: Stripe billing — metered usage-based pricing  
+
+
+   ok so i suppose we basically have it all. two things - one was can we have token streaming so we get like realtime output results at least in the agent box feed since main feed would   
+  be trickier to display. and the other is - dividing the feed in agent into three cols - one is right above the left of the message buttons and it basically shows various thinking... etc. terms so the user knows when the agent is like "workign" etc. idk
