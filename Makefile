@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-base agent-image-claude agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -22,6 +22,7 @@ codegen: schema
 	cd dashboard && pnpm codegen
 
 PLATFORM ?= linux/amd64
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 
 agent-image-base:
 	docker build --platform $(PLATFORM) -f agent/Dockerfile.base -t agentobox-agent-base:latest ./agent
@@ -29,7 +30,19 @@ agent-image-base:
 agent-image-claude: agent-image-base
 	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent
 
-agent-image: agent-image-claude
+agent-image: agent-image-runtime-desktop-managed
+
+agent-image-runtime:
+	docker build --platform $(PLATFORM) --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile -t agentobox-agent-runtime:latest ./agent
+
+agent-image-runtime-managed:
+	docker build --platform $(PLATFORM) --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile.managed -t agentobox-agent-runtime-managed:latest ./agent
+
+agent-image-runtime-desktop: agent-image-runtime
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-runtime:latest --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile.desktop -t agentobox-agent-runtime-desktop:latest ./agent
+
+agent-image-runtime-desktop-managed: agent-image-runtime-managed
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile.desktop.managed -t agentobox-agent-runtime-desktop-managed:latest ./agent
 
 up:
 	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build
@@ -64,6 +77,12 @@ test-agent:
 		-v ./agent/rootfs/opt/abox/relay_http.py:/opt/abox/relay_http.py \
 		agentobox-agent-claude:latest \
 		-m pytest /opt/abox/tests -v
+
+test-agent-runtime-docker-contract:
+	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts=
+
+test-agent-runtime-desktop-docker-contract:
+	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts= -k desktop
 
 lint:
 	cd backend && uv run ruff check agents/

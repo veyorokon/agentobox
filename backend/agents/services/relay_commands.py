@@ -30,7 +30,6 @@ class SignalAction(StrEnum):
 class CallbackBehavior(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
-    ALLOWALL = "allowall"
 
 
 @dataclass(frozen=True)

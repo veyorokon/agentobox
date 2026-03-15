@@ -60,7 +60,7 @@ class TestVolumeCompleteness:
         vol = _make_vol(tmp_path)
         vol.initialize()
         # Write some state
-        vol.append_inbox({"type": "input", "payload": "hello"})
+        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]}})
         original_content = (tmp_path / "_abox/inbox.jsonl").read_text()
         # Re-initialize should not clobber existing files
         vol.initialize()
@@ -149,60 +149,35 @@ class TestMirrorDontMap:
 # Convergence protocol: status.json hashes
 # ---------------------------------------------------------------------------
 
-class TestConvergence:
-    """status.json hashes match config file hashes = fully converged."""
+class TestRuntimeStatus:
+    """_abox/status.json is agent-owned — a structured runtime status document."""
 
-    def test_unconverged_after_write(self, tmp_path):
+    def test_runtime_status_empty_when_no_file(self, tmp_path):
         vol = _make_vol(tmp_path)
         vol.initialize()
-        vol.write("_abox/state.json", '{"mode": "auto"}')
-        assert not vol.is_converged()
-        assert "_abox/state.json" in vol.pending_changes()
+        assert vol.runtime_status() == {}
 
-    def test_converged_after_status_update(self, tmp_path):
+    def test_runtime_status_reads_agent_status_document(self, tmp_path):
         vol = _make_vol(tmp_path)
         vol.initialize()
-        vol.write("_abox/state.json", '{"mode": "auto"}')
-        # Simulate relay applying and updating status
-        h = vol.file_hash("_abox/state.json")
-        status = {"_abox/state.json": h}
-        vol.write("_abox/status.json", json.dumps(status))
-        assert vol.is_converged()
-        assert vol.pending_changes() == []
-
-    def test_unconverged_after_second_write(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        vol.write("_abox/state.json", '{"mode": "auto"}')
-        h = vol.file_hash("_abox/state.json")
-        vol.write("_abox/status.json", json.dumps({"_abox/state.json": h}))
-        assert vol.is_converged()
-        # Backend writes new state — relay hasn't applied yet
-        vol.write("_abox/state.json", '{"mode": "plan"}')
-        assert not vol.is_converged()
-
-    def test_missing_files_are_skipped(self, tmp_path):
-        """Files that don't exist yet are not counted as unconverged."""
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        # No config files written — should be converged (nothing to apply)
-        assert vol.is_converged()
-
-    def test_file_hash_is_deterministic(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.write("_abox/test.json", '{"stable": true}')
-        h1 = vol.file_hash("_abox/test.json")
-        h2 = vol.file_hash("_abox/test.json")
-        assert h1 == h2
-        assert len(h1) == 16  # truncated sha256
-
-    def test_file_hash_changes_on_content_change(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.write("_abox/test.json", "v1")
-        h1 = vol.file_hash("_abox/test.json")
-        vol.write("_abox/test.json", "v2")
-        h2 = vol.file_hash("_abox/test.json")
-        assert h1 != h2
+        status_doc = {
+            "status_version": "1",
+            "mode": "standalone",
+            "platform": "docker",
+            "startup_stage": "runtime_ready",
+            "runtime_state": "ready",
+            "runtime": {"session_id": "", "client_active": False, "task_id": "", "task_state": "idle"},
+            "transport": {"enabled": False, "state": "disabled", "connected": False, "last_error": None},
+            "services": {},
+            "degraded": [],
+            "fatal": None,
+        }
+        vol.write("_abox/status.json", json.dumps(status_doc))
+        result = vol.runtime_status()
+        assert result["status_version"] == "1"
+        assert result["mode"] == "standalone"
+        assert result["startup_stage"] == "runtime_ready"
+        assert result["runtime"]["client_active"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -220,13 +195,13 @@ class TestDelivery:
     def test_undelivered_after_append(self, tmp_path):
         vol = _make_vol(tmp_path)
         vol.initialize()
-        vol.append_inbox({"type": "input", "payload": "hello"})
+        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]}})
         assert not vol.inbox_delivered()
 
     def test_delivered_after_pos_advance(self, tmp_path):
         vol = _make_vol(tmp_path)
         vol.initialize()
-        vol.append_inbox({"type": "input", "payload": "hello"})
+        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]}})
         # Simulate relay consuming all messages
         size = (tmp_path / "_abox/inbox.jsonl").stat().st_size
         (tmp_path / "_abox/inbox.pos").write_text(str(size))
@@ -235,9 +210,9 @@ class TestDelivery:
     def test_partial_delivery(self, tmp_path):
         vol = _make_vol(tmp_path)
         vol.initialize()
-        vol.append_inbox({"type": "input", "payload": "msg1"})
+        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "msg1"}]}})
         size_after_first = (tmp_path / "_abox/inbox.jsonl").stat().st_size
-        vol.append_inbox({"type": "input", "payload": "msg2"})
+        vol.append_inbox({"type": "task", "task_id": "t2", "input": {"role": "user", "content": [{"type": "text", "text": "msg2"}]}})
         # Relay consumed only the first message
         (tmp_path / "_abox/inbox.pos").write_text(str(size_after_first))
         assert not vol.inbox_delivered()

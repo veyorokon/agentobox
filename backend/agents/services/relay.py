@@ -99,28 +99,26 @@ def _normalize_content(content: list) -> list:
     return content
 
 
-async def _send_via_inbox(agent: Agent, message: dict) -> None:
-    """Append a message to the agent's volume inbox and reload the relay.
+async def deliver_input(agent: Agent, content: list, task_id: str = "") -> bool:
+    """Durably enqueue a task for an agent and notify the relay.
 
-    Centralizes the inbox-append + reload pattern used by send_message,
-    answer_question, and broadcast_message. The message persists on the
-    volume even if the reload fails — relay reads it on next wake.
-    """
-    await deliver_input(agent, message)
+    Writes the canonical task envelope to the inbox:
+        {"type": "task", "task_id": "...", "input": {"role": "user", "content": [...]}}
 
-
-async def deliver_input(agent: Agent, message: dict) -> bool:
-    """Durably enqueue an input message for an agent and notify the relay.
-
-    This is the only supported transport for non-ephemeral agent input.
-    Inputs must be durable so reconnects, restarts, and relay flaps do not
-    create "looked delivered but disappeared" behavior.
+    Content blocks follow the ACP/MCP content model — text, image, tool_result, etc.
+    The agent runtime owns how these are mapped to executor-specific formats.
 
     Returns True when the relay reload was accepted, False when the relay is
-    known disconnected. The message is still durable either way because it
+    known disconnected. The task is still durable either way because it
     was appended to the inbox first.
     """
-    agent.volume.append_inbox({"type": "input", "payload": message})
+    if not task_id:
+        task_id = uuid.uuid4().hex[:16]
+    agent.volume.append_inbox({
+        "type": "task",
+        "task_id": task_id,
+        "input": {"role": "user", "content": content},
+    })
     return await push_to_relay(str(agent.id), ReloadCommand(path="_abox/inbox.jsonl"))
 
 
@@ -243,7 +241,7 @@ async def send_message(
         )
 
     # Append to inbox (persists on volume even if agent is dead)
-    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
+    await deliver_input(agent, api_parts)
 
     # Auto-restart dead agents — inbox message already on volume
     if _needs_restart(agent):
@@ -282,7 +280,7 @@ async def answer_question(agent_id: str, tool_use_id: str, answer_text: str) -> 
     )
 
     # Append to inbox (persists on volume even if agent is dead)
-    await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": parts}})
+    await deliver_input(agent, parts)
 
     # Auto-restart dead agents — inbox message already on volume
     if _needs_restart(agent):
@@ -348,7 +346,7 @@ async def broadcast_message(
         )
 
         # Append to inbox (persists on volume even if agent is dead)
-        await deliver_input(agent, {"type": "user", "message": {"role": "user", "content": api_parts}})
+        await deliver_input(agent, api_parts)
 
         if _needs_restart(agent):
             op_log.info("comms.auto_restarting", agent_id=str(agent.id))

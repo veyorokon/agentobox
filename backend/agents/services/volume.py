@@ -34,7 +34,7 @@ reads the file and reloads the relevant process.
             secrets/env                   # shell-sourceable secrets export
           _abox/                          # control plane (NOT mirrored into container)
             state.json                    # {model, mode, allowed_tools}
-            status.json                   # {filename: sha256_hash} — convergence tracking
+            status.json                   # runtime status document (agent-owned projection)
             inbox.jsonl                   # messages to agent (backend appends)
             inbox.pos                     # byte offset of last consumed message (relay writes)
             outbox.jsonl                  # events from agent (hooks/relay append)
@@ -56,12 +56,13 @@ reads the file and reloads the relevant process.
     The agent sees a normal filesystem. It doesn't know about the volume.
     Backend writes are immediately visible because they're the same files.
 
-## Convergence protocol
+## Runtime status
 
-    Backend writes a config file → sends WS reload {"type": "reload", "path": "..."}.
-    Relay reads the file, applies it, then writes the file's SHA-256 hash
-    to _abox/status.json. Backend can check is_converged() to verify the
-    relay has applied all pending changes.
+    _abox/status.json is agent-owned — the runtime writes a structured
+    StatusDocument there (mode, platform, startup_stage, runtime_state,
+    transport, services). Backend reads it via Volume.runtime_status()
+    but never writes to it. Convergence is tracked via the desired_status
+    vs reported status model on the Agent model, not file hashes.
 
 ## Delivery guarantee (inbox/outbox)
 
@@ -77,7 +78,6 @@ reads the file and reloads the relevant process.
     - /opt/abox/ (image-baked scripts, not agent state)
 """
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -107,9 +107,9 @@ SYMLINKED_PREFIXES = (
 # files necessarily exist.
 PROVISIONING_SENTINEL = "_abox/provisioned.ready"
 
-# Config files the backend manages. The relay tracks convergence by
-# comparing file hashes against _abox/status.json. When a file's hash
-# doesn't match, the relay hasn't applied the latest version yet.
+# Config files the backend manages. Written during provisioning and
+# updated via Volume.mutate() + reload commands. The agent reads these
+# on boot and on reload notifications.
 MANAGED_CONFIG_FILES = [
     "home/agent/.claude/settings.json",
     "home/agent/workspace/CLAUDE.md",
@@ -168,8 +168,8 @@ class Volume:
         vol = agent.volume                          # from Agent model property
         vol.write("home/agent/.claude/settings.json", json_content)
         vol.write_secret("run/secrets/proxy_key", key, mode=0o600)
-        vol.append_inbox({"type": "input", "payload": {...}})
-        assert vol.is_converged()                   # relay applied all changes
+        vol.append_inbox({"type": "task", "task_id": "...", "input": {...}})
+        status = vol.runtime_status()               # agent-owned status document
     """
 
     def __init__(self, project_id: str, agent_id: str):
@@ -221,47 +221,15 @@ class Volume:
     def exists(self, path: str) -> bool:
         return (self.root / path).exists()
 
-    def status(self) -> dict:
-        """Read status.json — the relay's record of what it has applied.
+    def runtime_status(self) -> dict:
+        """Read the agent's runtime status document from _abox/status.json.
 
-        Returns {filename: sha256_hash_prefix} for each config file the
-        relay has successfully read and acted on. Empty dict if the relay
-        hasn't started or status.json doesn't exist yet.
+        The new agent runtime writes a structured StatusDocument here
+        (mode, platform, startup_stage, runtime_state, transport, services).
+        Returns the parsed dict or empty dict if not yet written.
         """
         path = self.root / "_abox" / "status.json"
         return json.loads(path.read_text()) if path.exists() else {}
-
-    def file_hash(self, path: str) -> str:
-        """First 16 chars of SHA-256 hex digest. Sufficient for change detection."""
-        return hashlib.sha256((self.root / path).read_bytes()).hexdigest()[:16]
-
-    def is_converged(self) -> bool:
-        """Check if the relay has applied all config files.
-
-        Compares each managed config file's current hash against the hash
-        recorded in status.json. Returns True when all hashes match —
-        meaning the relay has read and applied every file the backend wrote.
-        Files that don't exist yet are skipped (not yet provisioned).
-        """
-        status = self.status()
-        for f in MANAGED_CONFIG_FILES:
-            if not self.exists(f):
-                continue
-            if status.get(f) != self.file_hash(f):
-                return False
-        return True
-
-    def pending_changes(self) -> list[str]:
-        """Config files whose hashes don't match status.json.
-
-        Useful for diagnostics — shows which files the relay hasn't
-        applied yet. Returns file paths relative to volume root.
-        """
-        status = self.status()
-        return [
-            f for f in MANAGED_CONFIG_FILES
-            if self.exists(f) and status.get(f) != self.file_hash(f)
-        ]
 
     def inbox_delivered(self) -> bool:
         """Check if all inbox messages have been consumed.

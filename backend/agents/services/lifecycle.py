@@ -72,6 +72,22 @@ ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 log = structlog.get_logger("abox.lifecycle")
 
 
+def _image_requires_scoped_sudo(image_ref: str) -> bool:
+    """Only legacy claude images need sudoers hardening.
+
+    The new runtime image family does not ship `sudo` or `/etc/sudoers.d`, so
+    attempting to provision scoped sudo there is simply the wrong contract.
+    """
+    image_name = image_ref.rsplit("/", 1)[-1]
+    return not image_name.startswith("agentobox-agent-runtime")
+
+
+def _runtime_image_ref(runtime_name: str, agent_type: str) -> str:
+    if runtime_name == "modal":
+        return app_config.modal.agent_image_map.get(agent_type, app_config.modal.agent_image)
+    return app_config.agent.image_map.get(agent_type, app_config.agent.image)
+
+
 def transition_agent_status(agent: Agent, new_status: str, *, reason: str = "", force: bool = False) -> Agent:
     """Enforce the lifecycle state machine when changing agent status.
 
@@ -578,8 +594,11 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
 
-        # Generate relay auth token for this agent
+        # Generate relay auth token for this agent.
+        # Passed as env var for the new runtime (reads RELAY_AUTH_TOKEN at boot).
+        # Also written to .relay_env on volume for the old relay.
         relay_token = secrets.token_urlsafe(32)
+        env["RELAY_AUTH_TOKEN"] = relay_token
 
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
@@ -729,11 +748,13 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="provisioning_ready")
 
-        # Security hardening — still uses runtime.exec() because
-        # /etc/sudoers.d/ is a system path, not on the volume.
-        await provision_scoped_sudo(runtime, sandbox_id, op_log)
-        if attempt_id:
-            await _update_lifecycle_attempt(attempt_id, step="sudo_provisioned")
+        image_ref = _runtime_image_ref(runtime_name, agent.agent_type)
+        if _image_requires_scoped_sudo(image_ref):
+            await provision_scoped_sudo(runtime, sandbox_id, op_log)
+            if attempt_id:
+                await _update_lifecycle_attempt(attempt_id, step="sudo_provisioned")
+        else:
+            op_log.info("lifecycle.sudo_skip", reason="runtime image does not ship sudo", image_ref=image_ref)
 
         # Save relay_token and sandbox details BEFORE launching relay.
         # The relay POSTs to /agents/<id>/stream/ immediately on startup,
@@ -752,22 +773,22 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
         await broadcast_agent_update(agent)
 
-        # The s6-supervised relay service depends on init-volume, which
-        # waits for the provisioning-ready sentinel before it creates
-        # symlinks. That ensures .relay_env and the rest of the boot config
-        # exist before relay startup.
-
-        # Spawn a tmux session tailing relay logs for VNC debug visibility.
-        # S6_LOGGING=1 routes service stdout/stderr through s6-log to the
-        # catch-all directory. Tail with -F to handle log rotation.
-        await runtime.exec(
-            sandbox.id,
-            ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50",
-             "bash", "-c",
-             "exec tail -F /run/uncaught-logs/current 2>/dev/null || exec sleep infinity"],
-            user="agent",
-        )
-        op_log.info("lifecycle.relay_launched", team_name=team_name, parent_session_id=parent_session_id)
+        # Old images: s6 supervises relay + services, tmux tails logs for VNC.
+        # New runtime images: python runtime manages its own services, no tmux/s6.
+        image_ref = _runtime_image_ref(runtime_name, agent.agent_type)
+        if _image_requires_scoped_sudo(image_ref):
+            # Legacy image — spawn tmux session tailing s6 relay logs
+            await runtime.exec(
+                sandbox.id,
+                ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50",
+                 "bash", "-c",
+                 "exec tail -F /run/uncaught-logs/current 2>/dev/null || exec sleep infinity"],
+                user="agent",
+            )
+            op_log.info("lifecycle.relay_launched", team_name=team_name, parent_session_id=parent_session_id)
+        else:
+            # New runtime image — runtime manages its own process lifecycle
+            op_log.info("lifecycle.runtime_self_managed", image_ref=image_ref)
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
 

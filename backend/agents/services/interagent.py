@@ -81,11 +81,7 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
     )
 
     # Enqueue via the same durable inbox path used for all other input.
-    input_msg = {
-        "type": "user",
-        "message": {"role": "user", "content": parts},
-    }
-    sent = await deliver_input(target, input_msg)
+    sent = await deliver_input(target, parts)
     if not sent:
         log.warning("comms.interagent_delivery_failed",
                     sender=sender_name, target=target.name)

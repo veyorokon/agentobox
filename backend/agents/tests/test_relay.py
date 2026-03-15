@@ -40,7 +40,8 @@ def test_callback_behavior_values_are_locked():
     """CallbackBehavior string values are part of the wire protocol. Never rename."""
     assert CallbackBehavior.ALLOW.value == "allow"
     assert CallbackBehavior.DENY.value == "deny"
-    assert CallbackBehavior.ALLOWALL.value == "allowall"
+    # Agent only supports allow|deny. No allowall — see agent/transports/agentobox/commands.py
+    assert len(CallbackBehavior) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -244,31 +245,49 @@ async def test_send_message_pushes_to_dashboard_ws():
 
 
 @pytest.mark.asyncio
-async def test_deliver_input_appends_to_inbox_then_reloads():
-    """deliver_input() uses durable inbox append + typed reload command."""
+async def test_deliver_input_writes_canonical_task_envelope():
+    """deliver_input() writes the new task envelope to inbox, not the legacy input/payload shape."""
     fake_agent = MagicMock()
     fake_agent.id = "agent-123"
     fake_agent.volume = MagicMock()
 
+    content = [{"type": "text", "text": "hello"}]
     with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=False) as mock_push:
-        result = await deliver_input(fake_agent, {"type": "user", "message": {"role": "user", "content": []}})
+        result = await deliver_input(fake_agent, content, task_id="test-task-1")
 
     assert result is False
-    fake_agent.volume.append_inbox.assert_called_once_with({
-        "type": "input",
-        "payload": {"type": "user", "message": {"role": "user", "content": []}},
-    })
-    # Assert exact typed command — not a raw dict
+    # Assert the canonical task envelope — not the legacy {"type": "input", "payload": ...}
+    fake_agent.volume.append_inbox.assert_called_once()
+    envelope = fake_agent.volume.append_inbox.call_args.args[0]
+    assert envelope["type"] == "task"
+    assert envelope["task_id"] == "test-task-1"
+    assert envelope["input"] == {"role": "user", "content": content}
+    # Assert reload command
     mock_push.assert_awaited_once()
     cmd = mock_push.await_args.args[1]
     assert isinstance(cmd, ReloadCommand)
     assert cmd.path == "_abox/inbox.jsonl"
-    assert cmd.to_wire() == {"type": "reload", "path": "_abox/inbox.jsonl"}
 
 
 @pytest.mark.asyncio
-async def test_interagent_delivery_uses_durable_input_helper():
-    """Inter-agent delivery must use the canonical durable input helper."""
+async def test_deliver_input_generates_task_id_when_omitted():
+    """deliver_input() generates a task_id if not provided."""
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-123"
+    fake_agent.volume = MagicMock()
+
+    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True):
+        await deliver_input(fake_agent, [{"type": "text", "text": "hello"}])
+
+    envelope = fake_agent.volume.append_inbox.call_args.args[0]
+    assert envelope["type"] == "task"
+    assert len(envelope["task_id"]) == 16  # uuid hex[:16]
+    assert envelope["input"]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_interagent_delivery_passes_content_blocks():
+    """Inter-agent delivery passes content blocks to deliver_input, not wrapped message dicts."""
     from agents.services.interagent import deliver_to_stdin
 
     target = MagicMock()
@@ -284,6 +303,8 @@ async def test_interagent_delivery_uses_durable_input_helper():
 
     assert result is True
     mock_deliver.assert_awaited_once()
-    delivered_payload = mock_deliver.await_args.args[1]
-    assert delivered_payload["type"] == "user"
-    assert delivered_payload["message"]["content"][0]["text"].startswith("[Team message from lead]:")
+    # deliver_input now receives content blocks directly, not a message wrapper
+    content_blocks = mock_deliver.await_args.args[1]
+    assert isinstance(content_blocks, list)
+    assert content_blocks[0]["type"] == "text"
+    assert content_blocks[0]["text"].startswith("[Team message from lead]:")
