@@ -88,6 +88,12 @@ def _runtime_image_ref(runtime_name: str, agent_type: str) -> str:
     return app_config.agent.image_map.get(agent_type, app_config.agent.image)
 
 
+def _runtime_executor(agent_type: str) -> str:
+    if agent_type == "claude-code":
+        return "claude_code"
+    raise ValueError(f"unsupported agent executor for agent_type={agent_type!r}")
+
+
 def transition_agent_status(agent: Agent, new_status: str, *, reason: str = "", force: bool = False) -> Agent:
     """Enforce the lifecycle state machine when changing agent status.
 
@@ -599,6 +605,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Also written to .relay_env on volume for the old relay.
         relay_token = secrets.token_urlsafe(32)
         env["RELAY_AUTH_TOKEN"] = relay_token
+        # New runtime reads provisioned files from AGENTOBOX_ROOT_DIR.
+        # Volume is mounted at /vol, agent files at /vol/agents/<agent_id>.
+        env["AGENTOBOX_ROOT_DIR"] = f"/vol/agents/{agent_id}"
 
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
@@ -1215,6 +1224,7 @@ def _build_agent_env(agent, project) -> dict[str, str]:
     return {
         "AGENT_ID": str(agent.id),
         "AGENT_TYPE": agent.agent_type,
+        "AGENTOBOX_EXECUTOR": _runtime_executor(agent.agent_type),
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
         "ABOX_CALLBACK_URL": app_config.callback_url,

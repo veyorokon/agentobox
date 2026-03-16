@@ -29,6 +29,7 @@ from agents.models import (
 from agents.services.lifecycle import (
     _create_lifecycle_attempt_sync,
     _image_requires_scoped_sudo,
+    _runtime_executor,
     _update_lifecycle_attempt_sync,
     transition_agent_status,
 )
@@ -53,6 +54,10 @@ def test_image_requires_scoped_sudo_skips_new_runtime_images():
     assert _image_requires_scoped_sudo("agentobox-agent-runtime-managed:latest") is False
     assert _image_requires_scoped_sudo("agentobox-agent-runtime-desktop-managed:latest") is False
     assert _image_requires_scoped_sudo("ghcr.io/veyorokon/agentobox-agent-runtime:dev") is False
+
+
+def test_runtime_executor_maps_claude_code_agent_type():
+    assert _runtime_executor("claude-code") == "claude_code"
 
 
 def test_shell_escape_basic():
