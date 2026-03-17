@@ -78,6 +78,7 @@ vi.mock("@/components/shared/copy-button", () => ({
 
 const { TeamFeed } = await import("@/components/feed/team-feed")
 const { AgentCardRow } = await import("@/components/agent/card-row")
+const { AttentionBar } = await import("@/components/attention/attention-bar")
 const { useSidebarStore } = await import("@/lib/stores/sidebar")
 
 /* ================================================================== */
@@ -395,6 +396,23 @@ describe("state consistency: feed items visible across UI components", () => {
 
       // Error text must NOT appear — the attention bar is for actionable items only
       expect(screen.queryByText(/Agent crashed: out of memory/)).toBeNull()
+    })
+  })
+
+  describe("review attention", () => {
+    it("does NOT render in AttentionBar — reviews are feed/card affordances, not global intervention", async () => {
+      render(
+        React.createElement(AttentionBar),
+        { wrapper: makeWrapper([agentsMock([makeAgent({
+          attentionLevel: "review",
+          lastOutput: "Please review this result",
+        })]), feedMock([])]) },
+      )
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Review latest output/)).toBeNull()
+      })
+      expect(screen.queryByText(/Please review this result/)).toBeNull()
     })
   })
 })

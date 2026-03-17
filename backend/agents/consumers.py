@@ -38,23 +38,38 @@ from agents.errors import (
 )
 
 log = structlog.get_logger("abox.relay")
+VNC_STARTUP_GRACE_S = 15
+
+
+def _is_recently_deployed(agent) -> bool:
+    deployed_at = getattr(agent, "deployed_at", None)
+    if not deployed_at:
+        return False
+    return (timezone.now() - deployed_at).total_seconds() <= VNC_STARTUP_GRACE_S
 
 
 def _is_transient_vnc_upstream_failure(agent, exc: Exception) -> bool:
-    """Treat DNS/connect misses as transient while the agent is still coming up."""
+    """Treat startup-time VNC misses as transient while the desktop is still coming up."""
     from agents.models import AgentStatus
 
-    is_connectivity_failure = isinstance(exc, (socket.gaierror, ConnectionRefusedError, TimeoutError, OSError))
-    return is_connectivity_failure and (
-        getattr(agent, "status", "") == AgentStatus.DEPLOYING or not getattr(agent, "relay_connected", False)
-    )
+    if isinstance(exc, socket.gaierror):
+        return getattr(agent, "status", "") == AgentStatus.DEPLOYING or not getattr(agent, "relay_connected", False)
+
+    if isinstance(exc, (ConnectionRefusedError, TimeoutError, OSError)):
+        return (
+            getattr(agent, "status", "") == AgentStatus.DEPLOYING
+            or not getattr(agent, "relay_connected", False)
+            or _is_recently_deployed(agent)
+        )
+
+    return False
 
 
 def _should_mark_vnc_runtime_unavailable(agent, exc: Exception) -> bool:
     from agents.models import AgentStatus
 
     return (
-        isinstance(exc, (socket.gaierror, ConnectionRefusedError, TimeoutError, OSError))
+        isinstance(exc, socket.gaierror)
         and getattr(agent, "status", "") in {AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING}
         and bool(getattr(agent, "relay_connected", False))
         and bool(getattr(agent, "sandbox_id", ""))

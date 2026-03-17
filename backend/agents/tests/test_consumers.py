@@ -2,6 +2,7 @@ import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from django.utils import timezone
 
 from agents.consumers import (
     RelayConsumer,
@@ -94,6 +95,19 @@ def test_transient_vnc_upstream_failure_false_for_ready_agent():
     assert _is_transient_vnc_upstream_failure(agent, socket.gaierror(-2, "Name or service not known")) is False
 
 
+def test_transient_vnc_upstream_failure_for_recently_deployed_connection_refused():
+    agent = MagicMock(
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        deployed_at=timezone.now(),
+    )
+
+    assert _is_transient_vnc_upstream_failure(
+        agent,
+        ConnectionRefusedError(111, "Connect call failed"),
+    ) is True
+
+
 def test_marks_runtime_unavailable_for_ready_agent_with_missing_upstream():
     agent = MagicMock(
         status=AgentStatus.IDLE,
@@ -105,6 +119,20 @@ def test_marks_runtime_unavailable_for_ready_agent_with_missing_upstream():
         agent,
         socket.gaierror(-2, "Name or service not known"),
     ) is True
+
+
+def test_does_not_mark_runtime_unavailable_for_connection_refused_on_ready_agent():
+    agent = MagicMock(
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        sandbox_id="sandbox-123",
+        deployed_at=timezone.now(),
+    )
+
+    assert _should_mark_vnc_runtime_unavailable(
+        agent,
+        ConnectionRefusedError(111, "Connect call failed"),
+    ) is False
 
 
 def test_does_not_mark_runtime_unavailable_while_still_deploying():

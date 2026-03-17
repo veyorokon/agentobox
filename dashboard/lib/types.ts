@@ -20,6 +20,7 @@ export type {
 } from "@/lib/graphql/__generated__/graphql"
 
 export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
+// review is a local/card/feed affordance, not a global intervention state.
 export type AttentionLevel = "none" | "review" | "plan" | "permission"
 export type Breakpoint = "mobile" | "S" | "M" | "L" | "XL" | "2XL"
 

@@ -8,9 +8,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { PendingItem } from "@/lib/types"
-import { useTeamStore } from "@/lib/stores/team"
 import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
-import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentTag } from "@/components/agent/avatar"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
@@ -23,14 +21,10 @@ export function AttentionBar() {
   // ── Store subscriptions ───────────────────────────────────────────
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
-  const { data: agentsData } = useAgents()
-  const agents = agentsData?.agents ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
-  const reviewAgent = useTeamStore(s => s.reviewAgent)
 
   const focusedAgentId = useSidebarStore(s => s.focusedAgentId)
-  const setMainTab = useSidebarStore(s => s.setMainTab)
   const stepIdx = useSidebarStore(s => s.attentionStepIdx)
   const setStepIdx = useSidebarStore(s => s.setAttentionStepIdx)
   const expandedFeedItemId = useSidebarStore(s => s.attentionExpandedFeedItemId)
@@ -54,37 +48,8 @@ export function AttentionBar() {
     ? pending.find(p => p.feedItemId === expandedFeedItemId && p.item.type === "plan")
     : null
 
-  const handleReview = (agentName: string, id: string) => {
-    reviewAgent(agentName)
-    setMainTab("chat")
-    setExpandedFeedItemId(id)
-  }
-
-  const reviewCandidate = useMemo(
-    () => agents.find(agent => agent.attentionLevel === "review" && Boolean(agent.lastOutput)),
-    [agents],
-  )
-
   if (pending.length === 0) {
-    if (!reviewCandidate) return null
-    return (
-      <div className="px-3 @[640px]/main:px-6 mb-2 max-w-3xl mx-auto w-full">
-        <button
-          type="button"
-          onClick={() => handleReview(reviewCandidate.name, reviewCandidate.id)}
-          className="w-full rounded-lg border border-warning/20 bg-warning-subtle/10 px-3.5 py-2.5 flex items-center gap-2 text-left hover:bg-warning-subtle/15 transition-colors"
-        >
-          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
-          <span className="text-[11px] text-warning font-mono shrink-0">
-            {reviewCandidate.name} · Review latest output
-          </span>
-          <span className="text-xs text-secondary truncate flex-1 min-w-0">
-            {reviewCandidate.lastOutput}
-          </span>
-          <ChevronRight className="h-3 w-3 text-warning shrink-0" />
-        </button>
-      </div>
-    )
+    return null
   }
 
   // Sort: permissions first, then plans
@@ -197,7 +162,7 @@ export function AttentionBar() {
           ) : (
             <button
               type="button"
-              onClick={() => handleReview(item.agent, feedItemId)}
+              onClick={() => setExpandedFeedItemId(feedItemId)}
               className="px-2 py-1 rounded text-[10px] font-medium text-warning border border-warning/30 hover:bg-warning-subtle/40 transition-colors inline-flex items-center gap-1"
             >
               Review <ChevronRight className="h-2.5 w-2.5" />

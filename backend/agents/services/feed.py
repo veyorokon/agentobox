@@ -106,6 +106,9 @@ async def recompute_attention(project_id, agent_id: str, after_result: bool = Fa
 
     after_result: if True and no pending items, set "review" instead of "none"
     (agent just finished a turn, output available for review).
+
+    review is intentionally weaker than pending permission/plan attention:
+    it is a card/feed affordance, not a global intervention state.
     """
     has_perm = await TeamFeedItem.objects.filter(
         project_id=project_id,
@@ -288,5 +291,4 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))
 
     return item
-
 

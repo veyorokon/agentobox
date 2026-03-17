@@ -48,6 +48,13 @@ jobs:
       - name: Dump backend logs on failure
         if: failure()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml logs backend --tail=500
+      - name: Dump agent container logs on failure
+        if: failure()
+        run: |
+          for cid in $(docker ps -aq --filter "label=agentobox.managed=true"); do
+            echo "=== Agent container $cid ==="
+            docker logs "$cid" --tail=100 2>&1 || true
+          done
       - name: Cleanup
         if: always()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml down -v

@@ -281,6 +281,7 @@ class Agent(models.Model):
 
     # Frontend-facing state
     mode = models.CharField(max_length=20, default="auto")               # auto | plan | supervised
+    # review is a local/card/feed signal; plan/permission require user intervention.
     attention_level = models.CharField(max_length=20, default="none")     # none | review | plan | permission
     task = models.CharField(max_length=500, blank=True, default="")       # current task description
     tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
@@ -649,4 +650,3 @@ class AgentFeedback(models.Model):
 
     def __str__(self):
         return f"rating={self.rating} → {self.agent.name} ({self.created_at:%H:%M})"
-
