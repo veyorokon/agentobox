@@ -163,11 +163,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         try:
             from django.utils import timezone
             from agents.models import Agent
+            from agents.services.broadcast import broadcast_agent_update
 
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 relay_connected=False,
                 relay_disconnected_at=timezone.now(),
             )
+            agent = await Agent.objects.aget(id=self.agent_id)
+            await broadcast_agent_update(agent)
         except Exception as exc:  # intentional: agent row may be deleted — don't crash disconnect handler
             log.warning(
                 "relay.update_failed",

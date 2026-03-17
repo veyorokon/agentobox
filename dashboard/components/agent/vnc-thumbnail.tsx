@@ -41,7 +41,7 @@ function buildVncWsUrl(agentId: string, token: string): string {
 }
 
 export function VncThumbnail({ agent }: VncThumbnailProps) {
-  const hasContainer = CONTAINER_ALIVE.has(agent.lifecycleStatus) && agent.relayConnected
+  const hasContainer = CONTAINER_ALIVE.has(agent.lifecycleStatus)
   const isStopped = agent.lifecycleStatus === "stopped"
   const hardRestartAgent = useHardRestartAgent()
 

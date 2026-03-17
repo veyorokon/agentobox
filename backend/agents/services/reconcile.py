@@ -113,7 +113,19 @@ def _mark_error(agent_id, error_message=""):
     # any stuck state, even if the transition isn't normally legal.
     transition_agent_status(agent, AgentStatus.ERROR, reason="reconciler", force=True)
     agent.deployed_at = None
-    update_fields = ["status", "deployed_at", "updated_at"]
+    agent.relay_connected = False
+    agent.relay_disconnected_at = timezone.now()
+    agent.sandbox_id = ""
+    agent.vnc_url = ""
+    update_fields = [
+        "status",
+        "deployed_at",
+        "relay_connected",
+        "relay_disconnected_at",
+        "sandbox_id",
+        "vnc_url",
+        "updated_at",
+    ]
     # Only write error_message if not already set (stream.py may have set it first)
     if error_message and not agent.error_message:
         agent.error_message = error_message[:2000]

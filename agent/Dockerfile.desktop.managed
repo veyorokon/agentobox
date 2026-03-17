@@ -71,8 +71,10 @@ RUN useradd -m -s /bin/bash agent || true \
 # managed_main.py's envfile loading propagate to the CC subprocess.
 COPY <<'ENTRYPOINT' /usr/local/bin/entrypoint.sh
 #!/bin/sh
-chown -R agent:agent "${AGENTOBOX_ROOT_DIR:-/var/lib/agentobox-agent}" /home/agent 2>/dev/null || true
+# Wait for provisioning to complete FIRST — backend writes files as root
+# after container creation. chown must run AFTER all files exist.
 python -m agent.runtime.fsbridge --wait
+chown -R agent:agent "${AGENTOBOX_ROOT_DIR:-/var/lib/agentobox-agent}" /home/agent 2>/dev/null || true
 exec gosu agent agentobox-agent-managed
 ENTRYPOINT
 RUN chmod +x /usr/local/bin/entrypoint.sh

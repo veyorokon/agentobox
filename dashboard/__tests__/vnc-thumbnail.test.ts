@@ -99,7 +99,9 @@ describe("VncThumbnail", () => {
     rerender(React.createElement(VncThumbnail, { agent: { ...baseAgent, relayConnected: false } }))
     expect(screen.getByTestId("vnc-screen")).toBeTruthy()
 
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(3000)
+    expect(screen.getByTestId("vnc-screen")).toBeTruthy()
+
     rerender(React.createElement(VncThumbnail, { agent: baseAgent }))
 
     expect(screen.getByTestId("vnc-screen")).toBeTruthy()

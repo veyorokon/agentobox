@@ -19,6 +19,7 @@ from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
     _detect_stuck_deploys,
+    _mark_error,
     _reap_errored_agents,
     _reap_orphans_sync,
 )
@@ -132,6 +133,35 @@ class TestDetectStuckDeploys:
         # Modal agents don't get the Docker liveness probe
         mock_runtime.get_status.assert_not_awaited()
         mock_terminate.assert_awaited_once()
+
+
+def test_mark_error_clears_stale_runtime_projection():
+    agent = MagicMock()
+    agent.id = "agent-1"
+    agent.deployed_at = timezone.now() - timedelta(seconds=12)
+    agent.error_message = ""
+    agent.relay_connected = True
+    agent.relay_disconnected_at = None
+    agent.sandbox_id = "sandbox-123"
+    agent.vnc_url = "http://runtime:6080"
+
+    mock_filter = MagicMock()
+    mock_filter.update = MagicMock()
+
+    with (
+        patch("agents.services.reconcile.Agent.objects.get", return_value=agent),
+        patch("agents.services.reconcile.Agent.objects.filter", return_value=mock_filter),
+        patch("agents.services.reconcile.transition_agent_status"),
+    ):
+        _mark_error.__wrapped__("agent-1", error_message="container died")
+
+    assert agent.deployed_at is None
+    assert agent.relay_connected is False
+    assert agent.relay_disconnected_at is not None
+    assert agent.sandbox_id == ""
+    assert agent.vnc_url == ""
+    assert agent.error_message == "container died"
+    agent.save.assert_called_once()
 
 
 class TestReapOrphans:

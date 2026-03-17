@@ -83,6 +83,29 @@ async def test_receive_json_ignores_task_update():
     mock_process.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_relay_disconnect_broadcasts_updated_agent_state():
+    consumer = _relay_consumer()
+    consumer.group_name = "relay_agent-123"
+    consumer.channel_name = "channel-123"
+    consumer.channel_layer = MagicMock()
+    consumer.channel_layer.group_discard = AsyncMock()
+
+    updated_agent = MagicMock()
+
+    with (
+        patch("agents.models.Agent.objects.filter") as mock_filter,
+        patch("agents.models.Agent.objects.aget", new_callable=AsyncMock, return_value=updated_agent),
+        patch("agents.services.broadcast.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+    ):
+        mock_filter.return_value.aupdate = AsyncMock()
+        await consumer.disconnect(1000)
+
+    consumer.channel_layer.group_discard.assert_awaited_once_with("relay_agent-123", "channel-123")
+    mock_filter.return_value.aupdate.assert_awaited_once()
+    mock_broadcast.assert_awaited_once_with(updated_agent)
+
+
 def test_transient_vnc_upstream_failure_when_agent_is_still_deploying():
     agent = MagicMock(status=AgentStatus.DEPLOYING, relay_connected=False)
 
