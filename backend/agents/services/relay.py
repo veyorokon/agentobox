@@ -15,7 +15,6 @@ control signals, not state.
 """
 
 import copy
-import json
 import uuid
 
 import structlog

@@ -26,7 +26,7 @@ from agents.errors import (
     ERR_RECONCILER_LOOP_FAILED,
     ERR_RECONCILER_STATUS_CHECK_FAILED,
 )
-from agents.models import Agent, AgentLifecycleAttempt, AgentLifecycleAttemptStatus, AgentStatus, DesiredStatus
+from agents.models import Agent, AgentLifecycleAttempt, AgentLifecycleAttemptStatus, AgentStatus
 from agents.services.lifecycle import transition_agent_status
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item

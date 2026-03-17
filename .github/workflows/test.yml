@@ -105,8 +105,8 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: cd backend && uv sync --group dev
-      - name: Run architecture invariant tests
-        run: uv run --directory backend pytest ../tests/architecture/ --tb=short -q -o "addopts="
+      - name: Run architecture checks
+        run: cd backend && uv run python agents/tests/check_architecture.py
 
   agent-unit:
     name: Agent Unit
@@ -117,9 +117,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: cd agent && uv sync --group dev
+        run: uv sync --package agent --group dev
       - name: Run agent unit tests
-        run: cd agent && uv run pytest -q -o addopts=
+        run: uv run --directory agent pytest tests/ -q -o addopts=
 
   lint:
     name: Lint

@@ -595,9 +595,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Volume is mounted at /vol, agent files at /vol/agents/<agent_id>.
         env["AGENTOBOX_ROOT_DIR"] = f"/vol/agents/{agent_id}"
 
-        image_ref = _runtime_image_ref(runtime_name, agent.agent_type)
-
-        # Resolve API key early — new runtime images need it in the container
+        # Resolve API key early — need it in the container
         # env so the CC process can authenticate directly (no api-proxy).
         api_key = _resolve_api_key(agent.model, secret_envs)
         if not api_key:
