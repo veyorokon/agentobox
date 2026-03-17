@@ -459,83 +459,6 @@ class TestPathParity:
     then verifies the Python constant matches.
     """
 
-    @staticmethod
-    def _extract_init_volume_dirs() -> set[str]:
-        """Parse init-volume script and extract covered directory prefixes.
-
-        Handles patterns in the script:
-        1. `for dir in X Y Z; do` → explicit dirs like tmp/abox-theme
-        2. `${AGENT_VOL}/some/path/*` or `"${AGENT_VOL}"/some/path/*` → glob dirs
-        """
-        script_path = (
-            Path(__file__).parent.parent.parent.parent
-            / "agent" / "rootfs" / "etc" / "s6-overlay" / "scripts" / "init-volume"
-        )
-        source = script_path.read_text()
-
-        dirs = set()
-
-        # Pattern 1: `for dir in tmp/abox-theme run/secrets ...; do`
-        for_match = re.search(r'for dir in\s+([^;]+);', source)
-        if for_match:
-            for d in for_match.group(1).split():
-                dirs.add(d.strip() + "/")
-
-        # Pattern 2: any ${AGENT_VOL}/path/* or "${AGENT_VOL}"/path/*
-        # Matches both quoted and unquoted AGENT_VOL references
-        for glob_match in re.finditer(
-            r'"\$\{AGENT_VOL\}"/?([^*"]+)\*|\$\{AGENT_VOL\}/([^*"\s]+)\*',
-            source,
-        ):
-            prefix = glob_match.group(1) or glob_match.group(2)
-            if prefix:
-                # Normalize: strip leading slash, ensure trailing slash
-                prefix = prefix.lstrip("/")
-                if not prefix.endswith("/"):
-                    prefix += "/"
-                dirs.add(prefix)
-
-        return dirs
-
-    @pytest.mark.skip(reason="init-volume script moved out of agent/rootfs/ during agent restructure")
-    def test_symlinked_prefixes_covers_init_volume(self):
-        """Every dir init-volume symlinks is in SYMLINKED_PREFIXES."""
-        init_dirs = self._extract_init_volume_dirs()
-        python_prefixes = set(SYMLINKED_PREFIXES)
-
-        # Every bash dir must be covered by a Python prefix
-        uncovered = set()
-        for d in init_dirs:
-            if not any(d.startswith(p) or p.startswith(d) for p in python_prefixes):
-                uncovered.add(d)
-
-        assert not uncovered, (
-            f"init-volume symlinks dirs not in SYMLINKED_PREFIXES: {uncovered}. "
-            f"Add them to SYMLINKED_PREFIXES in volume.py."
-        )
-
-    @pytest.mark.skip(reason="init-volume script moved out of agent/rootfs/ during agent restructure")
-    def test_symlinked_prefixes_no_extras(self):
-        """SYMLINKED_PREFIXES doesn't contain dirs init-volume doesn't cover.
-
-        Exception: _abox/ is control plane accessed directly, not symlinked.
-        """
-        init_dirs = self._extract_init_volume_dirs()
-        python_prefixes = set(SYMLINKED_PREFIXES)
-
-        # _abox/ is a known exception — accessed via /vol/ directly, not symlinked
-        exceptions = {"_abox/"}
-
-        extras = set()
-        for p in python_prefixes - exceptions:
-            if not any(p.startswith(d) or d.startswith(p) for d in init_dirs):
-                extras.add(p)
-
-        assert not extras, (
-            f"SYMLINKED_PREFIXES has dirs not in init-volume: {extras}. "
-            f"Either add to init-volume or remove from SYMLINKED_PREFIXES."
-        )
-
     def test_managed_config_files_under_symlinked_prefixes(self):
         """Every MANAGED_CONFIG_FILES entry is under a SYMLINKED_PREFIXES dir."""
         for f in MANAGED_CONFIG_FILES:
@@ -562,22 +485,7 @@ class TestPathParity:
 class TestProvisioningGate:
     """Boot readiness must wait for explicit provisioning completion."""
 
-    INIT_VOLUME = (
-        Path(__file__).parent.parent.parent.parent
-        / "agent" / "rootfs" / "etc" / "s6-overlay" / "scripts" / "init-volume"
-    )
     LIFECYCLE = Path(__file__).parent.parent / "services" / "lifecycle.py"
-
-    @pytest.mark.skip(reason="init-volume script moved out of agent/rootfs/ during agent restructure")
-    def test_init_volume_waits_for_provisioning_sentinel(self):
-        source = self.INIT_VOLUME.read_text()
-        assert PROVISIONING_SENTINEL in source, (
-            "init-volume does not wait for the provisioning sentinel — "
-            "services can start before .relay_env and other boot files exist"
-        )
-        assert 'while [ ! -f "${AGENT_VOL}/_abox/provisioned.ready" ]' in source, (
-            "init-volume gate is not file-based on provisioned.ready"
-        )
 
     def test_lifecycle_marks_provisioning_ready(self):
         source = self.LIFECYCLE.read_text()

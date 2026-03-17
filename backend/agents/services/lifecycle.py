@@ -59,7 +59,7 @@ from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
 from agents.schemas import ConfigSnapshot
 from agents.services.broadcast import broadcast_agent_update
-from agents.services.provision import provision_workspace, provision_scoped_sudo
+from agents.services.provision import provision_workspace
 from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
 from agents.services.volume import PROVISIONING_SENTINEL
 from agents.adapters import get_adapter
@@ -72,20 +72,6 @@ ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 log = structlog.get_logger("abox.lifecycle")
 
 
-def _image_requires_scoped_sudo(image_ref: str) -> bool:
-    """Only legacy claude images need sudoers hardening.
-
-    The new runtime image family does not ship `sudo` or `/etc/sudoers.d`, so
-    attempting to provision scoped sudo there is simply the wrong contract.
-    """
-    image_name = image_ref.rsplit("/", 1)[-1]
-    return not image_name.startswith("agentobox-agent-runtime")
-
-
-def _runtime_image_ref(runtime_name: str, agent_type: str) -> str:
-    if runtime_name == "modal":
-        return app_config.modal.agent_image_map.get(agent_type, app_config.modal.agent_image)
-    return app_config.agent.image_map.get(agent_type, app_config.agent.image)
 
 
 def _runtime_executor(agent_type: str) -> str:
@@ -625,36 +611,14 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
         is_oauth = api_key.startswith("sk-ant-oat")
 
-        # New runtime images don't have api-proxy at localhost:9999.
-        # Pass the real API key and upstream URL directly in container env.
-        # Old images (scoped sudo) use the proxy — key stays out of env.
-        if not _image_requires_scoped_sudo(image_ref) and not is_oauth:
+        # Pass the real API key directly in container env.
+        # OAuth tokens use .credentials.json on disk instead.
+        if not is_oauth:
             env["ANTHROPIC_API_KEY"] = api_key
             env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
 
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
-
-        # Dev: bind-mount relay files so changes don't require image rebuild.
-        rootfs_path = app_config.agent.rootfs_path
-        if rootfs_path:
-            import os as _os
-            # rootfs_path = agent/claude/rootfs (per-adapter)
-            # shared rootfs = agent/rootfs (shared across adapters)
-            shared_rootfs = _os.path.realpath(f"{rootfs_path}/../../rootfs")
-            dev_mounts = [
-                ("dev-relay", "/opt/abox/relay.py", f"{rootfs_path}/opt/abox/relay.py"),
-                ("dev-relay-common", "/opt/abox/relay_common.py",
-                 f"{shared_rootfs}/opt/abox/relay_common.py"),
-                ("dev-converters", "/opt/abox/converters.py",
-                 f"{shared_rootfs}/opt/abox/converters.py"),
-            ]
-            for name, mount_path, host_path in dev_mounts:
-                resolved = _os.path.realpath(host_path)
-                if _os.path.exists(resolved):
-                    mounts.append(VolumeMount(
-                        name=name, mount_path=mount_path, host_path=resolved,
-                    ))
 
         sandbox = await runtime.create(agent.name, env, volumes=mounts or None)
         sandbox_id = sandbox.id
@@ -701,10 +665,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         # Write all config files to the volume. The init-volume oneshot
         # creates symlinks so the container sees these at their canonical paths.
-        # New runtime images read API keys from container env (set above),
-        # not via apiKeyHelper. Keep OAuth credentials provisioned because CC
-        # still needs the credential files on disk in that path.
-        provision_api_key = api_key if (_image_requires_scoped_sudo(image_ref) or is_oauth) else ""
+        # API key is in container env — don't write apiKeyHelper to settings.json.
+        # OAuth still needs credential files on disk.
+        provision_api_key = api_key if is_oauth else ""
         await provision_workspace(
             vol, project,
             agent_type=agent.agent_type,
@@ -723,11 +686,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             model=agent.model,
             agent_tags=agent.tags or [],
         )
-        # Clear stale OAuth credentials for API-key auth on new runtime images.
-        # CC prefers .credentials.json over ANTHROPIC_API_KEY from env — if a
-        # prior deploy left an expired OAuth token on the volume, CC will use
-        # it and hang. Write empty JSON so CC falls through to the env var.
-        if not _image_requires_scoped_sudo(image_ref) and not is_oauth:
+        # Clear stale OAuth credentials for API-key auth.
+        # CC prefers .credentials.json over ANTHROPIC_API_KEY from env.
+        if not is_oauth:
             vol.write("home/agent/.claude/.credentials.json", "{}")
 
         if attempt_id:
@@ -740,7 +701,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Build relay environment via adapter (single source of truth for
         # env var names, model normalization, mode vocabulary, etc.)
         adapter = get_adapter(agent.agent_type)
-        relay_env_api_key = api_key if (_image_requires_scoped_sudo(image_ref) or is_oauth) else ""
+        relay_env_api_key = api_key if is_oauth else ""
         relay_env_content = adapter.build_relay_env(
             agent_id=agent_id,
             agent_name=agent.name,
@@ -781,13 +742,6 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="provisioning_ready")
 
-        image_ref = _runtime_image_ref(runtime_name, agent.agent_type)
-        if _image_requires_scoped_sudo(image_ref):
-            await provision_scoped_sudo(runtime, sandbox_id, op_log)
-            if attempt_id:
-                await _update_lifecycle_attempt(attempt_id, step="sudo_provisioned")
-        else:
-            op_log.info("lifecycle.sudo_skip", reason="runtime image does not ship sudo", image_ref=image_ref)
 
         # Save relay_token and sandbox details BEFORE launching relay.
         # The relay POSTs to /agents/<id>/stream/ immediately on startup,
@@ -806,22 +760,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
         await broadcast_agent_update(agent)
 
-        # Old images: s6 supervises relay + services, tmux tails logs for VNC.
-        # New runtime images: python runtime manages its own services, no tmux/s6.
-        image_ref = _runtime_image_ref(runtime_name, agent.agent_type)
-        if _image_requires_scoped_sudo(image_ref):
-            # Legacy image — spawn tmux session tailing s6 relay logs
-            await runtime.exec(
-                sandbox.id,
-                ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50",
-                 "bash", "-c",
-                 "exec tail -F /run/uncaught-logs/current 2>/dev/null || exec sleep infinity"],
-                user="agent",
-            )
-            op_log.info("lifecycle.relay_launched", team_name=team_name, parent_session_id=parent_session_id)
-        else:
-            # New runtime image — runtime manages its own process lifecycle
-            op_log.info("lifecycle.runtime_self_managed", image_ref=image_ref)
+        # Runtime manages its own process lifecycle — no tmux/s6 needed.
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
 

@@ -10,10 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BACKEND_DIR = REPO_ROOT / "backend"
 AGENT_DIR = REPO_ROOT / "agent"
 SERVICES_DIR = BACKEND_DIR / "agents" / "services"
-RELAY_PATH = AGENT_DIR / "claude" / "rootfs" / "opt" / "abox" / "relay.py"
 
-# Agent-side Python roots (base image + claude overlay)
-AGENT_PY_ROOTS = [
-    AGENT_DIR / "rootfs" / "opt" / "abox",
-    AGENT_DIR / "claude" / "rootfs" / "opt" / "abox",
-]
+# Agent runtime Python source
+AGENT_RUNTIME_DIR = AGENT_DIR / "runtime"
+AGENT_CONTRACTS_DIR = AGENT_DIR / "contracts"
+AGENT_TRANSPORTS_DIR = AGENT_DIR / "transports"

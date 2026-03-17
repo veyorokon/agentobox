@@ -24,15 +24,8 @@ _REPO_ROOT = PROJECT_ROOT.parent
 AGENT_ROOT = _REPO_ROOT / "agent" if (_REPO_ROOT / "agent").is_dir() else Path("/agent")
 DASHBOARD_ROOT = _REPO_ROOT / "dashboard" if (_REPO_ROOT / "dashboard").is_dir() else Path("/dashboard")
 
-# All agent rootfs dirs: shared (agent/rootfs) + per-type (agent/claude/rootfs)
+# Old rootfs dirs no longer exist — empty list so tests that reference them skip gracefully.
 AGENT_ROOTFS_DIRS: list[Path] = []
-for _d in sorted(AGENT_ROOT.iterdir()) if AGENT_ROOT.is_dir() else []:
-    _rootfs = _d / "rootfs" if _d.is_dir() and (_d / "rootfs").is_dir() else None
-    if _rootfs:
-        AGENT_ROOTFS_DIRS.append(_rootfs)
-_shared_rootfs = AGENT_ROOT / "rootfs"
-if _shared_rootfs.is_dir():
-    AGENT_ROOTFS_DIRS.append(_shared_rootfs)
 
 
 def _read_source(path: Path) -> str:

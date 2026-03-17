@@ -28,7 +28,6 @@ from agents.models import (
 )
 from agents.services.lifecycle import (
     _create_lifecycle_attempt_sync,
-    _image_requires_scoped_sudo,
     _runtime_executor,
     _update_lifecycle_attempt_sync,
     transition_agent_status,
@@ -43,17 +42,6 @@ def _create_project_without_signals(*, name: str, owner: User) -> Project:
     return project
 
 pytestmark = pytest.mark.unit
-
-
-def test_image_requires_scoped_sudo_for_legacy_claude_image():
-    assert _image_requires_scoped_sudo("agentobox-agent-claude:latest") is True
-    assert _image_requires_scoped_sudo("ghcr.io/veyorokon/agentobox-agent-claude:dev") is True
-
-
-def test_image_requires_scoped_sudo_skips_new_runtime_images():
-    assert _image_requires_scoped_sudo("agentobox-agent-runtime-managed:latest") is False
-    assert _image_requires_scoped_sudo("agentobox-agent-runtime-desktop-managed:latest") is False
-    assert _image_requires_scoped_sudo("ghcr.io/veyorokon/agentobox-agent-runtime:dev") is False
 
 
 def test_runtime_executor_maps_claude_code_agent_type():

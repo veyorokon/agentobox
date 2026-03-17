@@ -93,7 +93,6 @@ class AgentConfig(_EnvSettings):
         default_factory=dict,
     )
     volume_name: str = Field(default="agentobox_agent-volumes", alias="AGENT_VOLUME_NAME")
-    rootfs_path: str = Field(default="", alias="AGENT_ROOTFS_PATH")
 
 
 class ModalConfig(_EnvSettings):
