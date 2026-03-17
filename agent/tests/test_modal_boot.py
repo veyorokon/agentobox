@@ -13,7 +13,7 @@ import modal
 # Resolve paths relative to this script, not cwd
 _REPO = os.path.dirname(os.path.abspath(__file__))
 
-GHCR_IMAGE = "ghcr.io/veyorokon/agentobox-agent-claude:dev"
+GHCR_IMAGE = "ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:dev"
 AGENT_DIR = os.path.join(_REPO, "agent")
 
 # Files to inject (local path → container path)

@@ -99,7 +99,7 @@ class AgentConfig(_EnvSettings):
 class ModalConfig(_EnvSettings):
     app_name: str = Field(default="agentobox", alias="MODAL_APP_NAME")
     agent_image: str = Field(
-        default="ghcr.io/veyorokon/agentobox-agent-claude:dev",
+        default="ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:dev",
         alias="MODAL_AGENT_IMAGE",
     )
     agent_image_map: dict[str, str] = Field(

@@ -9,6 +9,7 @@ GraphQL types delegate computed fields to shared helpers here.
 """
 
 from asgiref.sync import sync_to_async
+from decimal import Decimal
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +30,35 @@ def _count_task_progress_sync(agent_id) -> dict | None:
 
 async def count_task_progress(agent_id) -> dict | None:
     return await sync_to_async(_count_task_progress_sync, thread_sensitive=False)(agent_id)
+
+
+def _compute_agent_total_cost_sync(agent_id, session_cost_usd) -> float:
+    """Sum the latest cumulative cost snapshot from each historical session.
+
+    SessionResult.total_cost_usd is cumulative within a session, so the total
+    lifetime agent cost is the sum of the latest value for each session_id.
+    Fall back to the materialized current-session field when no history exists
+    yet, which covers a just-started session before its first result event.
+    """
+    from agents.models import SessionResult
+
+    rows = SessionResult.objects.filter(agent_id=agent_id).order_by(
+        "session_id", "created_at", "id"
+    ).values_list("session_id", "total_cost_usd")
+
+    latest_by_session: dict[str, Decimal] = {}
+    for session_id, total_cost_usd in rows:
+        latest_by_session[session_id] = total_cost_usd or Decimal("0")
+
+    if latest_by_session:
+        return float(sum(latest_by_session.values(), Decimal("0")))
+    return float(session_cost_usd or 0)
+
+
+async def compute_agent_total_cost(agent_id, session_cost_usd) -> float:
+    return await sync_to_async(
+        _compute_agent_total_cost_sync, thread_sensitive=False
+    )(agent_id, session_cost_usd)
 
 
 def _fetch_tasks_sync(agent_id) -> list[dict]:
@@ -85,6 +115,7 @@ async def serialize_agent(agent) -> dict:
     task_progress = await count_task_progress(agent.id)
     tasks_raw = await fetch_tasks(agent.id)
     attempts_raw = await fetch_lifecycle_attempts(agent.id)
+    total_cost = await compute_agent_total_cost(agent.id, agent.session_cost_usd)
 
     tasks = [
         {
@@ -151,7 +182,7 @@ async def serialize_agent(agent) -> dict:
         "isConverged": agent.is_converged,
         "lastOutput": adapter.last_output(agent.latest_snapshot),
         "liveAction": adapter.live_action(agent.latest_snapshot) or None,
-        "cost": float(agent.session_cost_usd),
+        "cost": total_cost,
         "duration": adapter.duration(agent.latest_snapshot),
         "turns": adapter.turns(agent.latest_snapshot),
         "allowedTools": agent.allowed_tools if isinstance(agent.allowed_tools, list) else [],

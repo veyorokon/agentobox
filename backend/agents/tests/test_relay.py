@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.services.relay import _normalize_content, deliver_input, send_message
+from agents.models import AgentStatus
+from agents.services.relay import _normalize_content, deliver_input, send_message, set_agent_mode
 from agents.services.relay_commands import (
     CallbackBehavior,
     CallbackResponseCommand,
@@ -257,11 +258,7 @@ async def test_deliver_input_writes_canonical_task_envelope():
 
     assert result is False
     # Assert the canonical task envelope — not the legacy {"type": "input", "payload": ...}
-    fake_agent.volume.append_inbox.assert_called_once()
-    envelope = fake_agent.volume.append_inbox.call_args.args[0]
-    assert envelope["type"] == "task"
-    assert envelope["task_id"] == "test-task-1"
-    assert envelope["input"] == {"role": "user", "content": content}
+    fake_agent.volume.append_task.assert_called_once_with(task_id="test-task-1", content=content)
     # Assert reload command
     mock_push.assert_awaited_once()
     cmd = mock_push.await_args.args[1]
@@ -279,10 +276,10 @@ async def test_deliver_input_generates_task_id_when_omitted():
     with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True):
         await deliver_input(fake_agent, [{"type": "text", "text": "hello"}])
 
-    envelope = fake_agent.volume.append_inbox.call_args.args[0]
-    assert envelope["type"] == "task"
-    assert len(envelope["task_id"]) == 16  # uuid hex[:16]
-    assert envelope["input"]["role"] == "user"
+    fake_agent.volume.append_task.assert_called_once()
+    _, kwargs = fake_agent.volume.append_task.call_args
+    assert len(kwargs["task_id"]) == 16  # uuid hex[:16]
+    assert kwargs["content"][0]["type"] == "text"
 
 
 @pytest.mark.asyncio
@@ -308,3 +305,69 @@ async def test_interagent_delivery_passes_content_blocks():
     assert isinstance(content_blocks, list)
     assert content_blocks[0]["type"] == "text"
     assert content_blocks[0]["text"].startswith("[Team message from lead]:")
+
+
+@pytest.mark.asyncio
+async def test_set_agent_mode_recomputes_review_attention_for_supervised_mode():
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-123"
+    fake_agent.project_id = "proj-456"
+    fake_agent.agent_type = "claude-code"
+    fake_agent.status = AgentStatus.IDLE
+    fake_agent.mode = "auto"
+    fake_agent.model = "claude-haiku"
+    fake_agent.allowed_tools = []
+    fake_agent.latest_snapshot = {"result": {"type": "result", "session_id": "session-1"}}
+    fake_agent.arefresh_from_db = AsyncMock()
+    fake_agent.asave = AsyncMock()
+    fake_agent.volume = MagicMock()
+    fake_agent.volume.mutate_state.return_value = ReloadCommand(path="_abox/state.json")
+
+    fake_adapter = MagicMock()
+    fake_adapter.mode_to_wire.return_value = "default"
+
+    with (
+        patch("agents.services.relay.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
+        patch("agents.services.relay.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+        patch("agents.services.relay.create_stream_event", new_callable=AsyncMock),
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.adapters.get_adapter", return_value=fake_adapter),
+        patch("agents.services.feed.recompute_attention", new_callable=AsyncMock) as mock_recompute,
+    ):
+        result = await set_agent_mode("agent-123", "supervised")
+
+    assert result is fake_agent
+    mock_recompute.assert_awaited_once_with("proj-456", "agent-123", after_result=True)
+    mock_broadcast.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_set_agent_mode_clears_review_attention_when_leaving_supervised():
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-123"
+    fake_agent.project_id = "proj-456"
+    fake_agent.agent_type = "claude-code"
+    fake_agent.status = AgentStatus.IDLE
+    fake_agent.mode = "supervised"
+    fake_agent.model = "claude-haiku"
+    fake_agent.allowed_tools = []
+    fake_agent.latest_snapshot = {"result": {"type": "result", "session_id": "session-1"}}
+    fake_agent.arefresh_from_db = AsyncMock()
+    fake_agent.asave = AsyncMock()
+    fake_agent.volume = MagicMock()
+    fake_agent.volume.mutate_state.return_value = ReloadCommand(path="_abox/state.json")
+
+    fake_adapter = MagicMock()
+    fake_adapter.mode_to_wire.return_value = "acceptEdits"
+
+    with (
+        patch("agents.services.relay.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
+        patch("agents.services.relay.broadcast_agent_update", new_callable=AsyncMock),
+        patch("agents.services.relay.create_stream_event", new_callable=AsyncMock),
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.adapters.get_adapter", return_value=fake_adapter),
+        patch("agents.services.feed.recompute_attention", new_callable=AsyncMock) as mock_recompute,
+    ):
+        await set_agent_mode("agent-123", "auto")
+
+    mock_recompute.assert_awaited_once_with("proj-456", "agent-123", after_result=False)

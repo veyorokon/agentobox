@@ -128,5 +128,6 @@ export type AgentTask = {
 export type CardActionItem =
   | { kind: "permission"; feedItem: Extract<TeamFeedItem, { type: "permission" }> }
   | { kind: "plan"; feedItem: Extract<TeamFeedItem, { type: "plan" }> }
+  | { kind: "review"; agentName: string; lastOutput: string }
   | { kind: "config-dirty" }
   | { kind: "new-skill"; skillId: string; skillName: string }

@@ -23,6 +23,8 @@ import React, { type ReactNode } from "react"
 
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
+import { GET_AGENT_TASKS } from "@/lib/graphql/queries/tasks"
+import { GET_SKILLS } from "@/lib/graphql/queries/skills"
 
 /* ================================================================== */
 /*  MOCKS                                                               */
@@ -106,7 +108,10 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     mcpServers: [],
     runtime: "docker",
     workspacePath: "/home/vahid-eyorokon/projects/agentobox",
+    triggers: null,
+    computeSeconds: 300,
     taskProgress: { __typename: "TaskProgressType" as const, done: 3, total: 5 },
+    tasks: [],
     ...overrides,
   }
 }
@@ -232,6 +237,20 @@ function feedMock(items: Record<string, unknown>[]): MockedResponse {
   }
 }
 
+function agentTasksMock(tasks: Record<string, unknown>[] = []): MockedResponse {
+  return {
+    request: { query: GET_AGENT_TASKS, variables: { agentId: "agent-1" } },
+    result: { data: { agent: { __typename: "AgentType" as const, id: "agent-1", tasks } } },
+  }
+}
+
+function skillsMock(skills: Record<string, unknown>[] = []): MockedResponse {
+  return {
+    request: { query: GET_SKILLS, variables: { projectId: MOCK_PROJECT_ID } },
+    result: { data: { skills } },
+  }
+}
+
 /* ================================================================== */
 /*  STATE CONSISTENCY TESTS                                             */
 /*                                                                      */
@@ -270,7 +289,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([perm])]) },
+        { wrapper: makeWrapper([feedMock([perm]), agentTasksMock(), skillsMock()]) },
       )
 
       await waitFor(() => {
@@ -301,7 +320,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([plan])]) },
+        { wrapper: makeWrapper([feedMock([plan]), agentTasksMock(), skillsMock()]) },
       )
 
       await waitFor(() => {
@@ -332,7 +351,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([summary])]) },
+        { wrapper: makeWrapper([feedMock([summary]), agentTasksMock(), skillsMock()]) },
       )
 
       // Wait for card to settle (composer @-mention is always present)
@@ -366,7 +385,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([errorItem])]) },
+        { wrapper: makeWrapper([feedMock([errorItem]), agentTasksMock(), skillsMock()]) },
       )
 
       // Wait for card to settle

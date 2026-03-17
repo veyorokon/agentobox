@@ -6,7 +6,7 @@ not from stale model columns.
 
 import pytest
 
-from agents.models import Agent, AgentStatus
+from agents.models import Agent, AgentStatus, SessionResult
 
 pytestmark = pytest.mark.integration
 
@@ -87,11 +87,37 @@ class TestResolverAdapterDelegation:
         result = AgentType.turns(agent)
         assert result == 7
 
-    def test_cost_still_reads_from_model(self, agent):
-        """cost reads from session_cost_usd column, not snapshot."""
+    def test_cost_falls_back_to_session_field_without_history(self, agent):
+        """cost falls back to the current session field before any results persist."""
         from agents.graphql.types import AgentType
         result = AgentType.cost(agent)
         assert result == pytest.approx(1.23)
+
+    def test_cost_accumulates_latest_total_per_session(self, agent):
+        """Agent card cost should survive restarts by summing session totals."""
+        from agents.graphql.types import AgentType
+
+        SessionResult.objects.create(
+            agent=agent,
+            session_id="session-a",
+            total_cost_usd=0.01,
+            duration_ms=1000,
+        )
+        SessionResult.objects.create(
+            agent=agent,
+            session_id="session-a",
+            total_cost_usd=0.04,
+            duration_ms=2000,
+        )
+        SessionResult.objects.create(
+            agent=agent,
+            session_id="session-b",
+            total_cost_usd=0.02,
+            duration_ms=1000,
+        )
+
+        result = AgentType.cost(agent)
+        assert result == pytest.approx(0.06)
 
     def test_phase_still_reads_from_model(self, agent):
         """phase is an auto field that reads directly from the model."""

@@ -44,8 +44,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ci-smoke-secret-key-not-for-production
       AGENT_RUNTIME: docker
-      AGENT_IMAGE: agentobox-agent-claude:latest
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude:ci
+      AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:latest
+      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:ci
       DJANGO_SETTINGS_MODULE: config.settings
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}

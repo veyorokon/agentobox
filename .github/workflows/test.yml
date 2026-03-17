@@ -80,8 +80,8 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-test-secret-key-not-for-production
       AGENT_RUNTIME: docker
-      AGENT_IMAGE: agentobox-agent-claude:ci
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude:dev
+      AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:ci
+      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:dev
       DJANGO_SETTINGS_MODULE: config.settings
     steps:
       - uses: actions/checkout@v5
@@ -113,16 +113,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
-      - name: Install agent test dependencies
-        run: |
-          SDK_VERSION=$(grep -oP 'claude-agent-sdk==\K[^\s\\]+' agent/claude/Dockerfile)
-          python -m pip install --upgrade pip
-          python -m pip install pytest==9.0.2 websockets==16.0 "claude-agent-sdk==${SDK_VERSION}" fastapi httpx
+          enable-cache: true
+      - name: Install agent dependencies
+        run: cd agent && uv sync --group dev
       - name: Run agent unit tests
-        run: cd agent && python -m pytest -q
+        run: cd agent && uv run pytest -q -o addopts=
 
   lint:
     name: Lint
@@ -170,13 +167,16 @@ jobs:
           enable-cache: true
 
       # Build agent images (plain docker build — test-only, never pushed)
-      - name: Build agent base image
+      - name: Build agent runtime images
         if: env.SKIP_SMOKE != 'true'
-        run: docker build -t agentobox-agent-base:latest -f agent/Dockerfile.base agent/
-
-      - name: Build agent claude image
-        if: env.SKIP_SMOKE != 'true'
-        run: docker build -t agentobox-agent-claude:latest --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile agent/
+        run: |
+          docker build -t agentobox-agent-runtime-managed:latest \
+            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
+            -f agent/Dockerfile.managed agent/
+          docker build -t agentobox-agent-runtime-desktop-managed:latest \
+            --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest \
+            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
+            -f agent/Dockerfile.desktop.managed agent/
 
       # Start backend stack via compose
       - name: Start backend stack
@@ -223,12 +223,16 @@ jobs:
         if: env.SKIP_SMOKE != 'true'
         with:
           enable-cache: true
-      - name: Build agent base image
+      - name: Build agent runtime images
         if: env.SKIP_SMOKE != 'true'
-        run: docker build -t agentobox-agent-base:latest -f agent/Dockerfile.base agent/
-      - name: Build agent claude image
-        if: env.SKIP_SMOKE != 'true'
-        run: docker build -t agentobox-agent-claude:latest --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile agent/
+        run: |
+          docker build -t agentobox-agent-runtime-managed:latest \
+            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
+            -f agent/Dockerfile.managed agent/
+          docker build -t agentobox-agent-runtime-desktop-managed:latest \
+            --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest \
+            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
+            -f agent/Dockerfile.desktop.managed agent/
       - name: Start backend stack
         if: env.SKIP_SMOKE != 'true'
         run: |

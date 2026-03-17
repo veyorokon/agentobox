@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-base agent-image-claude agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -23,12 +23,6 @@ codegen: schema
 
 PLATFORM ?= linux/amd64
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
-
-agent-image-base:
-	docker build --platform $(PLATFORM) -f agent/Dockerfile.base -t agentobox-agent-base:latest ./agent
-
-agent-image-claude: agent-image-base
-	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent
 
 agent-image: agent-image-runtime-desktop-managed
 
@@ -70,13 +64,7 @@ _test-dashboard:
 	cd dashboard && pnpm vitest run
 
 test-agent:
-	docker run --rm --entrypoint python3 \
-		-v ./agent/tests:/opt/abox/tests \
-		-v ./agent/rootfs:/opt/abox/rootfs \
-		-v ./agent/claude/rootfs:/opt/abox/claude/rootfs \
-		-v ./agent/rootfs/opt/abox/relay_http.py:/opt/abox/relay_http.py \
-		agentobox-agent-claude:latest \
-		-m pytest /opt/abox/tests -v
+	cd agent && uv run pytest tests/ -v -o addopts=
 
 test-agent-runtime-docker-contract:
 	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts=

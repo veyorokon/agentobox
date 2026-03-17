@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import type { PendingItem } from "@/lib/types"
 import { useTeamStore } from "@/lib/stores/team"
 import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
+import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentTag } from "@/components/agent/avatar"
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer"
@@ -22,6 +23,8 @@ export function AttentionBar() {
   // ── Store subscriptions ───────────────────────────────────────────
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
+  const { data: agentsData } = useAgents()
+  const agents = agentsData?.agents ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
   const reviewAgent = useTeamStore(s => s.reviewAgent)
@@ -51,7 +54,38 @@ export function AttentionBar() {
     ? pending.find(p => p.feedItemId === expandedFeedItemId && p.item.type === "plan")
     : null
 
-  if (pending.length === 0) return null
+  const handleReview = (agentName: string, id: string) => {
+    reviewAgent(agentName)
+    setMainTab("chat")
+    setExpandedFeedItemId(id)
+  }
+
+  const reviewCandidate = useMemo(
+    () => agents.find(agent => agent.attentionLevel === "review" && Boolean(agent.lastOutput)),
+    [agents],
+  )
+
+  if (pending.length === 0) {
+    if (!reviewCandidate) return null
+    return (
+      <div className="px-3 @[640px]/main:px-6 mb-2 max-w-3xl mx-auto w-full">
+        <button
+          type="button"
+          onClick={() => handleReview(reviewCandidate.name, reviewCandidate.id)}
+          className="w-full rounded-lg border border-warning/20 bg-warning-subtle/10 px-3.5 py-2.5 flex items-center gap-2 text-left hover:bg-warning-subtle/15 transition-colors"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
+          <span className="text-[11px] text-warning font-mono shrink-0">
+            {reviewCandidate.name} · Review latest output
+          </span>
+          <span className="text-xs text-secondary truncate flex-1 min-w-0">
+            {reviewCandidate.lastOutput}
+          </span>
+          <ChevronRight className="h-3 w-3 text-warning shrink-0" />
+        </button>
+      </div>
+    )
+  }
 
   // Sort: permissions first, then plans
   const sorted = [...pending].sort((a, b) => {
@@ -64,12 +98,6 @@ export function AttentionBar() {
   const current = sorted[clamped]
   const { item, feedItemId, agentId } = current
   const isFocused = focusedAgentId != null && agentId === focusedAgentId
-
-  const handleReview = (agentName: string, id: string) => {
-    reviewAgent(agentName)
-    setMainTab("chat")
-    setExpandedFeedItemId(id)
-  }
 
   const handleResolvePlanAndCollapse = (id: string, verdict: "approved" | "rejected") => {
     resolvePlan(id, verdict)
