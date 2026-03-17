@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-
 from agent.contracts.platform import ExecResult, PlatformKind
 from agent.platform.base import BasePlatformAdapter
 
@@ -13,17 +11,7 @@ class LocalPlatformAdapter(BasePlatformAdapter):
         return None
 
     def exec(self, cmd: list[str]) -> ExecResult:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return ExecResult(
-            exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-        )
+        return self._run_local_command(cmd)
 
     def terminate(self) -> None:
         return None

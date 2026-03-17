@@ -5,10 +5,18 @@ from dataclasses import dataclass, field
 from agent.contracts.lifecycle import RuntimeState, ServiceState, StartupStage
 from agent.contracts.mode import AgentMode
 from agent.contracts.platform import PlatformKind
+from agent.contracts.profile import RuntimeProfile
 from agent.contracts.transport import TransportSnapshot
 
 
-STATUS_SCHEMA_VERSION = "1"
+STATUS_SCHEMA_VERSION = "2"
+
+
+@dataclass(frozen=True)
+class BuildMetadata:
+    image_ref: str = ""
+    image_digest: str = ""
+    git_commit: str = ""
 
 
 @dataclass(frozen=True)
@@ -23,6 +31,8 @@ class RuntimeSnapshot:
 class StatusDocument:
     mode: AgentMode
     platform: PlatformKind
+    profile: RuntimeProfile
+    build: BuildMetadata
     startup_stage: StartupStage
     runtime_state: RuntimeState
     runtime: RuntimeSnapshot
@@ -37,6 +47,12 @@ class StatusDocument:
             "status_version": self.status_version,
             "mode": self.mode.value,
             "platform": self.platform.value,
+            "profile": self.profile.value,
+            "build": {
+                "image_ref": self.build.image_ref,
+                "image_digest": self.build.image_digest,
+                "git_commit": self.build.git_commit,
+            },
             "startup_stage": self.startup_stage.value,
             "runtime_state": self.runtime_state.value,
             "runtime": {

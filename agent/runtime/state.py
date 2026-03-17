@@ -6,7 +6,8 @@ from threading import Lock
 from agent.contracts.lifecycle import RuntimeState, ServiceState, StartupStage
 from agent.contracts.mode import AgentMode
 from agent.contracts.platform import PlatformKind
-from agent.contracts.status import RuntimeSnapshot, StatusDocument
+from agent.contracts.profile import RuntimeProfile
+from agent.contracts.status import BuildMetadata, RuntimeSnapshot, StatusDocument
 from agent.contracts.transport import TransportSnapshot, TransportState
 
 
@@ -14,6 +15,8 @@ from agent.contracts.transport import TransportSnapshot, TransportState
 class MutableRuntimeState:
     mode: AgentMode
     platform: PlatformKind
+    profile: RuntimeProfile
+    build: BuildMetadata
     startup_stage: StartupStage = StartupStage.CONFIG_LOADING
     runtime_state: RuntimeState = RuntimeState.STARTING
     session_id: str = ""
@@ -30,9 +33,20 @@ class MutableRuntimeState:
 
 
 class RuntimeStateStore:
-    def __init__(self, mode: AgentMode, platform: PlatformKind):
+    def __init__(
+        self,
+        mode: AgentMode,
+        platform: PlatformKind,
+        profile: RuntimeProfile = RuntimeProfile.CORE,
+        build: BuildMetadata = BuildMetadata(),
+    ):
         self._lock = Lock()
-        self._state = MutableRuntimeState(mode=mode, platform=platform)
+        self._state = MutableRuntimeState(
+            mode=mode,
+            platform=platform,
+            profile=profile,
+            build=build,
+        )
 
     def update_stage(self, stage: StartupStage) -> None:
         with self._lock:
@@ -174,6 +188,8 @@ class RuntimeStateStore:
             return StatusDocument(
                 mode=self._state.mode,
                 platform=self._state.platform,
+                profile=self._state.profile,
+                build=self._state.build,
                 startup_stage=self._state.startup_stage,
                 runtime_state=self._state.runtime_state,
                 runtime=runtime,

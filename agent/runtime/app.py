@@ -13,18 +13,24 @@ from time import sleep
 from typing import Callable
 
 from agent.contracts.mode import AgentMode
-from agent.contracts.platform import PlatformAdapter
+from agent.contracts.platform import PlatformAdapter, PlatformKind
+from agent.contracts.profile import RuntimeProfile
 from agent.contracts.transport import ManagedTransport
 from agent.platform.factory import build_platform
 from agent.provisioning.providers.managed import ManagedProvisioningProvider
 from agent.provisioning.providers.standalone import StandaloneProvisioningProvider
 from agent.runtime.config import RuntimeConfig
+from agent.runtime.desktop.config import ensure_desktop_runtime_files, ensure_firefox_system_files
+from agent.runtime.executors.factory import build_executor
 from agent.runtime.ingress import LocalIngressServer
 from agent.runtime.lifecycle import LifecycleCoordinator
 from agent.runtime.managed_session import ManagedRelaySession
-from agent.runtime.runner import TaskRunner
+from agent.runtime.logging import emit_event
+from agent.runtime.projection import RuntimeStatusProjector, StatusProjector
+from agent.runtime.runner import TaskExecutor, TaskRunner
 from agent.runtime.state import RuntimeStateStore
 from agent.runtime.services import ManagedServiceGroup, ServiceGraph, ServiceGroup
+from agent.runtime.theme import ThemeManager, build_theme_manager
 from agent.transports.factory import build_transport
 
 
@@ -38,13 +44,27 @@ class AgentApplication:
         *,
         platform: PlatformAdapter | None = None,
         transport: ManagedTransport | None = None,
+        executor: TaskExecutor | None = None,
+        theme_manager: ThemeManager | None = None,
+        status_projector: StatusProjector | None = None,
         ingress_factory=LocalIngressServer,
         service_group_factory: ServiceGroupFactory = ManagedServiceGroup,
     ):
         self.config = config
-        self.state = RuntimeStateStore(mode=config.mode, platform=config.platform)
+        self.state = RuntimeStateStore(
+            mode=config.mode,
+            platform=config.platform,
+            profile=config.profile,
+            build=config.build,
+        )
         self.lifecycle = LifecycleCoordinator(config, self.state)
-        self.runner = TaskRunner(self.state)
+        self.runner = TaskRunner(self.state, executor=executor or build_executor(config))
+        self.theme_manager = theme_manager or build_theme_manager(
+            config.root_dir,
+            config.platform,
+            config.profile,
+        )
+        self.status_projector = status_projector or RuntimeStatusProjector(config.root_dir)
         self.http_server: LocalIngressServer | None = None
         self.platform = platform or build_platform(config.platform)
         self.transport = transport or self._build_default_transport()
@@ -55,6 +75,11 @@ class AgentApplication:
         self._observer_thread: threading.Thread | None = None
 
     def boot(self) -> None:
+        emit_event(
+            "runtime.booting",
+            image_digest=self.config.build.image_digest,
+            executor=self.config.executor.value,
+        )
         self.lifecycle.begin_boot()
 
         self.lifecycle.on_config_validated()
@@ -67,11 +92,16 @@ class AgentApplication:
         self.lifecycle.on_provisioning_wait()
         provider.prepare(self.config.root_dir)
         self.lifecycle.on_provisioning_validated()
+        self.theme_manager.project_if_present()
+        if self.config.profile is RuntimeProfile.DESKTOP:
+            ensure_desktop_runtime_files(self.config.root_dir)
+            if self.config.platform is not PlatformKind.LOCAL:
+                ensure_firefox_system_files()
 
         self.lifecycle.on_services_starting()
         self.platform.create()
         self.lifecycle.on_platform_created()
-        service_graph = self.platform.service_graph(self.config.mode)
+        service_graph = self.platform.service_graph(self.config.mode, self.config.profile)
         self.service_group = self.service_group_factory(service_graph)
         self.service_group.start_all()
         self.lifecycle.sync_services(self.service_group.statuses(), force=True)
@@ -79,6 +109,7 @@ class AgentApplication:
         self.http_server = self.ingress_factory(self.config.bind_host, self.config.port, self)
         self.http_server.start()
         self.lifecycle.on_ingress_started()
+        self.theme_manager.notify_current_theme()
 
         self.transport.start()
         self._start_runtime_observer()
@@ -86,6 +117,7 @@ class AgentApplication:
             self.lifecycle.on_standalone_runtime_ready()
         else:
             self._sync_transport_state(force=True)
+        self._project_status()
 
     def shutdown(self) -> None:
         self._observer_stop.set()
@@ -101,6 +133,7 @@ class AgentApplication:
         self.platform.terminate()
         self.lifecycle.on_platform_terminated()
         self.lifecycle.on_shutdown_complete()
+        self._project_status()
 
     def status(self):
         return self.state.snapshot()
@@ -114,9 +147,16 @@ class AgentApplication:
     def _build_default_transport(self) -> ManagedTransport:
         if self.config.mode is AgentMode.STANDALONE:
             return build_transport(self.config)
+        session = ManagedRelaySession(
+            self.config,
+            self.runner,
+            self.state,
+            theme_manager=self.theme_manager,
+        )
+        self.runner.set_callback_handler(session)
         return build_transport(
             self.config,
-            session=ManagedRelaySession(self.config.root_dir, self.runner),
+            session=session,
         )
 
     def _start_runtime_observer(self) -> None:
@@ -138,30 +178,13 @@ class AgentApplication:
         if not self.service_group:
             return
         self.lifecycle.sync_services(self.service_group.statuses(), force=force)
+        self._project_status()
 
     def _sync_transport_state(self, *, force: bool = False) -> None:
         if self.config.mode is AgentMode.STANDALONE:
             return
         self.lifecycle.sync_transport(self.transport.snapshot(), force=force)
+        self._project_status()
 
-
-def main() -> None:
-    config = RuntimeConfig.from_env()
-    app = AgentApplication(config)
-    app.boot()
-    import signal
-    import sys
-    from time import sleep
-
-    def _shutdown(*_args) -> None:
-        app.shutdown()
-        raise SystemExit(0)
-
-    signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGINT, _shutdown)
-    while True:
-        sleep(3600)
-
-
-if __name__ == "__main__":
-    main()
+    def _project_status(self) -> None:
+        self.status_projector.project(self.status())

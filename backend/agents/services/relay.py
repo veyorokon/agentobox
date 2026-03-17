@@ -114,11 +114,7 @@ async def deliver_input(agent: Agent, content: list, task_id: str = "") -> bool:
     """
     if not task_id:
         task_id = uuid.uuid4().hex[:16]
-    agent.volume.append_inbox({
-        "type": "task",
-        "task_id": task_id,
-        "input": {"role": "user", "content": content},
-    })
+    agent.volume.append_task(task_id=task_id, content=content)
     return await push_to_relay(str(agent.id), ReloadCommand(path="_abox/inbox.jsonl"))
 
 
@@ -422,8 +418,6 @@ async def push_theme_to_agents(project) -> None:
     if not tokens:
         return
 
-    tokens_json = json.dumps(tokens)
-
     running_agents = [
         a async for a in Agent.objects.filter(
             project=project,
@@ -433,7 +427,7 @@ async def push_theme_to_agents(project) -> None:
 
     for agent in running_agents:
         try:
-            reload_cmd = agent.volume.mutate("tmp/abox-theme/tokens.json", tokens_json)
+            reload_cmd = agent.volume.mutate_theme_document(tokens, name=project.name)
             await push_to_relay(str(agent.id), reload_cmd)
         except Exception as exc:  # intentional: theme push is best-effort — one agent failure must not block others
             log.exception(

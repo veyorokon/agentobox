@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent.contracts.execution import ExecutorKind
 from agent.contracts.lifecycle import RuntimeState, StartupStage
 from agent.contracts.mode import AgentMode
 from agent.contracts.platform import PlatformKind
@@ -13,6 +14,7 @@ def _managed_config(tmp_path):
     return RuntimeConfig(
         mode=AgentMode.MANAGED,
         platform=PlatformKind.MODAL,
+        executor=ExecutorKind.ECHO,
         bind_host="127.0.0.1",
         port=0,
         root_dir=tmp_path,

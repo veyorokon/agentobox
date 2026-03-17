@@ -609,6 +609,29 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Volume is mounted at /vol, agent files at /vol/agents/<agent_id>.
         env["AGENTOBOX_ROOT_DIR"] = f"/vol/agents/{agent_id}"
 
+        image_ref = _runtime_image_ref(runtime_name, agent.agent_type)
+
+        # Resolve API key early — new runtime images need it in the container
+        # env so the CC process can authenticate directly (no api-proxy).
+        api_key = _resolve_api_key(agent.model, secret_envs)
+        if not api_key:
+            from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
+            provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
+            expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
+            raise ValueError(
+                f"No API key found for provider '{provider}'. "
+                f"Add a project secret named '{expected_key}' or set "
+                f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
+            )
+        is_oauth = api_key.startswith("sk-ant-oat")
+
+        # New runtime images don't have api-proxy at localhost:9999.
+        # Pass the real API key and upstream URL directly in container env.
+        # Old images (scoped sudo) use the proxy — key stays out of env.
+        if not _image_requires_scoped_sudo(image_ref) and not is_oauth:
+            env["ANTHROPIC_API_KEY"] = api_key
+            env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
+
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
 
@@ -668,17 +691,6 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         secrets_content = build_secrets_env_content(secret_envs)
         vol.write_secret("mnt/abox-state/secrets/env", secrets_content)
 
-        api_key = _resolve_api_key(agent.model, secret_envs)
-        if not api_key:
-            from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
-            provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
-            expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
-            raise ValueError(
-                f"No API key found for provider '{provider}'. "
-                f"Add a project secret named '{expected_key}' or set "
-                f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
-            )
-
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
         callback_url = env.get("ABOX_CALLBACK_URL", "")
@@ -689,10 +701,14 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         # Write all config files to the volume. The init-volume oneshot
         # creates symlinks so the container sees these at their canonical paths.
+        # New runtime images read API keys from container env (set above),
+        # not via apiKeyHelper. Keep OAuth credentials provisioned because CC
+        # still needs the credential files on disk in that path.
+        provision_api_key = api_key if (_image_requires_scoped_sudo(image_ref) or is_oauth) else ""
         await provision_workspace(
             vol, project,
             agent_type=agent.agent_type,
-            api_key=api_key,
+            api_key=provision_api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
             instructions=agent.instructions,
@@ -707,16 +723,24 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             model=agent.model,
             agent_tags=agent.tags or [],
         )
+        # Clear stale OAuth credentials for API-key auth on new runtime images.
+        # CC prefers .credentials.json over ANTHROPIC_API_KEY from env — if a
+        # prior deploy left an expired OAuth token on the volume, CC will use
+        # it and hang. Write empty JSON so CC falls through to the env var.
+        if not _image_requires_scoped_sudo(image_ref) and not is_oauth:
+            vol.write("home/agent/.claude/.credentials.json", "{}")
+
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="workspace_provisioned")
 
-        # Write theme tokens to volume (converter generates CSS/lua at boot)
+        # Write canonical theme document to volume (runtime derives CSS/lua at boot)
         if project.theme_tokens:
-            vol.write("tmp/abox-theme/tokens.json", json.dumps(project.theme_tokens))
+            vol.write_theme_document(project.theme_tokens, name=project.name)
 
         # Build relay environment via adapter (single source of truth for
         # env var names, model normalization, mode vocabulary, etc.)
         adapter = get_adapter(agent.agent_type)
+        relay_env_api_key = api_key if (_image_requires_scoped_sudo(image_ref) or is_oauth) else ""
         relay_env_content = adapter.build_relay_env(
             agent_id=agent_id,
             agent_name=agent.name,
@@ -724,7 +748,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             parent_session_id=parent_session_id,
             callback_url=callback_url,
             relay_token=relay_token,
-            api_key=api_key,
+            api_key=relay_env_api_key,
             model=agent.model,
             mode=agent.mode or "auto",
             resume_session_id=resume_session_id,
@@ -1216,10 +1240,9 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
 def _build_agent_env(agent, project) -> dict[str, str]:
     """Build environment dict for the agent container.
 
-    NOTE: ANTHROPIC_API_KEY is intentionally NOT included here.
-    The key is delivered via apiKeyHelper + tmpfs (see provision.py).
-    It remains in .relay_env so the relay can write it to tmpfs at boot,
-    but is NOT in the container's shell environment.
+    NOTE: ANTHROPIC_API_KEY is NOT included here — it's added by
+    _provision_agent() for new runtime images (direct key in env) or
+    delivered via apiKeyHelper + proxy for legacy images.
     """
     return {
         "AGENT_ID": str(agent.id),

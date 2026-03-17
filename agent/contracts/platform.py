@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
 from agent.contracts.mode import AgentMode
+from agent.contracts.profile import RuntimeProfile
 
 if TYPE_CHECKING:
     from agent.runtime.services import ServiceGraph
@@ -32,4 +33,4 @@ class PlatformAdapter(Protocol):
 
     def terminate(self) -> None: ...
 
-    def service_graph(self, mode: AgentMode) -> "ServiceGraph": ...
+    def service_graph(self, mode: AgentMode, profile: RuntimeProfile) -> "ServiceGraph": ...

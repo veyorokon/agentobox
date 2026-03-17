@@ -1,0 +1,54 @@
+FROM python:3.12-slim
+
+ARG AGENTOBOX_GIT_COMMIT=""
+ARG AGENTOBOX_IMAGE_DIGEST=""
+ARG AGENTOBOX_IMAGE_REF="agentobox-agent-runtime-managed:latest"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    AGENTOBOX_MODE=managed \
+    AGENTOBOX_PLATFORM=docker \
+    AGENTOBOX_RUNTIME_PROFILE=core \
+    AGENTOBOX_IMAGE_REF=${AGENTOBOX_IMAGE_REF} \
+    AGENTOBOX_IMAGE_DIGEST=${AGENTOBOX_IMAGE_DIGEST} \
+    AGENTOBOX_GIT_COMMIT=${AGENTOBOX_GIT_COMMIT} \
+    AGENTOBOX_EXECUTOR=echo \
+    AGENTOBOX_BIND_HOST=0.0.0.0 \
+    AGENTOBOX_PORT=8080 \
+    AGENTOBOX_ROOT_DIR=/var/lib/agentobox-agent \
+    AGENTOBOX_PROVISIONING_TIMEOUT_S=120 \
+    AGENTOBOX_PROVISIONING_POLL_INTERVAL_S=0.25
+
+WORKDIR /app
+
+# Managed images use the exact same runtime package as standalone images.
+# The only difference is the explicit managed bootstrap entrypoint, which waits
+# for the canonical provisioning contract before handing off to the runtime.
+COPY pyproject.toml ./
+COPY __init__.py ./agent/__init__.py
+COPY __main__.py ./agent/__main__.py
+COPY main.py ./agent/main.py
+COPY managed_main.py ./agent/managed_main.py
+COPY contracts ./agent/contracts
+COPY platform ./agent/platform
+COPY provisioning ./agent/provisioning
+COPY runtime ./agent/runtime
+COPY transports ./agent/transports
+
+RUN pip install --no-cache-dir .
+
+RUN mkdir -p /var/lib/agentobox-agent
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8080/livez')); raise SystemExit(0 if data.get('status') == 'ok' else 1)"
+
+COPY <<'ENTRYPOINT' /usr/local/bin/entrypoint.sh
+#!/bin/sh
+python -m agent.runtime.fsbridge --wait
+exec agentobox-agent-managed
+ENTRYPOINT
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["entrypoint.sh"]

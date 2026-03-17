@@ -24,11 +24,13 @@ class LifecycleCoordinator:
         self._state = state
         self._last_transport_snapshot: TransportSnapshot | None = None
         self._last_service_statuses: dict[str, ServiceStatus] | None = None
+        self._last_blocked_required: tuple[str, ...] | None = None
 
     def begin_boot(self) -> None:
         configure_logging_context(
             mode=self._config.mode.value,
             platform=self._config.platform.value,
+            profile=self._config.profile.value,
             agent_id=self._config.managed.agent_id if self._config.managed else "",
         )
         self._state.update_stage(StartupStage.CONFIG_LOADING)
@@ -65,9 +67,32 @@ class LifecycleCoordinator:
     def sync_services(self, statuses: dict[str, ServiceStatus], *, force: bool = False) -> None:
         if not force and statuses == self._last_service_statuses:
             return
+        previous = self._last_service_statuses or {}
         self._last_service_statuses = dict(statuses)
         for service in statuses.values():
             self._state.set_service(service.name, service.state)
+            prior = previous.get(service.name)
+            if force or prior is None or prior.state is not service.state:
+                emit_event(
+                    RuntimeEvent.SERVICE_STATE_CHANGED.value,
+                    service=service.name,
+                    state=service.state.value,
+                    required_for_readiness=service.required_for_readiness,
+                )
+        blocked_required = tuple(
+            sorted(
+                service.name
+                for service in statuses.values()
+                if service.required_for_readiness and service.state is not ServiceState.UP
+            )
+        )
+        if force or blocked_required != self._last_blocked_required:
+            self._last_blocked_required = blocked_required
+            emit_event(
+                RuntimeEvent.SERVICE_READINESS_BLOCKED.value,
+                blocked_required=list(blocked_required),
+                blocked_count=len(blocked_required),
+            )
 
     def sync_transport(self, snapshot: TransportSnapshot, *, force: bool = False) -> None:
         if not force and snapshot == self._last_transport_snapshot:

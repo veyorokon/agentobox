@@ -144,15 +144,22 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         log.info("relay.disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
 
     async def receive_json(self, content):
-        """Each message from relay = one raw stream-json event.
+        """Handle canonical upstream runtime messages from the agent.
 
-        Callback requests are routed to the callbacks service before
-        reaching stream processing — they create feed items, not stream events.
-        Everything else: store verbatim, broadcast, side-effect.
+        The new runtime sends typed envelopes:
+        - runtime_hello
+        - task_update
+        - execution_event
+        - callback_request
+
+        execution_event/raw_message carries the actual Claude stream-json event
+        payload used by the existing backend read path. That path remains the
+        source of truth for feed/session semantics, so we unwrap and forward
+        those payloads into process_stream_event().
         """
         event_type = content.get("type", "")
 
-        if event_type == "callback":
+        if event_type in {"callback", "callback_request"}:
             from agents.services.callbacks import process_callback
             try:
                 await process_callback(self.agent, content)
@@ -175,6 +182,48 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                         message="Internal error processing callback",
                     )
                     await self.send_json(cmd.to_wire())
+            return
+
+        if event_type == "runtime_hello":
+            log.info(
+                "relay.runtime_hello",
+                agent_id=self.agent_id,
+                mode=content.get("mode", ""),
+                platform=content.get("platform", ""),
+                profile=content.get("profile", ""),
+                protocol_version=content.get("protocol_version", ""),
+            )
+            return
+
+        if event_type == "task_update":
+            log.info(
+                "relay.task_update",
+                agent_id=self.agent_id,
+                task_id=content.get("task_id", ""),
+                state=content.get("state", ""),
+            )
+            return
+
+        if event_type == "execution_event":
+            execution_type = content.get("event_type", "")
+            payload = content.get("payload", {})
+            if execution_type == "raw_message" and isinstance(payload, dict):
+                if content.get("session_id") and "session_id" not in payload:
+                    payload = {**payload, "session_id": content["session_id"]}
+                from agents.services.stream import process_stream_event
+
+                try:
+                    await process_stream_event(self.agent, payload)
+                except Exception as exc:  # intentional: one bad event must not kill the relay WS connection
+                    log.exception(
+                        "relay.event_failed",
+                        agent_id=self.agent_id,
+                        event_type=payload.get("type", execution_type),
+                        error_code=ERR_CONSUMER_EVENT_FAILED,
+                        error_class=type(exc).__name__,
+                        operation="process_stream_event",
+                    )
+                return
             return
 
         from agents.services.stream import process_stream_event

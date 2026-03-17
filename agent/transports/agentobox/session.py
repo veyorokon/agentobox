@@ -29,6 +29,8 @@ class RelaySession(Protocol):
 
     def on_disconnected(self) -> None: ...
 
+    def on_transport_poll(self) -> None: ...
+
     def drain_outbound_messages(self) -> list[UpstreamMessage]: ...
 
 
@@ -47,6 +49,9 @@ class NullRelaySession:
 
     def on_disconnected(self) -> None:
         self.connected = False
+
+    def on_transport_poll(self) -> None:
+        return None
 
     def drain_outbound_messages(self) -> list[UpstreamMessage]:
         return []

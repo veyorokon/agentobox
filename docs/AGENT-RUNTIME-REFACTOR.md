@@ -23,13 +23,27 @@ The greenfield runtime now already enforces several target-shape rules:
 - provisioning manifest plus validation boundary
 - managed transport as a plugin seam
 - canonical downstream command parsing via `commands.py` and `codec.py`
+- an explicit execution seam separate from transport
+- canonical structured task input using ACP/MCP-style content blocks
+- executor-owned result and process-exit normalization
 - structured JSON logging as a shared contract
 - a dedicated lifecycle coordinator owning transition policy
 - a canonical managed-process wrapper for future service supervision
+- a real package entrypoint for direct runtime execution
+- a minimal standalone Docker image wrapping the new runtime package
+- an explicit managed bootstrap module and managed Docker image entrypoint
+- explicit runtime profiles for `core` vs `desktop` runtime shapes
+- runtime-owned projection of `_abox/status.json` from in-memory live state
+- canonical theme tokens plus derived runtime-owned theme artifacts
+- managed live theme reload via explicit `reload { path }`
+- a black-box local HTTP contract test covering `livez`, `readyz`, `status`, and `/tasks`
+- an opt-in black-box Docker-managed contract test for the real image boundary
+- an opt-in black-box Docker-managed desktop contract covering desktop services and noVNC
 
 That means the runtime is no longer being rebuilt as a collection of shell
 scripts with implicit conventions. The composition root, lifecycle policy,
-process wrapper, and transport seam are now explicit code-level contracts.
+process wrapper, transport seam, and execution seam are now explicit
+code-level contracts.
 
 ## Purpose
 
@@ -71,6 +85,7 @@ There are four layers and only four layers.
 Owns:
 
 - model/session runtime
+- execution adapters and execution-event normalization
 - local execution loop
 - local state files
 - local health/status
@@ -161,6 +176,7 @@ Required behavior:
 
 - all standalone guarantees still hold
 - managed transport starts
+- execution continues to be runtime-owned, not transport-owned
 - backend auth/config are validated at startup
 - runtime connects to control plane
 - remote coordination and observation work
@@ -170,6 +186,33 @@ Required config:
 - backend URL/callback URL
 - relay auth token
 - any additional managed transport requirements
+
+## Runtime Profiles
+
+Mode answers whether the control plane is attached.
+Profile answers what runtime shape the image provides.
+
+Use an explicit profile variable:
+
+`AGENTOBOX_RUNTIME_PROFILE=core|desktop`
+
+Current meaning:
+
+- `core`
+  - no desktop/X11/VNC stack
+  - valid for standalone and managed non-visual execution
+- `desktop`
+  - includes the desktop service graph
+  - consumes derived theme artifacts
+  - exposes the noVNC/browser surface
+
+This keeps platform and runtime shape separate:
+
+- platforms: `local`, `docker`, `modal`
+- profiles: `core`, `desktop`
+
+The runtime must not pretend a desktop stack exists when the image only ships a
+core profile.
 
 ## Startup Flow
 
@@ -445,6 +488,7 @@ The target repository shape should reflect the layers above.
 `agent/runtime/`
 
 - runtime loop
+- execution adapters
 - health/status
 - local input/output
 - service ownership
@@ -462,6 +506,7 @@ The target repository shape should reflect the layers above.
 - backend auth
 - managed-mode connection logic
 - downstream command protocol
+- upstream message protocol
 
 ### Backend Side
 
@@ -485,10 +530,18 @@ This is the standalone-valid surface.
 Expected entrypoints:
 
 - container entrypoint
+- package/process entrypoint
 - local health API
 - local status API
 - local work ingress
 - local logs/output surface
+
+Current implementation:
+
+- `agent/main.py`
+- `python -m agent`
+- `agentobox-agent`
+- `agent/Dockerfile`
 
 Concrete contracts:
 
@@ -535,6 +588,8 @@ Concrete contracts:
 - transport health reported separately from core runtime health
 - downstream commands are explicit transport commands, not overloaded runtime
   events
+- upstream messages are derived from runtime execution and task state, not from
+  websocket mechanics
 
 ### Control-Plane Surface
 
@@ -565,12 +620,14 @@ Owns:
 - component wiring
 - process ownership
 - boot/shutdown sequencing
+- executor injection
 
 Does not own:
 
 - lifecycle transition policy
 - transport semantics
 - provisioning semantics
+- SDK-specific execution details
 
 `AgentApplication` is the composition root, not the state machine.
 
@@ -584,6 +641,23 @@ Owns:
 - canonical lifecycle event emission
 
 The coordinator is the single place where runtime transitions become legal.
+
+### Execution Adapters
+
+Own:
+
+- SDK-specific option building
+- raw message preservation/normalization
+- callback-request construction
+- task-time execution events
+
+Do not own:
+
+- websocket lifecycle
+- backend wire protocol policy
+- runtime boot/shutdown sequencing
+
+Execution adapters are runtime components. They are not transport clients.
 
 ### `ManagedProcess`
 
@@ -849,6 +923,7 @@ Define a canonical JSON schema for:
 Minimum `/status` surface:
 
 - mode
+- build identity
 - startup stage
 - runtime state
 - transport state
@@ -861,7 +936,13 @@ Example shape:
 
 ```json
 {
+  "status_version": "2",
   "mode": "managed",
+  "build": {
+    "image_ref": "agentobox-agent-runtime-desktop-managed:latest",
+    "image_digest": "sha256:...",
+    "git_commit": "abc1234"
+  },
   "startup_stage": "transport_connecting",
   "runtime_state": "ready",
   "transport": {
@@ -944,7 +1025,57 @@ Example command shapes:
 The backend should adapt to this transport vocabulary. The agent/runtime owns
 the command surface.
 
-### 5. Naming Rules
+### 5. Upstream Message Taxonomy
+
+Define a canonical upstream message vocabulary for Agentobox-managed mode.
+
+Upstream messages are facts emitted from runtime/task/execution state. They are
+separate from downstream commands and should be shaped by the execution layer.
+
+Current canonical upstream messages:
+
+- `runtime_hello`
+- `task_update`
+
+Current message intent:
+
+- `runtime_hello` identifies the runtime, mode, platform, and protocol/schema
+  versions on managed transport connect
+- `task_update` reports queued/running/completed/failed/cleared task state
+
+The upstream message set should remain minimal until the real execution layer
+reveals which richer events are actually worth publishing.
+
+### 5a. Canonical Task Input Envelope
+
+Managed inbox files should carry runtime-owned task envelopes, not transport-era
+`input/payload/message` wrappers and not lossy text-only payloads.
+
+Canonical managed task shape:
+
+```json
+{
+  "type": "task",
+  "task_id": "task-123",
+  "input": {
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "hello" }
+    ]
+  }
+}
+```
+
+Rules:
+
+- `type` is always `task`
+- `task_id` is durable and provider-assigned
+- `input` uses ACP/MCP-style content blocks
+- executors adapt this semantic input model to their native wire format
+- local standalone text submission may still enter through a simple text API,
+  but runtime internals should normalize it into the same structured task input
+
+### 6. Naming Rules
 
 Standardize naming across code, logs, tests, and status output.
 
@@ -964,7 +1095,7 @@ Recommended names:
 - providers: `standalone`, `managed`
 - health facets: `live`, `ready`, `degraded`, `fatal`
 
-### 6. Provisioning Manifest
+### 7. Provisioning Manifest
 
 Define one canonical manifest describing what the runtime needs before release.
 
@@ -979,7 +1110,7 @@ The manifest should describe:
 
 The manifest is the contract between providers and the runtime.
 
-### 7. File Layout
+### 8. File Layout
 
 Define one canonical runtime-visible path layout.
 
@@ -999,8 +1130,9 @@ This should include:
 - secrets
 - runtime state/status files
 - transport config files
+- durable task inbox files carrying structured task input envelopes
 
-### 8. Platform Adapter Semantics
+### 9. Platform Adapter Semantics
 
 Standardize the adapter behavior for:
 
@@ -1237,6 +1369,8 @@ If scaffolding from scratch, this is a reasonable initial file set.
 - `agent/runtime/config.py`
 - `agent/runtime/state.py`
 - `agent/runtime/lifecycle.py`
+- `agent/runtime/execution.py`
+- `agent/runtime/executors/`
 - `agent/runtime/health.py`
 - `agent/runtime/runner.py`
 - `agent/runtime/ingress.py`
@@ -1257,12 +1391,17 @@ If scaffolding from scratch, this is a reasonable initial file set.
 - `agent/transports/agentobox/config.py`
 - `agent/transports/agentobox/state.py`
 - `agent/transports/agentobox/client.py`
+- `agent/transports/agentobox/commands.py`
+- `agent/transports/agentobox/codec.py`
+- `agent/transports/agentobox/upstream.py`
 
 ### Platform
 
 - `agent/platform/base.py`
 - `agent/platform/docker.py`
 - `agent/platform/modal.py`
+- `agent/main.py`
+- `agent/Dockerfile`
 
 ### Tests
 
@@ -1324,7 +1463,10 @@ true.
 ### Test Structure
 
 - one canonical runtime contract suite exists
+- one black-box local HTTP runtime contract test exists
 - one canonical bootstrap contract suite exists
+- one opt-in black-box Docker-managed contract test exists for the real image
+  boundary
 - one canonical full smoke suite exists
 - local developer helpers exist for reproducing managed-mode failures before CI
 
@@ -1416,9 +1558,15 @@ implementation, but the structure should stay stable.
 
 ```json
 {
-  "status_version": "1",
+  "status_version": "2",
   "mode": "standalone",
   "platform": "docker",
+  "profile": "core",
+  "build": {
+    "image_ref": "agentobox-agent-runtime:latest",
+    "image_digest": "sha256:...",
+    "git_commit": "abc1234"
+  },
   "startup_stage": "runtime_ready",
   "runtime_state": "ready",
   "runtime": {
@@ -1447,7 +1595,8 @@ implementation, but the structure should stay stable.
 Rules:
 
 - `status_version` must exist
-- `mode` and `platform` must always be present
+- `mode`, `platform`, and `profile` must always be present
+- `build.image_ref`, `build.image_digest`, and `build.git_commit` expose runtime identity when known
 - `transport.enabled=false` is valid and healthy in standalone mode
 - `fatal` is `null` or a machine-readable object/string
 - `degraded` is always a list
@@ -1469,7 +1618,10 @@ This is the target shape for the canonical provisioning manifest.
     "_abox/inbox.jsonl"
   ],
   "derived_files": [
-    "tmp/abox-theme/theme.json"
+    "tmp/abox-theme/theme.json",
+    "tmp/abox-theme/theme.css",
+    "tmp/abox-theme/userChrome.css",
+    "tmp/abox-theme/awesome.lua"
   ],
   "validators": {
     "home/agent/.relay_env": "nonempty_file",
@@ -1501,6 +1653,9 @@ This is the desired runtime-visible layout contract.
 /tmp/abox-theme/
   tokens.json
   theme.json
+  theme.css
+  userChrome.css
+  awesome.lua
 
 /mnt/abox-state/
   secrets/
@@ -1534,6 +1689,8 @@ Interpretation:
 - runtime contract proves image validity
 - bootstrap contract proves provisioning + managed attach
 - full smoke proves user-visible end-to-end work
+- desktop-profile contracts prove the visual runtime surface without changing the
+  file or transport contracts
 
 ## Appendix E: Naming Lock-In
 
@@ -1542,6 +1699,7 @@ change them.
 
 - modes: `standalone`, `managed`
 - platforms: `docker`, `modal`
+- profiles: `core`, `desktop`
 - runtime states: `starting`, `ready`, `busy`, `degraded`, `stopped`, `fatal`
 - startup stages:
   - `config_loading`

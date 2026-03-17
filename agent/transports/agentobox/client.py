@@ -145,6 +145,7 @@ class AgentoboxTransportClient(ManagedTransport):
                 self.mark_connected()
                 session.on_connected()
                 while not self._stop_event.is_set():
+                    session.on_transport_poll()
                     for outbound in session.drain_outbound_messages():
                         ws.send(json.dumps(encode_upstream_message(outbound)))
                     try:

@@ -14,6 +14,7 @@ from agent.transports.agentobox.commands import (
     SignalCommand,
 )
 from agent.transports.agentobox.upstream import TaskUpdateMessage, UpstreamMessageType
+from agent.transports.agentobox.upstream import ExecutionEventMessage
 
 
 def test_parse_reload_command():
@@ -71,4 +72,21 @@ def test_encode_upstream_task_update_message():
         "state": "completed",
         "input_text": "hi",
         "output_text": "hello",
+    }
+
+
+def test_encode_upstream_execution_event_message():
+    message = ExecutionEventMessage(
+        task_id="task-1",
+        event_type="raw_message",
+        payload={"type": "assistant"},
+        session_id="sess-1",
+    )
+
+    assert encode_upstream_message(message) == {
+        "type": "execution_event",
+        "task_id": "task-1",
+        "event_type": "raw_message",
+        "payload": {"type": "assistant"},
+        "session_id": "sess-1",
     }

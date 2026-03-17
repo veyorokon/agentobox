@@ -1,66 +1,68 @@
-"""Canonical runtime service declarations by platform and mode.
+"""Canonical runtime service declarations by platform and runtime profile.
 
-This module is the source of truth for which long-running services exist in a
-given runtime shape. Platform adapters may change how services run, but not
-which services exist or how they depend on one another.
+This module is the source of truth for which long-running external services
+exist for a given runtime shape. Platform adapters may change how services
+run, but not which services exist or how they depend on one another.
 """
 
 from __future__ import annotations
 
 from agent.contracts.mode import AgentMode
 from agent.contracts.platform import PlatformKind
+from agent.contracts.profile import RuntimeProfile
 from agent.contracts.services import ServiceSpec
 from agent.runtime.services import ServiceGraph
 
 
-def service_graph_for_platform(platform: PlatformKind, mode: AgentMode) -> ServiceGraph:
-    """Return the canonical service graph for a platform/mode pair."""
+def service_graph_for_platform(
+    platform: PlatformKind,
+    mode: AgentMode,
+    profile: RuntimeProfile = RuntimeProfile.CORE,
+) -> ServiceGraph:
+    """Return the canonical service graph for a platform/profile pair."""
 
     if platform is PlatformKind.LOCAL:
         return ServiceGraph([])
     if platform in {PlatformKind.DOCKER, PlatformKind.MODAL}:
-        return ServiceGraph(_desktop_runtime_specs(mode))
+        if profile is RuntimeProfile.CORE:
+            return ServiceGraph([])
+        if profile is RuntimeProfile.DESKTOP:
+            return ServiceGraph(_desktop_runtime_specs(mode))
     raise ValueError(f"Unsupported platform kind: {platform}")
 
 
 def _desktop_runtime_specs(mode: AgentMode) -> list[ServiceSpec]:
     """Desktop-backed runtime services shared by Docker and Modal."""
 
-    specs = [
+    _ = mode
+    return [
         ServiceSpec(
             name="xvfb",
-            command=("/usr/bin/Xvfb", ":99"),
+            command=("python", "-m", "agent.runtime.desktop.xvfb"),
             required_for_readiness=True,
         ),
         ServiceSpec(
             name="x11vnc",
-            command=("/usr/bin/x11vnc", "-display", ":99"),
+            command=("python", "-m", "agent.runtime.desktop.x11vnc"),
             depends_on=("xvfb",),
             required_for_readiness=True,
         ),
         ServiceSpec(
             name="websockify",
-            command=("/usr/bin/websockify", "6080", "localhost:5900"),
+            command=("python", "-m", "agent.runtime.desktop.websockify"),
             depends_on=("x11vnc",),
             required_for_readiness=False,
         ),
         ServiceSpec(
-            name="mcp_gateway",
-            command=("python3", "-m", "agent.mcp_gateway"),
+            name="awesome",
+            command=("python", "-m", "agent.runtime.desktop.awesome"),
+            depends_on=("xvfb",),
             required_for_readiness=False,
         ),
         ServiceSpec(
-            name="api_proxy",
-            command=("python3", "-m", "agent.api_proxy"),
+            name="firefox",
+            command=("python", "-m", "agent.runtime.desktop.firefox"),
+            depends_on=("awesome",),
             required_for_readiness=False,
         ),
     ]
-    if mode is AgentMode.MANAGED:
-        specs.append(
-            ServiceSpec(
-                name="agentobox_relay",
-                command=("python3", "-m", "agent.transports.agentobox.relay"),
-                required_for_readiness=True,
-            )
-        )
-    return specs

@@ -82,6 +82,7 @@ import json
 from pathlib import Path
 
 from agents.services.relay_commands import ReloadCommand
+from agents.services.themes import format_theme_document
 from config.app_config import app_config
 
 # Directories that init-volume symlinks into the container.
@@ -260,6 +261,37 @@ class Volume:
         with open(path, "a") as f:
             f.write(json.dumps(message) + "\n")
 
+    def append_task(self, *, task_id: str, content: list, role: str = "user") -> None:
+        """Append one canonical task envelope to the agent inbox."""
+
+        self.append_inbox({
+            "type": "task",
+            "task_id": task_id,
+            "input": {
+                "role": role,
+                "content": content,
+            },
+        })
+
+    def write_theme_document(self, tokens: dict[str, str], *, name: str = "") -> None:
+        """Write the canonical runtime theme document to tokens.json."""
+
+        self.write("tmp/abox-theme/tokens.json", format_theme_document(tokens, name=name))
+
+    def mutate_theme_document(self, tokens: dict[str, str], *, name: str = "") -> ReloadCommand:
+        """Write the canonical runtime theme document and return a reload command."""
+
+        return self.mutate("tmp/abox-theme/tokens.json", format_theme_document(tokens, name=name))
+
+    def write_state_document(self, model: str, mode: str, allowed_tools: list) -> None:
+        """Write the canonical runtime state document to _abox/state.json."""
+
+        self.write("_abox/state.json", json.dumps({
+            "model": model,
+            "mode": mode,
+            "allowed_tools": allowed_tools,
+        }))
+
     def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
         """Write a reload-registered file and return the reload command.
 
@@ -329,6 +361,10 @@ class Volume:
             if prefix == "_abox/":
                 continue  # already created above
             (self.root / prefix.rstrip("/")).mkdir(parents=True, exist_ok=True)
+
+        # Ensure workspace dir exists even without a host bind mount.
+        # The executor uses this as cwd for Claude Code.
+        (self.root / "home/agent/workspace").mkdir(parents=True, exist_ok=True)
 
     def mark_provisioned(self) -> None:
         """Write the provisioning-ready sentinel.

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from time import monotonic, sleep
 
+from agent.contracts.execution import ExecutorKind
 from agent.contracts.lifecycle import RuntimeState, ServiceState, StartupStage
 from agent.contracts.mode import AgentMode
 from agent.contracts.platform import PlatformKind
@@ -74,6 +77,7 @@ def _managed_config(tmp_path):
     return RuntimeConfig(
         mode=AgentMode.MANAGED,
         platform=PlatformKind.MODAL,
+        executor=ExecutorKind.ECHO,
         bind_host="127.0.0.1",
         port=0,
         root_dir=tmp_path,
@@ -159,5 +163,15 @@ def test_managed_app_observes_transport_and_becomes_ready(tmp_path):
         assert status.services["agentobox_relay"] is ServiceState.UP
         assert status.transport.connected is True
         assert status.transport.state is TransportState.CONNECTED
+        deadline = monotonic() + 2
+        while monotonic() < deadline:
+            projected = json.loads((tmp_path / CANONICAL_PATHS["runtime_status"]).read_text())
+            if projected["startup_stage"] == "managed_ready":
+                break
+            sleep(0.05)
+        else:
+            assert False, "managed projected status did not reach managed_ready"
+        assert projected["startup_stage"] == "managed_ready"
+        assert projected["transport"]["connected"] is True
     finally:
         app.shutdown()

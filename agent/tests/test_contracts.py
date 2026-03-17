@@ -1,3 +1,4 @@
+from agent.contracts.execution import ExecutorKind
 from agent.contracts.lifecycle import RuntimeState, StartupStage
 from agent.contracts.mode import AgentMode
 from agent.runtime.config import RuntimeConfig
@@ -67,8 +68,31 @@ def test_managed_mode_requires_agent_id():
             os.environ.pop("RELAY_AUTH_TOKEN", None)
 
 
+def test_runtime_config_defaults_to_echo_executor():
+    import os
+
+    old_mode = os.environ.pop("AGENTOBOX_MODE", None)
+    old_callback = os.environ.pop("ABOX_CALLBACK_URL", None)
+    old_token = os.environ.pop("RELAY_AUTH_TOKEN", None)
+    old_executor = os.environ.pop("AGENTOBOX_EXECUTOR", None)
+    try:
+        config = RuntimeConfig.from_env()
+        assert config.executor is ExecutorKind.ECHO
+    finally:
+        if old_mode is not None:
+            os.environ["AGENTOBOX_MODE"] = old_mode
+        if old_callback is not None:
+            os.environ["ABOX_CALLBACK_URL"] = old_callback
+        if old_token is not None:
+            os.environ["RELAY_AUTH_TOKEN"] = old_token
+        if old_executor is not None:
+            os.environ["AGENTOBOX_EXECUTOR"] = old_executor
+
+
 def test_lifecycle_names_are_locked():
     assert AgentMode.STANDALONE.value == "standalone"
     assert AgentMode.MANAGED.value == "managed"
+    assert ExecutorKind.ECHO.value == "echo"
+    assert ExecutorKind.CLAUDE_CODE.value == "claude_code"
     assert StartupStage.RUNTIME_READY.value == "runtime_ready"
     assert RuntimeState.READY.value == "ready"

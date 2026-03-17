@@ -209,7 +209,9 @@ MCP_REGISTRY = {
 }
 
 # MCPs included on every agent by default (unless explicitly overridden).
-DEFAULT_MCPS = ["computer-use"]
+# Empty — bundled MCPs (computer-use) only exist in the legacy agent-claude
+# image. New runtime images don't ship MCP servers; they're added explicitly.
+DEFAULT_MCPS: list[str] = []
 
 # Team configuration templates
 # Each template defines a complete agent team with role, model, and responsibilities
@@ -221,7 +223,7 @@ TEAM_CONFIGS = {
                 "role": "lead",
                 "model": "claude-opus-4-6",
                 "instructions": "You are the team lead and sole agent. Handle all aspects of the project.",
-                "mcp_servers": ["computer-use"],
+                "mcp_servers": [],
             }
         ]
     },
@@ -232,7 +234,7 @@ TEAM_CONFIGS = {
                 "role": "lead",
                 "model": "claude-opus-4-6",
                 "instructions": "Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
-                "mcp_servers": ["computer-use"],
+                "mcp_servers": [],
             },
             {
                 "name": "backend",

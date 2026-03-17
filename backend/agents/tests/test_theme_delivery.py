@@ -24,6 +24,7 @@ import pytest
 from accounts.models import User
 from agents.models import Agent, AgentStatus
 from agents.services.relay_commands import ReloadCommand
+from agents.services.themes import THEME_SCHEMA_VERSION
 from projects.models import Project
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.asyncio]
@@ -95,11 +96,15 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
         "tokens.json NOT WRITTEN to agent volume — theme change is invisible to the container"
     )
 
-    written_tokens = json.loads(tokens_path.read_text())
-    assert written_tokens == theme_tokens, (
+    written_document = json.loads(tokens_path.read_text())
+    assert written_document == {
+        "schema_version": THEME_SCHEMA_VERSION,
+        "name": project.name,
+        "tokens": theme_tokens,
+    }, (
         f"tokens.json has wrong content.\n"
-        f"Expected: {theme_tokens}\n"
-        f"Got: {written_tokens}"
+        f"Expected canonical theme document with tokens: {theme_tokens}\n"
+        f"Got: {written_document}"
     )
 
     # Verify reload command was sent with exact wire payload
@@ -153,8 +158,10 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
     assert tokens_path.exists(), "Default theme not written when project has no theme_tokens"
     written = json.loads(tokens_path.read_text())
+    assert written["schema_version"] == THEME_SCHEMA_VERSION
+    assert written["name"] == project.name
     # Should have content from BUILTIN_THEMES["claude-dark"]
-    assert len(written) > 0, "Default theme is empty — BUILTIN_THEMES broken"
+    assert len(written["tokens"]) > 0, "Default theme is empty — BUILTIN_THEMES broken"
 
 
 async def test_mutation_calls_relay_not_inline():

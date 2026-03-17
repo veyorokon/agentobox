@@ -1,0 +1,26 @@
+#!/bin/bash
+# Focus the existing Firefox window when present instead of launching a
+# second instance against the same profile.
+
+URL=""
+for arg in "$@"; do
+    case "$arg" in
+        -*) ;;
+        *) URL="$arg"; break ;;
+    esac
+done
+
+if pgrep -x firefox-esr >/dev/null 2>&1; then
+    if [ -n "$URL" ]; then
+        xdotool search --name "Mozilla Firefox" windowactivate --sync 2>/dev/null
+        xdotool key --clearmodifiers ctrl+l
+        sleep 0.1
+        xdotool type --clearmodifiers -- "$URL"
+        xdotool key --clearmodifiers Return
+    else
+        xdotool search --name "Mozilla Firefox" windowactivate 2>/dev/null
+    fi
+    exit 0
+fi
+
+exec /usr/bin/firefox-esr "$@"

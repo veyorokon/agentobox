@@ -1,0 +1,53 @@
+ARG BASE_IMAGE=agentobox-agent-runtime:latest
+FROM ${BASE_IMAGE}
+
+ENV AGENTOBOX_RUNTIME_PROFILE=desktop \
+    AGENTOBOX_IMAGE_REF=agentobox-agent-runtime-desktop:latest \
+    DISPLAY=:99 \
+    RESOLUTION=1920x1080 \
+    NOVNC_WEB_ROOT=/opt/noVNC \
+    AGENT_HOME=/home/agent
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    x11-utils \
+    xdotool \
+    awesome \
+    dbus \
+    dbus-x11 \
+    python3-websockify \
+    firefox-esr \
+    xterm \
+    git \
+    ca-certificates \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /usr/share/fonts/truetype/jetbrains-mono \
+    && curl -fsSL https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip \
+       -o /tmp/jbmono.zip \
+    && unzip -q /tmp/jbmono.zip -d /tmp/jbmono \
+    && cp /tmp/jbmono/fonts/ttf/*.ttf /usr/share/fonts/truetype/jetbrains-mono/ \
+    && fc-cache -f \
+    && rm -rf /tmp/jbmono /tmp/jbmono.zip
+
+RUN git clone --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git /opt/noVNC \
+    && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html \
+    && rm -rf /opt/noVNC/.git
+
+ARG TEXTFOX_COMMIT=e86c0a3a77cbdd8dbbca51b0c190733c8e6788e1
+RUN git clone https://github.com/adriankarlen/textfox.git /opt/textfox \
+    && cd /opt/textfox \
+    && git checkout ${TEXTFOX_COMMIT} \
+    && rm -rf /opt/textfox/.git
+
+RUN useradd -m -s /bin/bash agent || true
+
+COPY desktop-assets/textfox/defaults.css /opt/textfox/chrome/defaults.css
+COPY desktop-assets/firefox/firefox /usr/local/bin/firefox
+COPY desktop-assets/firefox/firefox-esr /usr/local/bin/firefox-esr
+RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
+
+EXPOSE 6080

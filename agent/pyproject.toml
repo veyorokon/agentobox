@@ -4,8 +4,13 @@ version = "0.1.0"
 description = "Standalone and managed runtime for Agentobox agents"
 requires-python = ">=3.12"
 dependencies = [
+    "claude-agent-sdk>=0.1.0",
     "websockets>=15.0",
 ]
+
+[project.scripts]
+agentobox-agent = "agent.main:main"
+agentobox-agent-managed = "agent.managed_main:main"
 
 [dependency-groups]
 dev = [
@@ -14,3 +19,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "docker_contract: black-box tests that build and run the Docker-managed agent image",
+]

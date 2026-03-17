@@ -11,8 +11,7 @@ class DockerPlatformAdapter(BasePlatformAdapter):
         return None
 
     def exec(self, cmd: list[str]) -> ExecResult:
-        raise NotImplementedError("Docker platform adapter is not implemented yet.")
+        return self._run_local_command(cmd)
 
     def terminate(self) -> None:
         return None
-

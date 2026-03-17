@@ -227,6 +227,20 @@ class TestDelivery:
         assert json.loads(lines[0]) == {"type": "a"}
         assert json.loads(lines[1]) == {"type": "b"}
 
+    def test_append_task_writes_canonical_task_envelope(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.initialize()
+        vol.append_task(
+            task_id="task-1",
+            content=[{"type": "text", "text": "hello"}],
+        )
+        lines = (tmp_path / "_abox/inbox.jsonl").read_text().strip().split("\n")
+        assert json.loads(lines[0]) == {
+            "type": "task",
+            "task_id": "task-1",
+            "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        }
+
 
 # ---------------------------------------------------------------------------
 # Inbox/outbox symmetry
@@ -307,6 +321,17 @@ class TestNoOrphanState:
         cmd = vol.mutate_state("claude-sonnet-4-5-20250929", "auto", [])
         assert isinstance(cmd, ReloadCommand)
         assert cmd.to_wire() == {"type": "reload", "path": "_abox/state.json"}
+
+    def test_write_theme_document_writes_canonical_shape(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.initialize()
+        vol.write_theme_document({"surface": "#111111"}, name="Demo")
+        payload = json.loads((tmp_path / "tmp/abox-theme/tokens.json").read_text())
+        assert payload == {
+            "schema_version": "1",
+            "name": "Demo",
+            "tokens": {"surface": "#111111"},
+        }
 
 
 # ---------------------------------------------------------------------------

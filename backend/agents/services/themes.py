@@ -1,5 +1,4 @@
-"""
-Built-in theme registry — token dicts for dashboard themes.
+"""Built-in theme registry and canonical runtime theme document helpers.
 
 Each theme maps CSS custom property names (without --p- prefix) to hex values.
 Used by:
@@ -12,6 +11,12 @@ To add a new theme:
   2. Add the token dict here
   3. Add entry to BUILT_IN_THEMES in dashboard/lib/stores/theme.ts
 """
+
+from __future__ import annotations
+
+import json
+
+THEME_SCHEMA_VERSION = "1"
 
 # Claude dark — converted from HSL values in claude-dark.css to hex.
 # Conversion note: HSL values with alpha channels are represented as rgba().
@@ -108,3 +113,25 @@ BUILTIN_THEMES: dict[str, dict[str, str]] = {
     "ember-dark": _EMBER_DARK,
     "nord-dark": _NORD_DARK,
 }
+
+
+def build_theme_document(tokens: dict[str, str], *, name: str = "") -> dict[str, object]:
+    """Build the canonical runtime theme document.
+
+    The agent runtime owns the schema for `tmp/abox-theme/tokens.json`.
+    Backend writes that exact document shape and nothing flatter.
+    """
+
+    payload: dict[str, object] = {
+        "schema_version": THEME_SCHEMA_VERSION,
+        "tokens": dict(tokens),
+    }
+    if name:
+        payload["name"] = name
+    return payload
+
+
+def format_theme_document(tokens: dict[str, str], *, name: str = "") -> str:
+    """Serialize a canonical runtime theme document for the agent volume."""
+
+    return json.dumps(build_theme_document(tokens, name=name))

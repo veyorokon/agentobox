@@ -7,7 +7,7 @@ from agent.runtime.logging import configure_logging_context, emit_event
 
 
 def test_emit_event_writes_json(capsys):
-    configure_logging_context(mode="standalone", platform="local", agent_id="agent-xyz")
+    configure_logging_context(mode="standalone", platform="local", profile="core", agent_id="agent-xyz")
     emit_event(RuntimeEvent.RUNTIME_READY.value, answer=42)
     err = capsys.readouterr().err.strip()
     payload = json.loads(err)
@@ -16,4 +16,5 @@ def test_emit_event_writes_json(capsys):
     assert payload["service.name"] == "agentobox-agent"
     assert payload["mode"] == "standalone"
     assert payload["platform"] == "local"
+    assert payload["profile"] == "core"
     assert payload["agent_id"] == "agent-xyz"
