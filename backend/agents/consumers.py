@@ -50,6 +50,17 @@ def _is_transient_vnc_upstream_failure(agent, exc: Exception) -> bool:
     )
 
 
+def _should_mark_vnc_runtime_unavailable(agent, exc: Exception) -> bool:
+    from agents.models import AgentStatus
+
+    return (
+        isinstance(exc, (socket.gaierror, ConnectionRefusedError, TimeoutError, OSError))
+        and getattr(agent, "status", "") in {AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING}
+        and bool(getattr(agent, "relay_connected", False))
+        and bool(getattr(agent, "sandbox_id", ""))
+    )
+
+
 class RelayConsumer(AsyncJsonWebsocketConsumer):
     """Bidirectional WebSocket channel between agent relay and backend.
 
@@ -355,6 +366,17 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
                 log.warning("vnc.upstream_unready", **log_payload)
             else:
                 log.exception("vnc.upstream_failed", **log_payload)
+
+            if _should_mark_vnc_runtime_unavailable(agent, exc):
+                from agents.services.broadcast import broadcast_agent_update
+                from agents.services.utils import mark_agent_runtime_unavailable
+
+                updated_agent = await mark_agent_runtime_unavailable(
+                    self.agent_id,
+                    reason="vnc_upstream_missing",
+                    error_message="Desktop runtime is unavailable. Redeploy to restore preview.",
+                )
+                await broadcast_agent_update(updated_agent)
             await self.accept()
             await self.close(code=4003)
             return

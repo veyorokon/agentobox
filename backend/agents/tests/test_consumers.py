@@ -3,7 +3,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.consumers import RelayConsumer, _is_transient_vnc_upstream_failure
+from agents.consumers import (
+    RelayConsumer,
+    _is_transient_vnc_upstream_failure,
+    _should_mark_vnc_runtime_unavailable,
+)
 from agents.models import AgentStatus
 
 
@@ -88,3 +92,29 @@ def test_transient_vnc_upstream_failure_false_for_ready_agent():
     agent = MagicMock(status=AgentStatus.IDLE, relay_connected=True)
 
     assert _is_transient_vnc_upstream_failure(agent, socket.gaierror(-2, "Name or service not known")) is False
+
+
+def test_marks_runtime_unavailable_for_ready_agent_with_missing_upstream():
+    agent = MagicMock(
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        sandbox_id="sandbox-123",
+    )
+
+    assert _should_mark_vnc_runtime_unavailable(
+        agent,
+        socket.gaierror(-2, "Name or service not known"),
+    ) is True
+
+
+def test_does_not_mark_runtime_unavailable_while_still_deploying():
+    agent = MagicMock(
+        status=AgentStatus.DEPLOYING,
+        relay_connected=False,
+        sandbox_id="sandbox-123",
+    )
+
+    assert _should_mark_vnc_runtime_unavailable(
+        agent,
+        socket.gaierror(-2, "Name or service not known"),
+    ) is False

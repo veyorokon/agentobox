@@ -33,6 +33,7 @@ from agents.services.lifecycle import (
     transition_agent_status,
 )
 from agents.services.reconcile import recover_lifecycle_attempts
+from agents.services.utils import mark_agent_runtime_unavailable
 from projects.models import Project
 
 
@@ -206,6 +207,37 @@ async def test_recover_lifecycle_attempts_marks_terminal_agent_failed():
     assert attempt.status == AgentLifecycleAttemptStatus.FAILED
     assert attempt.step == "agent_terminal_before_ready"
     assert attempt.error_detail == "relay never connected"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
+    def _setup():
+        owner = User.objects.create_user(username="owner5", password="pw")
+        project = _create_project_without_signals(name="Test Project 5", owner=owner)
+        return Agent.objects.create(
+            name="worker-5",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            relay_connected=True,
+            sandbox_id="dead-sandbox",
+            vnc_url="http://agentobox-agent-dead:6080",
+        )
+
+    agent = await sync_to_async(_setup, thread_sensitive=True)()
+
+    updated = await mark_agent_runtime_unavailable(
+        str(agent.id),
+        reason="vnc_upstream_missing",
+        error_message="Desktop runtime is unavailable. Redeploy to restore preview.",
+    )
+
+    assert updated.status == AgentStatus.ERROR
+    assert updated.relay_connected is False
+    assert updated.sandbox_id == ""
+    assert updated.vnc_url == ""
+    assert updated.error_message == "Desktop runtime is unavailable. Redeploy to restore preview."
 
 
 # ── Lifecycle state machine tests ──

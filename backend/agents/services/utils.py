@@ -4,11 +4,14 @@ import asyncio
 
 import structlog
 from asgiref.sync import sync_to_async
+from django.db.models import F
+from django.utils import timezone
 
 from agents.models import Agent, AgentStatus, StreamEvent
 
 log = structlog.get_logger("abox.comms")
 _background_tasks: set[asyncio.Task] = set()
+_db = sync_to_async(thread_sensitive=False)
 
 
 def spawn_logged_task(coro, *, op_log, task_name: str, event: str, **context) -> asyncio.Task:
@@ -94,3 +97,41 @@ async def terminate_sandbox(agent: Agent, op_log) -> bool:
             agent_id=str(agent.id),
         )
         return False
+
+
+async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_message: str) -> Agent:
+    """Clear stale live-runtime fields when the backing sandbox is gone."""
+    from agents.services.lifecycle import transition_agent_status
+
+    @_db
+    def _mark() -> Agent:
+        agent = Agent.objects.get(id=agent_id)
+
+        if agent.deployed_at:
+            elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+            Agent.objects.filter(id=agent_id).update(
+                compute_seconds=F("compute_seconds") + elapsed,
+            )
+
+        transition_agent_status(agent, AgentStatus.ERROR, reason=reason, force=True)
+        agent.deployed_at = None
+        agent.relay_connected = False
+        agent.relay_disconnected_at = timezone.now()
+        agent.sandbox_id = ""
+        agent.vnc_url = ""
+        agent.error_message = error_message[:2000]
+        agent.save(
+            update_fields=[
+                "status",
+                "deployed_at",
+                "relay_connected",
+                "relay_disconnected_at",
+                "sandbox_id",
+                "vnc_url",
+                "error_message",
+                "updated_at",
+            ]
+        )
+        return agent
+
+    return await _mark()

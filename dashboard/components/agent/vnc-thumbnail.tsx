@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, Component, type ReactNode } f
 import { useMutation } from "@apollo/client/react"
 import { cn } from "@/lib/utils"
 import { CREATE_VNC_TOKEN } from "@/lib/graphql/mutations/vnc"
+import { useHardRestartAgent } from "@/lib/graphql/hooks/use-agents"
 import { createLogger } from "@/lib/logger"
 import type { Agent } from "@/lib/types"
 
@@ -42,6 +43,7 @@ function buildVncWsUrl(agentId: string, token: string): string {
 export function VncThumbnail({ agent }: VncThumbnailProps) {
   const hasContainer = CONTAINER_ALIVE.has(agent.lifecycleStatus) && agent.relayConnected
   const isStopped = agent.lifecycleStatus === "stopped"
+  const hardRestartAgent = useHardRestartAgent()
 
   const [connState, setConnState] = useState<ConnectionState>("idle")
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -247,6 +249,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   }, [fetchTokenAndConnect, reconnectCurrentUrl, wsUrl])
 
   const showVnc = viewerActive && VncScreen && wsUrl && (connState === "connecting" || connState === "connected")
+  const showRuntimeFallback =
+    !hasContainer &&
+    (connState === "error" || agent.lifecycleStatus === "error" || isStopped)
 
   useEffect(() => {
     if (!showVnc) return
@@ -294,12 +299,26 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                   <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
                   <span className="text-[7px] font-mono text-muted/40">connecting...</span>
                 </div>
-              ) : connState === "error" && errorMsg ? (
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-[7px] font-mono text-muted/40">{errorMsg}</span>
+              ) : showRuntimeFallback ? (
+                <div className="flex w-full max-w-[14rem] flex-col items-center gap-2 rounded-md border border-white/6 bg-surface-sunken/70 px-3 py-2 text-center">
+                  <span className="text-[8px] font-mono text-muted/60">
+                    {isStopped ? "session ended" : "preview unavailable"}
+                  </span>
+                  <span className="text-[7px] text-muted/45">
+                    {errorMsg || agent.errorMessage || "The runtime is no longer available."}
+                  </span>
+                  <div className="flex gap-3 text-[7px] font-mono text-muted/35">
+                    <span>{`$${agent.cost.toFixed(2)}`}</span>
+                    <span>{agent.duration}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => hardRestartAgent(agent.id)}
+                    className="rounded border border-accent/25 bg-accent/10 px-2 py-1 text-[7px] font-mono uppercase tracking-[0.18em] text-accent transition hover:bg-accent/15"
+                  >
+                    Redeploy
+                  </button>
                 </div>
-              ) : isStopped ? (
-                <span className="text-[7px] font-mono text-muted/20">session ended</span>
               ) : agent.lifecycleStatus === "error" ? (
                 <span className="text-[6px] font-mono text-danger/50 line-clamp-3 text-center px-1">
                   {agent.errorMessage

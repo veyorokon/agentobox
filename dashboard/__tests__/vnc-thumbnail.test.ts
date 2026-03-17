@@ -8,12 +8,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Agent } from "@/lib/types"
 
 const createVncToken = vi.fn()
+const hardRestartAgent = vi.fn()
 const disconnectSpy = vi.fn()
 const connectSpy = vi.fn()
 const screenProps: any[] = []
 
 vi.mock("@apollo/client/react", () => ({
   useMutation: () => [createVncToken],
+}))
+
+vi.mock("@/lib/graphql/hooks/use-agents", () => ({
+  useHardRestartAgent: () => hardRestartAgent,
 }))
 
 vi.mock("react-vnc", () => ({
@@ -65,6 +70,7 @@ describe("VncThumbnail", () => {
     createVncToken.mockReset()
     disconnectSpy.mockReset()
     connectSpy.mockReset()
+    hardRestartAgent.mockReset()
     screenProps.length = 0
     createVncToken.mockResolvedValue({
       data: { createVncToken: { token: "test-token" } },
@@ -121,5 +127,24 @@ describe("VncThumbnail", () => {
     await vi.advanceTimersByTimeAsync(50)
     await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
     expect(screen.getByTestId("vnc-screen").getAttribute("data-has-resize-session")).toBe("false")
+  })
+
+  it("shows a preview-unavailable fallback with redeploy action when the runtime is gone", async () => {
+    render(React.createElement(VncThumbnail, {
+      agent: {
+        ...baseAgent,
+        lifecycleStatus: "error",
+        relayConnected: false,
+        errorMessage: "Desktop runtime is unavailable. Redeploy to restore preview.",
+        cost: 0.23,
+        duration: "1d 17h",
+      },
+    }))
+
+    expect(screen.getByText("preview unavailable")).toBeTruthy()
+    expect(screen.getByText("Desktop runtime is unavailable. Redeploy to restore preview.")).toBeTruthy()
+
+    screen.getByRole("button", { name: "Redeploy" }).click()
+    expect(hardRestartAgent).toHaveBeenCalledWith("agent-1")
   })
 })
