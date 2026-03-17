@@ -1,13 +1,13 @@
-# Deploy pipeline: test → build → deploy → modal smoke
+# Deploy pipeline: validate → ci → build → deploy → bootstrap
 #
 # Branch → environment mapping:
 #   dev  branch → dev  environment (dev.agentobox.com)
 #   main branch → prod environment (agentobox.com)
 #
 # Flow:
-#   PR → dev:  unit + docker smoke (test.yml)
-#   merge dev: deploy to dev → modal smoke against dev.agentobox.com
-#   merge main: deploy to prod → modal smoke against agentobox.com
+#   PR → dev:  ci.yml
+#   merge dev: deploy to dev → agent bootstrap against dev.agentobox.com
+#   merge main: deploy to prod → agent bootstrap against agentobox.com
 #
 # Required GitHub Secrets (per environment):
 #   DEPLOY_HOST     — Server IP or domain
@@ -88,15 +88,15 @@ jobs:
           cd backend && uv run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
 
   # ─── Test ──────────────────────────────────────────────────────────
-  tests:
-    uses: ./.github/workflows/test.yml
+  ci:
+    uses: ./.github/workflows/ci.yml
     secrets: inherit
 
   # ─── Build ─────────────────────────────────────────────────────────
   build:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [tests, validate-secrets]
+    needs: [ci, validate-secrets]
     permissions:
       contents: read
       packages: write

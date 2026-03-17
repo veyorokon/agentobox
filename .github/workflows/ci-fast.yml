@@ -1,0 +1,148 @@
+# Fast PR checks: unit/integration/invariant/lint across backend, agent, dashboard.
+
+name: CI Fast
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-unit:
+    name: backend-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: cd backend && uv sync --group dev
+      - name: Run unit and invariant tests
+        run: cd backend && uv run pytest -m "unit or invariant" --tb=short -q
+
+  backend-chaos:
+    name: backend-chaos
+    runs-on: ubuntu-latest
+    needs: backend-unit
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DJANGO_SETTINGS_MODULE: config.settings_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: cd backend && uv sync --group dev
+      - name: Run chaos tests
+        run: cd backend && uv run pytest -m "chaos" --tb=short -q
+
+  backend-integration:
+    name: backend-integration
+    runs-on: ubuntu-latest
+    needs: backend-unit
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: agentobox
+          POSTGRES_PASSWORD: agentobox
+          POSTGRES_DB: agentobox_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U agentobox"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgres://agentobox:agentobox@localhost:5432/agentobox_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      AGENT_RUNTIME: docker
+      AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:ci
+      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:dev
+      DJANGO_SETTINGS_MODULE: config.settings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: cd backend && uv sync --group dev
+      - name: Run migrations
+        run: cd backend && uv run python manage.py migrate --noinput
+      - name: Run integration tests
+        run: cd backend && uv run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+
+  backend-architecture:
+    name: backend-architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: cd backend && uv sync --group dev
+      - name: Run architecture checks
+        run: cd backend && uv run python agents/tests/check_architecture.py
+
+  agent-unit:
+    name: agent-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install agent dependencies
+        run: uv sync --directory agent --group dev
+      - name: Run agent unit tests
+        run: PYTHONPATH=${{ github.workspace }} uv run --directory agent pytest tests/ -q -o addopts=
+
+  dashboard-unit:
+    name: dashboard-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - name: Install dashboard dependencies
+        run: cd dashboard && pnpm install --frozen-lockfile
+      - name: Run dashboard vitest suite
+        env:
+          SKIP_E2E: "1"
+        run: cd dashboard && pnpm exec vitest run
+
+  backend-lint:
+    name: backend-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install backend dependencies
+        run: cd backend && uv sync --group dev
+      - name: Run ruff
+        run: cd backend && uv run ruff check agents/

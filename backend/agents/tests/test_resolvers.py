@@ -5,13 +5,15 @@ not from stale model columns.
 """
 
 import pytest
+from asgiref.sync import sync_to_async
+from django.test import RequestFactory
 
 from agents.models import Agent, AgentStatus, SessionResult
 
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 class TestResolverAdapterDelegation:
     """Principle: GraphQL resolvers must delegate to adapters, never access raw JSON.
 
@@ -87,36 +89,64 @@ class TestResolverAdapterDelegation:
         result = AgentType.turns(agent)
         assert result == 7
 
-    def test_cost_falls_back_to_session_field_without_history(self, agent):
+    @pytest.mark.asyncio
+    async def test_cost_resolves_inside_async_graphql_query(self, agent):
+        """GraphQL agent query must not do sync ORM work in async execution."""
+        from schema import schema
+
+        request = RequestFactory().post("/graphql")
+        request.user = agent.project.owner
+
+        result = await schema.execute(
+            """
+            query ($agentId: ID!) {
+                agent(agentId: $agentId) {
+                    id
+                    cost
+                }
+            }
+            """,
+            variable_values={"agentId": str(agent.id)},
+            context_value={"request": request},
+        )
+
+        assert result.errors is None
+        assert result.data is not None
+        assert result.data["agent"]["id"] == str(agent.id)
+        assert result.data["agent"]["cost"] == pytest.approx(1.23)
+
+    @pytest.mark.asyncio
+    async def test_cost_falls_back_to_session_field_without_history(self, agent):
         """cost falls back to the current session field before any results persist."""
         from agents.graphql.types import AgentType
-        result = AgentType.cost(agent)
+        result = await AgentType.cost(agent)
         assert result == pytest.approx(1.23)
 
-    def test_cost_accumulates_latest_total_per_session(self, agent):
+    @pytest.mark.asyncio
+    async def test_cost_accumulates_latest_total_per_session(self, agent):
         """Agent card cost should survive restarts by summing session totals."""
         from agents.graphql.types import AgentType
 
-        SessionResult.objects.create(
+        await sync_to_async(SessionResult.objects.create, thread_sensitive=False)(
             agent=agent,
             session_id="session-a",
             total_cost_usd=0.01,
             duration_ms=1000,
         )
-        SessionResult.objects.create(
+        await sync_to_async(SessionResult.objects.create, thread_sensitive=False)(
             agent=agent,
             session_id="session-a",
             total_cost_usd=0.04,
             duration_ms=2000,
         )
-        SessionResult.objects.create(
+        await sync_to_async(SessionResult.objects.create, thread_sensitive=False)(
             agent=agent,
             session_id="session-b",
             total_cost_usd=0.02,
             duration_ms=1000,
         )
 
-        result = AgentType.cost(agent)
+        result = await AgentType.cost(agent)
         assert result == pytest.approx(0.06)
 
     def test_phase_still_reads_from_model(self, agent):

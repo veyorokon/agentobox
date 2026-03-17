@@ -286,10 +286,10 @@ class AgentType:
         return result or None
 
     @strawberry.field
-    def cost(self) -> float:
-        from agents.serializers import _compute_agent_total_cost_sync
+    async def cost(self) -> float:
+        from agents.serializers import compute_agent_total_cost
 
-        return _compute_agent_total_cost_sync(self.id, self.session_cost_usd)
+        return await compute_agent_total_cost(self.id, self.session_cost_usd)
 
     @strawberry.field
     def duration(self) -> str:

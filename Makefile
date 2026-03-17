@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-dashboard-unit test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -66,6 +66,35 @@ _test-dashboard:
 test-agent:
 	cd agent && uv run pytest tests/ -v -o addopts=
 
+test-backend-unit:
+	cd backend && uv run pytest -m "unit" --tb=short -q
+
+test-backend-integration:
+	cd backend && uv run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+
+test-backend-chaos:
+	cd backend && uv run pytest -m "chaos" --tb=short -q
+
+test-backend-architecture:
+	cd backend && uv run python agents/tests/check_architecture.py
+
+test-backend-lint:
+	cd backend && uv run ruff check agents/
+
+test-agent-unit:
+	cd agent && uv run pytest tests/ -q -o addopts=
+
+test-dashboard-unit:
+	cd dashboard && pnpm vitest run
+
+test-ci-fast: test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-dashboard-unit lint
+
+test-ci-smoke-bootstrap:
+	uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -o "addopts="
+
+test-ci-smoke-roundtrip:
+	uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+
 test-agent-runtime-docker-contract:
 	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts=
 
@@ -94,8 +123,7 @@ test-integration:
 test-visual:
 	ABOX_VISUAL_TESTS=1 uv run pytest agent/tests/test_theme_visual.py -v --timeout=120 -s
 
-test-unit:
-	cd backend && uv run pytest -m "unit" --tb=short -q
+test-unit: test-backend-unit
 
 test-invariant:
 	cd backend && uv run pytest -m "invariant" --tb=short -q
@@ -103,11 +131,9 @@ test-invariant:
 test-all:
 	docker compose exec backend uv run pytest --tb=short -q
 
-test-bootstrap:
-	uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -o "addopts="
+test-bootstrap: test-ci-smoke-bootstrap
 
-test-smoke:
-	uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+test-smoke: test-ci-smoke-roundtrip
 
 test-smoke-modal:
 	SMOKE_RUNTIME=modal uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="

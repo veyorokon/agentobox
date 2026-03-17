@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: fast
+    uses: ./.github/workflows/ci-fast.yml
+    secrets: inherit
+
+  smoke:
+    name: smoke
+    needs: fast
+    uses: ./.github/workflows/ci-smoke.yml
+    secrets: inherit
