@@ -12,6 +12,7 @@ django_asgi_app = get_asgi_application()
 
 from agents.services.mcp_coord import mcp  # noqa: E402
 from agents.consumers import DashboardConsumer, RelayConsumer, VncProxyConsumer  # noqa: E402
+from agents.services.reconcile import ensure_running as ensure_reconciler_running  # noqa: E402
 
 log = structlog.get_logger("abox.graphql")
 
@@ -25,6 +26,8 @@ _mcp_app = None
 _mcp_lifespan_task = None
 _mcp_ready = asyncio.Event()
 _mcp_lock = asyncio.Lock()
+_startup_ready = asyncio.Event()
+_startup_lock = asyncio.Lock()
 
 
 async def _mcp_lifespan_runner(app):
@@ -70,6 +73,18 @@ async def _ensure_mcp_ready():
     await _mcp_ready.wait()
 
 
+async def _ensure_background_services_started():
+    """Start backend-owned background loops once per ASGI worker."""
+    if _startup_ready.is_set():
+        return
+
+    async with _startup_lock:
+        if _startup_ready.is_set():
+            return
+        ensure_reconciler_running()
+        _startup_ready.set()
+
+
 async def http_dispatch(scope, receive, send):
     """Route /mcp and /messages to FastMCP, everything else to Django.
 
@@ -77,6 +92,8 @@ async def http_dispatch(scope, receive, send):
     message POSTs at /messages/?session_id=xxx. Both must route to
     the same FastMCP app or MCP clients hang during initialize.
     """
+    await _ensure_background_services_started()
+
     if scope["path"].startswith("/mcp") or scope["path"].startswith("/messages"):
         await _ensure_mcp_ready()
         await _mcp_app(scope, receive, send)

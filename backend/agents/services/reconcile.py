@@ -43,6 +43,9 @@ log = structlog.get_logger("abox.reconciler")
 INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
 DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container state
+REASON_RECONCILER_DEAD_RUNTIME = "reconciler.dead_runtime"
+REASON_RECONCILER_STUCK_DEPLOY = "reconciler.stuck_deploy"
+REASON_RECONCILER_ERROR_REAP = "reconciler.error_reap"
 
 _task: asyncio.Task | None = None
 
@@ -99,7 +102,7 @@ def _get_agents(**filters):
 
 
 @_db
-def _mark_error(agent_id, error_message=""):
+def _mark_error(agent_id, error_message="", *, reason=REASON_RECONCILER_DEAD_RUNTIME):
     agent = Agent.objects.get(id=agent_id)
 
     # Accumulate compute time atomically before status change
@@ -111,7 +114,7 @@ def _mark_error(agent_id, error_message=""):
 
     # Force=True: reconciler is a recovery path — it must be able to fix
     # any stuck state, even if the transition isn't normally legal.
-    transition_agent_status(agent, AgentStatus.ERROR, reason="reconciler", force=True)
+    transition_agent_status(agent, AgentStatus.ERROR, reason=reason, force=True)
     agent.deployed_at = None
     agent.relay_connected = False
     agent.relay_disconnected_at = timezone.now()
@@ -126,16 +129,43 @@ def _mark_error(agent_id, error_message=""):
         "vnc_url",
         "updated_at",
     ]
-    # Only write error_message if not already set (stream.py may have set it first)
-    if error_message and not agent.error_message:
+    # Prefer richer crash diagnostics over generic earlier placeholders.
+    if _should_replace_error_message(agent.error_message, error_message):
         agent.error_message = error_message[:2000]
         update_fields.append("error_message")
     agent.save(update_fields=update_fields)
     return agent
 
 
+def _should_replace_error_message(current: str, incoming: str) -> bool:
+    if not incoming:
+        return False
+    if not current:
+        return True
+
+    current_clean = current.strip()
+    incoming_clean = incoming.strip()
+    if not incoming_clean:
+        return False
+
+    generic_prefixes = (
+        "Container exited unexpectedly",
+        "Process exited with code ",
+    )
+    current_is_generic = current_clean.startswith(generic_prefixes)
+    incoming_is_generic = incoming_clean.startswith(generic_prefixes)
+
+    if current_is_generic and not incoming_is_generic:
+        return True
+    if current_is_generic and len(incoming_clean) > len(current_clean):
+        return True
+    if "\n" not in current_clean and "\n" in incoming_clean:
+        return True
+    return False
+
+
 @_db
-def _mark_stopped(agent_id):
+def _mark_stopped(agent_id, *, reason=REASON_RECONCILER_ERROR_REAP):
     agent = Agent.objects.get(id=agent_id)
 
     # Accumulate compute time atomically before status change
@@ -147,7 +177,7 @@ def _mark_stopped(agent_id):
 
     # Force=True: reconciler is a recovery path — it must be able to fix
     # any stuck state, even if the transition isn't normally legal.
-    transition_agent_status(agent, AgentStatus.STOPPED, reason="reconciler_reap", force=True)
+    transition_agent_status(agent, AgentStatus.STOPPED, reason=reason, force=True)
     agent.deployed_at = None
     agent.save(update_fields=["status", "deployed_at", "updated_at"])
     return agent
@@ -247,7 +277,11 @@ async def _detect_dead_containers():
                     parts.append(tail)
                 error_msg = "\n".join(parts)
 
-            agent = await _mark_error(agent.id, error_message=error_msg)
+            agent = await _mark_error(
+                agent.id,
+                error_message=error_msg,
+                reason=REASON_RECONCILER_DEAD_RUNTIME,
+            )
             await fail_active_lifecycle_attempts(
                 str(agent.id),
                 step="runtime_dead",
@@ -325,7 +359,7 @@ async def _detect_stuck_deploys(now):
                 )
 
         await terminate_sandbox(agent, agent_log)
-        agent = await _mark_error(agent.id)
+        agent = await _mark_error(agent.id, reason=REASON_RECONCILER_STUCK_DEPLOY)
         await fail_active_lifecycle_attempts(
             str(agent.id),
             step="stuck_deploy",
@@ -365,7 +399,7 @@ async def _reap_errored_agents(now):
 
     for agent in errored_agents:
         await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
-        agent = await _mark_stopped(agent.id)
+        agent = await _mark_stopped(agent.id, reason=REASON_RECONCILER_ERROR_REAP)
         await broadcast_agent_update(agent)
         log.info(
             "reconciler.error_reaped",

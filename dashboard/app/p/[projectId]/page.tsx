@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useQuery } from "@apollo/client/react"
 import {
@@ -33,6 +33,8 @@ import { TeamFeed } from "@/components/feed/team-feed"
 import { ComposerBar } from "@/components/composer/composer-bar"
 import { UserMenu } from "@/components/layout/user-menu"
 import { ThemePicker } from "@/components/layout/theme-picker"
+import { findBuiltInThemeByTokens } from "@/lib/config"
+import { useThemeStore } from "@/lib/stores/theme"
 
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
@@ -50,11 +52,18 @@ export default function ProjectPage() {
   const bp = useBreakpoint()
 
   // ── Project name (for breadcrumb) ─────────────────────────────────
-  const { data: projectData, loading: projectLoading } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
+  const syncTheme = useThemeStore((s) => s.syncTheme)
+  const { data: projectData, loading: projectLoading } = useQuery<{ project: { id: string; name: string; themeTokens?: Record<string, string> | null } | null }>(GET_PROJECT, {
     variables: { id: projectId },
     skip: !projectId,
   })
   const projectName = projectData?.project?.name ?? ""
+
+  useEffect(() => {
+    const matchedTheme = findBuiltInThemeByTokens(projectData?.project?.themeTokens)
+    if (!matchedTheme) return
+    syncTheme({ theme: matchedTheme.id, mode: matchedTheme.mode })
+  }, [projectData?.project?.themeTokens, syncTheme])
 
   // ── Sidebar store (mobile tab) ──────────────────────────────────
   const mainTab = useSidebarStore(s => s.mainTab)

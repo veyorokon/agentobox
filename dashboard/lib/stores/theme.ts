@@ -20,6 +20,7 @@ const DEFAULT_CONFIG: ThemeConfig = { theme: "claude", mode: "dark" }
 export interface ThemeState {
   config: ThemeConfig
   setTheme: (theme: string, mode?: string) => void
+  syncTheme: (config: ThemeConfig) => void
 }
 
 function readPersistedConfig(): ThemeConfig {
@@ -61,5 +62,11 @@ export const useThemeStore = create<ThemeState>()(zustandLog("theme", (set) => (
     persistConfig(resolved)
     applyToDocument(resolved)
     set({ config: resolved })
+  },
+
+  syncTheme: (config) => {
+    persistConfig(config)
+    applyToDocument(config)
+    set({ config })
   },
 })))

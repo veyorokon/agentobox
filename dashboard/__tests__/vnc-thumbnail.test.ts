@@ -123,6 +123,25 @@ describe("VncThumbnail", () => {
     expect(screen.getByTestId("vnc-screen").getAttribute("data-url")).toBe(firstProps.url)
   })
 
+  it("does not retry VNC while relay is down but lifecycle is still idle", async () => {
+    const { rerender } = render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+    expect(createVncToken).toHaveBeenCalledTimes(1)
+
+    rerender(React.createElement(VncThumbnail, {
+      agent: { ...baseAgent, relayConnected: false },
+    }))
+
+    const firstProps = screenProps.at(-1)
+    firstProps.onDisconnect?.({ detail: { code: 1000, clean: true } })
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(createVncToken).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId("vnc-screen")).toBeTruthy()
+  })
+
   it("does not request server-side resize for the thumbnail viewer", async () => {
     render(React.createElement(VncThumbnail, { agent: baseAgent }))
 
@@ -148,5 +167,18 @@ describe("VncThumbnail", () => {
 
     screen.getByRole("button", { name: "Redeploy" }).click()
     expect(hardRestartAgent).toHaveBeenCalledWith("agent-1")
+  })
+
+  it("does not dim the whole preview when a session has ended", async () => {
+    const { container } = render(React.createElement(VncThumbnail, {
+      agent: {
+        ...baseAgent,
+        lifecycleStatus: "stopped",
+        relayConnected: false,
+      },
+    }))
+
+    expect(screen.getByText("session ended")).toBeTruthy()
+    expect((container.firstChild as HTMLElement).className.includes("opacity-50")).toBe(false)
   })
 })

@@ -18,6 +18,7 @@ from agents.models import AgentStatus
 from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
+    REASON_RECONCILER_DEAD_RUNTIME,
     _detect_stuck_deploys,
     _mark_error,
     _reap_errored_agents,
@@ -151,16 +152,47 @@ def test_mark_error_clears_stale_runtime_projection():
     with (
         patch("agents.services.reconcile.Agent.objects.get", return_value=agent),
         patch("agents.services.reconcile.Agent.objects.filter", return_value=mock_filter),
-        patch("agents.services.reconcile.transition_agent_status"),
+        patch("agents.services.reconcile.transition_agent_status") as mock_transition,
     ):
         _mark_error.__wrapped__("agent-1", error_message="container died")
 
+    mock_transition.assert_called_once_with(
+        agent,
+        AgentStatus.ERROR,
+        reason=REASON_RECONCILER_DEAD_RUNTIME,
+        force=True,
+    )
     assert agent.deployed_at is None
     assert agent.relay_connected is False
     assert agent.relay_disconnected_at is not None
     assert agent.sandbox_id == ""
     assert agent.vnc_url == ""
     assert agent.error_message == "container died"
+    agent.save.assert_called_once()
+
+
+def test_mark_error_replaces_generic_error_with_richer_crash_details():
+    agent = MagicMock()
+    agent.id = "agent-1"
+    agent.deployed_at = None
+    agent.error_message = "Container exited unexpectedly"
+    agent.relay_connected = True
+    agent.relay_disconnected_at = None
+    agent.sandbox_id = "sandbox-123"
+    agent.vnc_url = "http://runtime:6080"
+
+    mock_filter = MagicMock()
+    mock_filter.update = MagicMock()
+    incoming = "Container exited with code 137\nKilled by OOM killer"
+
+    with (
+        patch("agents.services.reconcile.Agent.objects.get", return_value=agent),
+        patch("agents.services.reconcile.Agent.objects.filter", return_value=mock_filter),
+        patch("agents.services.reconcile.transition_agent_status"),
+    ):
+        _mark_error.__wrapped__("agent-1", error_message=incoming)
+
+    assert agent.error_message == incoming
     agent.save.assert_called_once()
 
 
@@ -333,5 +365,8 @@ class TestErrorReapDebugMode:
             await _reap_errored_agents(timezone.now())
 
         mock_terminate.assert_awaited_once()
-        mock_mark_stopped.assert_awaited_once_with(agent.id)
+        mock_mark_stopped.assert_awaited_once_with(
+            agent.id,
+            reason="reconciler.error_reap",
+        )
         mock_broadcast.assert_awaited_once_with(agent)

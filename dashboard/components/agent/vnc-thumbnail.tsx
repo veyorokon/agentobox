@@ -211,6 +211,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
     log("disconnected", { agent: a.id, clean, code, lifecycle: a.lifecycleStatus }, clean ? "debug" : "warn")
 
+    if (!a.relayConnected && CONTAINER_ALIVE.has(a.lifecycleStatus)) {
+      log("disconnected.hold_frame", { agent: a.id, lifecycle: a.lifecycleStatus })
+      return
+    }
+
     const permanentMsg = code ? CLOSE_MESSAGES[code] : null
     if (permanentMsg) {
       setWsUrl(null)
@@ -268,7 +273,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   }, [showVnc])
 
   return (
-    <div className={cn("overflow-hidden bg-surface flex flex-col", isStopped && "opacity-50")}>
+    <div className="overflow-hidden bg-surface flex flex-col">
       <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
         {showVnc ? (
           <VncErrorBoundary key={wsUrl}>
