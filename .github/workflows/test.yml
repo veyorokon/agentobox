@@ -117,9 +117,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: cd agent && uv sync --group dev
+        run: uv sync --directory agent --group dev
       - name: Run agent unit tests
-        run: cd agent && uv run pytest tests/ -q -o addopts=
+        run: PYTHONPATH=${{ github.workspace }} uv run --directory agent pytest tests/ -q -o addopts=
 
   dashboard-unit:
     name: Dashboard Unit
