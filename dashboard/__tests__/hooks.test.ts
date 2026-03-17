@@ -42,6 +42,7 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     name: "backend",
     lifecycleStatus: "running",
     attentionLevel: "none",
+    relayConnected: true,
     mode: "auto",
     task: "Vahid Eyorokon requested this feature",
     cost: 0.42,
@@ -51,12 +52,16 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     phase: "coding",
     liveAction: "EditTool",
     lastOutput: "Done",
+    errorMessage: null,
     tags: ["backend"],
     instructions: "Handle Django models",
     mcpServers: [],
     runtime: "docker",
     workspacePath: "/home/vahid-eyorokon/projects/agentobox",
+    triggers: [],
+    computeSeconds: 300,
     taskProgress: { __typename: "TaskProgressType", done: 3, total: 5 },
+    tasks: [],
     ...overrides,
   }
 }
@@ -568,7 +573,10 @@ describe("optimistic update contracts: lifecycle hooks", () => {
       mcpServers: [],
       runtime: "docker",
       workspacePath: "/home/vahid-eyorokon/projects/agentobox",
+      triggers: [],
+      computeSeconds: 300,
       taskProgress: { __typename: "TaskProgressType", done: 3, total: 5 },
+      tasks: [],
       ...overrides,
     }
   }

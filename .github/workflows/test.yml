@@ -117,11 +117,29 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: |
-          uv sync --group dev
-          uv pip install -e agent/
+        run: cd agent && uv sync --group dev
       - name: Run agent unit tests
-        run: uv run pytest agent/tests/ -q -o addopts=
+        run: cd agent && uv run pytest tests/ -q -o addopts=
+
+  dashboard-unit:
+    name: Dashboard Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - name: Install dashboard dependencies
+        run: cd dashboard && pnpm install --frozen-lockfile
+      - name: Run dashboard vitest suite
+        env:
+          SKIP_E2E: "1"
+        run: cd dashboard && pnpm exec vitest run
 
   lint:
     name: Lint
