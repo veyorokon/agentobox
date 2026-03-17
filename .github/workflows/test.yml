@@ -117,7 +117,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: uv sync --package agent --group dev
+        run: uv sync --package agentobox-agent --group dev
       - name: Run agent unit tests
         run: uv run --directory agent pytest tests/ -q -o addopts=
 
