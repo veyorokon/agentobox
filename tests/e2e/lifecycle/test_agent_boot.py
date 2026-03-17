@@ -1,29 +1,15 @@
-"""
-Agent boot health e2e tests.
+"""Agent boot health e2e tests for the managed runtime.
 
-Verifies the full agent boot chain works end-to-end:
-  1. Container starts and all s6 services are running
-  2. Volume symlinks resolve correctly (init-volume)
-  3. api-proxy is healthy (port 9999)
-  4. relay connects to backend (relay_init event)
-  5. Agent reaches idle status
-  6. Message sent to idle agent is processed (agent goes running)
+Bootstrap smoke proves the runtime contract itself:
+  1. backend can create and provision the agent container
+  2. the managed runtime reaches idle/ready
+  3. canonical runtime files are readable from the container
+  4. local ingress health/status endpoints report managed readiness
+  5. theme artifacts are generated when theme tokens exist
 
-These tests catch the class of bugs we kept hitting manually:
-  - Volume path mismatch (VOL_ROOT wrong → inbox empty)
-  - api-proxy not starting → SDK "Control request timeout: initialize"
-  - MCP config type wrong (http vs sse) → SDK init hang
-  - init-volume symlink gaps → missing .mcp.json, .claude/settings.json
-
-Every test here represents a bug we actually hit. If any of these
-fail, the agent is broken and nothing downstream works.
-
-Run:
-  make test-e2e-agents
-  # or directly:
-  uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py -v
-
-Requires: docker compose stack running with backend + agent image available.
+This suite intentionally avoids provider-specific execution dependencies.
+CI bootstrap uses the `echo` executor override so basic boot health is not
+coupled to Anthropic credentials or network conditions.
 """
 
 from __future__ import annotations
@@ -37,7 +23,7 @@ import os
 import pytest
 
 from helpers.graphql import AboxGraphQL
-from helpers.polling import poll_agent_status, poll_until
+from helpers.polling import poll_agent_status
 
 API_URL = os.environ.get("ABOX_API_URL", "http://localhost:8000/graphql")
 
@@ -52,7 +38,7 @@ MESSAGE_TIMEOUT_S = 120
 
 @pytest.mark.bootstrap
 class TestAgentBoot:
-    """Verify an agent boots correctly with all services healthy."""
+    """Verify an agent boots correctly with the new managed runtime contract."""
 
     @pytest.fixture(scope="class")
     def booted_agent(self, auth_token, test_project, docker_client):
@@ -65,7 +51,6 @@ class TestAgentBoot:
         agent = gql.create_agent(
             test_project["id"],
             name=agent_name,
-
             instructions="You are an e2e boot test agent by Vahid Eyorokon. Wait for instructions.",
         )
         agent_id = agent["id"]
@@ -99,55 +84,67 @@ class TestAgentBoot:
             pass
         gql.close()
 
-    # -- Service health checks --
+    # -- Runtime health checks --
 
-    def test_apiproxy_healthy(self, booted_agent):
-        """api-proxy must be running and responding on port 9999.
-
-        Bug this catches: api-proxy not starting → relay gets
-        "Control request timeout: initialize" because SDK can't
-        reach the Anthropic API via the proxy.
-        """
+    def test_healthz_ready(self, booted_agent):
+        """Ingress health must report managed readiness."""
         container = booted_agent["container"]
         docker_ops = booted_agent["docker_ops"]
 
         exit_code, output = docker_ops.exec_in_container(
             container.id,
-            ["curl", "-sf", "http://localhost:9999/health"],
+            ["curl", "-sf", "http://localhost:8080/healthz"],
         )
-        assert exit_code == 0 and "ok" in output.lower(), (
-            f"api-proxy health check failed (exit={exit_code}): {output}"
-        )
+        assert exit_code == 0, f"healthz request failed (exit={exit_code}): {output}"
+        payload = json.loads(output)
+        assert payload["status"] == "ready"
+        assert payload["startup_stage"] == "managed_ready"
+        assert payload["runtime_state"] in {"ready", "busy"}
+        assert payload["transport"]["connected"] is True
+        assert payload["build"]["image_ref"], f"missing build metadata: {payload}"
 
-    def test_relay_process_running(self, booted_agent):
-        """relay.py must be running as the agent user.
-
-        If relay dies silently, the agent shows as idle but can't
-        receive messages.
-        """
+    def test_status_projection_reports_managed_ready(self, booted_agent):
+        """Status endpoint and projected status file must agree on readiness."""
         container = booted_agent["container"]
         docker_ops = booted_agent["docker_ops"]
 
         exit_code, output = docker_ops.exec_in_container(
             container.id,
-            ["pgrep", "-f", "relay.py"],
+            ["curl", "-sf", "http://localhost:8080/status"],
         )
-        assert exit_code == 0, f"relay.py process not found: {output}"
+        assert exit_code == 0, f"status request failed (exit={exit_code}): {output}"
+        status = json.loads(output)
+        assert status["startup_stage"] == "managed_ready"
+        assert status["runtime_state"] in {"ready", "busy"}
+        assert status["transport"]["connected"] is True
+
+        exit_code, projected = docker_ops.exec_in_container(
+            container.id,
+            [
+                "python3",
+                "-c",
+                (
+                    "import json, os; "
+                    "aid = os.environ['AGENT_ID']; "
+                    "from pathlib import Path; "
+                    "p = Path('/vol/agents') / aid / '_abox' / 'status.json'; "
+                    "print(p.read_text())"
+                ),
+            ],
+            user="agent",
+        )
+        assert exit_code == 0, f"projected status not readable: {projected}"
+        projected_status = json.loads(projected)
+        assert projected_status["startup_stage"] == "managed_ready"
+        assert projected_status["transport"]["connected"] is True
 
     # -- Volume and symlink checks --
 
     def test_volume_inbox_accessible(self, booted_agent):
-        """Relay must be able to read inbox.jsonl at the VOL_ROOT path.
-
-        Bug this catches: relay reading /vol/_abox/inbox.jsonl (wrong)
-        instead of /vol/agents/$AGENT_ID/_abox/inbox.jsonl (correct).
-        The file exists but is empty at the wrong path — silent failure.
-        """
+        """Runtime must be able to read canonical inbox.jsonl under the agent root."""
         container = booted_agent["container"]
         docker_ops = booted_agent["docker_ops"]
-        agent_id = booted_agent["agent"]["id"]
 
-        # Verify the file exists at the path the relay actually uses (VOL_ROOT)
         exit_code, output = docker_ops.exec_in_container(
             container.id,
             ["python3", "-c", (
@@ -165,10 +162,7 @@ class TestAgentBoot:
         )
 
     def test_volume_status_json_accessible(self, booted_agent):
-        """status.json must exist and be writable at VOL_ROOT path.
-
-        The relay writes convergence hashes here after applying config changes.
-        """
+        """Projected status.json must exist at the canonical runtime path."""
         container = booted_agent["container"]
         docker_ops = booted_agent["docker_ops"]
 
@@ -189,24 +183,15 @@ class TestAgentBoot:
         )
 
     def test_volume_symlinks_resolve(self, booted_agent):
-        """Critical symlinks created by init-volume must resolve.
-
-        init-volume creates symlinks from volume paths → container paths.
-        If any are broken, the relay or CC can't find config files.
-        """
+        """Critical bridged runtime paths must resolve inside the container."""
         container = booted_agent["container"]
         docker_ops = booted_agent["docker_ops"]
 
-        # Always-present: provisioning writes these for every agent.
-        # When workspacePath is empty, CC workspace is /home/agent/ (not /home/agent/workspace/).
-        # Adapter provision_paths() determines the actual locations.
         critical_paths = [
             "/home/agent/.claude/settings.json",
             "/home/agent/.relay_env",
-            "/run/secrets/proxy_key",
-            "/run/secrets/api-key-helper.sh",  # SDK calls this to get API key — must be real, not placeholder
-            "/home/agent/CLAUDE.md",     # instruction file (may be /home/agent/workspace/CLAUDE.md with workspacePath)
-            "/home/agent/.mcp.json",     # MCP config (may be /home/agent/workspace/.mcp.json with workspacePath)
+            "/home/agent/CLAUDE.md",
+            "/home/agent/.mcp.json",
         ]
 
         missing = []
@@ -218,20 +203,12 @@ class TestAgentBoot:
                 missing.append(path)
 
         assert not missing, (
-            f"Critical paths missing after init-volume: {missing}. "
-            f"init-volume symlinks are broken or provisioning didn't write these files."
+            f"Critical bridged paths missing: {missing}. "
+            f"Provisioning/bridge contract is broken."
         )
 
     def test_mcp_config_valid(self, booted_agent):
-        """MCP config must be valid JSON and use correct transport types.
-
-        Bug this catches: MCP server type "http" instead of "sse" →
-        CC SDK hangs during initialize with "Control request timeout".
-
-        Path depends on workspacePath: when empty, adapter uses /home/agent/
-        as workspace root, so .mcp.json lands at /home/agent/.mcp.json.
-        When set, it's at /home/agent/workspace/.mcp.json (or similar).
-        """
+        """MCP config must be valid JSON and use SSE transport semantics."""
         container = booted_agent["container"]
         docker_ops = booted_agent["docker_ops"]
 
@@ -253,32 +230,10 @@ class TestAgentBoot:
         servers = config.get("mcpServers", {})
         for name, server in servers.items():
             server_type = server.get("type", "")
-            # "http" is wrong — CC SDK hangs during initialize.
-            # "sse" is correct for SSE transport.
             assert server_type != "http", (
                 f"MCP server '{name}' uses type 'http' — must be 'sse'. "
                 f"CC SDK will hang during initialize."
             )
-
-    def test_relay_env_has_proxy_config(self, booted_agent):
-        """relay_env must set ANTHROPIC_BASE_URL to the local proxy.
-
-        Without this, the SDK tries to reach api.anthropic.com directly
-        (which fails because the agent only has a placeholder key).
-        """
-        container = booted_agent["container"]
-        docker_ops = booted_agent["docker_ops"]
-
-        exit_code, output = docker_ops.exec_in_container(
-            container.id,
-            ["bash", "-c", "source /home/agent/.relay_env && echo $ANTHROPIC_BASE_URL"],
-        )
-        assert exit_code == 0, f"Can't source .relay_env: {output}"
-        url = output.strip()
-        assert url and "localhost" in url, (
-            f"ANTHROPIC_BASE_URL not set to local proxy: got '{url}'. "
-            f"api-proxy won't intercept API calls."
-        )
 
     # -- Theme files --
 

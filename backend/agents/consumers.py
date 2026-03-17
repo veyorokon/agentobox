@@ -21,6 +21,8 @@ all stored without code changes. The cost is ~1KB/row in Postgres, which
 is negligible compared to the value of having complete agent telemetry.
 """
 
+import socket
+
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from django.utils import timezone
@@ -36,6 +38,16 @@ from agents.errors import (
 )
 
 log = structlog.get_logger("abox.relay")
+
+
+def _is_transient_vnc_upstream_failure(agent, exc: Exception) -> bool:
+    """Treat DNS/connect misses as transient while the agent is still coming up."""
+    from agents.models import AgentStatus
+
+    is_connectivity_failure = isinstance(exc, (socket.gaierror, ConnectionRefusedError, TimeoutError, OSError))
+    return is_connectivity_failure and (
+        getattr(agent, "status", "") == AgentStatus.DEPLOYING or not getattr(agent, "relay_connected", False)
+    )
 
 
 class RelayConsumer(AsyncJsonWebsocketConsumer):
@@ -330,14 +342,19 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
             )
             log.info("vnc.upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))
         except Exception as exc:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
-            log.exception(
-                "vnc.upstream_failed",
-                agent_id=self.agent_id,
-                url=vnc_ws_url,
-                error_code=ERR_CONSUMER_VNC_UPSTREAM_FAILED,
-                error_class=type(exc).__name__,
-                operation="connect_vnc_upstream",
-            )
+            log_payload = {
+                "agent_id": self.agent_id,
+                "url": vnc_ws_url,
+                "error_code": ERR_CONSUMER_VNC_UPSTREAM_FAILED,
+                "error_class": type(exc).__name__,
+                "operation": "connect_vnc_upstream",
+                "lifecycle_status": getattr(agent, "status", ""),
+                "relay_connected": bool(getattr(agent, "relay_connected", False)),
+            }
+            if _is_transient_vnc_upstream_failure(agent, exc):
+                log.warning("vnc.upstream_unready", **log_payload)
+            else:
+                log.exception("vnc.upstream_failed", **log_payload)
             await self.accept()
             await self.close(code=4003)
             return

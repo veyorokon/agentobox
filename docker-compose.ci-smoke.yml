@@ -20,7 +20,7 @@ services:
       POSTGRES_USER: agentobox
       POSTGRES_PASSWORD: agentobox
     ports:
-      - "5432:5432"
+      - "${CI_SMOKE_POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "agentobox"]
       interval: 5s
@@ -30,7 +30,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${CI_SMOKE_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -45,17 +45,18 @@ services:
       SECRET_KEY: ci-smoke-secret-key-not-for-production
       AGENT_RUNTIME: docker
       AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:latest
+      AGENT_EXECUTOR_OVERRIDE: ${AGENT_EXECUTOR_OVERRIDE:-}
       MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:ci
       DJANGO_SETTINGS_MODULE: config.settings
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}
       ABOX_CALLBACK_URL: http://backend:8000
-      DOCKER_NETWORK: agentobox-ci-smoke_default
+      DOCKER_NETWORK: ${CI_SMOKE_PROJECT_NAME:-agentobox-ci-smoke}_default
       VOLUME_ROOT: /volumes
-      AGENT_VOLUME_NAME: agentobox-ci-smoke_agent-volumes
+      AGENT_VOLUME_NAME: ${CI_SMOKE_PROJECT_NAME:-agentobox-ci-smoke}_agent-volumes
       LOG_FORMAT: json
     ports:
-      - "8000:8000"
+      - "${CI_SMOKE_BACKEND_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy

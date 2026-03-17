@@ -15,21 +15,15 @@ jobs:
     name: docker-bootstrap
     runs-on: ubuntu-latest
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
+      AGENT_EXECUTOR_OVERRIDE: echo
+      CI_SMOKE_PROJECT_NAME: agentobox-ci-smoke
     steps:
       - uses: actions/checkout@v5
-      - name: Skip if no API key
-        if: env.ANTHROPIC_API_KEY == ''
-        run: |
-          echo "::warning::ANTHROPIC_API_KEY not set — skipping docker smoke test"
-          echo "SKIP_SMOKE=true" >> $GITHUB_ENV
       - uses: astral-sh/setup-uv@v6
-        if: env.SKIP_SMOKE != 'true'
         with:
           enable-cache: true
       - name: Build agent runtime images
-        if: env.SKIP_SMOKE != 'true'
         run: |
           docker build -t agentobox-agent-runtime-managed:latest \
             --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
@@ -39,7 +33,6 @@ jobs:
             --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
             -f agent/Dockerfile.desktop.managed agent/
       - name: Start backend stack
-        if: env.SKIP_SMOKE != 'true'
         run: |
           docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml up -d --build --wait
           for i in $(seq 1 60); do
@@ -48,16 +41,15 @@ jobs:
             sleep 3
           done
       - name: Run docker bootstrap tests
-        if: env.SKIP_SMOKE != 'true'
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
         run: uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
       - name: Dump backend logs on failure
-        if: failure() && env.SKIP_SMOKE != 'true'
+        if: failure()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml logs backend --tail=500
       - name: Cleanup
-        if: always() && env.SKIP_SMOKE != 'true'
+        if: always()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml down -v
 
   docker-smoke:
@@ -67,6 +59,7 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
+      CI_SMOKE_PROJECT_NAME: agentobox-ci-smoke
     steps:
       - uses: actions/checkout@v5
       - name: Skip if no API key

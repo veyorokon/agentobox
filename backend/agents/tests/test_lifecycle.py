@@ -48,6 +48,10 @@ def test_runtime_executor_maps_claude_code_agent_type():
     assert _runtime_executor("claude-code") == "claude_code"
 
 
+def test_runtime_executor_honors_override():
+    assert _runtime_executor("claude-code", override="echo") == "echo"
+
+
 def test_shell_escape_basic():
     """Simple safe strings pass through unquoted (shlex.quote behavior)."""
     assert _shell_escape("hello-world") == "hello-world"

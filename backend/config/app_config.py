@@ -89,6 +89,7 @@ class OAuthConfig(_EnvSettings):
 class AgentConfig(_EnvSettings):
     runtime: Literal["docker", "modal"] = Field(default="modal", alias="AGENT_RUNTIME")
     image: str = Field(default="agentobox-agent-runtime-desktop-managed:latest", alias="AGENT_IMAGE")
+    executor_override: str = Field(default="", alias="AGENT_EXECUTOR_OVERRIDE")
     image_map: dict[str, str] = Field(
         default_factory=dict,
     )

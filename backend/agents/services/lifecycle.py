@@ -74,7 +74,9 @@ log = structlog.get_logger("abox.lifecycle")
 
 
 
-def _runtime_executor(agent_type: str) -> str:
+def _runtime_executor(agent_type: str, override: str = "") -> str:
+    if override:
+        return override
     if agent_type == "claude-code":
         return "claude_code"
     raise ValueError(f"unsupported agent executor for agent_type={agent_type!r}")
@@ -585,6 +587,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
+        executor = env["AGENTOBOX_EXECUTOR"]
 
         # Generate relay auth token for this agent.
         # Passed as env var for the new runtime (reads RELAY_AUTH_TOKEN at boot).
@@ -595,25 +598,28 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Volume is mounted at /vol, agent files at /vol/agents/<agent_id>.
         env["AGENTOBOX_ROOT_DIR"] = f"/vol/agents/{agent_id}"
 
-        # Resolve API key early — need it in the container
-        # env so the CC process can authenticate directly (no api-proxy).
-        api_key = _resolve_api_key(agent.model, secret_envs)
-        if not api_key:
-            from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
-            provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
-            expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
-            raise ValueError(
-                f"No API key found for provider '{provider}'. "
-                f"Add a project secret named '{expected_key}' or set "
-                f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
-            )
-        is_oauth = api_key.startswith("sk-ant-oat")
+        api_key = ""
+        is_oauth = False
+        if executor == "claude_code":
+            # Resolve API key early — need it in the container
+            # env so the CC process can authenticate directly (no api-proxy).
+            api_key = _resolve_api_key(agent.model, secret_envs)
+            if not api_key:
+                from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
+                provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
+                expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
+                raise ValueError(
+                    f"No API key found for provider '{provider}'. "
+                    f"Add a project secret named '{expected_key}' or set "
+                    f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
+                )
+            is_oauth = api_key.startswith("sk-ant-oat")
 
-        # Pass the real API key directly in container env.
-        # OAuth tokens use .credentials.json on disk instead.
-        if not is_oauth:
-            env["ANTHROPIC_API_KEY"] = api_key
-            env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
+            # Pass the real API key directly in container env.
+            # OAuth tokens use .credentials.json on disk instead.
+            if not is_oauth:
+                env["ANTHROPIC_API_KEY"] = api_key
+                env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
 
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
@@ -1161,7 +1167,15 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
     try:
         output = await runtime.exec(
             sandbox_id,
-            ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' | grep -v grep"],
+            [
+                "bash",
+                "-c",
+                (
+                    "ps aux | grep -E "
+                    "'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' "
+                    "| grep -v grep || true"
+                ),
+            ],
         )
         truncated = output[:200] if output else "(empty)"
         op_log.info("lifecycle.processes_captured", output=truncated)
@@ -1184,7 +1198,10 @@ def _build_agent_env(agent, project) -> dict[str, str]:
     return {
         "AGENT_ID": str(agent.id),
         "AGENT_TYPE": agent.agent_type,
-        "AGENTOBOX_EXECUTOR": _runtime_executor(agent.agent_type),
+        "AGENTOBOX_EXECUTOR": _runtime_executor(
+            agent.agent_type,
+            app_config.agent.executor_override.strip(),
+        ),
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
         "ABOX_CALLBACK_URL": app_config.callback_url,

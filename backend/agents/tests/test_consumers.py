@@ -1,8 +1,10 @@
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.consumers import RelayConsumer
+from agents.consumers import RelayConsumer, _is_transient_vnc_upstream_failure
+from agents.models import AgentStatus
 
 
 pytestmark = pytest.mark.unit
@@ -75,3 +77,14 @@ async def test_receive_json_ignores_task_update():
 
     mock_process.assert_not_called()
 
+
+def test_transient_vnc_upstream_failure_when_agent_is_still_deploying():
+    agent = MagicMock(status=AgentStatus.DEPLOYING, relay_connected=False)
+
+    assert _is_transient_vnc_upstream_failure(agent, socket.gaierror(-2, "Name or service not known")) is True
+
+
+def test_transient_vnc_upstream_failure_false_for_ready_agent():
+    agent = MagicMock(status=AgentStatus.IDLE, relay_connected=True)
+
+    assert _is_transient_vnc_upstream_failure(agent, socket.gaierror(-2, "Name or service not known")) is False
