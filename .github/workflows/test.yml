@@ -119,7 +119,7 @@ jobs:
       - name: Install agent dependencies
         run: uv sync --package agentobox-agent --group dev
       - name: Run agent unit tests
-        run: uv run --directory agent pytest tests/ -q -o addopts=
+        run: uv run pytest agent/tests/ -q -o addopts=
 
   lint:
     name: Lint
