@@ -101,14 +101,12 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
     return item
 
 
-async def recompute_attention(project_id, agent_id: str, after_result: bool = False) -> None:
-    """Recompute attention_level from pending TeamFeedItems.
+async def recompute_attention(project_id, agent_id: str) -> None:
+    """Recompute agent attention from pending TeamFeedItems.
 
-    after_result: if True and no pending items, set "review" instead of "none"
-    (agent just finished a turn, output available for review).
-
-    review is intentionally weaker than pending permission/plan attention:
-    it is a card/feed affordance, not a global intervention state.
+    Attention is now intervention-only. Successful turns do not create a
+    separate "review" state; only pending permission and plan items should
+    surface as actionable attention in supervised mode.
     """
     has_perm = await TeamFeedItem.objects.filter(
         project_id=project_id,
@@ -126,8 +124,6 @@ async def recompute_attention(project_id, agent_id: str, after_result: bool = Fa
         plan_status="pending",
     ).aexists():
         level = "plan"
-    elif after_result:
-        level = "review"
     else:
         level = "none"
 
@@ -291,4 +287,3 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))
 
     return item
-

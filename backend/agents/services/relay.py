@@ -386,16 +386,11 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     agent.permission_mode = wire_mode
     await agent.asave(update_fields=["mode", "permission_mode"])  # DB cache for GraphQL — volume is source of truth
 
-    # Attention is derived state. Switching into supervised mode should surface
-    # the last completed result for review; switching out should clear stale
-    # review attention unless there are real pending plan/permission items.
+    # Attention is derived state. Supervised mode only surfaces real pending
+    # intervention items (permissions/plans), not passive review affordances.
     from agents.services.feed import recompute_attention
 
-    await recompute_attention(
-        str(agent.project_id),
-        str(agent.id),
-        after_result=frontend_mode == "supervised" and bool((agent.latest_snapshot or {}).get("result")),
-    )
+    await recompute_attention(str(agent.project_id), str(agent.id))
     await agent.arefresh_from_db(fields=["attention_level"])
 
     await broadcast_agent_update(agent)

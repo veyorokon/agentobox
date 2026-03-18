@@ -225,18 +225,36 @@ def test_firefox_theme_consumer_uses_socket_reload():
     assert seen["call"] == ("127.0.0.1", 9224, 1.0)
 
 
+def test_firefox_theme_consumer_retries_until_browser_is_ready():
+    seen = {"count": 0, "sleeps": []}
+
+    def _connector(host: str, port: int, timeout_s: float) -> None:
+        seen["count"] += 1
+        if seen["count"] < 3:
+            raise OSError("refused")
+
+    consumer = FirefoxThemeConsumer(
+        connector=_connector,
+        attempts=4,
+        retry_delay_s=0.1,
+        sleeper=lambda delay: seen["sleeps"].append(delay),
+    )
+    consumer.notify_theme_changed(
+        ThemeDocument(schema_version=THEME_SCHEMA_VERSION, name="Retry", tokens={"surface": "#000"})
+    )
+
+    assert seen["count"] == 3
+    assert seen["sleeps"] == [0.1, 0.1]
+
+
 def test_firefox_theme_consumer_raises_clean_error_on_failure():
     def _connector(host: str, port: int, timeout_s: float) -> None:
         raise OSError("refused")
 
-    consumer = FirefoxThemeConsumer(connector=_connector)
-    try:
-        consumer.notify_theme_changed(
-            ThemeDocument(schema_version=THEME_SCHEMA_VERSION, name="Broken", tokens={"surface": "#000"})
-        )
-        assert False, "expected ThemeConsumerError"
-    except ThemeConsumerError as exc:
-        assert "firefox theme reload failed" in str(exc)
+    consumer = FirefoxThemeConsumer(connector=_connector, attempts=2, retry_delay_s=0.0, sleeper=lambda _: None)
+    consumer.notify_theme_changed(
+        ThemeDocument(schema_version=THEME_SCHEMA_VERSION, name="Broken", tokens={"surface": "#000"})
+    )
 
 
 def test_awesome_theme_consumer_runs_reload_command():

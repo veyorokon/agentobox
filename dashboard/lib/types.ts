@@ -20,7 +20,8 @@ export type {
 } from "@/lib/graphql/__generated__/graphql"
 
 export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
-// review is a local/card/feed affordance, not a global intervention state.
+// attention is reserved for intervention states; review is retained only for
+// legacy wire compatibility and should not drive primary UI actions.
 export type AttentionLevel = "none" | "review" | "plan" | "permission"
 export type Breakpoint = "mobile" | "S" | "M" | "L" | "XL" | "2XL"
 
@@ -129,6 +130,5 @@ export type AgentTask = {
 export type CardActionItem =
   | { kind: "permission"; feedItem: Extract<TeamFeedItem, { type: "permission" }> }
   | { kind: "plan"; feedItem: Extract<TeamFeedItem, { type: "plan" }> }
-  | { kind: "review"; agentName: string; lastOutput: string }
   | { kind: "config-dirty" }
   | { kind: "new-skill"; skillId: string; skillName: string }

@@ -2,6 +2,14 @@
 # Focus the existing Firefox window when present instead of launching a
 # second instance against the same profile.
 
+PROFILE="${AGENTOBOX_FIREFOX_PROFILE:-/home/agent/.mozilla/firefox/agentobox.default}"
+
+for arg in "$@"; do
+    if [ "$arg" = "--profile" ]; then
+        exec /usr/bin/firefox-esr "$@"
+    fi
+done
+
 URL=""
 for arg in "$@"; do
     case "$arg" in
@@ -23,4 +31,8 @@ if pgrep -x firefox-esr >/dev/null 2>&1; then
     exit 0
 fi
 
-exec /usr/bin/firefox-esr "$@"
+if [ -n "$URL" ]; then
+    exec /usr/bin/firefox-esr --profile "$PROFILE" --new-window "$URL"
+fi
+
+exec /usr/bin/firefox-esr --profile "$PROFILE" --new-window about:newtab

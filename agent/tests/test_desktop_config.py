@@ -29,6 +29,7 @@ def test_ensure_desktop_runtime_files_writes_awesome_config(tmp_path):
     assert 'require("beautiful")' in source
     assert 'awful.wibar({' in source
     assert 'launcher_firefox' in source
+    assert "AGENTOBOX_FIREFOX_PROFILE='/home/agent/.mozilla/firefox/agentobox.default' firefox-esr about:newtab" in source
     assert 'launcher_terminal' in source
     assert str(tmp_path / CANONICAL_PATHS["theme_awesome_lua"]) in source
     assert "_G.agentobox_apply_theme = apply_theme" in source
@@ -69,6 +70,9 @@ def test_prepare_firefox_profile_creates_deterministic_profile(tmp_path):
     assert (profile_dir / "user.js").exists()
     assert (profile_dir / "chrome/defaults.css").exists()
     assert 'user_pref("textfox.enabled", true);' in (profile_dir / "user.js").read_text()
+    profiles_ini = (tmp_path / "home/agent/.mozilla/firefox/profiles.ini").read_text()
+    assert "Path=agentobox.default" in profiles_ini
+    assert "Default=1" in profiles_ini
 
 
 def test_desktop_profile_boot_writes_runtime_owned_awesome_config(tmp_path):

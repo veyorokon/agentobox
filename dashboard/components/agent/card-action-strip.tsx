@@ -10,7 +10,6 @@ interface CardActionStripProps {
   items: CardActionItem[]
   onResolvePermission: (id: string, verdict: string, alwaysAllow?: boolean) => void
   onResolvePlan: (id: string, verdict: string) => void
-  onReview?: () => void
   onRestart?: () => void
   onRedeploy?: () => void
   onDismissSkill?: (skillId: string) => void
@@ -21,7 +20,6 @@ export function CardActionStrip({
   items,
   onResolvePermission,
   onResolvePlan,
-  onReview,
   onRestart,
   onRedeploy,
   onDismissSkill,
@@ -71,24 +69,6 @@ export function CardActionStrip({
                 positiveLabel="Approve"
                 negativeLabel="Reject"
               />
-            </div>
-          </>
-        )}
-
-        {current.kind === "review" && (
-          <>
-            <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
-            <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
-              Review latest output from {current.agentName}
-            </span>
-            <div className="shrink-0">
-              <button
-                type="button"
-                onClick={onReview}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-warning border border-warning/30 hover:bg-warning/10 transition-colors"
-              >
-                Open feed
-              </button>
             </div>
           </>
         )}

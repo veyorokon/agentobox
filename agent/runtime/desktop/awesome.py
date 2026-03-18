@@ -14,7 +14,7 @@ def main() -> None:
     display = os.environ.get("DISPLAY", ":99")
     root_dir = os.environ.get("AGENTOBOX_ROOT_DIR", "/var/lib/agentobox-agent")
     agent_home = os.environ.get("AGENT_HOME", "/home/agent")
-    ensure_desktop_runtime_files(Path(root_dir))
+    ensure_desktop_runtime_files(Path(root_dir), agent_home=Path(agent_home))
     wait_for_display(display)
     config_path = str(Path(root_dir) / CANONICAL_PATHS["desktop_awesome_rc"])
     exec_process(["awesome", "-c", config_path], extra_env={"HOME": agent_home})

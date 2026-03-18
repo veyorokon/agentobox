@@ -308,7 +308,7 @@ async def test_interagent_delivery_passes_content_blocks():
 
 
 @pytest.mark.asyncio
-async def test_set_agent_mode_recomputes_review_attention_for_supervised_mode():
+async def test_set_agent_mode_recomputes_intervention_attention_for_supervised_mode():
     fake_agent = MagicMock()
     fake_agent.id = "agent-123"
     fake_agent.project_id = "proj-456"
@@ -337,12 +337,12 @@ async def test_set_agent_mode_recomputes_review_attention_for_supervised_mode():
         result = await set_agent_mode("agent-123", "supervised")
 
     assert result is fake_agent
-    mock_recompute.assert_awaited_once_with("proj-456", "agent-123", after_result=True)
+    mock_recompute.assert_awaited_once_with("proj-456", "agent-123")
     mock_broadcast.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_set_agent_mode_clears_review_attention_when_leaving_supervised():
+async def test_set_agent_mode_recomputes_attention_when_leaving_supervised():
     fake_agent = MagicMock()
     fake_agent.id = "agent-123"
     fake_agent.project_id = "proj-456"
@@ -370,4 +370,4 @@ async def test_set_agent_mode_clears_review_attention_when_leaving_supervised():
     ):
         await set_agent_mode("agent-123", "auto")
 
-    mock_recompute.assert_awaited_once_with("proj-456", "agent-123", after_result=False)
+    mock_recompute.assert_awaited_once_with("proj-456", "agent-123")

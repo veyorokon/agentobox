@@ -176,19 +176,12 @@ export function AgentCardRow({
     setViewMode("skills")
   }, [])
 
-  const handleReviewOutput = useCallback(() => {
-    setViewMode("feed")
-  }, [])
-
   // Build unified action items: permissions → plans → new skills → config-dirty
   const actionItems = useMemo(() => {
     const items: CardActionItem[] = []
     for (const p of pendingItems) {
       if (p.type === "permission") items.push({ kind: "permission", feedItem: p })
       else if (p.type === "plan") items.push({ kind: "plan", feedItem: p })
-    }
-    if (agent.attentionLevel === "review" && agent.lastOutput) {
-      items.push({ kind: "review", agentName: agent.name, lastOutput: agent.lastOutput })
     }
     // Add new skill notifications
     for (const skill of newSkills) {
@@ -198,7 +191,7 @@ export function AgentCardRow({
       items.push({ kind: "config-dirty" })
     }
     return items
-  }, [agent.attentionLevel, agent.lastOutput, agent.name, pendingItems, newSkills, viewMode, settingsDirty])
+  }, [pendingItems, newSkills, viewMode, settingsDirty])
 
   // Auto-expand on new activity (unless muted)
   const prevActivityCount = useRef(0)
@@ -447,7 +440,6 @@ export function AgentCardRow({
           items={actionItems}
           onResolvePermission={resolvePermission}
           onResolvePlan={resolvePlan}
-          onReview={handleReviewOutput}
           onRestart={() => settingsRef.current?.restart()}
           onRedeploy={() => settingsRef.current?.redeploy()}
           onDismissSkill={handleDismissSkill}

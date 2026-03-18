@@ -12,6 +12,7 @@ import json
 import re
 import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -238,16 +239,33 @@ class FirefoxThemeConsumer:
         port: int = 9224,
         *,
         connector: SocketConnector | None = None,
+        attempts: int = 6,
+        retry_delay_s: float = 0.25,
+        sleeper: Callable[[float], None] | None = None,
     ):
         self._host = host
         self._port = port
         self._connector = connector or _default_socket_connector
+        self._attempts = attempts
+        self._retry_delay_s = retry_delay_s
+        self._sleeper = sleeper or time.sleep
 
     def notify_theme_changed(self, document: ThemeDocument) -> None:
-        try:
-            self._connector(self._host, self._port, 1.0)
-        except OSError as exc:
-            raise ThemeConsumerError(f"firefox theme reload failed: {exc}") from exc
+        for attempt in range(1, self._attempts + 1):
+            try:
+                self._connector(self._host, self._port, 1.0)
+                break
+            except OSError as exc:
+                if attempt == self._attempts:
+                    emit_event(
+                        "theme.consumer_unavailable",
+                        consumer="firefox",
+                        error=str(exc),
+                        theme_name=document.name,
+                        token_count=len(document.tokens),
+                    )
+                    return
+                self._sleeper(self._retry_delay_s)
         emit_event(
             "theme.consumer_applied",
             consumer="firefox",
