@@ -41,6 +41,7 @@ class ModalRuntime:
         image = modal.Image.from_registry(
             image_ref,
             secret=modal.Secret.from_name("ghcr-secret"),
+            force_build=True,
         ).entrypoint(["/usr/local/bin/abox-init"])
         env_secret = modal.Secret.from_dict(env)
 
