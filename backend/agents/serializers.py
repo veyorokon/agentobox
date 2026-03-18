@@ -11,6 +11,9 @@ GraphQL types delegate computed fields to shared helpers here.
 from asgiref.sync import sync_to_async
 from decimal import Decimal
 
+PREVIEW_READY_STATUSES = {"idle", "running", "waiting"}
+PreviewState = str
+
 
 # ---------------------------------------------------------------------------
 # Shared query helpers — used by both WS serialize and GraphQL resolvers
@@ -102,6 +105,25 @@ async def fetch_lifecycle_attempts(agent_id) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def derive_preview_state(agent) -> PreviewState:
+    """Collapse runtime/VNC-specific state into a frontend preview contract."""
+    if agent.status == "deploying":
+        return "deploying"
+    if (
+        agent.status in PREVIEW_READY_STATUSES
+        and bool(agent.sandbox_id)
+        and bool(agent.vnc_url)
+    ):
+        return "ready"
+    if agent.status == "error":
+        return "error"
+    return "unavailable"
+
+
+def derive_preview_runtime_id(agent) -> str:
+    return str(agent.sandbox_id or "") if derive_preview_state(agent) == "ready" else ""
+
+
 async def serialize_agent(agent) -> dict:
     """Canonical agent view — internal representation.
 
@@ -178,6 +200,8 @@ async def serialize_agent(agent) -> dict:
         "task": agent.task,
         "errorMessage": agent.error_message or "",
         "lifecycleStatus": agent.status,
+        "previewState": derive_preview_state(agent),
+        "previewRuntimeId": derive_preview_runtime_id(agent),
         "desiredStatus": agent.desired_status,
         "isConverged": agent.is_converged,
         "lastOutput": adapter.last_output(agent.latest_snapshot),

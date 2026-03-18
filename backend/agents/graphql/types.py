@@ -24,6 +24,7 @@ from strawberry import auto
 from strawberry.scalars import JSON
 
 from agents import models
+from agents.serializers import derive_preview_runtime_id, derive_preview_state
 
 
 # ── Helper types ──
@@ -256,6 +257,16 @@ class AgentType:
     def error_message(self) -> str:
         """Last error context — stderr excerpt or crash diagnostics."""
         return self.error_message or ""
+
+    @strawberry.field
+    def preview_state(self) -> str:
+        """Derived desktop preview contract for the frontend."""
+        return derive_preview_state(self)
+
+    @strawberry.field
+    def preview_runtime_id(self) -> str:
+        """Identity of the currently previewable runtime, if any."""
+        return derive_preview_runtime_id(self)
 
     @strawberry.field
     def lifecycle_status(self) -> str:

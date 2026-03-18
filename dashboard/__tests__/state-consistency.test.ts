@@ -92,6 +92,8 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     id: "agent-1",
     name: "backend",
     lifecycleStatus: "running",
+    previewState: "ready",
+    previewRuntimeId: "sandbox-agent-1",
     attentionLevel: "none",
     relayConnected: true,
     mode: "auto",

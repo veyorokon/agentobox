@@ -29,7 +29,6 @@ const CLOSE_MESSAGES: Record<number, string> = {
 }
 
 const REFRESH_TOKEN_CODES: Set<number> = new Set([4001, 4003])
-const CONTAINER_ALIVE: Set<string> = new Set(["running", "idle", "waiting"])
 
 type ConnectionState = "idle" | "fetching-token" | "connecting" | "connected" | "error"
 
@@ -41,7 +40,9 @@ function buildVncWsUrl(agentId: string, token: string): string {
 }
 
 export function VncThumbnail({ agent }: VncThumbnailProps) {
-  const hasContainer = CONTAINER_ALIVE.has(agent.lifecycleStatus)
+  const previewReady = agent.previewState === "ready"
+  const isDeploying = agent.previewState === "deploying"
+  const isPreviewError = agent.previewState === "error"
   const isStopped = agent.lifecycleStatus === "stopped"
   const hardRestartAgent = useHardRestartAgent()
 
@@ -51,18 +52,16 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
   const [VncScreen, setVncScreen] = useState<React.ComponentType<any> | null>(null)
   const [wsUrl, setWsUrl] = useState<string | null>(null)
-  const [viewerActive, setViewerActive] = useState(false)
   const vncRef = useRef<any>(null)
   const retryCountRef = useRef(0)
   const mountedRef = useRef(true)
   const connectingRef = useRef(false)
   const connectedAtRef = useRef(0)
   const tokenIssuedAtRef = useRef(0)
+  const previewRuntimeIdRef = useRef(agent.previewRuntimeId)
 
   const agentRef = useRef(agent)
   agentRef.current = agent
-  const hasContainerRef = useRef(hasContainer)
-  hasContainerRef.current = hasContainer
   const connStateRef = useRef(connState)
   connStateRef.current = connState
   const createVncTokenRef = useRef(createVncToken)
@@ -92,12 +91,12 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   }, [])
 
   const fetchTokenAndConnect = useCallback(async () => {
-    if (!mountedRef.current || connectingRef.current) return
+    if (!mountedRef.current || connectingRef.current || agentRef.current.previewState !== "ready") return
     connectingRef.current = true
     setConnState("fetching-token")
     setErrorMsg(null)
-    const { id, name } = agentRef.current
-    log("token.fetch", { agent: id, name })
+    const { id, name, previewRuntimeId } = agentRef.current
+    log("token.fetch", { agent: id, name, runtimeId: previewRuntimeId })
 
     try {
       const { data } = await createVncTokenRef.current({ variables: { agentId: id } })
@@ -119,7 +118,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
       tokenIssuedAtRef.current = Date.now()
       const url = buildVncWsUrl(id, token)
-      log("connecting", { agent: id, name })
+      log("connecting", { agent: id, name, runtimeId: previewRuntimeId })
       setWsUrl(url)
       setConnState("connecting")
     } catch (err: any) {
@@ -137,39 +136,64 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   }, [])
 
   useEffect(() => {
-    if (hasContainer) {
-      setViewerActive(true)
-      if (connStateRef.current === "error") {
-        setConnState("idle")
-        setErrorMsg(null)
-      }
-      if (!wsUrl && (connStateRef.current === "idle" || connStateRef.current === "error")) {
-        retryCountRef.current = 0
-        fetchTokenAndConnect()
-      }
-      return
-    }
+    const previousRuntimeId = previewRuntimeIdRef.current
+    if (previousRuntimeId === agent.previewRuntimeId) return
 
-    const timer = setTimeout(() => {
-      if (hasContainerRef.current) return
-      const a = agentRef.current
-      log("cleanup", { agent: a.id, lifecycle: a.lifecycleStatus, relay: a.relayConnected })
-      setViewerActive(false)
+    previewRuntimeIdRef.current = agent.previewRuntimeId
+    log("runtime.changed", {
+      agent: agent.id,
+      previousRuntimeId,
+      nextRuntimeId: agent.previewRuntimeId,
+      previewState: agent.previewState,
+    })
+
+    setWsUrl(null)
+    setConnState("idle")
+    setErrorMsg(null)
+    retryCountRef.current = 0
+    connectingRef.current = false
+    connectedAtRef.current = 0
+    tokenIssuedAtRef.current = 0
+    const ref = vncRef.current
+    vncRef.current = null
+    if (ref) {
+      setTimeout(() => { try { ref.disconnect() } catch {} }, 0)
+    }
+  }, [agent.id, agent.previewRuntimeId, agent.previewState])
+
+  useEffect(() => {
+    if (!previewReady) {
+      log("preview.unavailable", {
+        agent: agent.id,
+        previewState: agent.previewState,
+        runtimeId: agent.previewRuntimeId,
+      })
       setWsUrl(null)
-      setConnState("idle")
-      setErrorMsg(null)
       retryCountRef.current = 0
       connectingRef.current = false
+      connectedAtRef.current = 0
       tokenIssuedAtRef.current = 0
       const ref = vncRef.current
       vncRef.current = null
       if (ref) {
         setTimeout(() => { try { ref.disconnect() } catch {} }, 0)
       }
-    }, 2000)
+      if (agent.previewState !== "error") {
+        setConnState("idle")
+        setErrorMsg(null)
+      }
+      return
+    }
 
-    return () => clearTimeout(timer)
-  }, [fetchTokenAndConnect, hasContainer, wsUrl])
+    if (connStateRef.current === "error") {
+      setConnState("idle")
+      setErrorMsg(null)
+    }
+    if (!wsUrl && (connStateRef.current === "idle" || connStateRef.current === "error")) {
+      retryCountRef.current = 0
+      fetchTokenAndConnect()
+    }
+  }, [agent.id, agent.previewRuntimeId, agent.previewState, fetchTokenAndConnect, previewReady, wsUrl])
 
   const handleConnect = useCallback(() => {
     if (!mountedRef.current) return
@@ -181,26 +205,29 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   }, [])
 
   const reconnectCurrentUrl = useCallback(() => {
-    if (!mountedRef.current || !hasContainerRef.current || !wsUrl) return
-    log("reconnecting.same_url", { agent: agentRef.current.id })
+    if (!mountedRef.current || agentRef.current.previewState !== "ready" || !wsUrl) return
+    log("reconnecting.same_url", { agent: agentRef.current.id, runtimeId: agentRef.current.previewRuntimeId })
     setConnState("connecting")
   }, [wsUrl])
 
   const handleDisconnect = useCallback((e: any) => {
     connectingRef.current = false
     vncRef.current = null
-    const currentHasContainer = hasContainerRef.current
     const a = agentRef.current
 
-    if (!mountedRef.current || !currentHasContainer) {
-      if (mountedRef.current && !currentHasContainer) {
+    if (!mountedRef.current || a.previewState !== "ready") {
+      if (mountedRef.current && a.previewState !== "ready") {
         let msg = "Desktop disconnected"
         if (a.lifecycleStatus === "stopped") msg = "Desktop stopped — session ended"
-        else if (a.lifecycleStatus === "error") msg = "Desktop lost — agent errored"
-        else if (a.lifecycleStatus === "deploying") msg = "Desktop not ready yet"
-        else if (!a.relayConnected) msg = "Desktop lost — relay disconnected"
-        else msg = "Desktop closed"
-        log("disconnected.final", { agent: a.id, message: msg })
+        else if (a.previewState === "error") msg = "Desktop lost — agent errored"
+        else if (a.previewState === "deploying") msg = "Desktop not ready yet"
+        else if (a.previewState === "unavailable") msg = "Preview unavailable"
+        log("disconnected.final", {
+          agent: a.id,
+          message: msg,
+          previewState: a.previewState,
+          runtimeId: a.previewRuntimeId,
+        })
         setWsUrl(null)
         setConnState("error")
         setErrorMsg(msg)
@@ -212,13 +239,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     const detail = e?.detail ?? e
     const clean = detail?.clean ?? false
     const code = detail?.code
+    const runtimeId = a.previewRuntimeId
 
-    log("disconnected", { agent: a.id, clean, code, lifecycle: a.lifecycleStatus }, clean ? "debug" : "warn")
-
-    if (!a.relayConnected && CONTAINER_ALIVE.has(a.lifecycleStatus)) {
-      log("disconnected.hold_frame", { agent: a.id, lifecycle: a.lifecycleStatus })
-      return
-    }
+    log("disconnected", { agent: a.id, clean, code, previewState: a.previewState, runtimeId }, clean ? "debug" : "warn")
 
     const permanentMsg = code ? CLOSE_MESSAGES[code] : null
     if (permanentMsg) {
@@ -247,7 +270,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     setConnState("idle")
 
     setTimeout(() => {
-      if (!mountedRef.current || !hasContainerRef.current) return
+      if (!mountedRef.current) return
+      if (agentRef.current.previewState !== "ready") return
+      if (agentRef.current.previewRuntimeId !== runtimeId) return
       if (!shouldRefreshToken && tokenFresh) {
         reconnectCurrentUrl()
         return
@@ -257,10 +282,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     }, delay)
   }, [fetchTokenAndConnect, reconnectCurrentUrl, wsUrl])
 
-  const showVnc = viewerActive && VncScreen && wsUrl && (connState === "connecting" || connState === "connected")
+  const showVnc = Boolean(VncScreen && wsUrl && previewReady && (connState === "connecting" || connState === "connected"))
+  const VncScreenComponent = VncScreen
   const showRuntimeFallback =
-    !hasContainer &&
-    (connState === "error" || agent.lifecycleStatus === "error" || isStopped)
+    agent.previewState === "error" || agent.previewState === "unavailable" || isStopped
 
   useEffect(() => {
     if (!showVnc) return
@@ -279,9 +304,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   return (
     <div className="overflow-hidden bg-surface flex flex-col">
       <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
-        {showVnc ? (
+        {showVnc && VncScreenComponent ? (
           <VncErrorBoundary key={wsUrl}>
-            <VncScreen
+            <VncScreenComponent
               ref={vncRef}
               url={wsUrl}
               autoConnect={false}
@@ -295,19 +320,19 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
         ) : (
           <div className="absolute inset-0 flex flex-col">
             <div className="flex-1 bg-surface p-1.5 flex items-center justify-center">
-              {connState === "fetching-token" || connState === "connecting" || (connState === "idle" && hasContainer) ? (
+              {connState === "fetching-token" || connState === "connecting" || (connState === "idle" && previewReady) ? (
                 <div className="flex flex-col items-center gap-1">
                   <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
                   <span className="text-[7px] font-mono text-muted/40">connecting...</span>
                 </div>
-              ) : showRuntimeFallback || agent.lifecycleStatus === "error" ? (
+              ) : showRuntimeFallback || isPreviewError ? (
                 <div className="flex w-full h-full flex-col font-mono text-[9px]">
                   {/* Status strip */}
                   <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
                     <div className="flex items-center gap-1.5">
                       <span className={`h-1.5 w-1.5 rounded-full ${isStopped ? "bg-muted/40" : "bg-danger/60"}`} />
                       <span className={isStopped ? "text-muted/50" : "text-danger/60"}>
-                        {isStopped ? "session ended" : "runtime crashed"}
+                        {isStopped ? "session ended" : isPreviewError ? "runtime crashed" : "preview unavailable"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -336,13 +361,13 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       </div>
                     ) : (
                       <span className="text-muted/25 text-center">
-                        {isStopped ? "session ended cleanly" : "container exited — no diagnostics captured"}
+                        {isStopped ? "session ended cleanly" : isPreviewError ? "container exited — no diagnostics captured" : "preview is not currently available"}
                       </span>
                     )}
                   </div>
                 </div>
               ) : (
-                <span className="text-[7px] font-mono text-muted/25">{agent.lifecycleStatus}</span>
+                <span className="text-[7px] font-mono text-muted/25">{isDeploying ? "deploying" : agent.previewState}</span>
               )}
             </div>
           </div>

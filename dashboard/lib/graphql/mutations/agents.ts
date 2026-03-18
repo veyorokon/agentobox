@@ -96,6 +96,8 @@ export const CREATE_AGENT = gql`
       id
       name
       lifecycleStatus
+      previewState
+      previewRuntimeId
       attentionLevel
       mode
       task

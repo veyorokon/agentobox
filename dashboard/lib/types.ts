@@ -20,6 +20,7 @@ export type {
 } from "@/lib/graphql/__generated__/graphql"
 
 export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
+export type PreviewState = "deploying" | "ready" | "unavailable" | "error"
 // attention is reserved for intervention states; review is retained only for
 // legacy wire compatibility and should not drive primary UI actions.
 export type AttentionLevel = "none" | "review" | "plan" | "permission"
@@ -29,6 +30,8 @@ export type Agent = {
   id: string
   name: string
   lifecycleStatus: LifecycleStatus
+  previewState: PreviewState
+  previewRuntimeId: string
   attentionLevel: AttentionLevel
   relayConnected: boolean
   task: string

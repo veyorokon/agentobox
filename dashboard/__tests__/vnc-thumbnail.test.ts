@@ -45,6 +45,8 @@ const baseAgent: Agent = {
   id: "agent-1",
   name: "team-lead",
   lifecycleStatus: "idle",
+  previewState: "ready",
+  previewRuntimeId: "sandbox-1",
   attentionLevel: "none",
   relayConnected: true,
   task: "idle",
@@ -89,7 +91,7 @@ describe("VncThumbnail", () => {
     vi.unstubAllGlobals()
   })
 
-  it("keeps the VNC viewer mounted across transient container-state flickers", async () => {
+  it("keeps the VNC viewer mounted across relay flickers while preview remains ready", async () => {
     const { rerender } = render(React.createElement(VncThumbnail, { agent: baseAgent }))
 
     await vi.advanceTimersByTimeAsync(50)
@@ -123,7 +125,7 @@ describe("VncThumbnail", () => {
     expect(screen.getByTestId("vnc-screen").getAttribute("data-url")).toBe(firstProps.url)
   })
 
-  it("does not retry VNC while relay is down but lifecycle is still idle", async () => {
+  it("tears down and stops retrying when preview becomes unavailable", async () => {
     const { rerender } = render(React.createElement(VncThumbnail, { agent: baseAgent }))
 
     await vi.advanceTimersByTimeAsync(50)
@@ -131,7 +133,7 @@ describe("VncThumbnail", () => {
     expect(createVncToken).toHaveBeenCalledTimes(1)
 
     rerender(React.createElement(VncThumbnail, {
-      agent: { ...baseAgent, relayConnected: false },
+      agent: { ...baseAgent, previewState: "unavailable", previewRuntimeId: "" },
     }))
 
     const firstProps = screenProps.at(-1)
@@ -139,7 +141,8 @@ describe("VncThumbnail", () => {
     await vi.advanceTimersByTimeAsync(5000)
 
     expect(createVncToken).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId("vnc-screen")).toBeTruthy()
+    expect(screen.queryByTestId("vnc-screen")).toBeNull()
+    expect(screen.getByText("preview unavailable")).toBeTruthy()
   })
 
   it("does not request server-side resize for the thumbnail viewer", async () => {
@@ -155,6 +158,8 @@ describe("VncThumbnail", () => {
       agent: {
         ...baseAgent,
         lifecycleStatus: "error",
+        previewState: "error",
+        previewRuntimeId: "",
         relayConnected: false,
         errorMessage: "Desktop runtime is unavailable. Redeploy to restore preview.",
         cost: 0.23,
@@ -174,6 +179,8 @@ describe("VncThumbnail", () => {
       agent: {
         ...baseAgent,
         lifecycleStatus: "error",
+        previewState: "error",
+        previewRuntimeId: "",
         relayConnected: false,
         errorMessage: "Runtime crashed",
       },
@@ -193,11 +200,29 @@ describe("VncThumbnail", () => {
       agent: {
         ...baseAgent,
         lifecycleStatus: "stopped",
+        previewState: "unavailable",
+        previewRuntimeId: "",
         relayConnected: false,
       },
     }))
 
     expect(screen.getByText("session ended")).toBeTruthy()
     expect((container.firstChild as HTMLElement).className.includes("opacity-50")).toBe(false)
+  })
+
+  it("fully resets and mints a new token when the preview runtime changes", async () => {
+    const { rerender } = render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+    expect(createVncToken).toHaveBeenCalledTimes(1)
+
+    rerender(React.createElement(VncThumbnail, {
+      agent: { ...baseAgent, previewRuntimeId: "sandbox-2" },
+    }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(createVncToken).toHaveBeenCalledTimes(2))
+    expect(disconnectSpy).toHaveBeenCalledTimes(1)
   })
 })
