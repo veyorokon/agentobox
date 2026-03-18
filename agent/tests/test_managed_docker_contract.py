@@ -287,11 +287,9 @@ def test_managed_docker_image_waits_for_provisioning_then_reaches_ready(tmp_path
         settings = _container_exec(container_id, "cat", "/home/agent/.claude/settings.json")
         onboarding = _container_exec(container_id, "cat", "/home/agent/.claude.json")
         proxy_key = _container_exec(container_id, "cat", "/run/secrets/proxy_key")
-        claude_version = _container_exec(container_id, "claude", "--version")
         assert settings.stdout.strip() == '{"theme":"dark"}'
         assert onboarding.stdout.strip() == '{"hasCompletedOnboarding":true}'
         assert proxy_key.stdout.strip() == "proxy-key"
-        assert claude_version.stdout.strip().startswith("2.1.71")
 
         projected = json.loads((tmp_path / CANONICAL_PATHS["runtime_status"]).read_text())
         assert projected["startup_stage"] == "managed_ready"
@@ -405,9 +403,11 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         settings = _container_exec(container_id, "cat", "/home/agent/.claude/settings.json")
         onboarding = _container_exec(container_id, "cat", "/home/agent/.claude.json")
         proxy_key = _container_exec(container_id, "cat", "/run/secrets/proxy_key")
+        claude_version = _container_exec(container_id, "claude", "--version")
         assert settings.stdout.strip() == '{"theme":"dark"}'
         assert onboarding.stdout.strip() == '{"hasCompletedOnboarding":true}'
         assert proxy_key.stdout.strip() == "proxy-key"
+        assert claude_version.stdout.strip().startswith("2.1.71")
 
         novnc_index = _wait_for(
             lambda: _http_get_text(novnc_url),
