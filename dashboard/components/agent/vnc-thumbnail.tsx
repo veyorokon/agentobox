@@ -139,7 +139,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   useEffect(() => {
     if (hasContainer) {
       setViewerActive(true)
-      if (!wsUrl && connStateRef.current === "idle") {
+      if (connStateRef.current === "error") {
+        setConnState("idle")
+        setErrorMsg(null)
+      }
+      if (!wsUrl && (connStateRef.current === "idle" || connStateRef.current === "error")) {
         retryCountRef.current = 0
         fetchTokenAndConnect()
       }

@@ -237,3 +237,34 @@ class DockerRuntime:
                 return None
 
         return await self._run_sync(_inspect)
+
+    async def get_event_tail(self, sandbox_id: str, *, limit: int = 20) -> list[dict]:
+        """Capture recent Docker daemon events correlated to the sandbox."""
+
+        def _events():
+            since = max(0, int(time.time()) - 300)
+            until = int(time.time()) + 1
+            results = []
+            for event in self._client.events(
+                since=since,
+                until=until,
+                decode=True,
+                filters={"container": sandbox_id},
+            ):
+                if not isinstance(event, dict):
+                    continue
+                actor = event.get("Actor", {}) or {}
+                attrs = actor.get("Attributes", {}) or {}
+                entry = {
+                    "time": event.get("time"),
+                    "type": event.get("Type", ""),
+                    "action": event.get("Action", ""),
+                }
+                for key in ("signal", "exitCode", "name"):
+                    value = attrs.get(key)
+                    if value not in (None, ""):
+                        entry[key] = value
+                results.append(entry)
+            return results[-max(1, limit):]
+
+        return await self._run_sync(_events)

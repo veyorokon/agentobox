@@ -249,6 +249,10 @@ class Volume:
                 events.append(payload)
         return events
 
+    def write_runtime_diagnostics(self, payload: dict) -> None:
+        """Persist the latest runtime crash diagnostics bundle for this agent."""
+        self.write("_abox/runtime-diagnostics.json", json.dumps(payload, indent=2, sort_keys=True))
+
     def inbox_delivered(self) -> bool:
         """Check if all inbox messages have been consumed.
 

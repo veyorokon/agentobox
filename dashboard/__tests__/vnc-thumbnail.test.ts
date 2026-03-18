@@ -162,11 +162,30 @@ describe("VncThumbnail", () => {
       },
     }))
 
-    expect(screen.getByText("preview unavailable")).toBeTruthy()
+    expect(screen.getByText("runtime crashed")).toBeTruthy()
     expect(screen.getByText("Desktop runtime is unavailable. Redeploy to restore preview.")).toBeTruthy()
 
-    screen.getByRole("button", { name: "Redeploy" }).click()
+    screen.getByRole("button", { name: /redeploy/i }).click()
     expect(hardRestartAgent).toHaveBeenCalledWith("agent-1")
+  })
+
+  it("recovers from an error fallback when the agent returns to idle", async () => {
+    const { rerender } = render(React.createElement(VncThumbnail, {
+      agent: {
+        ...baseAgent,
+        lifecycleStatus: "error",
+        relayConnected: false,
+        errorMessage: "Runtime crashed",
+      },
+    }))
+
+    expect(screen.getByText("runtime crashed")).toBeTruthy()
+
+    rerender(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+    expect(createVncToken).toHaveBeenCalledTimes(1)
   })
 
   it("does not dim the whole preview when a session has ended", async () => {

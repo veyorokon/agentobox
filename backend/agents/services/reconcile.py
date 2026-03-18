@@ -179,6 +179,10 @@ async def _read_runtime_log_tail(agent, *, limit: int = 10) -> list[dict]:
     return await sync_to_async(agent.volume.runtime_log_tail, thread_sensitive=False)(limit=limit)
 
 
+async def _write_runtime_diagnostics(agent, payload: dict) -> None:
+    await sync_to_async(agent.volume.write_runtime_diagnostics, thread_sensitive=False)(payload)
+
+
 @_db
 def _mark_stopped(agent_id, *, reason=REASON_RECONCILER_ERROR_REAP):
     agent = Agent.objects.get(id=agent_id)
@@ -291,6 +295,9 @@ async def _detect_dead_containers():
             crash_info = await runtime.get_crash_info(agent.sandbox_id)
             runtime_events = await _read_runtime_log_tail(agent, limit=10)
             runtime_log_summary, recent_runtime_events = _summarize_runtime_log(runtime_events)
+            runtime_status = await sync_to_async(agent.volume.runtime_status, thread_sensitive=False)()
+            docker_events = await runtime.get_event_tail(agent.sandbox_id, limit=10)
+            last_docker_action = docker_events[-1]["action"] if docker_events else ""
 
             # Build error message from crash info (backup path — stream.py
             # may have already set it from relay's process_exit event)
@@ -318,6 +325,23 @@ async def _detect_dead_containers():
                     if error_msg
                     else runtime_log_summary
                 )
+            if container_status == "missing" and last_docker_action:
+                docker_summary = f"Last docker action: {last_docker_action}"
+                error_msg = f"{error_msg}\n{docker_summary}" if error_msg else docker_summary
+
+            await _write_runtime_diagnostics(
+                agent,
+                {
+                    "captured_at": timezone.now().isoformat(),
+                    "agent_id": str(agent.id),
+                    "sandbox_id": agent.sandbox_id,
+                    "container_status": container_status,
+                    "runtime_status": runtime_status,
+                    "crash_info": crash_info or {},
+                    "runtime_log_tail": runtime_events,
+                    "docker_event_tail": docker_events,
+                },
+            )
 
             agent = await _mark_error(
                 agent.id,
@@ -359,6 +383,7 @@ async def _detect_dead_containers():
                 oom_killed=crash_info.get("oom_killed") if crash_info else None,
                 last_runtime_event=recent_runtime_events[-1] if recent_runtime_events else "",
                 recent_runtime_events=recent_runtime_events,
+                last_docker_action=last_docker_action,
             )
 
 

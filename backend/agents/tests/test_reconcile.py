@@ -200,6 +200,7 @@ def test_mark_error_replaces_generic_error_with_richer_crash_details():
 
 @pytest.mark.asyncio
 async def test_detect_dead_containers_marks_missing_runtime_explicitly():
+    written_diagnostics = {}
     agent = SimpleNamespace(
         id="agent-1",
         name="test-agent",
@@ -207,12 +208,17 @@ async def test_detect_dead_containers_marks_missing_runtime_explicitly():
         runtime="docker",
         status=AgentStatus.IDLE,
         project_id="project-1",
-        volume=SimpleNamespace(runtime_log_tail=lambda limit=10: []),
+        volume=SimpleNamespace(
+            runtime_log_tail=lambda limit=10: [],
+            runtime_status=lambda: {"runtime_state": "ready"},
+            write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
+        ),
     )
     marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
     mock_runtime = AsyncMock()
     mock_runtime.get_status = AsyncMock(return_value="missing")
     mock_runtime.get_crash_info = AsyncMock(return_value=None)
+    mock_runtime.get_event_tail = AsyncMock(return_value=[])
 
     with (
         patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
@@ -230,10 +236,13 @@ async def test_detect_dead_containers_marks_missing_runtime_explicitly():
         reason=REASON_RECONCILER_RUNTIME_MISSING,
     )
     mock_fail_attempt.assert_awaited_once()
+    assert written_diagnostics["container_status"] == "missing"
+    assert written_diagnostics["runtime_status"] == {"runtime_state": "ready"}
 
 
 @pytest.mark.asyncio
 async def test_detect_dead_containers_includes_last_runtime_event_for_missing_runtime():
+    written_diagnostics = {}
     agent = SimpleNamespace(
         id="agent-1",
         name="test-agent",
@@ -246,13 +255,16 @@ async def test_detect_dead_containers_includes_last_runtime_event_for_missing_ru
                 {"event": "provisioning.release_complete"},
                 {"event": "runtime.booting"},
                 {"event": "transport.connected"},
-            ]
+            ],
+            runtime_status=lambda: {"runtime_state": "stopped"},
+            write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
         ),
     )
     marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
     mock_runtime = AsyncMock()
     mock_runtime.get_status = AsyncMock(return_value="missing")
     mock_runtime.get_crash_info = AsyncMock(return_value=None)
+    mock_runtime.get_event_tail = AsyncMock(return_value=[{"action": "kill", "signal": "15"}])
 
     with (
         patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
@@ -266,11 +278,12 @@ async def test_detect_dead_containers_includes_last_runtime_event_for_missing_ru
 
     mock_mark_error.assert_awaited_once_with(
         "agent-1",
-        error_message="Runtime container is missing\nLast runtime event: transport.connected",
+        error_message="Runtime container is missing\nLast runtime event: transport.connected\nLast docker action: kill",
         reason=REASON_RECONCILER_RUNTIME_MISSING,
     )
     mock_feed_item.assert_awaited_once()
     assert mock_feed_item.await_args.kwargs["text"] == "Runtime container is missing"
+    assert written_diagnostics["docker_event_tail"] == [{"action": "kill", "signal": "15"}]
 
 
 class TestReapOrphans:

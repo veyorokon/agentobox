@@ -138,6 +138,21 @@ def test_render_awesome_theme_lua_roundtrips_tokens():
     assert '["accent"] = "#ffaa00"' in lua
 
 
+def test_render_awesome_theme_lua_converts_hsl_tokens_to_hex():
+    lua = render_awesome_theme_lua(
+        ThemeDocument(
+            schema_version=THEME_SCHEMA_VERSION,
+            tokens={
+                "surface": "hsl(60 2.1% 18.4%)",
+                "accent": "hsl(15 54.2% 51.2%)",
+            },
+        )
+    )
+
+    assert '["surface"] = "#30302e"' in lua
+    assert '["accent"] = "#c6613f"' in lua
+
+
 def test_runtime_theme_manager_projects_then_notifies_consumers(tmp_path):
     source = tmp_path / CANONICAL_PATHS["theme_tokens"]
     source.parent.mkdir(parents=True, exist_ok=True)

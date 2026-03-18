@@ -7,7 +7,9 @@ live theme updates follow the same path.
 
 from __future__ import annotations
 
+import colorsys
 import json
+import re
 import socket
 import subprocess
 from pathlib import Path
@@ -25,6 +27,19 @@ _NEWTAB_LOGO_LINES = (
     "██  ██ ▀███▀ ██▄▄▄ ██ ▀██   ██  ▀███▀ ██▄█▀ ▀███▀ ██ ██",
 )
 _NEWTAB_LOGO_CSS = '"' + "\\A ".join(_NEWTAB_LOGO_LINES) + '"'
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_HSL_COLOR_RE = re.compile(
+    r"^hsla?\(\s*"
+    r"(?P<hue>-?\d+(?:\.\d+)?)"
+    r"(?:deg)?"
+    r"(?:\s*,\s*|\s+)"
+    r"(?P<saturation>\d+(?:\.\d+)?)%"
+    r"(?:\s*,\s*|\s+)"
+    r"(?P<lightness>\d+(?:\.\d+)?)%"
+    r"(?:\s*(?:/|,)\s*(?P<alpha>\d+(?:\.\d+)?%?))?"
+    r"\s*\)$",
+    re.IGNORECASE,
+)
 
 
 class ThemeLoadError(ValueError):
@@ -186,7 +201,10 @@ def render_firefox_theme_css(document: ThemeDocument) -> str:
 def render_awesome_theme_lua(document: ThemeDocument) -> str:
     """Render AwesomeWM theme tokens into a small Lua table."""
 
-    entries = ", ".join(f'["{k}"] = "{v}"' for k, v in sorted(document.tokens.items()))
+    entries = ", ".join(
+        f'["{k}"] = "{_normalize_awesome_color(v)}"'
+        for k, v in sorted(document.tokens.items())
+    )
     return f"return {{ {entries} }}\n"
 
 
@@ -311,6 +329,28 @@ def _default_socket_connector(host: str, port: int, timeout_s: float) -> None:
 
 def _default_command_runner(command: list[str]) -> None:
     subprocess.run(command, check=True, capture_output=True, text=True)
+
+
+def _normalize_awesome_color(value: str) -> str:
+    candidate = value.strip()
+    if _HEX_COLOR_RE.fullmatch(candidate):
+        return candidate
+    match = _HSL_COLOR_RE.fullmatch(candidate)
+    if match is None:
+        return candidate
+    hue = float(match.group("hue")) % 360.0
+    saturation = _clamp_percent(match.group("saturation"))
+    lightness = _clamp_percent(match.group("lightness"))
+    red, green, blue = colorsys.hls_to_rgb(hue / 360.0, lightness, saturation)
+    return "#{:02x}{:02x}{:02x}".format(
+        round(red * 255),
+        round(green * 255),
+        round(blue * 255),
+    )
+
+
+def _clamp_percent(raw: str) -> float:
+    return max(0.0, min(float(raw) / 100.0, 1.0))
 
 
 def _notify_theme_consumer(consumer: ThemeConsumer, document: ThemeDocument) -> None:

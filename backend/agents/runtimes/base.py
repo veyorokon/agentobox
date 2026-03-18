@@ -68,3 +68,7 @@ class Runtime(Protocol):
         Result shape: {exit_code: int, oom_killed: bool, logs: str}
         """
         ...
+
+    async def get_event_tail(self, sandbox_id: str, *, limit: int = 20) -> list[dict]:
+        """Return recent platform events correlated to the sandbox if available."""
+        ...
