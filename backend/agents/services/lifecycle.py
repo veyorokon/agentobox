@@ -970,8 +970,13 @@ def _atomic_reset_for_restart(agent_id):
         # Live fields reflect post-creation mutations (mode change, model
         # swap). config_snapshot is creation-time only — used as fallback
         # for old agent rows that may be missing newer fields.
+        #
+        # Runtime is the exception: it is deployment-environment policy, not
+        # a user-selected per-agent knob. Hard restart should always reprovision
+        # onto the currently configured runtime so legacy agents do not keep
+        # dragging obsolete Docker/Modal assumptions forward forever.
         snap = ConfigSnapshot.from_dict(agent.config_snapshot) if agent.config_snapshot else None
-        runtime_name = agent.runtime or (snap.runtime if snap else "docker")
+        runtime_name = app_config.agent.runtime
         model = agent.model or (snap.model if snap else "")
         mcp_servers = agent.mcp_servers if agent.mcp_servers is not None else (snap.mcp_servers if snap else [])
         workspace_path = agent.workspace_path or (snap.workspace_path if snap else "")

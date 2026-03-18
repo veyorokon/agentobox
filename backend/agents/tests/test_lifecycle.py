@@ -17,6 +17,7 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 
 from accounts.models import User
+from config.app_config import app_config
 from agents.adapters.claude_code import _shell_escape
 from agents.models import (
     Agent,
@@ -30,6 +31,7 @@ from agents.models import (
     VALID_TRANSITIONS,
 )
 from agents.services.lifecycle import (
+    _atomic_reset_for_restart,
     _build_agent_env,
     _create_lifecycle_attempt_sync,
     _runtime_executor,
@@ -259,6 +261,46 @@ async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
     segment = await RuntimeSegment.objects.aget(agent_id=agent.id)
     assert segment.close_reason == "vnc_upstream_missing"
     assert segment.compute_seconds >= 9
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_atomic_reset_for_restart_normalizes_legacy_runtime_to_current_policy():
+    def _setup():
+        owner = User.objects.create_user(username="owner6", password="pw")
+        project = _create_project_without_signals(name="Test Project 6", owner=owner)
+        return Agent.objects.create(
+            name="legacy-worker",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            desired_status=DesiredStatus.DEPLOYED,
+            model="claude-sonnet-4-5-20250929",
+            config_snapshot={
+                "runtime": "docker",
+                "model": "claude-sonnet-4-5-20250929",
+                "agent_type": "claude-code",
+                "mcp_servers": {},
+                "workspace_path": "",
+                "instructions": "",
+                "role": "worker",
+                "volume_mounts": [],
+            },
+        )
+
+    agent = await sync_to_async(_setup, thread_sensitive=True)()
+
+    old_runtime = app_config.agent.runtime
+    app_config.agent.runtime = "modal"
+    try:
+        result = await _atomic_reset_for_restart(str(agent.id))
+    finally:
+        app_config.agent.runtime = old_runtime
+
+    assert result is not None
+    reset_agent, _old_sandbox_id, _previous_runtime, _resume_session_id, config = result
+    assert config["runtime"] == "modal"
+    assert reset_agent.runtime == "modal"
 
 
 # ── Lifecycle state machine tests ──
