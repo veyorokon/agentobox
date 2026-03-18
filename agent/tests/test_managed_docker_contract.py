@@ -291,7 +291,10 @@ def test_managed_docker_image_waits_for_provisioning_then_reaches_ready(tmp_path
         assert onboarding.stdout.strip() == '{"hasCompletedOnboarding":true}'
         assert proxy_key.stdout.strip() == "proxy-key"
 
-        projected = json.loads((tmp_path / CANONICAL_PATHS["runtime_status"]).read_text())
+        status_raw = _container_exec(
+            container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['runtime_status']}"
+        )
+        projected = json.loads(status_raw.stdout)
         assert projected["startup_stage"] == "managed_ready"
         assert projected["transport"]["connected"] is True
         failed = False
@@ -437,7 +440,10 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert 'pref("general.config.filename", "mozilla.cfg");' in autoconfig.stdout
         assert 'let RELOAD_PORT = 9224;' in mozilla_cfg.stdout
 
-        projected = json.loads((tmp_path / CANONICAL_PATHS["runtime_status"]).read_text())
+        status_raw = _container_exec(
+            container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['runtime_status']}"
+        )
+        projected = json.loads(status_raw.stdout)
         assert projected["profile"] == "desktop"
         assert projected["services"]["xvfb"] == "up"
         assert projected["services"]["x11vnc"] == "up"
