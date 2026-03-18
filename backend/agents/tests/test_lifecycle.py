@@ -6,6 +6,7 @@ Covers:
   quotes and handles all shell metacharacters.
 """
 
+from datetime import timedelta
 import re
 import uuid
 from pathlib import Path
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 from asgiref.sync import sync_to_async
+from django.utils import timezone
 
 from accounts.models import User
 from agents.adapters.claude_code import _shell_escape
@@ -21,6 +23,7 @@ from agents.models import (
     AgentLifecycleAttempt,
     AgentLifecycleAttemptStatus,
     AgentLifecycleKind,
+    RuntimeSegment,
     AgentStatus,
     DesiredStatus,
     IllegalTransitionError,
@@ -237,6 +240,7 @@ async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
             relay_connected=True,
             sandbox_id="dead-sandbox",
             vnc_url="http://agentobox-agent-dead:6080",
+            deployed_at=timezone.now() - timedelta(seconds=9),
         )
 
     agent = await sync_to_async(_setup, thread_sensitive=True)()
@@ -252,6 +256,9 @@ async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
     assert updated.sandbox_id == ""
     assert updated.vnc_url == ""
     assert updated.error_message == "Desktop runtime is unavailable. Redeploy to restore preview."
+    segment = await RuntimeSegment.objects.aget(agent_id=agent.id)
+    assert segment.close_reason == "vnc_upstream_missing"
+    assert segment.compute_seconds >= 9
 
 
 # ── Lifecycle state machine tests ──

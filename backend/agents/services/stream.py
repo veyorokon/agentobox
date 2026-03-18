@@ -27,6 +27,7 @@ from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item, recompute_attention
 from agents.services.lifecycle import transition_agent_status
 from agents.services.media import externalize_image_block
+from agents.services.runtime_segments import record_runtime_segment
 
 log = structlog.get_logger("abox.stream")
 
@@ -475,6 +476,12 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         stderr = event.get("stderr", "").strip()
         if is_error and stderr:
             f_update["error_message"] = stderr[:2000]  # cap at 2000 chars for DB
+
+        await record_runtime_segment(
+            agent,
+            close_reason=f"process_exit(code={exit_code})",
+            metadata={"stderr": stderr[:500] if stderr else ""},
+        )
 
         await Agent.objects.filter(id=agent.id).aupdate(**f_update)
         # Refresh local instance so broadcast/downstream sees current state

@@ -102,6 +102,7 @@ async def terminate_sandbox(agent: Agent, op_log) -> bool:
 async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_message: str) -> Agent:
     """Clear stale live-runtime fields when the backing sandbox is gone."""
     from agents.services.lifecycle import transition_agent_status
+    from agents.services.runtime_segments import record_runtime_segment_sync
 
     @_db
     def _mark() -> Agent:
@@ -111,6 +112,11 @@ async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_me
             elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
             Agent.objects.filter(id=agent_id).update(
                 compute_seconds=F("compute_seconds") + elapsed,
+            )
+            record_runtime_segment_sync(
+                agent,
+                close_reason=reason,
+                metadata={"error_message": error_message[:500]},
             )
 
         transition_agent_status(agent, AgentStatus.ERROR, reason=reason, force=True)

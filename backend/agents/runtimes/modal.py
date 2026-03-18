@@ -18,6 +18,8 @@ from config.app_config import app_config
 from agents.runtimes.base import SandboxInstance, VolumeMount
 
 log = structlog.get_logger("abox.runtime.modal")
+MODAL_DEFAULT_CPU_CORES = 2.0
+MODAL_DEFAULT_MEMORY_MB = 4096
 
 
 class ModalRuntime:
@@ -62,8 +64,8 @@ class ModalRuntime:
             secrets=[env_secret],
             encrypted_ports=[6080, 8080],
             timeout=3600,
-            cpu=2.0,
-            memory=4096,
+            cpu=MODAL_DEFAULT_CPU_CORES,
+            memory=MODAL_DEFAULT_MEMORY_MB,
         )
         if modal_volumes:
             create_kwargs["volumes"] = modal_volumes

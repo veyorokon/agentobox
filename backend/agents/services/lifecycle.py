@@ -60,6 +60,10 @@ from agents.runtimes.base import VolumeMount
 from agents.schemas import ConfigSnapshot
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.provision import provision_workspace
+from agents.services.runtime_segments import (
+    record_runtime_segment,
+    record_runtime_segment_sync,
+)
 from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
 from agents.services.volume import PROVISIONING_SENTINEL
 from agents.adapters import get_adapter
@@ -866,6 +870,11 @@ async def kill_agent(agent_id: str) -> bool:
         )
 
     await terminate_sandbox(agent, op_log)
+    await record_runtime_segment(
+        agent,
+        close_reason="kill_agent",
+        metadata={"status_before": agent.status},
+    )
 
     # Validate transition before atomic bulk update.
     # transition_agent_status logs but does NOT save — the aupdate below
@@ -976,6 +985,11 @@ def _atomic_reset_for_restart(agent_id):
             elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
             Agent.objects.filter(id=agent_id).update(
                 compute_seconds=F("compute_seconds") + elapsed,
+            )
+            record_runtime_segment_sync(
+                agent,
+                close_reason="hard_restart",
+                metadata={"status_before": agent.status, "old_runtime": old_runtime},
             )
 
         # Clean slate: reset ALL mutable state to DEPLOYING defaults.

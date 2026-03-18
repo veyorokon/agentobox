@@ -539,6 +539,47 @@ class SessionResult(models.Model):
         return f"session {self.session_id[:12]} ${self.total_cost_usd} → {self.agent.name}"
 
 
+class RuntimeSegment(models.Model):
+    """One runtime-compute segment for provider-attributed usage.
+
+    A segment opens when an agent becomes operational (deployed_at set) and closes
+    when the runtime stops, errors, or is explicitly terminated. This is the
+    durable ledger for provider-side compute facts, separate from model-token cost.
+    """
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="runtime_segments")
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="runtime_segments")
+    provider = models.CharField(max_length=32, default="")
+    sandbox_id = models.CharField(max_length=100, blank=True, db_index=True)
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField()
+    compute_seconds = models.BigIntegerField(default=0)
+    close_reason = models.CharField(max_length=64, blank=True, default="")
+    cpu_cores = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    memory_mb = models.IntegerField(default=0)
+    metadata_json = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["agent", "started_at"]),
+            models.Index(fields=["project", "started_at"]),
+            models.Index(fields=["provider", "started_at"]),
+            models.Index(fields=["sandbox_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent", "provider", "sandbox_id", "started_at"],
+                name="agents_runtime_segment_unique_start",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.provider}:{self.compute_seconds}s:{self.agent.name}"
+
+
 class AgentTask(models.Model):
     """Task created by an agent via Claude Code's native TaskCreate tool.
 
