@@ -115,6 +115,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       # Backend image
       - id: backend-meta
         uses: docker/metadata-action@v6
@@ -136,7 +140,7 @@ jobs:
           cache-to: type=gha,scope=backend,mode=max
       - id: backend-image-ref
         name: Record backend image ref
-        run: echo "ref=${{ env.BACKEND_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ env.BACKEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
 
       # Dashboard image
       - id: dashboard-meta
@@ -159,7 +163,7 @@ jobs:
           cache-to: type=gha,scope=dashboard,mode=max
       - id: dashboard-image-ref
         name: Record dashboard image ref
-        run: echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
 
       # Agent managed base image
       - id: agent-managed-meta
@@ -180,7 +184,7 @@ jobs:
           labels: ${{ steps.agent-managed-meta.outputs.labels }}
           build-args: |
             AGENTOBOX_GIT_COMMIT=${{ github.sha }}
-            AGENTOBOX_IMAGE_REF=${{ env.AGENT_MANAGED_IMAGE }}:sha-${{ github.sha[0:7] }}
+            AGENTOBOX_IMAGE_REF=${{ env.AGENT_MANAGED_IMAGE }}:sha-${{ steps.sha.outputs.short }}
           cache-from: type=gha,scope=managed
           cache-to: type=gha,scope=managed,mode=max
 
@@ -202,15 +206,15 @@ jobs:
           tags: ${{ steps.agent-desktop-meta.outputs.tags }}
           labels: ${{ steps.agent-desktop-meta.outputs.labels }}
           build-args: |
-            BASE_IMAGE=${{ env.AGENT_MANAGED_IMAGE }}:sha-${{ github.sha[0:7] }}
+            BASE_IMAGE=${{ env.AGENT_MANAGED_IMAGE }}:sha-${{ steps.sha.outputs.short }}
             AGENTOBOX_GIT_COMMIT=${{ github.sha }}
-            AGENTOBOX_IMAGE_REF=${{ env.AGENT_DESKTOP_IMAGE }}:sha-${{ github.sha[0:7] }}
+            AGENTOBOX_IMAGE_REF=${{ env.AGENT_DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}
           cache-from: type=gha,scope=desktop-managed
           cache-to: type=gha,scope=desktop-managed,mode=max
 
       - id: agent-image-ref
         name: Record Modal agent image ref
-        run: echo "ref=${{ env.AGENT_DESKTOP_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ env.AGENT_DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
 
   # ─── Deploy ────────────────────────────────────────────────────────
   deploy:
