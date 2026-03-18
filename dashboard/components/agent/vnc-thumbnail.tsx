@@ -290,46 +290,53 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
           </VncErrorBoundary>
         ) : (
           <div className="absolute inset-0 flex flex-col">
-            <div className="h-4 bg-surface-sunken flex items-center px-2 gap-1 shrink-0">
-              <span className="h-1.5 w-1.5 rounded-full bg-danger/60" />
-              <span className="h-1.5 w-1.5 rounded-full bg-warning/60" />
-              <span className="h-1.5 w-1.5 rounded-full bg-success/60" />
-              <span className="ml-2 text-[7px] text-muted/40 font-mono truncate">
-                {agent.name} — {hasContainer ? agent.task : isStopped ? "session ended" : agent.lifecycleStatus}
-              </span>
-            </div>
             <div className="flex-1 bg-surface p-1.5 flex items-center justify-center">
               {connState === "fetching-token" || connState === "connecting" || (connState === "idle" && hasContainer) ? (
                 <div className="flex flex-col items-center gap-1">
                   <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
                   <span className="text-[7px] font-mono text-muted/40">connecting...</span>
                 </div>
-              ) : showRuntimeFallback ? (
-                <div className="flex w-full max-w-[14rem] flex-col items-center gap-2 rounded-md border border-white/6 bg-surface-sunken/70 px-3 py-2 text-center">
-                  <span className="text-[8px] font-mono text-muted/60">
-                    {isStopped ? "session ended" : "preview unavailable"}
-                  </span>
-                  <span className="text-[7px] text-muted/45">
-                    {errorMsg || agent.errorMessage || "The runtime is no longer available."}
-                  </span>
-                  <div className="flex gap-3 text-[7px] font-mono text-muted/35">
-                    <span>{`$${agent.cost.toFixed(2)}`}</span>
-                    <span>{agent.duration}</span>
+              ) : showRuntimeFallback || agent.lifecycleStatus === "error" ? (
+                <div className="flex w-full h-full flex-col font-mono text-[9px]">
+                  {/* Status strip */}
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`h-1.5 w-1.5 rounded-full ${isStopped ? "bg-muted/40" : "bg-danger/60"}`} />
+                      <span className={isStopped ? "text-muted/50" : "text-danger/60"}>
+                        {isStopped ? "session ended" : "runtime crashed"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted/25">{`$${agent.cost.toFixed(2)}`}</span>
+                      <span className="text-muted/25">{agent.duration}</span>
+                      {!isStopped && (
+                        <button
+                          type="button"
+                          onClick={() => hardRestartAgent(agent.id)}
+                          className="rounded border border-accent/25 bg-accent/8 px-2 py-0.5 text-[8px] text-accent/70 transition hover:bg-accent/15 hover:text-accent"
+                        >
+                          redeploy
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => hardRestartAgent(agent.id)}
-                    className="rounded border border-accent/25 bg-accent/10 px-2 py-1 text-[7px] font-mono uppercase tracking-[0.18em] text-accent transition hover:bg-accent/15"
-                  >
-                    Redeploy
-                  </button>
+
+                  {/* Diagnostic body */}
+                  <div className="flex-1 flex flex-col justify-center px-3 py-2">
+                    {(agent.errorMessage || errorMsg) ? (
+                      <div className="space-y-1.5">
+                        <span className="text-[7px] text-muted/30 uppercase tracking-wider">diagnostics</span>
+                        <p className="text-[8px] text-default/50 leading-relaxed line-clamp-5 whitespace-pre-wrap">
+                          {agent.errorMessage || errorMsg}
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="text-muted/25 text-center">
+                        {isStopped ? "session ended cleanly" : "container exited — no diagnostics captured"}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              ) : agent.lifecycleStatus === "error" ? (
-                <span className="text-[6px] font-mono text-danger/50 line-clamp-3 text-center px-1">
-                  {agent.errorMessage
-                    ? agent.errorMessage.split("\n").pop()?.slice(0, 120)
-                    : `Process exited (${agent.task || "unknown error"})`}
-                </span>
               ) : (
                 <span className="text-[7px] font-mono text-muted/25">{agent.lifecycleStatus}</span>
               )}

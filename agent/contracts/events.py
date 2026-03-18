@@ -11,6 +11,8 @@ class RuntimeEvent(StrEnum):
     PROVISIONING_RELEASE_COMPLETE = "provisioning.release_complete"
     RUNTIME_READY = "runtime.ready"
     RUNTIME_UPDATED = "runtime.updated"
+    RUNTIME_FATAL = "runtime.fatal"
+    RUNTIME_SHUTDOWN = "runtime.shutdown"
     TRANSPORT_CONNECTING = "transport.connecting"
     TRANSPORT_CONNECTED = "transport.connected"
     TRANSPORT_DEGRADED = "transport.degraded"

@@ -27,6 +27,7 @@ from agents.models import (
     VALID_TRANSITIONS,
 )
 from agents.services.lifecycle import (
+    _build_agent_env,
     _create_lifecycle_attempt_sync,
     _runtime_executor,
     _update_lifecycle_attempt_sync,
@@ -51,6 +52,19 @@ def test_runtime_executor_maps_claude_code_agent_type():
 
 def test_runtime_executor_honors_override():
     assert _runtime_executor("claude-code", override="echo") == "echo"
+
+
+def test_build_agent_env_does_not_export_bash_env():
+    agent = SimpleNamespace(
+        id=uuid.uuid4(),
+        agent_type="claude-code",
+        name="worker",
+    )
+    project = SimpleNamespace(id=uuid.uuid4())
+
+    env = _build_agent_env(agent, project)
+
+    assert "BASH_ENV" not in env
 
 
 def test_shell_escape_basic():

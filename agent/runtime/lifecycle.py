@@ -32,6 +32,9 @@ class LifecycleCoordinator:
             platform=self._config.platform.value,
             profile=self._config.profile.value,
             agent_id=self._config.managed.agent_id if self._config.managed else "",
+            image_ref=self._config.build.image_ref,
+            git_commit=self._config.build.git_commit,
+            root_dir=self._config.root_dir,
         )
         self._state.update_stage(StartupStage.CONFIG_LOADING)
         self._state.update_runtime_state(RuntimeState.STARTING)

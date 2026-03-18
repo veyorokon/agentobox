@@ -215,7 +215,7 @@ class DockerRuntime:
                 container.reload()
                 return container.status  # "running", "exited", etc.
             except docker.errors.NotFound:
-                return "dead"
+                return "missing"
 
         return await self._run_sync(_status)
 

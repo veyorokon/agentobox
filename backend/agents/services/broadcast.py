@@ -49,8 +49,8 @@ async def broadcast_agent_update(agent: Agent) -> None:
             "broadcast.agent_updated",
             agent_id=str(agent.id),
             agent_name=agent.name,
-            from_status=old_status,
-            to_status=agent.status,
+            previous_status=old_status,
+            next_status=agent.status,
         )
         event = await _create_status_event(agent, old_status)
         # Reset to prevent double-emission on subsequent broadcasts

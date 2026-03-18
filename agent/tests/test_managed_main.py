@@ -4,6 +4,7 @@ from agent.managed_main import main
 def test_managed_main_waits_for_bootstrap_then_runs_runtime(monkeypatch):
     calls = []
     env_loaded = {}
+    logging_contexts = []
 
     class _Value:
         def __init__(self, value: str):
@@ -41,6 +42,10 @@ def test_managed_main_waits_for_bootstrap_then_runs_runtime(monkeypatch):
     monkeypatch.setattr("agent.managed_main.RuntimeConfig.from_env", lambda: next(configs))
     monkeypatch.setattr("agent.managed_main.ManagedBootstrap", FakeBootstrap)
     monkeypatch.setattr(
+        "agent.managed_main.configure_logging_context",
+        lambda **kwargs: logging_contexts.append(kwargs),
+    )
+    monkeypatch.setattr(
         "agent.managed_main.load_managed_runtime_env",
         lambda _root_dir: {"CLAUDE_MODEL": "claude-sonnet-4-5", "AGENT_MODE": "auto"},
     )
@@ -73,3 +78,5 @@ def test_managed_main_waits_for_bootstrap_then_runs_runtime(monkeypatch):
         "AGENT_MODE": "auto",
         "__override__": True,
     }
+    assert len(logging_contexts) == 2
+    assert all(entry["root_dir"] is not None for entry in logging_contexts)

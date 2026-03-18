@@ -232,6 +232,23 @@ class Volume:
         path = self.root / "_abox" / "status.json"
         return json.loads(path.read_text()) if path.exists() else {}
 
+    def runtime_log_tail(self, limit: int = 20) -> list[dict]:
+        """Read the last structured runtime log events from _abox/logs/runtime.jsonl."""
+        path = self.root / "_abox" / "logs" / "runtime.jsonl"
+        if not path.exists():
+            return []
+        lines = [line for line in path.read_text().splitlines() if line.strip()]
+        tail = lines[-max(1, limit):]
+        events: list[dict] = []
+        for line in tail:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                events.append(payload)
+        return events
+
     def inbox_delivered(self) -> bool:
         """Check if all inbox messages have been consumed.
 

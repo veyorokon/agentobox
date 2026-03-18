@@ -26,6 +26,7 @@ def main(app_factory: ApplicationFactory = AgentApplication) -> None:
         agent_id=bootstrap_config.managed.agent_id if bootstrap_config.managed else "",
         image_ref=bootstrap_config.build.image_ref,
         git_commit=bootstrap_config.build.git_commit,
+        root_dir=bootstrap_config.root_dir,
     )
     timeout_s = float(os.environ.get("AGENTOBOX_PROVISIONING_TIMEOUT_S", "120"))
     poll_interval_s = float(os.environ.get("AGENTOBOX_PROVISIONING_POLL_INTERVAL_S", "0.25"))
@@ -42,5 +43,6 @@ def main(app_factory: ApplicationFactory = AgentApplication) -> None:
         agent_id=config.managed.agent_id if config.managed else "",
         image_ref=config.build.image_ref,
         git_commit=config.build.git_commit,
+        root_dir=config.root_dir,
     )
     run_forever(app_factory(config))

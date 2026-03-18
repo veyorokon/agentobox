@@ -175,6 +175,17 @@ def merge_agent_context(logger, method_name, event_dict):
     return event_dict
 
 
+def normalize_domain_field_names(logger, method_name, event_dict):
+    """Normalize legacy field aliases into one canonical log vocabulary."""
+    from_status = event_dict.pop("from_status", None)
+    to_status = event_dict.pop("to_status", None)
+    if from_status is not None and "previous_status" not in event_dict:
+        event_dict["previous_status"] = from_status
+    if to_status is not None and "next_status" not in event_dict:
+        event_dict["next_status"] = to_status
+    return event_dict
+
+
 def bind_agent_context(agent_id: str, agent_name: str, sandbox_id: str = "", project_id: str = ""):
     """
     Bind agent metadata to current execution context.
@@ -316,6 +327,7 @@ def start_queue_listener():
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             drop_noisy_fields,  # Final pass: strip ip/user_agent from django_structlog context
+            normalize_domain_field_names,
             # Extract exc_info from LogRecord into event_dict.
             # BoundLogger.exception() sets exc_info on the LogRecord, not
             # the structlog event_dict. The configure() chain's format_exc_info
@@ -330,6 +342,7 @@ def start_queue_listener():
             drop_noisy_fields,
             structlog.contextvars.merge_contextvars,
             merge_agent_context,
+            normalize_domain_field_names,
             truncate_graphql_request,
             truncate_long_values,
             structlog.stdlib.add_log_level,
@@ -539,6 +552,7 @@ def setup():
             drop_noisy_fields,  # Strip ip/user_agent injected by django_structlog
             structlog.contextvars.merge_contextvars,
             merge_agent_context,  # Add agent metadata from context
+            normalize_domain_field_names,
             truncate_graphql_request,  # Shorten URL-encoded GraphQL queries
             truncate_long_values,  # Truncate long string values
             structlog.stdlib.add_log_level,

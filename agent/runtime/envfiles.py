@@ -24,13 +24,6 @@ def load_managed_runtime_env(root_dir: Path) -> dict[str, str]:
     state_env = load_runtime_state_env(root_dir)
     loaded.update(state_env)
 
-    secret_env = root_dir / CANONICAL_PATHS["secret_env"]
-    if secret_env.exists():
-        loaded.update(parse_export_env_file(secret_env))
-
-    if loaded.get("ANTHROPIC_API_KEY") and loaded.get("ANTHROPIC_BASE_URL", "").startswith("http://localhost:9999"):
-        loaded["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
-
     return loaded
 
 

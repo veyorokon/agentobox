@@ -44,10 +44,12 @@ INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
 DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container state
 REASON_RECONCILER_DEAD_RUNTIME = "reconciler.dead_runtime"
+REASON_RECONCILER_RUNTIME_MISSING = "reconciler.runtime_missing"
 REASON_RECONCILER_STUCK_DEPLOY = "reconciler.stuck_deploy"
 REASON_RECONCILER_ERROR_REAP = "reconciler.error_reap"
 
 _task: asyncio.Task | None = None
+_logged_error_reap_skip = False
 
 # Decorator for sync DB operations in background tasks
 _db = sync_to_async(thread_sensitive=False)
@@ -164,6 +166,19 @@ def _should_replace_error_message(current: str, incoming: str) -> bool:
     return False
 
 
+def _summarize_runtime_log(events: list[dict]) -> tuple[str, list[str]]:
+    names = [str(event.get("event", "")).strip() for event in events if event.get("event")]
+    names = [name for name in names if name]
+    if not names:
+        return "", []
+    recent = names[-5:]
+    return f"Last runtime event: {recent[-1]}", recent
+
+
+async def _read_runtime_log_tail(agent, *, limit: int = 10) -> list[dict]:
+    return await sync_to_async(agent.volume.runtime_log_tail, thread_sensitive=False)(limit=limit)
+
+
 @_db
 def _mark_stopped(agent_id, *, reason=REASON_RECONCILER_ERROR_REAP):
     agent = Agent.objects.get(id=agent_id)
@@ -222,11 +237,26 @@ def _reap_orphans_sync():
     )
     active_sandbox_ids = set(active_agents.values_list("sandbox_id", flat=True))
     active_agent_ids = set(str(aid) for aid in active_agents.values_list("id", flat=True))
+    retained_failed_agent_ids: set[str] = set()
+
+    from config.app_config import app_config
+    if app_config.reconciler.keep_failed_containers:
+        retained_failed_agent_ids = set(
+            str(aid)
+            for aid in Agent.objects.filter(
+                runtime="docker",
+                status=AgentStatus.ERROR,
+            ).values_list("id", flat=True)
+        )
 
     for container in containers:
         # Match by sandbox_id (normal case) or agent.id label (provisioning window)
         agent_id_label = container.labels.get("agentobox.agent.id", "")
-        if container.id in active_sandbox_ids or agent_id_label in active_agent_ids:
+        if (
+            container.id in active_sandbox_ids
+            or agent_id_label in active_agent_ids
+            or agent_id_label in retained_failed_agent_ids
+        ):
             continue
         try:
             container.stop(timeout=5)
@@ -256,14 +286,20 @@ async def _detect_dead_containers():
 
     for agent in agents:
         container_status = await runtime.get_status(agent.sandbox_id)
-        if container_status in ("exited", "dead"):
+        if container_status in ("exited", "dead", "missing"):
             # Capture crash diagnostics before marking ERROR
             crash_info = await runtime.get_crash_info(agent.sandbox_id)
+            runtime_events = await _read_runtime_log_tail(agent, limit=10)
+            runtime_log_summary, recent_runtime_events = _summarize_runtime_log(runtime_events)
 
             # Build error message from crash info (backup path — stream.py
             # may have already set it from relay's process_exit event)
             error_msg = ""
-            if crash_info:
+            reason = REASON_RECONCILER_DEAD_RUNTIME
+            if container_status == "missing":
+                error_msg = "Runtime container is missing"
+                reason = REASON_RECONCILER_RUNTIME_MISSING
+            elif crash_info:
                 parts = []
                 exit_code = crash_info.get("exit_code", -1)
                 if crash_info.get("oom_killed"):
@@ -276,11 +312,17 @@ async def _detect_dead_containers():
                     tail = "\n".join(logs.splitlines()[-10:])
                     parts.append(tail)
                 error_msg = "\n".join(parts)
+            if runtime_log_summary:
+                error_msg = (
+                    f"{error_msg}\n{runtime_log_summary}"
+                    if error_msg
+                    else runtime_log_summary
+                )
 
             agent = await _mark_error(
                 agent.id,
                 error_message=error_msg,
-                reason=REASON_RECONCILER_DEAD_RUNTIME,
+                reason=reason,
             )
             await fail_active_lifecycle_attempts(
                 str(agent.id),
@@ -294,7 +336,11 @@ async def _detect_dead_containers():
             # Create error feed item so dashboard shows WHY the agent crashed
             # (backup path — stream.py creates one from relay's process_exit
             # event, but if relay never sent it, this is the only record)
-            summary = error_msg.splitlines()[-1][:200] if error_msg else "Container exited unexpectedly"
+            summary = (
+                "Runtime container is missing"
+                if container_status == "missing"
+                else (error_msg.splitlines()[-1][:200] if error_msg else "Container exited unexpectedly")
+            )
             await create_feed_item(
                 project_id=str(agent.project_id),
                 type="error",
@@ -303,13 +349,16 @@ async def _detect_dead_containers():
                 text=summary,
             )
 
+            event_name = "reconciler.runtime_missing" if container_status == "missing" else "reconciler.dead_container"
             log.info(
-                "reconciler.dead_container",
+                event_name,
                 agent_id=str(agent.id),
                 agent_name=agent.name,
                 container_status=container_status,
                 exit_code=crash_info.get("exit_code") if crash_info else None,
                 oom_killed=crash_info.get("oom_killed") if crash_info else None,
+                last_runtime_event=recent_runtime_events[-1] if recent_runtime_events else "",
+                recent_runtime_events=recent_runtime_events,
             )
 
 
@@ -387,9 +436,14 @@ async def _reap_errored_agents(now):
     """
     from config.app_config import app_config
 
+    global _logged_error_reap_skip
     if app_config.reconciler.keep_failed_containers:
-        log.info("reconciler.error_reap_skipped", keep_failed_containers=True)
+        if not _logged_error_reap_skip:
+            log.info("reconciler.error_reap_skipped", keep_failed_containers=True)
+            _logged_error_reap_skip = True
         return
+
+    _logged_error_reap_skip = False
 
     reap_cutoff = now - timedelta(seconds=app_config.reconciler.reap_delay_s)
     errored_agents = await _get_agents(

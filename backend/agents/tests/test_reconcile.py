@@ -19,6 +19,8 @@ from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
     REASON_RECONCILER_DEAD_RUNTIME,
+    REASON_RECONCILER_RUNTIME_MISSING,
+    _detect_dead_containers,
     _detect_stuck_deploys,
     _mark_error,
     _reap_errored_agents,
@@ -194,6 +196,81 @@ def test_mark_error_replaces_generic_error_with_richer_crash_details():
 
     assert agent.error_message == incoming
     agent.save.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_detect_dead_containers_marks_missing_runtime_explicitly():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        sandbox_id="missing-container",
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        project_id="project-1",
+        volume=SimpleNamespace(runtime_log_tail=lambda limit=10: []),
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
+    mock_runtime = AsyncMock()
+    mock_runtime.get_status = AsyncMock(return_value="missing")
+    mock_runtime.get_crash_info = AsyncMock(return_value=None)
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock) as mock_fail_attempt,
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock),
+        patch("agents.services.reconcile.create_feed_item", new_callable=AsyncMock),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        await _detect_dead_containers()
+
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Runtime container is missing",
+        reason=REASON_RECONCILER_RUNTIME_MISSING,
+    )
+    mock_fail_attempt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_detect_dead_containers_includes_last_runtime_event_for_missing_runtime():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        sandbox_id="missing-container",
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        project_id="project-1",
+        volume=SimpleNamespace(
+            runtime_log_tail=lambda limit=10: [
+                {"event": "provisioning.release_complete"},
+                {"event": "runtime.booting"},
+                {"event": "transport.connected"},
+            ]
+        ),
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
+    mock_runtime = AsyncMock()
+    mock_runtime.get_status = AsyncMock(return_value="missing")
+    mock_runtime.get_crash_info = AsyncMock(return_value=None)
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock),
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock),
+        patch("agents.services.reconcile.create_feed_item", new_callable=AsyncMock) as mock_feed_item,
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        await _detect_dead_containers()
+
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Runtime container is missing\nLast runtime event: transport.connected",
+        reason=REASON_RECONCILER_RUNTIME_MISSING,
+    )
+    mock_feed_item.assert_awaited_once()
+    assert mock_feed_item.await_args.kwargs["text"] == "Runtime container is missing"
 
 
 class TestReapOrphans:

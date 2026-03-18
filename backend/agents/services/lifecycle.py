@@ -109,8 +109,8 @@ def transition_agent_status(agent: Agent, new_status: str, *, reason: str = "", 
     log.info(
         "lifecycle.status_transition",
         agent_id=str(agent.id),
-        from_status=old_status,
-        to_status=new_status,
+        previous_status=old_status,
+        next_status=new_status,
         reason=reason,
         forced=force,
     )
@@ -615,8 +615,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 )
             is_oauth = api_key.startswith("sk-ant-oat")
 
-            # Pass the real API key directly in container env.
-            # OAuth tokens use .credentials.json on disk instead.
+            # New runtime still authenticates Claude via explicit container env
+            # for non-OAuth flows. Shared secrets on the volume remain scoped;
+            # this explicit env is limited to the Claude execution path.
             if not is_oauth:
                 env["ANTHROPIC_API_KEY"] = api_key
                 env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
@@ -1165,19 +1166,16 @@ async def fail_active_lifecycle_attempts(
 async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
     """Best-effort capture of sandbox process list after provisioning."""
     try:
-        output = await runtime.exec(
-            sandbox_id,
-            [
-                "bash",
-                "-c",
-                (
-                    "ps aux | grep -E "
-                    "'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' "
-                    "| grep -v grep || true"
-                ),
-            ],
-        )
-        truncated = output[:200] if output else "(empty)"
+        output = await runtime.exec(sandbox_id, ["ps", "aux"])
+        interesting = [
+            line
+            for line in output.splitlines()
+            if any(
+                token in line
+                for token in ("Xvfb", "novnc", "websockify", "firefox", "awesome", "relay", "svc-relay")
+            )
+        ]
+        truncated = "\n".join(interesting)[:200] if interesting else "(empty)"
         op_log.info("lifecycle.processes_captured", output=truncated)
     except Exception as exc:  # intentional: log capture is diagnostic only — never block provisioning
         op_log.warning(
@@ -1210,10 +1208,6 @@ def _build_agent_env(agent, project) -> dict[str, str]:
         # DO NOT set CLAUDECODE=1 — the CLI treats it as a nested session
         # marker and refuses to start. The SDK sets its own entrypoint env var
         # (CLAUDE_CODE_ENTRYPOINT=sdk-py) internally.
-        # BASH_ENV is sourced by bash for every non-interactive invocation.
-        # Claude Code's Bash tool uses non-interactive shells, so .bashrc
-        # is NOT read. BASH_ENV ensures secrets are available to all commands.
-        "BASH_ENV": "/mnt/abox-state/secrets/env",
     }
 
 

@@ -13,9 +13,10 @@ from threading import Event, current_thread, main_thread
 from time import sleep
 from typing import Callable
 
+from agent.contracts.events import RuntimeEvent
 from agent.runtime.app import AgentApplication
 from agent.runtime.config import RuntimeConfig
-from agent.runtime.logging import configure_logging_context
+from agent.runtime.logging import configure_logging_context, emit_event
 
 
 ApplicationFactory = Callable[[RuntimeConfig], AgentApplication]
@@ -34,11 +35,23 @@ def run_forever(
     stop_event = stop_event or Event()
     if install_signal_handlers and current_thread() is main_thread():
         _install_signal_handlers(stop_event)
-    app.boot()
     try:
+        emit_event("runtime.booting")
+        app.boot()
         while not stop_event.is_set():
             sleep(poll_interval_s)
+    except BaseException as exc:
+        emit_event(
+            RuntimeEvent.RUNTIME_FATAL.value,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
     finally:
+        emit_event(
+            RuntimeEvent.RUNTIME_SHUTDOWN.value,
+            stop_requested=stop_event.is_set(),
+        )
         app.shutdown()
         if managed_stop:
             stop_event.set()
@@ -55,6 +68,7 @@ def main(app_factory: ApplicationFactory = AgentApplication) -> None:
         agent_id=config.managed.agent_id if config.managed else "",
         image_ref=config.build.image_ref,
         git_commit=config.build.git_commit,
+        root_dir=config.root_dir,
     )
     run_forever(app_factory(config))
 
