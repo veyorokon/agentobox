@@ -81,6 +81,7 @@ class TaskRunner:
     def __init__(self, state: RuntimeStateStore, executor: TaskExecutor | None = None):
         self._state = state
         self._executor = executor or EchoExecutor()
+        self._callback_handler: ExecutionCallbackHandler | None = None
         self._queue: queue.Queue[TaskRequest] = queue.Queue()
         self._lock = threading.Lock()
         self._tasks: dict[str, TaskRecord] = {}
@@ -133,9 +134,20 @@ class TaskRunner:
         self._execution_observers.append(observer)
 
     def set_callback_handler(self, handler: ExecutionCallbackHandler) -> None:
+        with self._lock:
+            self._callback_handler = handler
         setter = getattr(self._executor, "set_callback_handler", None)
         if callable(setter):
             setter(handler)
+
+    def set_executor(self, executor: TaskExecutor) -> None:
+        with self._lock:
+            self._executor = executor
+            callback_handler = getattr(self, "_callback_handler", None)
+        if callback_handler is not None:
+            setter = getattr(self._executor, "set_callback_handler", None)
+            if callable(setter):
+                setter(callback_handler)
 
     def clear_pending(self) -> list[str]:
         """Drop queued-but-not-running tasks and mark them as cleared."""

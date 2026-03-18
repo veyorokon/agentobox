@@ -53,7 +53,7 @@ def _translate_permission_mode(raw_mode: str) -> str:
     mode_map = {
         "auto": "bypassPermissions",
         "plan": "plan",
-        "supervised": "default",
+        "supervised": "bypassPermissions",
     }
     return mode_map.get(raw_mode, "bypassPermissions")
 

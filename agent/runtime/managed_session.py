@@ -15,12 +15,14 @@ from pathlib import Path
 from agent.contracts.events import RuntimeEvent
 from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.config import RuntimeConfig
+from agent.runtime.envfiles import apply_env_overrides, load_runtime_state_env
 from agent.runtime.execution import (
     ExecutionCallbackHandler,
     ExecutionEvent,
     ExecutionEventType,
     ExecutionObserver,
 )
+from agent.runtime.executors.factory import build_executor
 from agent.runtime.inbox import (
     inbox_cursor_path,
     load_new_inbox_entries,
@@ -201,6 +203,17 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
                 update="theme_applied",
                 token_count=len(document.tokens),
                 theme_name=document.name,
+            )
+            return
+        if command.path == CANONICAL_PATHS["runtime_state"]:
+            state_env = load_runtime_state_env(self._root_dir)
+            apply_env_overrides(state_env, override=True)
+            self._runner.set_executor(build_executor(self._config))
+            emit_event(
+                RuntimeEvent.RUNTIME_UPDATED.value,
+                source="managed_session",
+                update="state_reloaded",
+                reloaded_keys=sorted(state_env.keys()),
             )
             return
         raise ValueError(f"unsupported reload path: {command.path}")

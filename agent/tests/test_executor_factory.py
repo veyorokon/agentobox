@@ -46,3 +46,27 @@ def test_build_executor_returns_claude_code_cli_executor(tmp_path, monkeypatch):
     executor = build_executor(config)
 
     assert isinstance(executor, ClaudeCodeCLIExecutor)
+    assert executor._config.permission_mode == "bypassPermissions"
+
+
+def test_build_executor_maps_supervised_to_noninteractive_cli_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_MODEL", "claude-sonnet-4")
+    monkeypatch.setenv("AGENT_MODE", "supervised")
+    config = RuntimeConfig(
+        mode=AgentMode.MANAGED,
+        platform=PlatformKind.LOCAL,
+        executor=ExecutorKind.CLAUDE_CODE,
+        bind_host="127.0.0.1",
+        port=0,
+        root_dir=tmp_path,
+        managed=ManagedConfig(
+            agent_id="agent-123",
+            callback_url="https://example.com",
+            relay_auth_token="token",
+        ),
+    )
+
+    executor = build_executor(config)
+
+    assert isinstance(executor, ClaudeCodeCLIExecutor)
+    assert executor._config.permission_mode == "bypassPermissions"

@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 
@@ -197,6 +198,36 @@ def test_managed_session_reloads_theme_tokens(tmp_path):
     assert "--abox-accent: #ffaa00;" in theme_css
     assert "--toolbar-bgcolor: #101010" in firefox_css
     assert '["accent"] = "#ffaa00"' in awesome_lua
+    assert session.drain_outbound_messages() == []
+
+
+def test_managed_session_reloads_runtime_state_without_degrading_transport(tmp_path, monkeypatch):
+    state_path = tmp_path / CANONICAL_PATHS["runtime_state"]
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "model": "claude-haiku-4-5",
+                "mode": "auto",
+                "allowed_tools": ["Read"],
+            }
+        )
+    )
+    runner = _build_runner()
+    session = ManagedRelaySession(_managed_runtime_config(tmp_path), runner, runner._state)
+
+    class ReplacementExecutor:
+        pass
+
+    replacement = ReplacementExecutor()
+    monkeypatch.setattr("agent.runtime.managed_session.build_executor", lambda _config: replacement)
+
+    session.on_command(ReloadCommand(path=CANONICAL_PATHS["runtime_state"]))
+
+    assert runner._executor is replacement
+    assert os.environ["CLAUDE_MODEL"] == "claude-haiku-4-5"
+    assert os.environ["AGENT_MODE"] == "auto"
+    assert os.environ["ALLOWED_TOOLS"] == '["Read"]'
     assert session.drain_outbound_messages() == []
 
 
