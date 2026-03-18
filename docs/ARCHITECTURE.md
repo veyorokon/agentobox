@@ -203,7 +203,7 @@ All backend logging uses `structlog` with a `domain.action` naming convention en
 | `graphql` | Query/mutation/subscription events | `mutations.py`, `subscriptions.py`, `views.py` |
 | `auth` | Relay token authentication | `auth_relay.py` |
 
-Adding a new domain requires adding it to `_VALID_DOMAINS` in `tests/test_architecture.py`. The full taxonomy spec is in `docs/drafts/event-taxonomy.md`.
+Adding a new domain requires adding it to `_VALID_DOMAINS` in `tests/test_architecture.py`. The full taxonomy spec is in `docs/drafts/event-taxonomy.md`. The standard runtime debugging procedure and failure-class audit process is in `docs/RUNTIME-FAILURE-AUDIT.md`.
 
 ## Adapters (Ports & Adapters)
 

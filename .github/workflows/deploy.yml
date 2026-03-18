@@ -41,6 +41,8 @@ env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/veyorokon/agentobox-backend
   DASHBOARD_IMAGE: ghcr.io/veyorokon/agentobox-dashboard
+  AGENT_MANAGED_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-managed
+  AGENT_DESKTOP_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed
 
 jobs:
   # ─── Validate Secrets ─────────────────────────────────────────────
@@ -100,6 +102,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      backend-image: ${{ steps.backend-image-ref.outputs.ref }}
+      dashboard-image: ${{ steps.dashboard-image-ref.outputs.ref }}
+      modal-agent-image: ${{ steps.agent-image-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -128,6 +134,9 @@ jobs:
           labels: ${{ steps.backend-meta.outputs.labels }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,scope=backend,mode=max
+      - id: backend-image-ref
+        name: Record backend image ref
+        run: echo "ref=${{ env.BACKEND_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       # Dashboard image
       - id: dashboard-meta
@@ -148,6 +157,60 @@ jobs:
           labels: ${{ steps.dashboard-meta.outputs.labels }}
           cache-from: type=gha,scope=dashboard
           cache-to: type=gha,scope=dashboard,mode=max
+      - id: dashboard-image-ref
+        name: Record dashboard image ref
+        run: echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Agent managed base image
+      - id: agent-managed-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.AGENT_MANAGED_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: agent
+          file: agent/Dockerfile.managed
+          push: true
+          tags: ${{ steps.agent-managed-meta.outputs.tags }}
+          labels: ${{ steps.agent-managed-meta.outputs.labels }}
+          build-args: |
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+            AGENTOBOX_IMAGE_REF=${{ env.AGENT_MANAGED_IMAGE }}:sha-${{ github.sha[0:7] }}
+          cache-from: type=gha,scope=managed
+          cache-to: type=gha,scope=managed,mode=max
+
+      # Agent desktop image consumed by Modal sandboxes
+      - id: agent-desktop-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.AGENT_DESKTOP_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: agent
+          file: agent/Dockerfile.desktop.managed
+          push: true
+          tags: ${{ steps.agent-desktop-meta.outputs.tags }}
+          labels: ${{ steps.agent-desktop-meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ env.AGENT_MANAGED_IMAGE }}:sha-${{ github.sha[0:7] }}
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+            AGENTOBOX_IMAGE_REF=${{ env.AGENT_DESKTOP_IMAGE }}:sha-${{ github.sha[0:7] }}
+          cache-from: type=gha,scope=desktop-managed
+          cache-to: type=gha,scope=desktop-managed,mode=max
+
+      - id: agent-image-ref
+        name: Record Modal agent image ref
+        run: echo "ref=${{ env.AGENT_DESKTOP_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
   # ─── Deploy ────────────────────────────────────────────────────────
   deploy:
@@ -158,13 +221,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Sync deploy artifacts
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: docker-compose.prod.yml,Caddyfile
+          target: /opt/agentobox
+
       - name: Write .env from APP_SECRETS + APP_CONFIG
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ubuntu
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: _APP_CONFIG,_APP_SECRETS
+          envs: _APP_CONFIG,_APP_SECRETS,_BACKEND_IMAGE,_DASHBOARD_IMAGE,_MODAL_AGENT_IMAGE
           script: |
             mkdir -p /opt/agentobox
             python3 -c "
@@ -177,6 +249,15 @@ jobs:
                 if raw.strip():
                     merged.update(json.loads(raw))
 
+            dynamic_refs = {
+                'BACKEND_IMAGE': os.environ.get('_BACKEND_IMAGE', '').strip(),
+                'DASHBOARD_IMAGE': os.environ.get('_DASHBOARD_IMAGE', '').strip(),
+                'MODAL_AGENT_IMAGE': os.environ.get('_MODAL_AGENT_IMAGE', '').strip(),
+            }
+            for key, value in dynamic_refs.items():
+                if value:
+                    merged[key] = value
+
             lines = []
             for k, v in sorted(merged.items()):
                 safe = v.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))
@@ -186,6 +267,9 @@ jobs:
         env:
           _APP_CONFIG: ${{ vars.APP_CONFIG }}
           _APP_SECRETS: ${{ secrets.APP_SECRETS }}
+          _BACKEND_IMAGE: ${{ needs.build.outputs.backend-image }}
+          _DASHBOARD_IMAGE: ${{ needs.build.outputs.dashboard-image }}
+          _MODAL_AGENT_IMAGE: ${{ needs.build.outputs.modal-agent-image }}
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1

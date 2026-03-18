@@ -67,7 +67,7 @@ class AboxGraphQL:
             query ($projectId: ID!) {
                 agents(projectId: $projectId) {
                     id name lifecycleStatus errorMessage phase task
-                    mode attentionLevel role
+                    mode attentionLevel role relayConnected cost turns
                 }
             }
             """,

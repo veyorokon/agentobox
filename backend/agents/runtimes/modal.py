@@ -38,11 +38,13 @@ class ModalRuntime:
         # (set by lifecycle.py from the Agent model field).
         agent_type = env.get("AGENT_TYPE", "claude-code")
         image_ref = app_config.modal.agent_image_map.get(agent_type, app_config.modal.agent_image)
+        # Managed images define their own entrypoint. Do not override it here,
+        # or Modal will boot the sandbox through a stale bootstrap path that
+        # may not exist in the current image.
         image = modal.Image.from_registry(
             image_ref,
             secret=modal.Secret.from_name("ghcr-secret"),
-            force_build=True,
-        ).entrypoint(["/usr/local/bin/abox-init"])
+        )
         env_secret = modal.Secret.from_dict(env)
 
         # Convert VolumeMount list to Modal volumes.

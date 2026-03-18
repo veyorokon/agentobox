@@ -61,6 +61,7 @@ class ProjectMutation:
         self, input: CreateProjectInput, info: Info
     ) -> ProjectType:
         from projects.models import Project
+        from django.utils import timezone
 
         user = info.context["request"].user
         if not user.is_authenticated:
@@ -85,8 +86,11 @@ class ProjectMutation:
             await spawn_team_lead(str(project.id))
         except Exception:
             log.exception("create_project.team_lead_failed", project_id=str(project.id))
-            # Don't silently return a half-initialized project
-            await project.adelete()
+            # Preserve the failed project as a tombstone for audit/debugging,
+            # but hide it from normal project queries.
+            project.deleted_at = timezone.now()
+            project.archived_at = project.deleted_at
+            await project.asave(update_fields=["deleted_at", "archived_at"])
             raise Exception("Failed to initialize project — team lead could not be created")
 
         return project
@@ -155,14 +159,33 @@ class ProjectMutation:
 
     @strawberry.mutation
     async def delete_project(self, id: ID, info: Info) -> bool:
+        from django.utils import timezone
+
+        from agents.models import Agent, AgentStatus
+        from agents.services.lifecycle import kill_agent
         from projects.models import Project
 
         user = info.context["request"].user
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
 
-        deleted, _ = await Project.objects.filter(id=id, owner=user).adelete()
-        return deleted > 0
+        project = await Project.objects.aget(id=id, owner=user)
+
+        live_statuses = {
+            AgentStatus.DEPLOYING,
+            AgentStatus.RUNNING,
+            AgentStatus.WAITING,
+            AgentStatus.IDLE,
+        }
+        for agent in [a async for a in Agent.objects.filter(project=project)]:
+            if agent.status in live_statuses:
+                await kill_agent(str(agent.id))
+
+        project.deleted_at = timezone.now()
+        if project.archived_at is None:
+            project.archived_at = project.deleted_at
+        await project.asave(update_fields=["deleted_at", "archived_at"])
+        return True
 
     @strawberry.mutation
     async def stop_all_agents(self, project_id: ID, info: Info) -> int:

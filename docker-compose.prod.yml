@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ghcr.io/veyorokon/agentobox-backend:${VERSION:-latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/veyorokon/agentobox-backend:${VERSION:-latest}}
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -17,7 +17,7 @@ services:
       ABOX_DASHBOARD_URL: https://${DOMAIN}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:${AGENT_VERSION:-${VERSION:-latest}}
+      MODAL_AGENT_IMAGE: ${MODAL_AGENT_IMAGE:-ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:${AGENT_VERSION:-${VERSION:-latest}}}
       MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-main}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY}
       DOCKER_NETWORK: agentobox_default
@@ -39,7 +39,7 @@ services:
       - agent-volumes:/volumes
 
   dashboard:
-    image: ghcr.io/veyorokon/agentobox-dashboard:${VERSION:-latest}
+    image: ${DASHBOARD_IMAGE:-ghcr.io/veyorokon/agentobox-dashboard:${VERSION:-latest}}
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: https://${DOMAIN}/graphql

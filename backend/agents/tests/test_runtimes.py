@@ -53,6 +53,87 @@ class TestDockerRuntimeExec:
 
 class TestModalRuntimeExec:
     @pytest.mark.asyncio
+    async def test_create_uses_image_default_entrypoint(self, monkeypatch):
+        runtime = ModalRuntime()
+        captured = {}
+
+        class FakeImage:
+            def entrypoint(self, *_args, **_kwargs):
+                raise AssertionError("ModalRuntime should not override the managed image entrypoint")
+
+        fake_image = FakeImage()
+
+        class FakeImageAPI:
+            @staticmethod
+            def from_registry(image_ref, secret=None):
+                captured["image_ref"] = image_ref
+                captured["registry_secret"] = secret
+                return fake_image
+
+        class FakeAppLookup:
+            @staticmethod
+            async def aio(name, create_if_missing=True):
+                captured["app_lookup"] = {"name": name, "create_if_missing": create_if_missing}
+                return SimpleNamespace(app_id="ap-test")
+
+        class FakeSecretAPI:
+            @staticmethod
+            def from_name(name):
+                return ("secret-name", name)
+
+            @staticmethod
+            def from_dict(env):
+                captured["env"] = dict(env)
+                return ("secret-dict", dict(env))
+
+        class FakeSetTags:
+            @staticmethod
+            async def aio(tags):
+                captured["tags"] = tags
+
+        class FakeTunnels:
+            @staticmethod
+            async def aio():
+                return {
+                    6080: SimpleNamespace(url="wss://vnc.example"),
+                    8080: SimpleNamespace(url="https://health.example"),
+                }
+
+        class FakeSandbox:
+            object_id = "sb-test"
+            set_tags = FakeSetTags()
+            tunnels = FakeTunnels()
+
+        class FakeSandboxCreate:
+            @staticmethod
+            async def aio(**kwargs):
+                captured["create_kwargs"] = kwargs
+                return FakeSandbox()
+
+        monkeypatch.setattr("agents.runtimes.modal.modal.Image", FakeImageAPI)
+        monkeypatch.setattr("agents.runtimes.modal.modal.App.lookup", FakeAppLookup)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Secret", FakeSecretAPI)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Sandbox.create", FakeSandboxCreate)
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.app_name", "agentobox")
+        monkeypatch.setattr(
+            "agents.runtimes.modal.app_config.modal.agent_image",
+            "ghcr.io/test/managed:sha-1234567",
+        )
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.agent_image_map", {})
+
+        sandbox = await runtime.create(
+            "team-lead",
+            {"AGENT_ID": "agent-123", "AGENT_TYPE": "claude-code"},
+            volumes=None,
+        )
+
+        assert captured["image_ref"] == "ghcr.io/test/managed:sha-1234567"
+        assert captured["create_kwargs"]["image"] is fake_image
+        assert sandbox.id == "sb-test"
+        assert sandbox.vnc_url == "wss://vnc.example"
+        assert sandbox.health_url == "https://health.example"
+
+    @pytest.mark.asyncio
     async def test_exec_raises_on_nonzero_exit(self, monkeypatch):
         runtime = ModalRuntime()
 

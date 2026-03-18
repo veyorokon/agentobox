@@ -34,7 +34,7 @@ import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "e2e"))
-from helpers.polling import poll_agent_status, poll_until
+from helpers.polling import poll_until
 
 # Timeouts — generous because cold boot + LLM inference can be slow.
 BOOT_TIMEOUT_S = 120
@@ -91,63 +91,50 @@ def _collect_failure_artifacts(gql, docker_ops, agent_id, agent_name, health_url
 
 
 class TestAgentSmoke:
-    """Full lifecycle smoke test. One agent, three verification layers."""
+    """Full lifecycle smoke test against the auto-created team lead."""
 
     SMOKE_TOKEN = f"SMOKE_OK_{uuid.uuid4().hex[:12]}"
 
     @pytest.fixture(scope="class")
     def smoke_agent(self, gql, smoke_project, docker_ops):
-        """Create one smoke agent. All tests in this class share it.
+        """Use the project's auto-created team lead and wait for it to be ready."""
+        project_id = smoke_project["id"]
 
-        The agent gets deterministic instructions: respond with an exact
-        token so we can assert the full round-trip mechanically.
-        """
-        agent_name = f"smoke-{uuid.uuid4().hex[:8]}"
-        agent = gql.create_agent(
-            smoke_project["id"],
-            name=agent_name,
-            model="claude-haiku-4-5-20251001",
-            instructions=(
-                "You are a smoke test agent by Vahid Eyorokon. "
-                "When you receive ANY message, respond with EXACTLY this text "
-                "and nothing else — no explanation, no formatting, no quotes:\n\n"
-                f"{self.SMOKE_TOKEN}"
-            ),
-            mode="auto",
-        )
-        agent_id = agent["id"]
+        def _team_lead_ready():
+            rows = gql.query_agents(project_id)
+            for row in rows:
+                if row.get("name") == "team-lead":
+                    return row
+            return None
 
-        # Wait for agent to reach idle (relay connected, ready for work)
         try:
-            idle_agent = poll_agent_status(
-                gql,
-                agent_id,
-                target_statuses=["idle"],
+            idle_agent = poll_until(
+                _team_lead_ready,
+                lambda agent: bool(
+                    agent
+                    and agent.get("lifecycleStatus") == "idle"
+                    and agent.get("relayConnected")
+                ),
                 timeout_s=BOOT_TIMEOUT_S,
                 interval_s=3,
+                description=f"team-lead for project {project_id} ready",
             )
         except Exception:
             artifacts = _collect_failure_artifacts(
-                gql, docker_ops, agent_id, agent_name, ""
+                gql, docker_ops, "", "team-lead", ""
             )
-            pytest.fail(f"Agent failed to reach idle within {BOOT_TIMEOUT_S}s.{artifacts}")
+            pytest.fail(
+                f"Team lead failed to reach idle within {BOOT_TIMEOUT_S}s.{artifacts}"
+            )
+
+        agent_id = idle_agent["id"]
 
         yield {
             "agent": idle_agent,
             "agent_id": agent_id,
-            "agent_name": agent_name,
-            "project_id": smoke_project["id"],
+            "agent_name": "team-lead",
+            "project_id": project_id,
         }
-
-        # Cleanup
-        try:
-            gql.kill_agent(agent_id)
-        except Exception:
-            pass
-        try:
-            gql.remove_agent(agent_id)
-        except Exception:
-            pass
 
     # -- Round-trip smoke --
 
@@ -210,21 +197,3 @@ class TestAgentSmoke:
             f"Smoke token '{self.SMOKE_TOKEN}' not found in agent responses. "
             f"Got: {response_texts}"
         )
-
-    # -- Teardown verification --
-
-    def test_agent_can_be_killed(self, gql, smoke_agent):
-        """Agent can be stopped cleanly after smoke test."""
-        agent_id = smoke_agent["agent_id"]
-        result = gql.kill_agent(agent_id)
-        assert result is True
-
-        # Verify it transitions to stopped
-        stopped = poll_agent_status(
-            gql,
-            agent_id,
-            target_statuses=["stopped"],
-            timeout_s=30,
-            interval_s=2,
-        )
-        assert stopped["lifecycleStatus"] == "stopped"

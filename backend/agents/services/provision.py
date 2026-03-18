@@ -92,7 +92,7 @@ async def provision_workspace(
     """
     adapter = get_adapter(agent_type)
     op_log = log.bind(project_id=str(project.id))
-    workspace = "/home/agent"
+    workspace = "/home/agent/workspace"
     paths = adapter.provision_paths(workspace)
     op_log.info(
         "lifecycle.provisioning_workspace",
@@ -355,7 +355,7 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
 
     vol = agent.volume
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
-    workspace = "/home/agent"
+    workspace = "/home/agent/workspace"
     paths = adapter.provision_paths(workspace)
 
     # Rebuild coord server config if agent has a relay_token
