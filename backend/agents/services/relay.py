@@ -133,7 +133,7 @@ async def _sync_append_to_sandbox(agent: Agent, vol_path: str, line: str) -> Non
 
     runtime = get_runtime("modal")
     dest = f"/vol/agents/{agent.id}/{vol_path}"
-    encoded = base64.b64encode(line.encode()).decode()
+    encoded = base64.b64encode((line + "\n").encode()).decode()
     await runtime.exec(
         agent.sandbox_id,
         ["bash", "-c", f"echo {encoded} | base64 -d >> {dest}"],

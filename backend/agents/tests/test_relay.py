@@ -306,6 +306,16 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
     assert exec_args.args[0] == "sb-abc123"
     cmd = exec_args.args[1]
     assert ">> /vol/agents/agent-modal-1/_abox/inbox.jsonl" in cmd[-1]
+    # The base64-encoded payload must decode to valid JSONL with trailing newline.
+    # Without the newline, readline() in the relay never returns the line.
+    import base64
+    b64_token = cmd[-1].split("echo ", 1)[1].split(" |", 1)[0]
+    decoded = base64.b64decode(b64_token).decode()
+    assert decoded.endswith("\n"), f"inbox line must end with newline, got: {decoded!r}"
+    import json
+    parsed = json.loads(decoded.strip())
+    assert parsed["type"] == "task"
+    assert parsed["task_id"] == "modal-task-1"
 
 
 @pytest.mark.asyncio
