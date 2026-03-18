@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents.models import AgentStatus
-from agents.services.relay import _normalize_content, deliver_input, send_message, set_agent_mode
+from agents.services.relay import (
+    _normalize_content,
+    _sync_append_to_sandbox,
+    _sync_write_to_sandbox,
+    deliver_input,
+    send_message,
+    set_agent_mode,
+    update_volume_and_reload,
+)
 from agents.services.relay_commands import (
     CallbackBehavior,
     CallbackResponseCommand,
@@ -264,6 +272,105 @@ async def test_deliver_input_writes_canonical_task_envelope():
     cmd = mock_push.await_args.args[1]
     assert isinstance(cmd, ReloadCommand)
     assert cmd.path == "_abox/inbox.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_deliver_input_syncs_inbox_to_modal_sandbox():
+    """deliver_input() must push the task line into the Modal sandbox.
+
+    Regression: messages written to local filesystem are invisible to Modal
+    sandboxes. The inbox append must be synced via runtime.exec so the
+    relay inside the sandbox can read it.
+    """
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-modal-1"
+    fake_agent.runtime = "modal"
+    fake_agent.sandbox_id = "sb-abc123"
+    fake_agent.volume = MagicMock()
+
+    mock_runtime = MagicMock()
+    mock_runtime.exec = AsyncMock(return_value="")
+
+    content = [{"type": "text", "text": "hello from modal"}]
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        await deliver_input(fake_agent, content, task_id="modal-task-1")
+
+    # Local write still happens (durable record)
+    fake_agent.volume.append_task.assert_called_once()
+    # Sandbox exec must be called to append the line inside the container
+    mock_runtime.exec.assert_awaited_once()
+    exec_args = mock_runtime.exec.await_args
+    assert exec_args.args[0] == "sb-abc123"
+    cmd = exec_args.args[1]
+    assert ">> /vol/agents/agent-modal-1/_abox/inbox.jsonl" in cmd[-1]
+
+
+@pytest.mark.asyncio
+async def test_deliver_input_skips_sandbox_sync_for_docker():
+    """Docker agents share filesystem — no sandbox sync needed."""
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-docker-1"
+    fake_agent.runtime = "docker"
+    fake_agent.sandbox_id = "container-xyz"
+    fake_agent.volume = MagicMock()
+
+    content = [{"type": "text", "text": "hello from docker"}]
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.runtimes.get_runtime") as mock_get_runtime,
+    ):
+        await deliver_input(fake_agent, content, task_id="docker-task-1")
+
+    fake_agent.volume.append_task.assert_called_once()
+    mock_get_runtime.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_volume_and_reload_syncs_to_modal_sandbox():
+    """update_volume_and_reload() must push file content into Modal sandbox.
+
+    Regression: mode changes, theme updates, and state writes go through
+    this path. Without sandbox sync, the Modal agent never sees the update.
+    """
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-modal-2"
+    fake_agent.runtime = "modal"
+    fake_agent.sandbox_id = "sb-def456"
+    fake_agent.volume = MagicMock()
+    fake_agent.volume.mutate.return_value = ReloadCommand(path="_abox/state.json")
+
+    mock_runtime = MagicMock()
+    mock_runtime.write_file = AsyncMock()
+
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        await update_volume_and_reload(fake_agent, "_abox/state.json", '{"mode": "plan"}')
+
+    fake_agent.volume.mutate.assert_called_once_with("_abox/state.json", '{"mode": "plan"}')
+    mock_runtime.write_file.assert_awaited_once_with(
+        "sb-def456",
+        b'{"mode": "plan"}',
+        "/vol/agents/agent-modal-2/_abox/state.json",
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_append_skips_when_no_sandbox_id():
+    """Sync helpers must be no-ops when sandbox_id is empty (agent not yet provisioned)."""
+    fake_agent = MagicMock()
+    fake_agent.runtime = "modal"
+    fake_agent.sandbox_id = ""
+
+    with patch("agents.runtimes.get_runtime") as mock_get_runtime:
+        await _sync_append_to_sandbox(fake_agent, "_abox/inbox.jsonl", '{"test": true}')
+        await _sync_write_to_sandbox(fake_agent, "_abox/state.json", '{"mode": "auto"}')
+
+    mock_get_runtime.assert_not_called()
 
 
 @pytest.mark.asyncio
