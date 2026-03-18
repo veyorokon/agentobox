@@ -75,6 +75,30 @@ def test_prepare_firefox_profile_creates_deterministic_profile(tmp_path):
     assert "Default=1" in profiles_ini
 
 
+def test_prepare_firefox_profile_clears_stale_recovery_state(tmp_path):
+    ensure_desktop_runtime_files(tmp_path)
+
+    profile_dir = tmp_path / "home/agent/.mozilla/firefox/agentobox.default"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "sessionstore.jsonlz4").write_text("stale")
+    (profile_dir / "sessionCheckpoints.json").write_text("{}")
+    (profile_dir / "sessionstore-backups").mkdir()
+    (profile_dir / "crashes").mkdir()
+    (profile_dir / "minidumps").mkdir()
+
+    prepare_firefox_profile(
+        tmp_path,
+        agent_home=tmp_path / "home/agent",
+        textfox_root=tmp_path / "opt/textfox",
+    )
+
+    assert not (profile_dir / "sessionstore.jsonlz4").exists()
+    assert not (profile_dir / "sessionCheckpoints.json").exists()
+    assert not (profile_dir / "sessionstore-backups").exists()
+    assert not (profile_dir / "crashes").exists()
+    assert not (profile_dir / "minidumps").exists()
+
+
 def test_desktop_profile_boot_writes_runtime_owned_awesome_config(tmp_path):
     theme_path = tmp_path / CANONICAL_PATHS["theme_tokens"]
     theme_path.parent.mkdir(parents=True, exist_ok=True)

@@ -497,6 +497,16 @@ class TestProvisioningGate:
             "lifecycle.py does not release the provisioning gate explicitly"
         )
 
+    def test_lifecycle_saves_relay_token_before_releasing_gate(self):
+        source = self.LIFECYCLE.read_text()
+        save_index = source.index("agent = await _save_provisioned(")
+        ready_index = source.index("await _mark_provisioned_ready(")
+        assert save_index < ready_index, (
+            "lifecycle.py releases provisioned.ready before saving the fresh relay token. "
+            "The managed runtime can then race its first relay connect and get rejected "
+            "with bad_token."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Mutation boundary: state push MUST go through agents/services/relay.py

@@ -218,6 +218,7 @@ user_pref("security.cert_pinning.enforcement_level", 0);
 
 user_pref("security.sandbox.warn_unprivileged_namespaces", false);
 user_pref("browser.toolbars.bookmarks.visibility", "never");
+user_pref("browser.sessionstore.resume_from_crash", false);
 user_pref("app.update.enabled", false);
 user_pref("app.update.auto", false);
 user_pref("toolkit.cosmeticAnimations.enabled", false);
@@ -335,6 +336,7 @@ def prepare_firefox_profile(
     user_js = textfox_user_js.read_text() if textfox_user_js.exists() else ""
     overrides = (root_dir / CANONICAL_PATHS["desktop_firefox_overrides_js"]).read_text()
     user_js_path.write_text(user_js + overrides)
+    _clear_firefox_recovery_state(profile_dir)
     (firefox_dir / "profiles.ini").write_text(_render_firefox_profiles_ini(profile_dir))
     return profile_dir
 
@@ -347,6 +349,30 @@ def _ensure_firefox_profile_exists(
     profile_dir = firefox_dir / "agentobox.default"
     profile_dir.mkdir(parents=True, exist_ok=True)
     return profile_dir
+
+
+def _clear_firefox_recovery_state(profile_dir: Path) -> None:
+    """Remove persisted crash/session state so restarted sandboxes boot cleanly."""
+
+    stale_files = (
+        "sessionstore.jsonlz4",
+        "sessionCheckpoints.json",
+    )
+    stale_dirs = (
+        "sessionstore-backups",
+        "crashes",
+        "minidumps",
+    )
+
+    for rel_path in stale_files:
+        path = profile_dir / rel_path
+        if path.exists():
+            path.unlink()
+
+    for rel_path in stale_dirs:
+        path = profile_dir / rel_path
+        if path.exists():
+            shutil.rmtree(path)
 
 
 def _render_firefox_profiles_ini(profile_dir: Path) -> str:

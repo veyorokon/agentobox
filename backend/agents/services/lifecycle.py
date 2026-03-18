@@ -734,6 +734,24 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         state = json.dumps({"model": agent.model, "mode": agent.mode or "auto", "allowed_tools": agent.allowed_tools or []})
         vol.write("_abox/state.json", state)
 
+        # Save relay_token and sandbox details BEFORE launching relay.
+        # The managed runtime is released by provisioned.ready and can attempt
+        # its first relay WS connect immediately afterward. Persist the fresh
+        # relay token before releasing that gate so the very first connect sees
+        # the correct backend-side token.
+        agent = await _save_provisioned(
+            agent_id, sandbox.id, sandbox.vnc_url,
+            team_name, parent_session_id, relay_token,
+            health_url=sandbox.health_url,
+        )
+        if attempt_id:
+            await _update_lifecycle_attempt(
+                attempt_id,
+                step="relay_token_saved",
+                metadata={"relay_token_set": True},
+            )
+        await broadcast_agent_update(agent)
+
         # Modal volume sync: the backend wrote all provisioning files to
         # a local Docker volume, but Modal sandboxes mount their own
         # Modal volume at /vol. Copy files into the sandbox so init-volume
@@ -744,30 +762,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 await _update_lifecycle_attempt(attempt_id, step="volume_synced_to_sandbox")
 
         # Release the init-volume gate only after all provisioned files are
-        # present. Waiting on _abox/ alone is too weak because initialize()
-        # creates that directory before .relay_env, workspace files, and
-        # other boot-critical config necessarily exist.
+        # present and the backend has already recorded the fresh relay token.
+        # Otherwise the managed runtime can win the race and get rejected with
+        # a fatal bad_token on its first websocket connect.
         await _mark_provisioned_ready(runtime_name, runtime, sandbox_id, vol, agent_id, op_log)
         if attempt_id:
-            await _update_lifecycle_attempt(attempt_id, step="provisioning_ready")
-
-
-        # Save relay_token and sandbox details BEFORE launching relay.
-        # The relay POSTs to /agents/<id>/stream/ immediately on startup,
-        # authenticated via X-Relay-Token. If the token isn't in DB yet,
-        # early relay POSTs get 401.
-        agent = await _save_provisioned(
-            agent_id, sandbox.id, sandbox.vnc_url,
-            team_name, parent_session_id, relay_token,
-            health_url=sandbox.health_url,
-        )
-        if attempt_id:
-            await _update_lifecycle_attempt(
-                attempt_id,
-                step="waiting_for_relay",
-                metadata={"relay_token_set": True},
-            )
-        await broadcast_agent_update(agent)
+            await _update_lifecycle_attempt(attempt_id, step="waiting_for_relay")
 
         # Runtime manages its own process lifecycle — no tmux/s6 needed.
 
