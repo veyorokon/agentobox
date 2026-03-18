@@ -15,6 +15,7 @@ control signals, not state.
 """
 
 import copy
+import json
 import uuid
 
 import structlog
@@ -98,6 +99,47 @@ def _normalize_content(content: list) -> list:
     return content
 
 
+async def _sync_write_to_sandbox(agent: Agent, vol_path: str, content: str | bytes) -> None:
+    """Write a file into the Modal sandbox after a local volume write.
+
+    Docker agents share a filesystem with the backend — local writes are
+    immediately visible. Modal sandboxes have their own volume mount, so
+    post-provisioning writes must be pushed into the sandbox explicitly.
+    """
+    if agent.runtime != "modal" or not agent.sandbox_id:
+        return
+
+    from agents.runtimes import get_runtime
+
+    runtime = get_runtime("modal")
+    dest = f"/vol/agents/{agent.id}/{vol_path}"
+    if isinstance(content, str):
+        content = content.encode()
+    await runtime.write_file(agent.sandbox_id, content, dest)
+
+
+async def _sync_append_to_sandbox(agent: Agent, vol_path: str, line: str) -> None:
+    """Append a line to a file inside the Modal sandbox.
+
+    Used for inbox.jsonl where we need append semantics, not overwrite.
+    Uses base64 to avoid shell escaping issues with JSON content.
+    """
+    if agent.runtime != "modal" or not agent.sandbox_id:
+        return
+
+    import base64
+
+    from agents.runtimes import get_runtime
+
+    runtime = get_runtime("modal")
+    dest = f"/vol/agents/{agent.id}/{vol_path}"
+    encoded = base64.b64encode(line.encode()).decode()
+    await runtime.exec(
+        agent.sandbox_id,
+        ["bash", "-c", f"echo {encoded} | base64 -d >> {dest}"],
+    )
+
+
 async def deliver_input(agent: Agent, content: list, task_id: str = "") -> bool:
     """Durably enqueue a task for an agent and notify the relay.
 
@@ -114,6 +156,12 @@ async def deliver_input(agent: Agent, content: list, task_id: str = "") -> bool:
     if not task_id:
         task_id = uuid.uuid4().hex[:16]
     agent.volume.append_task(task_id=task_id, content=content)
+    task_line = json.dumps({
+        "type": "task",
+        "task_id": task_id,
+        "input": {"role": "user", "content": content},
+    })
+    await _sync_append_to_sandbox(agent, "_abox/inbox.jsonl", task_line)
     return await push_to_relay(str(agent.id), ReloadCommand(path="_abox/inbox.jsonl"))
 
 
@@ -159,6 +207,7 @@ async def update_volume_and_reload(agent, path: str, content: str | bytes) -> bo
     so callers outside the service layer dont need to import push_to_relay.
     """
     reload_cmd = agent.volume.mutate(path, content)
+    await _sync_write_to_sandbox(agent, path, content)
     return await push_to_relay(str(agent.id), reload_cmd)
 
 
