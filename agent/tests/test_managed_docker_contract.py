@@ -420,12 +420,14 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         )
         assert "noVNC" in novnc_index
 
-        firefox_config = tmp_path / CANONICAL_PATHS["desktop_firefox_config_css"]
-        firefox_overrides = tmp_path / CANONICAL_PATHS["desktop_firefox_overrides_js"]
-        assert firefox_config.exists()
-        assert firefox_overrides.exists()
-        assert "userChrome.css" in firefox_config.read_text()
-        assert 'user_pref("browser.aboutwelcome.enabled", false);' in firefox_overrides.read_text()
+        firefox_config = _container_exec(
+            container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['desktop_firefox_config_css']}"
+        )
+        firefox_overrides = _container_exec(
+            container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['desktop_firefox_overrides_js']}"
+        )
+        assert "userChrome.css" in firefox_config.stdout
+        assert 'user_pref("browser.aboutwelcome.enabled", false);' in firefox_overrides.stdout
 
         autoconfig = _container_exec(
             container_id,
