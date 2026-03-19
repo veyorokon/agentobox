@@ -19,10 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-websockify \
     firefox-esr \
     xterm \
-    git \
+    gosu \
     ca-certificates \
     curl \
     unzip \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (required for Claude Code CLI)
@@ -42,18 +43,16 @@ RUN mkdir -p /usr/share/fonts/truetype/jetbrains-mono \
     && fc-cache -f \
     && rm -rf /tmp/jbmono /tmp/jbmono.zip
 
-RUN git clone --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git /opt/noVNC \
-    && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html \
-    && rm -rf /opt/noVNC/.git
+ARG NOVNC_VERSION=1.6.0
+RUN mkdir -p /opt/noVNC \
+    && curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+       | tar -xz --strip-components=1 -C /opt/noVNC \
+    && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html
 
 ARG TEXTFOX_COMMIT=e86c0a3a77cbdd8dbbca51b0c190733c8e6788e1
-RUN git clone https://github.com/adriankarlen/textfox.git /opt/textfox \
-    && cd /opt/textfox \
-    && git checkout ${TEXTFOX_COMMIT} \
-    && rm -rf /opt/textfox/.git
-
-RUN apt-get update && apt-get install -y --no-install-recommends gosu \
-    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/textfox \
+    && curl -fsSL "https://github.com/adriankarlen/textfox/archive/${TEXTFOX_COMMIT}.tar.gz" \
+       | tar -xz --strip-components=1 -C /opt/textfox
 
 COPY desktop-assets/textfox/defaults.css /opt/textfox/chrome/defaults.css
 COPY desktop-assets/firefox/firefox /usr/local/bin/firefox
