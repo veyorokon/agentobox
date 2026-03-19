@@ -19,6 +19,14 @@ dev = [
     "ruff>=0.15.5",
 ]
 
+[tool.uv]
+# The agent runtime must lock successfully for both local macOS dev and Linux CI/runtime.
+# This forces uv to reject wheel-only resolutions that only work on the current machine.
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
