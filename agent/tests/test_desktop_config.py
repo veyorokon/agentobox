@@ -39,6 +39,11 @@ def test_ensure_desktop_runtime_files_writes_awesome_config(tmp_path):
     firefox_overrides = (tmp_path / CANONICAL_PATHS["desktop_firefox_overrides_js"]).read_text()
     assert "Theme colors come from /tmp/abox-theme/userChrome.css" in firefox_config
     assert 'user_pref("browser.aboutwelcome.enabled", false);' in firefox_overrides
+    assert 'user_pref("gfx.webrender.all", false);' in firefox_overrides
+    assert 'user_pref("gfx.webrender.enabled", false);' in firefox_overrides
+    assert 'user_pref("layers.acceleration.disabled", true);' in firefox_overrides
+    assert 'user_pref("gfx.x11-egl.force-disabled", true);' in firefox_overrides
+    assert 'user_pref("media.hardware-video-decoding.enabled", false);' in firefox_overrides
 
 
 def test_firefox_system_bridge_writes_autoconfig_files(tmp_path):

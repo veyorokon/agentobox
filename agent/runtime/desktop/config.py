@@ -223,6 +223,14 @@ user_pref("app.update.enabled", false);
 user_pref("app.update.auto", false);
 user_pref("toolkit.cosmeticAnimations.enabled", false);
 user_pref("ui.prefersReducedMotion", 1);
+
+// Software rendering: disable WebRender and GPU process to prevent
+// SIGSEGV crashes on llvmpipe (Xvfb has no real GPU).
+user_pref("gfx.webrender.all", false);
+user_pref("gfx.webrender.enabled", false);
+user_pref("layers.acceleration.disabled", true);
+user_pref("gfx.x11-egl.force-disabled", true);
+user_pref("media.hardware-video-decoding.enabled", false);
 """
 
 
