@@ -15,12 +15,12 @@ concurrency:
 
 jobs:
   fast:
-    name: fast
+    name: CI Fast
     uses: ./.github/workflows/ci-fast.yml
     secrets: inherit
 
   smoke:
-    name: smoke
+    name: CI Smoke
     needs: fast
     uses: ./.github/workflows/ci-smoke.yml
     secrets: inherit

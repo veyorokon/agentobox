@@ -25,6 +25,8 @@ from websockets.sync.server import ServerConnection, serve
 
 from agent.provisioning.manifest import CANONICAL_PATHS, write_json
 
+pytestmark = [pytest.mark.contract, pytest.mark.docker_contract]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENABLE_ENV = "AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS"

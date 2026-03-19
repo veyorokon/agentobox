@@ -4,6 +4,8 @@ import json
 import threading
 from time import monotonic, sleep
 
+import pytest
+
 from agent.contracts.execution import ExecutorKind
 from agent.contracts.lifecycle import RuntimeState, ServiceState, StartupStage
 from agent.contracts.mode import AgentMode
@@ -14,6 +16,9 @@ from agent.runtime.app import AgentApplication
 from agent.runtime.bootstrap import ManagedBootstrap
 from agent.runtime.config import ManagedConfig, RuntimeConfig
 from agent.runtime.services import ServiceGraph, ServiceStatus
+
+
+pytestmark = pytest.mark.contract
 
 
 class FakeManagedTransport(ManagedTransport):

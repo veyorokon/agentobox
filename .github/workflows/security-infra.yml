@@ -35,3 +35,17 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Security Infra Summary"
+            echo
+            echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- sha: \`${{ github.sha }}\`"
+            echo "- trigger: \`${{ github.event_name }}\`"
+            echo "- overall: \`${{ job.status }}\`"
+            echo "- scan_path: \`infra\`"
+            echo "- scanner: \`trivy config\`"
+            echo "- severity_threshold: \`HIGH,CRITICAL\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,11 @@
 # Architecture
 
+## Operational Contracts
+
+- [Testing](./testing.md)
+- [Runtime Failure Audit](./RUNTIME-FAILURE-AUDIT.md)
+- [Contracts](./contracts/README.md)
+
 ## System Overview
 
 Agentobox is a managed agent workflow platform with real desktop environments. The system has two execution loops and a web dashboard for observability and control.

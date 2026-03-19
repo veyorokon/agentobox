@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from agent.contracts.events import RuntimeEvent
 from agent.contracts.execution import ExecutorKind
 from agent.contracts.mode import AgentMode
@@ -10,6 +12,9 @@ from agent.provisioning.providers.managed import ManagedProvisioningProvider
 from agent.runtime.bootstrap import ManagedBootstrap, ManagedBootstrapError
 from agent.runtime.config import ManagedConfig, RuntimeConfig
 from agent.runtime.logging import configure_logging_context
+
+
+pytestmark = pytest.mark.contract
 
 
 def _managed_config(tmp_path: Path) -> RuntimeConfig:

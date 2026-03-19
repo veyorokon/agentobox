@@ -52,6 +52,7 @@ testpaths = [
     "config",
 ]
 markers = [
+    # Backend pytest config is the authority for backend-local taxonomy.
     "unit: Fast tests with no external dependencies",
     "integration: Tests requiring database/redis/docker",
     "chaos: Failure injection tests",

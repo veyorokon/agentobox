@@ -178,8 +178,8 @@ jobs:
       - name: Run ruff
         run: uv --directory backend run ruff check agents/
 
-  security:
-    name: security
+  security-app:
+    name: security-app
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -209,3 +209,59 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+  summary:
+    name: summary
+    if: always()
+    needs:
+      - backend-unit
+      - backend-chaos
+      - backend-integration
+      - backend-architecture
+      - backend-lint
+      - agent-unit
+      - agent-lint
+      - dashboard-unit
+      - dashboard-typecheck
+      - security-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write job summary
+        run: |
+          overall=success
+          for result in \
+            "${{ needs.backend-unit.result }}" \
+            "${{ needs.backend-chaos.result }}" \
+            "${{ needs.backend-integration.result }}" \
+            "${{ needs.backend-architecture.result }}" \
+            "${{ needs.backend-lint.result }}" \
+            "${{ needs.agent-unit.result }}" \
+            "${{ needs.agent-lint.result }}" \
+            "${{ needs.dashboard-unit.result }}" \
+            "${{ needs.dashboard-typecheck.result }}" \
+            "${{ needs.security-app.result }}"; do
+            if [ "$result" != "success" ]; then
+              overall=attention-needed
+              break
+            fi
+          done
+          {
+            echo "## CI Fast Summary"
+            echo
+            echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- sha: \`${{ github.sha }}\`"
+            echo "- trigger: \`${{ github.event_name }}\`"
+            echo "- overall: \`${overall}\`"
+            echo
+            echo "### Lanes"
+            echo "- backend-unit: \`${{ needs.backend-unit.result }}\`"
+            echo "- backend-chaos: \`${{ needs.backend-chaos.result }}\`"
+            echo "- backend-integration: \`${{ needs.backend-integration.result }}\`"
+            echo "- backend-architecture: \`${{ needs.backend-architecture.result }}\`"
+            echo "- backend-lint: \`${{ needs.backend-lint.result }}\`"
+            echo "- agent-unit: \`${{ needs.agent-unit.result }}\`"
+            echo "- agent-lint: \`${{ needs.agent-lint.result }}\`"
+            echo "- dashboard-unit: \`${{ needs.dashboard-unit.result }}\`"
+            echo "- dashboard-typecheck: \`${{ needs.dashboard-typecheck.result }}\`"
+            echo "- security-app: \`${{ needs.security-app.result }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

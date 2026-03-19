@@ -29,6 +29,8 @@ required-environments = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Agent pytest config is the authority for runtime contract markers.
 markers = [
+    "contract: agent runtime contract and bootstrap tests",
     "docker_contract: black-box tests that build and run the Docker-managed agent image",
 ]

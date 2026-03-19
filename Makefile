@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-contract test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	uv --directory backend run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -83,6 +83,9 @@ test-backend-lint:
 
 test-agent-unit:
 	PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/ -q -o addopts=
+
+test-agent-contract:
+	PYTHONPATH=$(CURDIR) uv --directory agent run pytest -m "contract" tests/ -q -o addopts=
 
 test-agent-lint:
 	uv --directory agent run ruff check .

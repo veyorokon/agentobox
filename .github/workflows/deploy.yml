@@ -99,7 +99,7 @@ jobs:
   # Build the managed desktop agent image once, in parallel with CI.
   # Deploy and Modal bootstrap then consume that exact immutable sha image.
   agent-image:
-    name: agent-image
+    name: Agent Image
     permissions:
       contents: read
       packages: write
@@ -329,3 +329,57 @@ jobs:
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
         run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+
+  summary:
+    name: summary
+    if: always()
+    needs:
+      - validate-secrets
+      - ci
+      - agent-image
+      - build
+      - deploy
+      - agent-bootstrap
+      - agent-smoke
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    steps:
+      - name: Write job summary
+        run: |
+          overall=success
+          for result in \
+            "${{ needs.validate-secrets.result }}" \
+            "${{ needs.ci.result }}" \
+            "${{ needs.agent-image.result }}" \
+            "${{ needs.build.result }}" \
+            "${{ needs.deploy.result }}" \
+            "${{ needs.agent-bootstrap.result }}" \
+            "${{ needs.agent-smoke.result }}"; do
+            if [ "$result" != "success" ]; then
+              overall=attention-needed
+              break
+            fi
+          done
+          {
+            echo "## Deploy Summary"
+            echo
+            echo "- environment: \`${{ github.ref_name == 'main' && 'prod' || 'dev' }}\`"
+            echo "- domain: \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\`"
+            echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- sha: \`${{ github.sha }}\`"
+            echo "- overall: \`${overall}\`"
+            echo
+            echo "### Gates"
+            echo "- validate_secrets: \`${{ needs.validate-secrets.result }}\`"
+            echo "- ci: \`${{ needs.ci.result }}\`"
+            echo "- build: \`${{ needs.build.result }}\`"
+            echo "- agent_image: \`${{ needs.agent-image.result }}\`"
+            echo "- deploy: \`${{ needs.deploy.result }}\`"
+            echo "- agent_bootstrap: \`${{ needs.agent-bootstrap.result }}\`"
+            echo "- agent_smoke: \`${{ needs.agent-smoke.result }}\`"
+            echo
+            echo "### Artifacts"
+            echo "- backend_image: \`${{ needs.build.outputs.backend-image }}\`"
+            echo "- dashboard_image: \`${{ needs.build.outputs.dashboard-image }}\`"
+            echo "- agent_desktop_image: \`${{ needs.agent-image.outputs.desktop-image }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

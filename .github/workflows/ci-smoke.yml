@@ -82,6 +82,35 @@ jobs:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
         run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+      - name: Write job summary
+        if: always()
+        run: |
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            provider_key_present=true
+            mode=real-executor
+          else
+            provider_key_present=false
+            mode=echo-only
+          fi
+          if [ "${SKIP_SMOKE:-}" = "true" ]; then
+            mode=skipped
+            round_trip_smoke=skipped
+          else
+            round_trip_smoke=attempted
+          fi
+          {
+            echo "## CI Smoke Summary"
+            echo
+            echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- sha: \`${{ github.sha }}\`"
+            echo "- overall: \`${{ job.status }}\`"
+            echo "- compose_project: \`${{ env.CI_SMOKE_PROJECT_NAME }}\`"
+            echo "- backend_url: \`http://localhost:8000/graphql\`"
+            echo "- bootstrap_test: \`completed\`"
+            echo "- round_trip_smoke: \`${round_trip_smoke}\`"
+            echo "- provider_key_present: \`${provider_key_present}\`"
+            echo "- mode: \`${mode}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Dump backend logs on failure
         if: failure()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml logs backend --tail=500

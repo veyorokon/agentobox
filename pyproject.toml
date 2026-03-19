@@ -21,6 +21,7 @@ e2e = [
 [tool.pytest.ini_options]
 testpaths = ["tests/e2e"]
 asyncio_mode = "auto"
+# Root pytest config is the authority for system-level test markers only.
 markers = [
     "e2e: end-to-end tests requiring docker compose stack",
     "integration: integration tests against live services (no mocks)",
