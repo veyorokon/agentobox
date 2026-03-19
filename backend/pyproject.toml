@@ -22,10 +22,13 @@ dependencies = [
     "pydantic-settings>=2.8.0",
     "pgvector>=0.4.2", # Required by 0001_initial migration (VectorExtension, VectorField); removable after migration squash
     "psycopg[binary]>=3.3.2",
-    "pyjwt>=2.11.0",
+    "pyasn1>=0.6.3", # Security floor for transitive auth stack dependency
+    "pyjwt>=2.12.0",
+    "pyopenssl>=26.0.0", # Security floor for TLS/auth runtime dependency
     "strawberry-graphql>=0.291.0",
     "strawberry-graphql-django>=0.75.0",
     "structlog>=25.5.0",
+    "ujson>=5.12.0", # Security floor for transitive JSON dependency
     "websockets>=14.0",
 ]
 

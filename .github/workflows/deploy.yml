@@ -58,7 +58,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install backend deps
-        run: cd backend && uv sync --no-dev
+        run: uv --directory backend sync --no-dev
       - name: Validate APP_SECRETS + APP_CONFIG against AppConfig schema
         env:
           _APP_CONFIG: ${{ vars.APP_CONFIG }}
@@ -86,7 +86,7 @@ jobs:
               safe = v.replace(\"'\", \"'\\\\''\" )
               print(f\"export {k}='{safe}'\")
           ")"
-          cd backend && uv run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
+          uv --directory backend run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
 
   # ─── Test ──────────────────────────────────────────────────────────
   ci:
@@ -297,7 +297,7 @@ jobs:
           enable-cache: true
 
       - name: Install test dependencies
-        run: uv sync --group e2e
+        run: uv sync --project . --group e2e
 
       - name: Run agent bootstrap test
         env:
@@ -305,7 +305,7 @@ jobs:
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
-        run: uv run pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+        run: uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
 
   # ─── Agent Smoke (Modal) ───────────────────────────────────────────
   # Final deploy confidence: a fully booted agent can complete one
@@ -321,11 +321,11 @@ jobs:
         with:
           enable-cache: true
       - name: Install test dependencies
-        run: uv sync --group e2e
+        run: uv sync --project . --group e2e
       - name: Run agent smoke test
         env:
           ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
-        run: uv run pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+        run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="

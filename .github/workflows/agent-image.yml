@@ -99,9 +99,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install test dependencies
-        run: uv sync --directory agent --group dev
+        run: uv sync --project agent --group dev
       - name: Run managed Docker contract test
-        run: PYTHONPATH=${{ github.workspace }} AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 uv run --directory agent pytest tests/test_managed_docker_contract.py -q -o addopts=
+        run: PYTHONPATH=${{ github.workspace }} AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 uv run --project agent pytest agent/tests/test_managed_docker_contract.py -q -o addopts=
 
       # Push the exact tested desktop image to GHCR
       - uses: docker/login-action@v4

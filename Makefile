@@ -1,19 +1,19 @@
 .PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
-	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
+	uv --directory backend run daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
 migrate:
-	cd backend && uv run python manage.py migrate
+	uv --directory backend run python manage.py migrate
 
 makemigrations:
-	cd backend && uv run python manage.py makemigrations
+	uv --directory backend run python manage.py makemigrations
 
 createsuperuser:
-	cd backend && uv run python manage.py createsuperuser
+	uv --directory backend run python manage.py createsuperuser
 
 check:
-	cd backend && uv run python manage.py check
+	uv --directory backend run python manage.py check
 
 schema:
 	docker compose exec -T backend uv run python -c "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); import django; django.setup(); from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
@@ -55,37 +55,37 @@ test:
 test-local: _test-backend _test-agent _test-dashboard
 
 _test-backend:
-	cd backend && uv run python -m pytest agents/tests/ -v
+	uv --directory backend run python -m pytest agents/tests/ -v
 
 _test-agent:
-	uv run pytest agent/tests/ tests/architecture/ -v -o "addopts="
+	uv run --project . pytest agent/tests/ tests/architecture/ -v -o "addopts="
 
 _test-dashboard:
 	cd dashboard && pnpm vitest run
 
 test-agent:
-	cd agent && uv run pytest tests/ -v -o addopts=
+	PYTHONPATH=$(CURDIR) uv run --project agent pytest agent/tests/ -v -o addopts=
 
 test-backend-unit:
-	cd backend && uv run pytest -m "unit" --tb=short -q
+	uv --directory backend run pytest -m "unit" --tb=short -q
 
 test-backend-integration:
-	cd backend && uv run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+	uv --directory backend run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
 
 test-backend-chaos:
-	cd backend && uv run pytest -m "chaos" --tb=short -q
+	uv --directory backend run pytest -m "chaos" --tb=short -q
 
 test-backend-architecture:
-	cd backend && uv run python agents/tests/check_architecture.py
+	uv --directory backend run python agents/tests/check_architecture.py
 
 test-backend-lint:
-	cd backend && uv run ruff check agents/
+	uv --directory backend run ruff check agents/
 
 test-agent-unit:
-	cd agent && uv run pytest tests/ -q -o addopts=
+	PYTHONPATH=$(CURDIR) uv run --project agent pytest agent/tests/ -q -o addopts=
 
 test-agent-lint:
-	cd agent && uv run ruff check .
+	uv run --project agent ruff check agent
 
 test-dashboard-unit:
 	cd dashboard && pnpm vitest run
@@ -96,10 +96,10 @@ test-dashboard-typecheck:
 test-ci-fast: test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck lint
 
 test-ci-smoke-bootstrap:
-	uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -o "addopts="
+	uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -o "addopts="
 
 test-ci-smoke-roundtrip:
-	uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+	uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
 
 test-agent-runtime-docker-contract:
 	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts=
@@ -108,23 +108,23 @@ test-agent-runtime-desktop-docker-contract:
 	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts= -k desktop
 
 lint:
-	cd backend && uv run ruff check agents/
+	uv --directory backend run ruff check agents/
 	cd dashboard && pnpm next lint
 
 test-e2e:
-	uv run --group e2e pytest tests/e2e/ -v || test $$? -eq 5
+	uv run --project . --group e2e pytest tests/e2e/ -v || test $$? -eq 5
 
 test-e2e-full:
-	uv run --group e2e pytest tests/e2e/ -v -m "e2e"
+	uv run --project . --group e2e pytest tests/e2e/ -v -m "e2e"
 
 test-e2e-agents:
-	uv run --group e2e pytest tests/e2e/ -v -m "e2e and agent"
+	uv run --project . --group e2e pytest tests/e2e/ -v -m "e2e and agent"
 
 test-e2e-dashboard:
-	uv run --group e2e pytest tests/e2e/ -v -m "e2e and dashboard"
+	uv run --project . --group e2e pytest tests/e2e/ -v -m "e2e and dashboard"
 
 test-integration:
-	uv run --group e2e pytest tests/integration/ -v --timeout=30 -m "integration" -o "addopts="
+	uv run --project . --group e2e pytest tests/integration/ -v --timeout=30 -m "integration" -o "addopts="
 
 test-visual:
 	ABOX_VISUAL_TESTS=1 uv run pytest agent/tests/test_theme_visual.py -v --timeout=120 -s
@@ -132,7 +132,7 @@ test-visual:
 test-unit: test-backend-unit
 
 test-invariant:
-	cd backend && uv run pytest -m "invariant" --tb=short -q
+	uv --directory backend run pytest -m "invariant" --tb=short -q
 
 test-all:
 	docker compose exec backend uv run pytest --tb=short -q
@@ -142,7 +142,7 @@ test-bootstrap: test-ci-smoke-bootstrap
 test-smoke: test-ci-smoke-roundtrip
 
 test-smoke-modal:
-	SMOKE_RUNTIME=modal uv run --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+	SMOKE_RUNTIME=modal uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
 
 test-modal-local-bootstrap:
 	bash bin/modal-local-bootstrap

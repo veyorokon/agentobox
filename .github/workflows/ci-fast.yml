@@ -20,9 +20,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: cd backend && uv sync --group dev
+        run: uv --directory backend sync --group dev
       - name: Run unit and invariant tests
-        run: cd backend && uv run pytest -m "unit or invariant" --tb=short -q
+        run: uv --directory backend run pytest -m "unit or invariant" --tb=short -q
 
   backend-chaos:
     name: backend-chaos
@@ -37,9 +37,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: cd backend && uv sync --group dev
+        run: uv --directory backend sync --group dev
       - name: Run chaos tests
-        run: cd backend && uv run pytest -m "chaos" --tb=short -q
+        run: uv --directory backend run pytest -m "chaos" --tb=short -q
 
   backend-integration:
     name: backend-integration
@@ -82,11 +82,11 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: cd backend && uv sync --group dev
+        run: uv --directory backend sync --group dev
       - name: Run migrations
-        run: cd backend && uv run python manage.py migrate --noinput
+        run: uv --directory backend run python manage.py migrate --noinput
       - name: Run integration tests
-        run: cd backend && uv run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+        run: uv --directory backend run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
 
   backend-architecture:
     name: backend-architecture
@@ -97,9 +97,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: cd backend && uv sync --group dev
+        run: uv --directory backend sync --group dev
       - name: Run architecture checks
-        run: cd backend && uv run python agents/tests/check_architecture.py
+        run: uv --directory backend run python agents/tests/check_architecture.py
 
   agent-unit:
     name: agent-unit
@@ -110,9 +110,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: uv sync --directory agent --group dev
+        run: uv sync --project agent --group dev
       - name: Run agent unit tests
-        run: PYTHONPATH=${{ github.workspace }} uv run --directory agent pytest tests/ -q -o addopts=
+        run: PYTHONPATH=${{ github.workspace }} uv run --project agent pytest agent/tests/ -q -o addopts=
 
   agent-lint:
     name: agent-lint
@@ -123,9 +123,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: uv sync --directory agent --group dev
+        run: uv sync --project agent --group dev
       - name: Run ruff
-        run: cd agent && uv run ruff check .
+        run: uv run --project agent ruff check agent
 
   dashboard-unit:
     name: dashboard-unit
@@ -174,9 +174,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install backend dependencies
-        run: cd backend && uv sync --group dev
+        run: uv --directory backend sync --group dev
       - name: Run ruff
-        run: cd backend && uv run ruff check agents/
+        run: uv --directory backend run ruff check agents/
 
   security:
     name: security
@@ -189,12 +189,22 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Vulnerability scan
+      - name: Backend dependency scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
-          scan-ref: .
-          scanners: vuln,config
+          scan-ref: backend
+          scanners: vuln
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Dashboard dependency scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: dashboard
+          scanners: vuln
           vuln-type: library
           severity: HIGH,CRITICAL
           ignore-unfixed: true

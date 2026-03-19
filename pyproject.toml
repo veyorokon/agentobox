@@ -2,9 +2,10 @@
 name = "agentobox-e2e"
 version = "0.0.1"
 requires-python = ">=3.12"
-
-[tool.uv.workspace]
-members = ["backend", "agent"]
+# Root project is e2e/tooling only.
+# Deployable Python projects own their own pyproject.toml + uv.lock:
+# - backend/
+# - agent/
 
 [dependency-groups]
 e2e = [

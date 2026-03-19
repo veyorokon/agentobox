@@ -58,7 +58,7 @@ jobs:
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
-        run: uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+        run: uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
       - name: Restart backend stack with real executor
         if: env.ANTHROPIC_API_KEY != ''
         run: |
@@ -79,7 +79,7 @@ jobs:
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
-        run: uv run --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+        run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
       - name: Dump backend logs on failure
         if: failure()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml logs backend --tail=500
