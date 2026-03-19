@@ -110,9 +110,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: uv sync --project agent --group dev
+        run: uv --directory agent sync --group dev
       - name: Run agent unit tests
-        run: PYTHONPATH=${{ github.workspace }} uv run --project agent pytest agent/tests/ -q -o addopts=
+        run: PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/ -q -o addopts=
 
   agent-lint:
     name: agent-lint
@@ -123,9 +123,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install agent dependencies
-        run: uv sync --project agent --group dev
+        run: uv --directory agent sync --group dev
       - name: Run ruff
-        run: uv run --project agent ruff check agent
+        run: uv --directory agent run ruff check .
 
   dashboard-unit:
     name: dashboard-unit

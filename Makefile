@@ -64,7 +64,7 @@ _test-dashboard:
 	cd dashboard && pnpm vitest run
 
 test-agent:
-	PYTHONPATH=$(CURDIR) uv run --project agent pytest agent/tests/ -v -o addopts=
+	PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/ -v -o addopts=
 
 test-backend-unit:
 	uv --directory backend run pytest -m "unit" --tb=short -q
@@ -82,10 +82,10 @@ test-backend-lint:
 	uv --directory backend run ruff check agents/
 
 test-agent-unit:
-	PYTHONPATH=$(CURDIR) uv run --project agent pytest agent/tests/ -q -o addopts=
+	PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/ -q -o addopts=
 
 test-agent-lint:
-	uv run --project agent ruff check agent
+	uv --directory agent run ruff check .
 
 test-dashboard-unit:
 	cd dashboard && pnpm vitest run
