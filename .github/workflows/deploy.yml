@@ -92,17 +92,25 @@ jobs:
   ci:
     permissions:
       contents: read
-      packages: write
     uses: ./.github/workflows/ci.yml
-    with:
-      prebuild_agent_image: true
+    secrets: inherit
+
+  # ─── Agent Image ───────────────────────────────────────────────────
+  # Build the managed desktop agent image once, in parallel with CI.
+  # Deploy and Modal bootstrap then consume that exact immutable sha image.
+  agent-image:
+    name: agent-image
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/agent-image.yml
     secrets: inherit
 
   # ─── Build ─────────────────────────────────────────────────────────
   build:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [ci, validate-secrets]
+    needs: validate-secrets
     permissions:
       contents: read
       packages: write
@@ -171,14 +179,11 @@ jobs:
   # ─── Deploy ────────────────────────────────────────────────────────
   deploy:
     name: Deploy (${{ github.ref_name }})
-    needs: [build, ci]
+    needs: [build, ci, agent-image]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
       - uses: actions/checkout@v5
-      - id: sha
-        name: Compute short sha
-        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Sync deploy artifacts
         uses: appleboy/scp-action@v1
@@ -228,7 +233,7 @@ jobs:
           _APP_SECRETS: ${{ secrets.APP_SECRETS }}
           _BACKEND_IMAGE: ${{ needs.build.outputs.backend-image }}
           _DASHBOARD_IMAGE: ${{ needs.build.outputs.dashboard-image }}
-          _MODAL_AGENT_IMAGE: ${{ env.AGENT_DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}
+          _MODAL_AGENT_IMAGE: ${{ needs.agent-image.outputs.desktop-image }}
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1

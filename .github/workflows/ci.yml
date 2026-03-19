@@ -7,11 +7,6 @@ on:
       - "**.md"
       - "docs/**"
   workflow_call:
-    inputs:
-      prebuild_agent_image:
-        required: false
-        type: boolean
-        default: false
   workflow_dispatch:
 
 concurrency:
@@ -24,27 +19,8 @@ jobs:
     uses: ./.github/workflows/ci-fast.yml
     secrets: inherit
 
-  agent-image:
-    name: agent-image
-    if: ${{ github.event_name == 'workflow_call' && inputs.prebuild_agent_image }}
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/agent-image.yml
-    secrets: inherit
-
-  smoke-prefetched:
+  smoke:
     name: smoke
-    if: ${{ github.event_name == 'workflow_call' && inputs.prebuild_agent_image }}
-    needs: [fast, agent-image]
-    uses: ./.github/workflows/ci-smoke.yml
-    with:
-      desktop-image: ${{ needs.agent-image.outputs.desktop-image }}
-    secrets: inherit
-
-  smoke-local:
-    name: smoke
-    if: ${{ github.event_name != 'workflow_call' || !inputs.prebuild_agent_image }}
     needs: fast
     uses: ./.github/workflows/ci-smoke.yml
     secrets: inherit
