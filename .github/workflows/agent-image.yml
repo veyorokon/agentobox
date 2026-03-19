@@ -1,10 +1,14 @@
 name: Agent Image
 
 on:
-  push:
-    branches: [dev, main]
-    paths: ["agent/**"]
-    tags: ["v*"]
+  workflow_call:
+    outputs:
+      managed-image:
+        description: Managed agent image ref for this commit
+        value: ${{ jobs.build-managed.outputs.managed-image }}
+      desktop-image:
+        description: Desktop agent image ref for this commit
+        value: ${{ jobs.build-desktop-managed.outputs.desktop-image }}
   workflow_dispatch: {}
 
 concurrency:
@@ -24,6 +28,7 @@ jobs:
       packages: write
     outputs:
       managed-tag: ${{ steps.meta.outputs.version }}
+      managed-image: ${{ steps.image-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -32,6 +37,9 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -52,6 +60,9 @@ jobs:
             AGENTOBOX_GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=managed
           cache-to: type=gha,scope=managed,mode=max
+      - id: image-ref
+        name: Record managed image ref
+        run: echo "ref=${{ env.MANAGED_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
 
   build-desktop-managed:
     needs: build-managed
@@ -59,9 +70,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      desktop-image: ${{ steps.image-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       # Build locally for contract test
       - name: Build images for contract test
@@ -114,3 +130,6 @@ jobs:
             AGENTOBOX_GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=desktop-managed
           cache-to: type=gha,scope=desktop-managed,mode=max
+      - id: image-ref
+        name: Record desktop image ref
+        run: echo "ref=${{ env.DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"

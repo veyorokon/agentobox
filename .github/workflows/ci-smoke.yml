@@ -4,6 +4,11 @@ name: CI Smoke
 
 on:
   workflow_call:
+    inputs:
+      desktop-image:
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
 
 concurrency:
@@ -14,16 +19,33 @@ jobs:
   docker-bootstrap:
     name: docker-bootstrap
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     env:
       ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
       AGENT_EXECUTOR_OVERRIDE: echo
       CI_SMOKE_PROJECT_NAME: agentobox-ci-smoke
+      MODAL_AGENT_IMAGE: ${{ inputs.desktop-image }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Login to GHCR
+        if: inputs.desktop-image != ''
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull prebuilt agent runtime image
+        if: inputs.desktop-image != ''
+        run: |
+          docker pull "${{ inputs.desktop-image }}"
+          docker tag "${{ inputs.desktop-image }}" agentobox-agent-runtime-desktop-managed:latest
       - name: Build agent runtime images
+        if: inputs.desktop-image == ''
         run: |
           docker build -t agentobox-agent-runtime-managed:latest \
             --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
@@ -63,10 +85,14 @@ jobs:
     name: docker-smoke
     runs-on: ubuntu-latest
     needs: docker-bootstrap
+    permissions:
+      contents: read
+      packages: read
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
       CI_SMOKE_PROJECT_NAME: agentobox-ci-smoke
+      MODAL_AGENT_IMAGE: ${{ inputs.desktop-image }}
     steps:
       - uses: actions/checkout@v5
       - name: Skip if no API key
@@ -78,8 +104,20 @@ jobs:
         if: env.SKIP_SMOKE != 'true'
         with:
           enable-cache: true
+      - name: Login to GHCR
+        if: env.SKIP_SMOKE != 'true' && inputs.desktop-image != ''
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull prebuilt agent runtime image
+        if: env.SKIP_SMOKE != 'true' && inputs.desktop-image != ''
+        run: |
+          docker pull "${{ inputs.desktop-image }}"
+          docker tag "${{ inputs.desktop-image }}" agentobox-agent-runtime-desktop-managed:latest
       - name: Build agent runtime images
-        if: env.SKIP_SMOKE != 'true'
+        if: env.SKIP_SMOKE != 'true' && inputs.desktop-image == ''
         run: |
           docker build -t agentobox-agent-runtime-managed:latest \
             --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
