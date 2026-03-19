@@ -489,7 +489,7 @@ class TestProvisioningGate:
 
     def test_lifecycle_marks_provisioning_ready(self):
         source = self.LIFECYCLE.read_text()
-        assert "mark_provisioned()" in source, (
+        assert "mark_provisioned(" in source, (
             "lifecycle.py never marks provisioning complete — "
             "init-volume would block forever"
         )

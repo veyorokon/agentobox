@@ -41,7 +41,7 @@ function buildVncWsUrl(agentId: string, token: string): string {
 
 export function VncThumbnail({ agent }: VncThumbnailProps) {
   const previewReady = agent.previewState === "ready"
-  const isDeploying = agent.previewState === "deploying"
+  const isDeploying = agent.previewState === "deploying" || agent.lifecycleStatus === "deploying"
   const isPreviewError = agent.previewState === "error"
   const isStopped = agent.lifecycleStatus === "stopped"
   const hardRestartAgent = useHardRestartAgent()
@@ -332,7 +332,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                     <div className="flex items-center gap-1.5">
                       <span className={`h-1.5 w-1.5 rounded-full ${isStopped ? "bg-muted/40" : "bg-danger/60"}`} />
                       <span className={isStopped ? "text-muted/50" : "text-danger/60"}>
-                        {isStopped ? "session ended" : isPreviewError ? "runtime crashed" : "preview unavailable"}
+                        {isStopped ? "session ended" : isDeploying ? "redeploying" : isPreviewError ? "runtime crashed" : "preview unavailable"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -341,10 +341,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       {!isStopped && (
                         <button
                           type="button"
+                          disabled={isDeploying}
                           onClick={() => hardRestartAgent(agent.id)}
-                          className="rounded border border-accent/25 bg-accent/8 px-2 py-0.5 text-[8px] text-accent/70 transition hover:bg-accent/15 hover:text-accent"
+                          className="rounded border border-accent/25 bg-accent/8 px-2 py-0.5 text-[8px] text-accent/70 transition hover:bg-accent/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          redeploy
+                          {isDeploying ? "redeploying" : "redeploy"}
                         </button>
                       )}
                     </div>
@@ -361,7 +362,13 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       </div>
                     ) : (
                       <span className="text-muted/25 text-center">
-                        {isStopped ? "session ended cleanly" : isPreviewError ? "container exited — no diagnostics captured" : "preview is not currently available"}
+                        {isStopped
+                          ? "session ended cleanly"
+                          : isDeploying
+                            ? "desktop is redeploying"
+                            : isPreviewError
+                              ? "container exited — no diagnostics captured"
+                              : "preview is not currently available"}
                       </span>
                     )}
                   </div>

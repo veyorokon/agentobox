@@ -99,12 +99,16 @@ def wait_for_provisioned_ready(
     *,
     timeout_s: float = 120.0,
     poll_interval_s: float = 0.25,
+    required_token: str = "",
 ) -> None:
     sentinel = root_dir / "_abox/provisioned.ready"
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if sentinel.exists():
-            return
+            if not required_token:
+                return
+            if sentinel.read_text().strip() == required_token:
+                return
         time.sleep(poll_interval_s)
     raise TimeoutError(f"provisioned sentinel never appeared: {sentinel}")
 
@@ -134,6 +138,7 @@ def main() -> None:
             root_dir,
             timeout_s=float(os.environ.get("AGENTOBOX_PROVISIONING_TIMEOUT_S", "120")),
             poll_interval_s=float(os.environ.get("AGENTOBOX_PROVISIONING_POLL_INTERVAL_S", "0.25")),
+            required_token=os.environ.get("RELAY_AUTH_TOKEN", "").strip(),
         )
     materialize_runtime_bindings(root_dir, agent_home=agent_home)
 

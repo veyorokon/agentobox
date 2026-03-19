@@ -387,10 +387,10 @@ class Volume:
         # The executor uses this as cwd for Claude Code.
         (self.root / "home/agent/workspace").mkdir(parents=True, exist_ok=True)
 
-    def mark_provisioned(self) -> None:
+    def mark_provisioned(self, token: str = "") -> None:
         """Write the provisioning-ready sentinel.
 
         The container boot oneshot (init-volume) waits for this file before it
         creates symlinks and allows services like svc-relay to start.
         """
-        self.write(PROVISIONING_SENTINEL, "")
+        self.write(PROVISIONING_SENTINEL, token)

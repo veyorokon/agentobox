@@ -174,6 +174,22 @@ describe("VncThumbnail", () => {
     expect(hardRestartAgent).toHaveBeenCalledWith("agent-1")
   })
 
+  it("shows redeploying state and disables redeploy while lifecycle is deploying", async () => {
+    render(React.createElement(VncThumbnail, {
+      agent: {
+        ...baseAgent,
+        lifecycleStatus: "deploying",
+        previewState: "unavailable",
+        previewRuntimeId: "",
+        relayConnected: false,
+      },
+    }))
+
+    expect(screen.getAllByText("redeploying")).toHaveLength(2)
+    expect(screen.getByText("desktop is redeploying")).toBeTruthy()
+    expect(screen.getByRole("button", { name: /redeploying/i }).hasAttribute("disabled")).toBe(true)
+  })
+
   it("recovers from an error fallback when the agent returns to idle", async () => {
     const { rerender } = render(React.createElement(VncThumbnail, {
       agent: {

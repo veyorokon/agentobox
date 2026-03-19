@@ -89,3 +89,25 @@ def test_wait_for_provisioned_ready_blocks_until_sentinel(tmp_path: Path):
     wait_for_provisioned_ready(root_dir, timeout_s=1.0, poll_interval_s=0.01)
     thread.join(timeout=1)
     assert sentinel.exists()
+
+
+def test_wait_for_provisioned_ready_waits_for_matching_token(tmp_path: Path):
+    root_dir = tmp_path / "root"
+    sentinel = root_dir / "_abox/provisioned.ready"
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("stale-token")
+
+    def _update_sentinel() -> None:
+        time.sleep(0.05)
+        sentinel.write_text("fresh-token")
+
+    thread = threading.Thread(target=_update_sentinel, daemon=True)
+    thread.start()
+    wait_for_provisioned_ready(
+        root_dir,
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+        required_token="fresh-token",
+    )
+    thread.join(timeout=1)
+    assert sentinel.read_text() == "fresh-token"

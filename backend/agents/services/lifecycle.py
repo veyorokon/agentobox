@@ -26,6 +26,7 @@ Container provisioning sequence:
 import io
 import json
 import secrets
+import shlex
 import tarfile
 
 import structlog
@@ -529,10 +530,11 @@ async def _mark_provisioned_ready(
     sandbox_id: str,
     vol,
     agent_id: str,
+    provisioning_token: str,
     op_log,
 ) -> None:
     """Release init-volume only after provisioning files are fully present."""
-    vol.mark_provisioned()
+    vol.mark_provisioned(provisioning_token)
 
     if runtime_name != "modal":
         op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
@@ -545,7 +547,7 @@ async def _mark_provisioned_ready(
             "bash",
             "-c",
             f"mkdir -p /vol/agents/{agent_id}/_abox && "
-            f"touch {sentinel_path} && "
+            f"printf %s {shlex.quote(provisioning_token)} > {sentinel_path} && "
             f"chown agent:agent {sentinel_path}",
         ],
         user="root",
@@ -765,7 +767,15 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # present and the backend has already recorded the fresh relay token.
         # Otherwise the managed runtime can win the race and get rejected with
         # a fatal bad_token on its first websocket connect.
-        await _mark_provisioned_ready(runtime_name, runtime, sandbox_id, vol, agent_id, op_log)
+        await _mark_provisioned_ready(
+            runtime_name,
+            runtime,
+            sandbox_id,
+            vol,
+            agent_id,
+            relay_token,
+            op_log,
+        )
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="waiting_for_relay")
 

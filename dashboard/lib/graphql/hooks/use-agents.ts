@@ -1,3 +1,4 @@
+import { gql } from "@apollo/client"
 import { useQuery, useMutation, useApolloClient } from "@apollo/client/react"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
@@ -25,6 +26,12 @@ import type { Agent, AttentionLevel } from "@/lib/types"
 /* ================================================================== */
 
 const log = createLogger("apollo")
+const inFlightHardRestarts = new Set<string>()
+const RESTART_STATUS_FRAGMENT = gql`
+  fragment RestartStatus on AgentType {
+    lifecycleStatus
+  }
+`
 
 type AgentsData = { agents: Agent[] }
 
@@ -107,12 +114,33 @@ export function useHardRestartAgent() {
   const client = useApolloClient()
   const [mutate] = useMutation(HARD_RESTART_AGENT)
   return useCallback((agentId: string) => {
+    if (inFlightHardRestarts.has(agentId)) {
+      log("mutation.skipped", { mutation: "hardRestartAgent", agentId, reason: "in_flight" })
+      return
+    }
+    const cacheId = client.cache.identify({ __typename: "AgentType", id: agentId })
+    const cached = cacheId
+      ? client.cache.readFragment<{ lifecycleStatus?: string }>({
+          id: cacheId,
+          fragment: RESTART_STATUS_FRAGMENT,
+        })
+      : null
+    if (cached?.lifecycleStatus === "deploying") {
+      log("mutation.skipped", { mutation: "hardRestartAgent", agentId, reason: "already_deploying" })
+      return
+    }
+
+    inFlightHardRestarts.add(agentId)
     log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
     const rollback = optimisticAgentField(client.cache, agentId, "lifecycleStatus", "deploying")
-    mutate({ variables: { agentId } }).catch(err => {
-      log("mutation.error", { mutation: "hardRestartAgent", agentId, error: err.message })
-      rollback()
-    })
+    mutate({ variables: { agentId } })
+      .catch(err => {
+        log("mutation.error", { mutation: "hardRestartAgent", agentId, error: err.message })
+        rollback()
+      })
+      .finally(() => {
+        inFlightHardRestarts.delete(agentId)
+      })
   }, [client, mutate])
 }
 
