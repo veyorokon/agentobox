@@ -7,9 +7,7 @@ from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.theme import (
     AwesomeThemeConsumer,
     FirefoxThemeConsumer,
-    NullThemeConsumer,
     RuntimeThemeManager,
-    ThemeConsumerError,
     ThemeConsumerGroup,
     ThemeFilesApplier,
     ThemeLoadError,

@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
-
 from agent.runtime.health import livez_payload, readyz_payload
 
 
@@ -84,4 +82,3 @@ class LocalIngressServer:
         thread = getattr(self, "_thread", None)
         if thread:
             thread.join(timeout=2)
-

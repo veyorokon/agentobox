@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.envfiles import (
     load_managed_runtime_env,

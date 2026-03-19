@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-dashboard-unit test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -84,10 +84,16 @@ test-backend-lint:
 test-agent-unit:
 	cd agent && uv run pytest tests/ -q -o addopts=
 
+test-agent-lint:
+	cd agent && uv run ruff check .
+
 test-dashboard-unit:
 	cd dashboard && pnpm vitest run
 
-test-ci-fast: test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-dashboard-unit lint
+test-dashboard-typecheck:
+	cd dashboard && pnpm exec tsc --noEmit
+
+test-ci-fast: test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck lint
 
 test-ci-smoke-bootstrap:
 	uv run --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -o "addopts="

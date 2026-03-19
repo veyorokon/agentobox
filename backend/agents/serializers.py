@@ -109,7 +109,7 @@ async def fetch_lifecycle_attempts(agent_id) -> list[dict]:
 def _load_runtime_status(agent) -> dict:
     try:
         return agent.volume.runtime_status()
-    except Exception:
+    except Exception:  # intentional: runtime status is agent-owned and preview must degrade safely if unreadable
         return {}
 
 
