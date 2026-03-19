@@ -42,7 +42,7 @@ services:
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ci-smoke-secret-key-not-for-production
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       AGENT_RUNTIME: docker
       AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:latest
       AGENT_EXECUTOR_OVERRIDE: ${AGENT_EXECUTOR_OVERRIDE:-}

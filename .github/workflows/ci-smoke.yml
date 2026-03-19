@@ -15,14 +15,26 @@ jobs:
     name: docker-smoke
     runs-on: ubuntu-latest
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ABOX_ENCRYPTION_KEY: vD8UbDl_vyNWOKfYjVOWHKUlk9lpqfiLH-Esu8NB-Xg=
       CI_SMOKE_PROJECT_NAME: agentobox-ci-smoke
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Generate CI secrets
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print(f"SECRET_KEY={secrets.token_urlsafe(48)}")
+          print(f"ABOX_ENCRYPTION_KEY={secrets.token_urlsafe(32)}")
+          PY
+      - name: Export Anthropic credential if configured
+        env:
+          PROVIDER_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$PROVIDER_TOKEN" ]; then
+            printf 'ANTHROPIC_API_KEY=%s\n' "$PROVIDER_TOKEN" >> "$GITHUB_ENV"
+          fi
       - name: Build agent runtime images
         run: |
           docker build -t agentobox-agent-runtime-managed:latest \

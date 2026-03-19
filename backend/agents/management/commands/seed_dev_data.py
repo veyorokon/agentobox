@@ -421,10 +421,10 @@ class Command(BaseCommand):
         # ── Secrets ──
 
         secrets = [
-            ("GITHUB_TOKEN", "ghp_a1b2c3d4e5f6g7h8i9j0"),
-            ("ANTHROPIC_API_KEY", "sk-ant-api03-xxxxxxxxxxxx"),
-            ("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE"),
-            ("OPENAI_API_KEY", "sk-proj-xxxxxxxxxxxxxxxx"),
+            ("GITHUB_TOKEN", "github-token-placeholder"),
+            ("ANTHROPIC_API_KEY", "anthropic-key-placeholder"),
+            ("AWS_ACCESS_KEY_ID", "aws-access-key-id-placeholder"),
+            ("OPENAI_API_KEY", "openai-key-placeholder"),
         ]
         for key, value in secrets:
             ProjectSecret.objects.create(
