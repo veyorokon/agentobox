@@ -27,6 +27,9 @@ jobs:
   agent-image:
     name: agent-image
     if: ${{ github.event_name == 'workflow_call' && inputs.prebuild_agent_image }}
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/agent-image.yml
     secrets: inherit
 

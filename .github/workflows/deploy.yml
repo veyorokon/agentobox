@@ -90,6 +90,9 @@ jobs:
 
   # ─── Test ──────────────────────────────────────────────────────────
   ci:
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/ci.yml
     with:
       prebuild_agent_image: true
