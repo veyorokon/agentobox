@@ -84,7 +84,7 @@ def _write_managed_contract(root) -> None:
     (root / CANONICAL_PATHS["relay_env"]).write_text("RELAY_AUTH_TOKEN=token\n")
     write_json(root / CANONICAL_PATHS["runtime_state"], {"mode": "managed"})
     write_json(root / CANONICAL_PATHS["runtime_status"], {})
-    (root / CANONICAL_PATHS["provisioned_ready"]).touch()
+    (root / CANONICAL_PATHS["provisioned_ready"]).write_text("token")
 
 
 def test_managed_boot_contract_waits_for_provisioning_then_reaches_ready(tmp_path):

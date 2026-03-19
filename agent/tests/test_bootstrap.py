@@ -34,7 +34,7 @@ def _write_managed_contract(root: Path) -> None:
     (root / CANONICAL_PATHS["relay_env"]).write_text("RELAY_AUTH_TOKEN=token\n")
     write_json(root / CANONICAL_PATHS["runtime_state"], {"mode": "managed"})
     write_json(root / CANONICAL_PATHS["runtime_status"], {})
-    (root / CANONICAL_PATHS["provisioned_ready"]).touch()
+    (root / CANONICAL_PATHS["provisioned_ready"]).write_text("token")
 
 
 def test_managed_bootstrap_waits_for_valid_contract(tmp_path):

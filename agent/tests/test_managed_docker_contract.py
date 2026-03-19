@@ -132,7 +132,7 @@ def _write_managed_contract(root_dir: Path) -> None:
     (root_dir / CANONICAL_PATHS["secret_env"]).write_text("export ANTHROPIC_API_KEY=secret\n")
     write_json(root_dir / CANONICAL_PATHS["runtime_state"], {"mode": "managed"})
     write_json(root_dir / CANONICAL_PATHS["runtime_status"], {})
-    (root_dir / CANONICAL_PATHS["provisioned_ready"]).touch()
+    (root_dir / CANONICAL_PATHS["provisioned_ready"]).write_text("test-token")
 
 
 def _http_get_json(url: str) -> dict:
