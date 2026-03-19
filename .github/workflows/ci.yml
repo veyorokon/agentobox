@@ -12,10 +12,6 @@ on:
         required: false
         type: boolean
         default: false
-    outputs:
-      desktop-image:
-        description: Prebuilt desktop agent image ref when CI is called in deploy mode
-        value: ${{ jobs.agent-image.outputs.desktop-image }}
   workflow_dispatch:
 
 concurrency:

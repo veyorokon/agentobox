@@ -41,6 +41,7 @@ env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/veyorokon/agentobox-backend
   DASHBOARD_IMAGE: ghcr.io/veyorokon/agentobox-dashboard
+  AGENT_DESKTOP_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed
 
 jobs:
   # ─── Validate Secrets ─────────────────────────────────────────────
@@ -172,6 +173,9 @@ jobs:
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
       - uses: actions/checkout@v5
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Sync deploy artifacts
         uses: appleboy/scp-action@v1
@@ -221,7 +225,7 @@ jobs:
           _APP_SECRETS: ${{ secrets.APP_SECRETS }}
           _BACKEND_IMAGE: ${{ needs.build.outputs.backend-image }}
           _DASHBOARD_IMAGE: ${{ needs.build.outputs.dashboard-image }}
-          _MODAL_AGENT_IMAGE: ${{ needs.ci.outputs.desktop-image }}
+          _MODAL_AGENT_IMAGE: ${{ env.AGENT_DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
