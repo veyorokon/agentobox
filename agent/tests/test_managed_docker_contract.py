@@ -372,7 +372,7 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
             if status is None:
                 return None
             services = status.get("services", {})
-            required = {"xvfb": "up", "x11vnc": "up"}
+            required = {"xvfb": "up", "x11vnc": "up", "awesome": "up"}
             if any(services.get(name) != state for name, state in required.items()):
                 return None
             if services.get("websockify") != "up":
@@ -396,6 +396,7 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert status["services"]["xvfb"] == "up"
         assert status["services"]["x11vnc"] == "up"
         assert status["services"]["websockify"] == "up"
+        assert status["services"]["awesome"] == "up"
         assert status["services"]["firefox"] == "up"
 
         assert relay.wait_for_connection(timeout_s=10) is True
@@ -450,6 +451,7 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert projected["services"]["xvfb"] == "up"
         assert projected["services"]["x11vnc"] == "up"
         assert projected["services"]["websockify"] == "up"
+        assert projected["services"]["awesome"] == "up"
         assert projected["services"]["firefox"] == "up"
         failed = False
     except AssertionError as exc:

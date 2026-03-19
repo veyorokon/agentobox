@@ -56,10 +56,11 @@ async def test_serialize_agent_cost_accumulates_latest_total_per_session():
 
 @pytest.mark.django_db
 @pytest.mark.asyncio
-async def test_serialize_agent_derives_preview_contract():
+async def test_serialize_agent_derives_preview_contract(monkeypatch):
     from django.contrib.auth import get_user_model
 
     from agents.serializers import serialize_agent
+    from agents.services.volume import Volume
     from projects.models import Project
 
     User = get_user_model()
@@ -87,6 +88,16 @@ async def test_serialize_agent_derives_preview_contract():
         vnc_url="ws://vnc",
         agent_type="claude-code",
     )
+    desktop_not_ready = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="desktop-not-ready-agent",
+        project=project,
+        runtime="modal",
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        sandbox_id="sb-234",
+        vnc_url="ws://vnc-not-ready",
+        agent_type="claude-code",
+    )
     unavailable = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
         name="unavailable-agent",
         project=project,
@@ -104,8 +115,43 @@ async def test_serialize_agent_derives_preview_contract():
         agent_type="claude-code",
     )
 
+    runtime_status_by_agent = {
+        str(ready.id): {
+            "profile": "desktop",
+            "startup_stage": "managed_ready",
+            "runtime_state": "ready",
+            "transport": {"connected": True},
+            "services": {
+                "xvfb": "up",
+                "x11vnc": "up",
+                "websockify": "up",
+                "awesome": "up",
+                "firefox": "up",
+            },
+        },
+        str(desktop_not_ready.id): {
+            "profile": "desktop",
+            "startup_stage": "managed_ready",
+            "runtime_state": "ready",
+            "transport": {"connected": True},
+            "services": {
+                "xvfb": "up",
+                "x11vnc": "up",
+                "websockify": "up",
+                "awesome": "up",
+                "firefox": "down",
+            },
+        },
+    }
+
+    def fake_runtime_status(self):
+        return runtime_status_by_agent.get(self.root.name, {})
+
+    monkeypatch.setattr(Volume, "runtime_status", fake_runtime_status)
+
     deploying_payload = await serialize_agent(deploying)
     ready_payload = await serialize_agent(ready)
+    desktop_not_ready_payload = await serialize_agent(desktop_not_ready)
     unavailable_payload = await serialize_agent(unavailable)
     errored_payload = await serialize_agent(errored)
 
@@ -113,6 +159,8 @@ async def test_serialize_agent_derives_preview_contract():
     assert deploying_payload["previewRuntimeId"] == ""
     assert ready_payload["previewState"] == "ready"
     assert ready_payload["previewRuntimeId"] == "sb-123"
+    assert desktop_not_ready_payload["previewState"] == "unavailable"
+    assert desktop_not_ready_payload["previewRuntimeId"] == ""
     assert unavailable_payload["previewState"] == "unavailable"
     assert unavailable_payload["previewRuntimeId"] == ""
     assert errored_payload["previewState"] == "error"

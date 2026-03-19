@@ -51,18 +51,18 @@ def _desktop_runtime_specs(mode: AgentMode) -> list[ServiceSpec]:
             name="websockify",
             command=("python", "-m", "agent.runtime.desktop.websockify"),
             depends_on=("x11vnc",),
-            required_for_readiness=False,
+            required_for_readiness=True,
         ),
         ServiceSpec(
             name="awesome",
             command=("python", "-m", "agent.runtime.desktop.awesome"),
             depends_on=("xvfb",),
-            required_for_readiness=False,
+            required_for_readiness=True,
         ),
         ServiceSpec(
             name="firefox",
             command=("python", "-m", "agent.runtime.desktop.firefox"),
             depends_on=("awesome",),
-            required_for_readiness=False,
+            required_for_readiness=True,
         ),
     ]

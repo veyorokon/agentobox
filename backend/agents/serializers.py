@@ -12,6 +12,7 @@ from asgiref.sync import sync_to_async
 from decimal import Decimal
 
 PREVIEW_READY_STATUSES = {"idle", "running", "waiting"}
+DESKTOP_PREVIEW_REQUIRED_SERVICES = {"xvfb", "x11vnc", "websockify", "awesome", "firefox"}
 PreviewState = str
 
 
@@ -105,18 +106,41 @@ async def fetch_lifecycle_attempts(agent_id) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _load_runtime_status(agent) -> dict:
+    try:
+        return agent.volume.runtime_status()
+    except Exception:
+        return {}
+
+
+def _desktop_preview_ready(status: dict) -> bool:
+    if not status:
+        return False
+    if status.get("profile") != "desktop":
+        return False
+    if status.get("startup_stage") != "managed_ready":
+        return False
+    if status.get("runtime_state") != "ready":
+        return False
+    transport = status.get("transport") or {}
+    if not transport.get("connected"):
+        return False
+    services = status.get("services") or {}
+    return all(services.get(name) == "up" for name in DESKTOP_PREVIEW_REQUIRED_SERVICES)
+
+
 def derive_preview_state(agent) -> PreviewState:
     """Collapse runtime/VNC-specific state into a frontend preview contract."""
     if agent.status == "deploying":
         return "deploying"
+    if agent.status == "error":
+        return "error"
     if (
         agent.status in PREVIEW_READY_STATUSES
         and bool(agent.sandbox_id)
         and bool(agent.vnc_url)
     ):
-        return "ready"
-    if agent.status == "error":
-        return "error"
+        return "ready" if _desktop_preview_ready(_load_runtime_status(agent)) else "unavailable"
     return "unavailable"
 
 
