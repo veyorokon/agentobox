@@ -194,7 +194,8 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          vuln-type: library,config
+          scanners: vuln,config
+          vuln-type: library
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
