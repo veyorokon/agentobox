@@ -24,9 +24,11 @@ jobs:
       - name: Generate CI secrets
         run: |
           python3 - <<'PY' >> "$GITHUB_ENV"
+          import base64
+          import os
           import secrets
           print(f"SECRET_KEY={secrets.token_urlsafe(48)}")
-          print(f"ABOX_ENCRYPTION_KEY={secrets.token_urlsafe(32)}")
+          print(f"ABOX_ENCRYPTION_KEY={base64.urlsafe_b64encode(os.urandom(32)).decode()}")
           PY
       - name: Export Anthropic credential if configured
         env:
