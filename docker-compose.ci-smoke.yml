@@ -38,7 +38,9 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
