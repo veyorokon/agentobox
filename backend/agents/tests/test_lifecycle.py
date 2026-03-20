@@ -74,8 +74,14 @@ def test_runtime_executor_maps_claude_code_agent_type():
     assert _runtime_executor("claude-code") == "claude_code"
 
 
-def test_agent_machine_is_canonical_and_volume_is_compat_alias():
-    agent = Agent(id=uuid.uuid4(), project_id=uuid.uuid4())
+def test_agent_machine_is_canonical_and_volume_is_compat_alias(monkeypatch):
+    agent = Agent(id=uuid.uuid4(), project_id=uuid.uuid4(), runtime="docker")
+
+    class _FakeRuntime:
+        def machine_store(self):
+            return LocalProjectVolumeStore(Path("/tmp/agent-machine-test"))
+
+    monkeypatch.setattr("agents.runtimes.get_runtime", lambda runtime_name: _FakeRuntime())
 
     machine = agent.machine
     volume = agent.volume
@@ -90,9 +96,9 @@ def test_agent_machine_resolves_store_from_runtime(monkeypatch):
 
     sentinel_store = object()
 
-    def _resolve(runtime_name: str):
-        assert runtime_name == "modal"
-        return sentinel_store
+    class _FakeRuntime:
+        def machine_store(self):
+            return sentinel_store
 
     captured = {}
 
@@ -102,7 +108,7 @@ def test_agent_machine_resolves_store_from_runtime(monkeypatch):
             captured["agent_id"] = agent_id
             captured["store"] = store
 
-    monkeypatch.setattr("agents.services.project_volume.resolve_project_volume_store", _resolve)
+    monkeypatch.setattr("agents.runtimes.get_runtime", lambda runtime_name: _FakeRuntime())
     monkeypatch.setattr("agents.services.volume.AgentMachine", _FakeMachine)
 
     agent.machine
@@ -230,7 +236,11 @@ async def test_mark_provisioned_ready_skips_runtime_sync_for_docker(tmp_path):
     )
 
     assert vol.read("_abox/provisioned.ready") == "token-456"
-    _Runtime.await_machine_path_visible.assert_not_awaited()
+    _Runtime.await_machine_path_visible.assert_awaited_once_with(
+        "ct-123",
+        "/vol/agents/agent-test/_abox/provisioned.ready",
+        expected_content="token-456",
+    )
 
 
 @pytest.mark.django_db(transaction=True)
@@ -375,11 +385,20 @@ async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
 
     agent = await sync_to_async(_setup, thread_sensitive=True)()
 
-    updated = await mark_agent_runtime_unavailable(
-        str(agent.id),
-        reason="vnc_upstream_missing",
-        error_message="Desktop runtime is unavailable. Redeploy to restore preview.",
-    )
+    class _FakeRuntime:
+        def resource_snapshot(self):
+            from decimal import Decimal
+            from agents.runtimes.base import RuntimeResources
+
+            return RuntimeResources(cpu_cores=Decimal("0"), memory_mb=0)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("agents.services.runtime_segments.get_runtime", lambda runtime_name: _FakeRuntime())
+        updated = await mark_agent_runtime_unavailable(
+            str(agent.id),
+            reason="vnc_upstream_missing",
+            error_message="Desktop runtime is unavailable. Redeploy to restore preview.",
+        )
 
     assert updated.status == AgentStatus.ERROR
     assert updated.relay_connected is False

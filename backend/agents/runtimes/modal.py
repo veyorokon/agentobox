@@ -13,13 +13,15 @@ import asyncio
 import os
 import shlex
 import time
+from decimal import Decimal
 from pathlib import PurePosixPath
 
 import modal
 import structlog
 from config.app_config import app_config
 
-from agents.runtimes.base import SandboxInstance, VolumeMount
+from agents.runtimes.base import RuntimeResources, SandboxInstance, VolumeMount
+from agents.services.project_volume import ModalProjectVolumeStore
 
 log = structlog.get_logger("abox.runtime.modal")
 MODAL_DEFAULT_CPU_CORES = 2.0
@@ -142,6 +144,18 @@ class ModalRuntime:
         f.close()
 
         op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
+
+    def machine_store(self):
+        return ModalProjectVolumeStore(
+            app_config.agent.volume_name,
+            environment_name=self._environment_name(),
+        )
+
+    def resource_snapshot(self) -> RuntimeResources:
+        return RuntimeResources(
+            cpu_cores=Decimal(str(MODAL_DEFAULT_CPU_CORES)),
+            memory_mb=MODAL_DEFAULT_MEMORY_MB,
+        )
 
     async def sync_machine_volume(self, sandbox_id: str, mount_path: str = "/vol") -> None:
         op = log.bind(op="sync_machine_volume", sandbox_id=sandbox_id, mount_path=mount_path)

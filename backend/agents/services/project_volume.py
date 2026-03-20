@@ -212,9 +212,3 @@ class ModalProjectVolumeStore:
 
     def local_machine_root(self, machine: AgentMachinePaths) -> Path:
         return Path(machine.mounted_root())
-
-
-def resolve_project_volume_store(runtime_name: str) -> ProjectVolumeStore:
-    if runtime_name == "modal":
-        return ModalProjectVolumeStore(app_config.agent.volume_name)
-    return LocalProjectVolumeStore(Path(app_config.volume_root))

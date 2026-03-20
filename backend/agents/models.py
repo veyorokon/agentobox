@@ -339,13 +339,13 @@ class Agent(models.Model):
     @property
     def machine(self):
         """Canonical machine-state interface for this agent."""
+        from agents.runtimes import get_runtime
         from agents.services.volume import AgentMachine
-        from agents.services.project_volume import resolve_project_volume_store
 
         return AgentMachine(
             str(self.project_id),
             str(self.id),
-            store=resolve_project_volume_store(self.runtime),
+            store=get_runtime(self.runtime).machine_store(),
         )
 
     @property

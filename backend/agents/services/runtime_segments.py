@@ -2,25 +2,11 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 
 from agents.models import RuntimeSegment
-from agents.runtimes.modal import MODAL_DEFAULT_CPU_CORES, MODAL_DEFAULT_MEMORY_MB
-
-
-def _runtime_resource_snapshot(runtime_name: str) -> dict:
-    if runtime_name == "modal":
-        return {
-            "cpu_cores": Decimal(str(MODAL_DEFAULT_CPU_CORES)),
-            "memory_mb": MODAL_DEFAULT_MEMORY_MB,
-        }
-    return {
-        "cpu_cores": Decimal("0"),
-        "memory_mb": 0,
-    }
+from agents.runtimes import get_runtime
 
 
 def record_runtime_segment_sync(agent, *, ended_at=None, close_reason: str = "", metadata: dict | None = None):
@@ -30,7 +16,7 @@ def record_runtime_segment_sync(agent, *, ended_at=None, close_reason: str = "",
 
     finished_at = ended_at or timezone.now()
     compute_seconds = max(0, int((finished_at - agent.deployed_at).total_seconds()))
-    resources = _runtime_resource_snapshot(agent.runtime)
+    resources = get_runtime(agent.runtime).resource_snapshot()
 
     segment, _created = RuntimeSegment.objects.get_or_create(
         agent=agent,
@@ -42,8 +28,8 @@ def record_runtime_segment_sync(agent, *, ended_at=None, close_reason: str = "",
             "ended_at": finished_at,
             "compute_seconds": compute_seconds,
             "close_reason": close_reason,
-            "cpu_cores": resources["cpu_cores"],
-            "memory_mb": resources["memory_mb"],
+            "cpu_cores": resources.cpu_cores,
+            "memory_mb": resources.memory_mb,
             "metadata_json": metadata or {},
         },
     )

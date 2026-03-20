@@ -18,13 +18,15 @@ import asyncio
 import io
 import tarfile
 import time
-from pathlib import PurePosixPath
+from decimal import Decimal
+from pathlib import Path, PurePosixPath
 
 import docker
 import structlog
 from config.app_config import app_config
 
-from agents.runtimes.base import SandboxInstance, VolumeMount
+from agents.runtimes.base import RuntimeResources, SandboxInstance, VolumeMount
+from agents.services.project_volume import LocalProjectVolumeStore
 
 log = structlog.get_logger("abox.runtime.docker")
 
@@ -165,6 +167,12 @@ class DockerRuntime:
 
         await self._run_sync(_write)
         op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
+
+    def machine_store(self):
+        return LocalProjectVolumeStore(Path(app_config.volume_root))
+
+    def resource_snapshot(self) -> RuntimeResources:
+        return RuntimeResources(cpu_cores=Decimal("0"), memory_mb=0)
 
     async def sync_machine_volume(self, sandbox_id: str, mount_path: str = "/vol") -> None:
         """Docker bind/named volumes are already runtime-visible."""

@@ -5,12 +5,30 @@ import pytest
 
 from agents.runtimes.docker import DockerRuntime
 from agents.runtimes.modal import ModalRuntime
+from agents.services.project_volume import LocalProjectVolumeStore, ModalProjectVolumeStore
 
 
 pytestmark = pytest.mark.unit
 
 
 class TestDockerRuntimeExec:
+    def test_machine_store_uses_local_project_volume_store(self, monkeypatch):
+        monkeypatch.setattr("agents.runtimes.docker.app_config.volume_root", "/tmp/agentobox-vol")
+
+        runtime = DockerRuntime.__new__(DockerRuntime)
+        store = runtime.machine_store()
+
+        assert isinstance(store, LocalProjectVolumeStore)
+        assert str(store._root) == "/tmp/agentobox-vol"
+
+    def test_resource_snapshot_reports_zero_local_runtime_facts(self):
+        runtime = DockerRuntime.__new__(DockerRuntime)
+
+        snapshot = runtime.resource_snapshot()
+
+        assert str(snapshot.cpu_cores) == "0"
+        assert snapshot.memory_mb == 0
+
     @pytest.mark.asyncio
     async def test_exec_raises_on_nonzero_exit(self):
         runtime = DockerRuntime.__new__(DockerRuntime)
@@ -51,6 +69,25 @@ class TestDockerRuntimeExec:
 
 
 class TestModalRuntimeExec:
+    def test_machine_store_uses_modal_project_volume_store(self, monkeypatch):
+        monkeypatch.setattr("agents.runtimes.modal.app_config.agent.volume_name", "agentobox_agent-volumes")
+        monkeypatch.setattr("agents.runtimes.modal.app_config.environment", "dev")
+
+        runtime = ModalRuntime()
+        store = runtime.machine_store()
+
+        assert isinstance(store, ModalProjectVolumeStore)
+        assert store._volume_name == "agentobox_agent-volumes"
+        assert store._environment_name == "dev"
+
+    def test_resource_snapshot_reports_modal_runtime_facts(self):
+        runtime = ModalRuntime()
+
+        snapshot = runtime.resource_snapshot()
+
+        assert float(snapshot.cpu_cores) == pytest.approx(2.0)
+        assert snapshot.memory_mb == 4096
+
     @pytest.mark.asyncio
     async def test_create_uses_image_default_entrypoint(self, monkeypatch):
         runtime = ModalRuntime()

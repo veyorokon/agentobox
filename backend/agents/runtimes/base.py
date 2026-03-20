@@ -11,8 +11,11 @@ get_runtime(name) from __init__.py and program against this Protocol. Adding
 a new runtime (e.g. Fly.io) means implementing this interface and registering
 it in __init__.py; no service code changes.
 """
+from decimal import Decimal
 from dataclasses import dataclass
 from typing import Protocol
+
+from agents.services.project_volume import ProjectVolumeStore
 
 
 @dataclass
@@ -41,6 +44,12 @@ class VolumeMount:
     read_only: bool = False
 
 
+@dataclass(frozen=True)
+class RuntimeResources:
+    cpu_cores: Decimal
+    memory_mb: int
+
+
 class Runtime(Protocol):
     async def create(
         self, name: str, env: dict[str, str],
@@ -54,6 +63,10 @@ class Runtime(Protocol):
     async def write_file(
         self, sandbox_id: str, content: bytes, dest: str
     ) -> None: ...
+
+    def machine_store(self) -> ProjectVolumeStore: ...
+
+    def resource_snapshot(self) -> RuntimeResources: ...
 
     async def sync_machine_volume(
         self, sandbox_id: str, mount_path: str = "/vol"

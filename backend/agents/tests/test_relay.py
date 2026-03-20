@@ -215,6 +215,7 @@ async def test_send_message_pushes_to_dashboard_ws():
     fake_agent.project_id = "proj-456"
     fake_agent.session_id = "session-789"
     fake_agent.status = "running"
+    fake_agent.runtime = "docker"
 
     # Mock stream event
     fake_stream_event = MagicMock()
@@ -237,7 +238,11 @@ async def test_send_message_pushes_to_dashboard_ws():
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock),
         patch("agents.services.relay.get_channel_layer", return_value=mock_channel_layer),
         patch("agents.serializers.serialize_agent", new_callable=AsyncMock, return_value=fake_serialized_agent),
+        patch("agents.services.relay.get_machine_writer") as mock_get_machine_writer,
     ):
+        mock_writer = MagicMock()
+        mock_writer.append_task = AsyncMock()
+        mock_get_machine_writer.return_value = mock_writer
         result = await send_message("agent-123", "Hello agent!")
 
     # Assert send_message succeeded
@@ -306,24 +311,29 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
 
 
 @pytest.mark.asyncio
-async def test_deliver_input_skips_sandbox_sync_for_docker():
-    """Docker agents share filesystem — no sandbox sync needed."""
+async def test_deliver_input_uses_runtime_writer_for_docker():
+    """Writer resolution is runtime-backed even when Docker sync is a no-op."""
     fake_agent = MagicMock()
     fake_agent.id = "agent-docker-1"
     fake_agent.runtime = "docker"
     fake_agent.sandbox_id = "container-xyz"
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
+    fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
 
     content = [{"type": "text", "text": "hello from docker"}]
     with (
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
+        mock_runtime = MagicMock()
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
+        mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, content, task_id="docker-task-1")
 
     fake_agent.volume.append_task.assert_called_once()
-    mock_get_runtime.assert_not_called()
+    mock_get_runtime.assert_called_once_with("docker")
+    mock_runtime.sync_machine_volume.assert_awaited_once_with("container-xyz", "/vol/agents/agent-docker-1")
 
 
 @pytest.mark.asyncio
@@ -370,10 +380,14 @@ async def test_deliver_input_skips_modal_append_when_no_sandbox_id():
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
+        mock_runtime = MagicMock()
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
+        mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, [{"type": "text", "text": "hello"}], task_id="modal-task-2")
 
     fake_agent.volume.append_task.assert_called_once()
-    mock_get_runtime.assert_not_called()
+    mock_get_runtime.assert_called_once_with("modal")
+    mock_runtime.sync_machine_volume.assert_not_awaited()
 
 
 @pytest.mark.asyncio
