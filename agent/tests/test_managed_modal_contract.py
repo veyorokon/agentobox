@@ -17,5 +17,7 @@ def test_managed_modal_contract_boots_runtime_and_serves_health():
         run_managed_modal_contract(
             image_ref=os.environ.get("AGENTOBOX_MODAL_CONTRACT_IMAGE", "").strip(),
             callback_url=os.environ.get("AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL", "https://example.com/graphql"),
+            stability_window_s=5.0,
+            required_services=("firefox",),
         )
     )

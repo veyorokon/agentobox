@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-contract test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-agent-runtime-modal-contract modal-contract modal-debug test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-contract test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-agent-runtime-modal-contract modal-contract modal-debug modal-contract-local modal-contract-local-rebuild modal-debug-local modal-debug-local-rebuild modal-shell modal-status modal-logs modal-stop test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	uv --directory backend run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -23,6 +23,8 @@ codegen: schema
 
 PLATFORM ?= linux/amd64
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+MODAL_HARNESS_RESULT_FILE ?= .playwright-mcp/modal-harness-latest.json
+MODAL_HARNESS_LOG_FILE ?= .playwright-mcp/modal-latest.log
 
 agent-image: agent-image-runtime-desktop-managed
 
@@ -114,10 +116,41 @@ test-agent-runtime-modal-contract:
 	AGENTOBOX_RUN_MODAL_CONTRACT_TESTS=1 PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/test_managed_modal_contract.py -q -o addopts=
 
 modal-contract:
-	uv run --project agent python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}"
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
 
 modal-debug:
-	uv run --project agent python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --keep-alive
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --isolated --keep-alive --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-contract-local:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-contract-local-rebuild:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --force-build --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-debug-local:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --isolated --keep-alive --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-debug-local-rebuild:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --force-build --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --isolated --keep-alive --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-shell:
+	@modal shell "$${SANDBOX_ID:?set SANDBOX_ID}"
+
+modal-status:
+	@python3 -c 'import json; from pathlib import Path; path = Path(".playwright-mcp/modal-harness-latest.json"); \
+assert path.exists(), "missing .playwright-mcp/modal-harness-latest.json; run modal-debug or modal-debug-local first"; \
+obj = json.loads(path.read_text()); \
+print(json.dumps({"sandbox_id": obj["sandbox_id"], "container_id": obj.get("container_id", ""), "image_ref": obj["image_ref"], "health_url": obj["health_url"], "vnc_url": obj["vnc_url"], "status_payload": obj["status_payload"]}, indent=2))'
+
+modal-logs:
+	@CONTAINER_ID="$${CONTAINER_ID:-$$(python3 -c 'import json; from pathlib import Path; path = Path(".playwright-mcp/modal-harness-latest.json"); print(json.loads(path.read_text()).get("container_id", "")) if path.exists() else print("")')}"; \
+	test -n "$$CONTAINER_ID" || { echo "missing CONTAINER_ID and no container_id in .playwright-mcp/modal-harness-latest.json"; exit 1; }; \
+	MODAL_ENVIRONMENT="$${MODAL_ENVIRONMENT:-dev}" modal container logs "$$CONTAINER_ID"
+
+modal-stop:
+	@CONTAINER_ID="$${CONTAINER_ID:-$$(python3 -c 'import json; from pathlib import Path; path = Path(".playwright-mcp/modal-harness-latest.json"); print(json.loads(path.read_text()).get("container_id", "")) if path.exists() else print("")')}"; \
+	test -n "$$CONTAINER_ID" || { echo "missing CONTAINER_ID and no container_id in .playwright-mcp/modal-harness-latest.json"; exit 1; }; \
+	MODAL_ENVIRONMENT="$${MODAL_ENVIRONMENT:-dev}" modal container stop "$$CONTAINER_ID"
 
 lint:
 	uv --directory backend run ruff check agents/

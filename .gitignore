@@ -25,6 +25,7 @@ dist/
 
 # Claude Code
 .claude/
+.codex/
 .mcp.json
 .playwright-mcp/
 
