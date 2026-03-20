@@ -269,6 +269,37 @@ Each lane must ship:
 No lane is complete if it only changes code without updating the corresponding
 contract and regression coverage.
 
+## Cleanup Audit
+
+Cleanup is part of the migration program, not a follow-up chore.
+
+Every lane that replaces an old path must also:
+
+- remove the superseded code path in the same wave or in the immediately
+  following wave
+- document the removal in the migration notes
+- add or update an invariant/regression test that prevents the old path from
+  silently returning
+
+The program-level cleanup audit should explicitly track:
+
+- obsolete Modal-specific volume sync helpers
+- any remaining backend reads that assume local host-path visibility of agent
+  machine state
+- duplicate runtime truth sources between:
+  - machine filesystem
+  - relay transport messages
+  - DB projections
+- UI fallback logic that re-invents preview/runtime truth instead of consuming
+  the canonical backend projection
+
+The migration is not complete until:
+
+- the new source of truth is live
+- old compatibility code is removed
+- a repo-wide grep audit shows no residual references to the deprecated path
+- focused tests cover the replacement seam
+
 ## Recommended Execution Order
 
 1. finalize machine contract
