@@ -6,6 +6,13 @@ It is intentionally generic. The goal is not to encode local implementation triv
 
 ## Core Posture
 
+- Understand before changing.
+- Simplify.
+- Measure, don't assume.
+- Look at the actual data.
+- Fix the source, not the sink.
+- Signal completion, don't infer it.
+- Test the contract, not just the code.
 - Optimize for explicit contracts over convenience.
 - Prefer one canonical source of truth per concern.
 - Treat projections and caches as disposable read models, not authority.
@@ -75,6 +82,18 @@ Common forms:
 - one concept described by multiple names
 
 Ambiguity should be treated as a bug, not as a style issue.
+
+### One Code Path
+
+Ship the code you test and test the code you ship.
+
+Avoid parallel execution paths that create different behavior between:
+- local and production
+- Docker and remote runtimes
+- mock and real integrations
+- fallback and primary paths
+
+Multiple paths are acceptable only when they are explicit adapter boundaries with shared contracts.
 
 ### Canonical vs Derived
 
@@ -184,6 +203,17 @@ Agents should move up and down this scale deliberately. Do not stay too low too 
 
 This is the normal path for both debugging and refactoring.
 
+### Trace The Actual Chain
+
+Before theorizing, trace the real path end to end.
+
+Examples:
+- user action -> API -> queue -> worker -> storage -> UI
+- deploy -> provision -> bootstrap -> transport connect -> ready
+- write -> projection -> read model -> rendered state
+
+When possible, identify the first point where reality diverges from the expected chain.
+
 ### Fix, Describe, Regress
 
 The preferred sequence is:
@@ -238,6 +268,18 @@ Sources of reality:
 7. formalize the fix in code
 
 This matters most for remote or platform-specific systems where local reproduction is incomplete.
+
+### Look At The Actual Data
+
+When modeling or debugging a system, inspect the concrete artifacts first:
+- files
+- payloads
+- logs
+- traces
+- screenshots
+- process state
+
+Do not design from imagined shapes when the real shape is available.
 
 ### Remote-First Debugging
 
@@ -298,6 +340,19 @@ Examples:
 
 Do not force lower-level tests to prove things they cannot honestly observe.
 
+### Test The Contract, Not Just The Code
+
+If two independently maintained components rely on the same:
+- file paths
+- sentinel names
+- env vars
+- message shapes
+- lifecycle transitions
+
+then encode that shared dependency as a contract test.
+
+Logic tests are not enough when the failure mode is drift between systems.
+
 ### Regression Ladder
 
 When a real failure is found, ask:
@@ -323,6 +378,18 @@ If a bug only reproduces on one platform:
   - runtime adapter
   - image/runtime packaging
   - deployment/config
+
+### Signal Completion, Dont Infer It
+
+If process B depends on process A being done, process A should emit an explicit completion signal.
+
+Do not treat these as proof of completion:
+- directory exists
+- file is non-empty
+- port is open
+- process started
+
+These indicate that something began, not that it completed.
 
 ## State Principles
 
@@ -372,6 +439,16 @@ Work is done when:
 - the old ambiguous path is removed or explicitly deprecated
 - the system is more legible than before
 - future failures at the same seam should be faster to diagnose
+
+## Prior Art
+
+Before building a non-trivial new mechanism:
+- search for existing solutions
+- inspect real implementations, not just docs
+- study how mature systems solved the same shape of problem
+- adopt or adapt when possible
+
+Build from scratch only when there is clear evidence that existing approaches do not fit.
 
 ## Heuristics Worth Keeping
 

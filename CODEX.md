@@ -1,4 +1,4 @@
-# CLAUDE.md
+# CODEX.md
 
 This repo uses [AGENTS.md](./AGENTS.md) as the canonical operating guide.
 
