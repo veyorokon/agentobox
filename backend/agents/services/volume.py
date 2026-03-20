@@ -251,6 +251,15 @@ class AgentMachine:
     def skill_file(self, safe_name: str) -> str:
         return self._machine.skill_file(safe_name)
 
+    def mounted_root(self) -> str:
+        return self._machine.mounted_root()
+
+    def mounted_path(self, path: str) -> str:
+        return self._machine.mounted_path(path)
+
+    def archive_entry(self, path: str = "") -> str:
+        return self._machine.archive_entry(path)
+
     def runtime_status(self) -> dict:
         """Read the agent's runtime status document from _abox/status.json.
 

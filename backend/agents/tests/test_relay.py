@@ -289,6 +289,7 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
     fake_agent.sandbox_id = "sb-abc123"
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
 
     content = [{"type": "text", "text": "hello from modal"}]
     with (
@@ -354,6 +355,7 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
     fake_agent.sandbox_id = "sb-def456"
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
     fake_agent.volume.mutate.return_value = ReloadCommand(path="_abox/state.json")
 
     with (

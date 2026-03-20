@@ -22,6 +22,15 @@ class AgentMachinePaths:
         base = Path("agents") / self.agent_id
         return base / path if path else base
 
+    def archive_entry(self, path: str = "") -> str:
+        return self.relative(path).as_posix()
+
+    def mounted_root(self) -> str:
+        return f"/vol/{self.archive_entry()}"
+
+    def mounted_path(self, path: str) -> str:
+        return f"{self.mounted_root()}/{path}"
+
     def skill_dir(self, safe_name: str) -> str:
         return f"home/agent/workspace/.claude/skills/{safe_name}"
 

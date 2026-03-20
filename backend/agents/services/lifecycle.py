@@ -502,7 +502,7 @@ async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, 
             path = root / rel_path
             if not path.is_file():
                 continue
-            arcname = f"agents/{agent_id}/{rel_path}"
+            arcname = vol.archive_entry(rel_path)
             info = tarfile.TarInfo(name=arcname)
             info.size = path.stat().st_size
             info.uid = 1000
@@ -521,7 +521,7 @@ async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, 
     await runtime.exec(sandbox_id, [
         "bash", "-c",
         "cd /vol && tar xzf /tmp/vol-sync.tar.gz && "
-        f"chown -R agent:agent /vol/agents/{agent_id} && "
+        f"chown -R agent:agent {vol.mounted_root()} && "
         "rm -f /tmp/vol-sync.tar.gz"
     ], user="root")
 
@@ -544,13 +544,13 @@ async def _mark_provisioned_ready(
         op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
         return
 
-    sentinel_path = f"/vol/agents/{agent_id}/{PROVISIONING_SENTINEL}"
+    sentinel_path = vol.mounted_path(PROVISIONING_SENTINEL)
     await runtime.exec(
         sandbox_id,
         [
             "bash",
             "-c",
-            f"mkdir -p /vol/agents/{agent_id}/_abox && "
+            f"mkdir -p {vol.mounted_root()}/_abox && "
             f"printf %s {shlex.quote(provisioning_token)} > {sentinel_path} && "
             f"chown agent:agent {sentinel_path}",
         ],

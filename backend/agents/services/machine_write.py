@@ -39,7 +39,7 @@ class ModalAgentMachineWriter(LocalAgentMachineWriter):
         self._runtime = None
 
     def _sandbox_dest(self, path: str) -> str:
-        return f"/vol/agents/{self.agent.id}/{path}"
+        return self.machine.mounted_path(path)
 
     @property
     def runtime(self):

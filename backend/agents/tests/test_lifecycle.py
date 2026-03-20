@@ -87,6 +87,14 @@ def test_agent_machine_is_canonical_and_volume_is_compat_alias():
     assert machine.root == volume.root
 
 
+def test_agent_machine_exposes_canonical_runtime_visible_paths():
+    machine = AgentMachine(project_id="proj-1", agent_id="agent-1")
+
+    assert machine.archive_entry("_abox/state.json") == "agents/agent-1/_abox/state.json"
+    assert machine.mounted_root() == "/vol/agents/agent-1"
+    assert machine.mounted_path("_abox/state.json") == "/vol/agents/agent-1/_abox/state.json"
+
+
 def test_runtime_executor_honors_override():
     assert _runtime_executor("claude-code", override="echo") == "echo"
 
