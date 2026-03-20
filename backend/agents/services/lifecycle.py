@@ -23,11 +23,8 @@ Container provisioning sequence:
     provision_workspace → write .relay_env → save relay_token →
     relay self-starts (polls for .relay_env) → spawn tmux log tail
 """
-import io
 import json
 import secrets
-import shlex
-import tarfile
 
 import structlog
 from asgiref.sync import sync_to_async
@@ -66,7 +63,6 @@ from agents.services.runtime_segments import (
     record_runtime_segment_sync,
 )
 from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
-from agents.services.volume import PROVISIONING_SENTINEL
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
@@ -477,50 +473,6 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     return mounts
 
 
-async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, op_log):
-    """Copy backend-owned provisioning files from local volume into Modal sandbox.
-
-    Docker volumes are shared between backend and agent containers —
-    vol.write() writes to the same filesystem the container reads.
-    Modal volumes are separate — the backend writes to one project-volume
-    implementation, while the Modal sandbox mounts its own runtime-visible
-    machine root at /vol. This bridge tars only backend-owned desired/
-    config/secrets files and extracts them inside the sandbox. Runtime-
-    owned files such as _abox/status.json stay runtime-owned and must not
-    be projected backend→sandbox.
-    """
-
-    buf = io.BytesIO()
-    file_count = 0
-    sync_paths = vol.provision_sync_paths()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for rel_path in sync_paths:
-            arcname = vol.archive_entry(rel_path)
-            body = vol.read_bytes(rel_path)
-            info = tarfile.TarInfo(name=arcname)
-            info.size = len(body)
-            info.uid = 1000
-            info.gid = 1000
-            # Preserve restrictive permissions for secrets
-            info.mode = vol.stat_mode(rel_path)
-            tar.addfile(info, io.BytesIO(body))
-            file_count += 1
-    buf.seek(0)
-    tar_bytes = buf.read()
-
-    op_log.info("lifecycle.volume_sync_start", file_count=file_count, tar_size=len(tar_bytes))
-
-    await runtime.write_file(sandbox_id, tar_bytes, "/tmp/vol-sync.tar.gz")
-    await runtime.exec(sandbox_id, [
-        "bash", "-c",
-        "cd /vol && tar xzf /tmp/vol-sync.tar.gz && "
-        f"chown -R agent:agent {vol.mounted_root()} && "
-        "rm -f /tmp/vol-sync.tar.gz"
-    ], user="root")
-
-    op_log.info("lifecycle.volume_sync_done", file_count=file_count)
-
-
 async def _mark_provisioned_ready(
     runtime_name: str,
     runtime,
@@ -530,25 +482,14 @@ async def _mark_provisioned_ready(
     provisioning_token: str,
     op_log,
 ) -> None:
-    """Release init-volume only after provisioning files are fully present."""
+    """Release managed provisioning only after canonical machine state is present."""
     vol.mark_provisioned(provisioning_token)
 
     if runtime_name != "modal":
         op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
         return
 
-    sentinel_path = vol.mounted_path(PROVISIONING_SENTINEL)
-    await runtime.exec(
-        sandbox_id,
-        [
-            "bash",
-            "-c",
-            f"mkdir -p {vol.mounted_root()}/_abox && "
-            f"printf %s {shlex.quote(provisioning_token)} > {sentinel_path} && "
-            f"chown agent:agent {sentinel_path}",
-        ],
-        user="root",
-    )
+    await runtime.sync_machine_volume(sandbox_id, vol.mounted_root())
     op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
 
 
@@ -753,19 +694,11 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
         await broadcast_agent_update(agent)
 
-        # Modal volume sync: the backend wrote all provisioning files to
-        # a local Docker volume, but Modal sandboxes mount their own
-        # Modal volume at /vol. Copy files into the sandbox so init-volume
-        # can find them and create symlinks.
-        if runtime_name == "modal":
-            await _sync_volume_to_sandbox(runtime, sandbox_id, vol, agent_id, op_log)
-            if attempt_id:
-                await _update_lifecycle_attempt(attempt_id, step="volume_synced_to_sandbox")
-
-        # Release the init-volume gate only after all provisioned files are
-        # present and the backend has already recorded the fresh relay token.
-        # Otherwise the managed runtime can win the race and get rejected with
-        # a fatal bad_token on its first websocket connect.
+        # Release the managed provisioning gate only after all files are
+        # present in the canonical machine store and the backend has already
+        # recorded the fresh relay token. Modal sandboxes require an explicit
+        # mounted-volume sync before the running runtime can observe those
+        # backend-side writes.
         await _mark_provisioned_ready(
             runtime_name,
             runtime,
@@ -776,7 +709,11 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             op_log,
         )
         if attempt_id:
-            await _update_lifecycle_attempt(attempt_id, step="waiting_for_relay")
+            await _update_lifecycle_attempt(
+                attempt_id,
+                step="waiting_for_relay",
+                metadata={"provision_store_runtime": runtime_name},
+            )
 
         # Runtime manages its own process lifecycle — no tmux/s6 needed.
 

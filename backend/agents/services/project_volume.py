@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import io
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+import modal
+
+from config.app_config import app_config
 
 
 @dataclass(frozen=True)
@@ -61,10 +67,6 @@ class ProjectVolumeStore(Protocol):
 
     def stat_size(self, machine: AgentMachinePaths, path: str) -> int: ...
 
-    def stat_mode(self, machine: AgentMachinePaths, path: str) -> int: ...
-
-    def list_files(self, machine: AgentMachinePaths, prefix: str) -> list[str]: ...
-
     def local_machine_root(self, machine: AgentMachinePaths) -> Path: ...
 
 
@@ -119,18 +121,87 @@ class LocalProjectVolumeStore:
     def stat_size(self, machine: AgentMachinePaths, path: str) -> int:
         return self._full_path(machine, path).stat().st_size
 
-    def stat_mode(self, machine: AgentMachinePaths, path: str) -> int:
-        return self._full_path(machine, path).stat().st_mode & 0o777
-
-    def list_files(self, machine: AgentMachinePaths, prefix: str) -> list[str]:
-        base = self._full_path(machine, prefix)
-        if not base.exists():
-            return []
-        return [
-            str(full_path.relative_to(self._full_path(machine)))
-            for full_path in sorted(base.rglob("*"))
-            if full_path.is_file()
-        ]
-
     def local_machine_root(self, machine: AgentMachinePaths) -> Path:
         return self._full_path(machine)
+
+
+class ModalProjectVolumeStore:
+    """Modal Volume-backed machine store for runtime-visible agent state."""
+
+    def __init__(self, volume_name: str, *, environment_name: str | None = None):
+        self._volume_name = volume_name
+        self._environment_name = environment_name or os.environ.get("MODAL_ENVIRONMENT") or app_config.environment
+        self._volume = None
+
+    @property
+    def volume(self):
+        if self._volume is None:
+            self._volume = modal.Volume.from_name(
+                self._volume_name,
+                create_if_missing=True,
+                environment_name=self._environment_name,
+            )
+        return self._volume
+
+    def _volume_path(self, machine: AgentMachinePaths, path: str = "") -> str:
+        entry = machine.archive_entry(path)
+        return f"/{entry}"
+
+    def write_bytes(self, machine: AgentMachinePaths, path: str, content: bytes) -> None:
+        with self.volume.batch_upload(force=True) as batch:
+            batch.put_file(io.BytesIO(content), self._volume_path(machine, path))
+
+    def read_text(self, machine: AgentMachinePaths, path: str) -> str:
+        return self.read_bytes(machine, path).decode()
+
+    def read_bytes(self, machine: AgentMachinePaths, path: str) -> bytes:
+        return b"".join(self.volume.read_file(self._volume_path(machine, path)))
+
+    def exists(self, machine: AgentMachinePaths, path: str) -> bool:
+        target = self._volume_path(machine, path).lstrip("/")
+        try:
+            entries = self.volume.listdir(self._volume_path(machine, path), recursive=False)
+        except modal.exception.NotFoundError:
+            return False
+        return any(getattr(entry, "path", "") == target for entry in entries) or bool(entries)
+
+    def chmod(self, machine: AgentMachinePaths, path: str, mode: int) -> None:
+        body = self.read_bytes(machine, path)
+        with self.volume.batch_upload(force=True) as batch:
+            batch.put_file(io.BytesIO(body), self._volume_path(machine, path), mode=mode)
+
+    def mkdir(self, machine: AgentMachinePaths, path: str) -> None:
+        # Managed runtime no longer requires empty directory precreation on Modal.
+        return None
+
+    def unlink(self, machine: AgentMachinePaths, path: str) -> None:
+        try:
+            self.volume.remove_file(self._volume_path(machine, path), recursive=True)
+        except modal.exception.NotFoundError:
+            return None
+
+    def append_text(self, machine: AgentMachinePaths, path: str, content: str) -> None:
+        existing = self.read_text(machine, path) if self.exists(machine, path) else ""
+        self.write_bytes(machine, path, (existing + content).encode())
+
+    def remove_tree(self, machine: AgentMachinePaths, path: str) -> None:
+        self.unlink(machine, path)
+
+    def stat_size(self, machine: AgentMachinePaths, path: str) -> int:
+        target = self._volume_path(machine, path).lstrip("/")
+        try:
+            for entry in self.volume.listdir(self._volume_path(machine, path), recursive=False):
+                if getattr(entry, "path", "") == target:
+                    return int(getattr(entry, "size", 0))
+        except modal.exception.NotFoundError:
+            pass
+        return len(self.read_bytes(machine, path))
+
+    def local_machine_root(self, machine: AgentMachinePaths) -> Path:
+        return Path(machine.mounted_root())
+
+
+def resolve_project_volume_store(runtime_name: str) -> ProjectVolumeStore:
+    if runtime_name == "modal":
+        return ModalProjectVolumeStore(app_config.agent.volume_name)
+    return LocalProjectVolumeStore(Path(app_config.volume_root))

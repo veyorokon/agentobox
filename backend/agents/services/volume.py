@@ -126,23 +126,6 @@ MANAGED_CONFIG_FILES = [
     "_abox/state.json",
 ]
 
-# Backend-owned machine artifacts that must be present inside the runtime at
-# provision time. This is intentionally narrower than "everything under the
-# agent volume": runtime-owned files such as _abox/status.json, cursors, logs,
-# and diagnostics are never pushed backend→sandbox.
-PROVISION_SYNC_FILES = tuple(dict.fromkeys([
-    *MANAGED_CONFIG_FILES,
-    "home/agent/.claude/.credentials.json",
-    "mnt/abox-state/secrets/env",
-]))
-
-# Recursive backend-owned directories copied during provision-time sync.
-# Files within these trees are written by the backend and read by the runtime.
-PROVISION_SYNC_DIRS = (
-    "run/secrets",
-    "home/agent/workspace/.claude/skills",
-)
-
 # ── Reload registry ───────────────────────────────────────────────────
 #
 # The single contract between backend and relay for mutable runtime state.
@@ -244,9 +227,6 @@ class AgentMachine:
 
     def read_bytes(self, path: str) -> bytes:
         return self._store.read_bytes(self._machine, path)
-
-    def stat_mode(self, path: str) -> int:
-        return self._store.stat_mode(self._machine, path)
 
     def exists(self, path: str) -> bool:
         return self._store.exists(self._machine, path)
@@ -405,30 +385,6 @@ class AgentMachine:
         """
         state = {"model": model, "mode": mode, "allowed_tools": allowed_tools}
         return self.mutate("_abox/state.json", json.dumps(state))
-
-    def provision_sync_paths(self) -> list[str]:
-        """Return backend-owned files that should cross the Modal provision bridge.
-
-        This manifest is the authoritative backend→runtime sync boundary for
-        provision-time machine state. It intentionally excludes runtime-owned
-        artifacts such as _abox/status.json, cursors, logs, and diagnostics.
-        """
-
-        paths: list[str] = []
-        seen: set[str] = set()
-
-        for path in PROVISION_SYNC_FILES:
-            if self.exists(path) and path not in seen:
-                paths.append(path)
-                seen.add(path)
-
-        for prefix in PROVISION_SYNC_DIRS:
-            for rel in self._store.list_files(self._machine, prefix):
-                if rel not in seen:
-                    paths.append(rel)
-                    seen.add(rel)
-
-        return paths
 
     def initialize(self) -> None:
         """Create empty control plane files and directory structure for a new agent.

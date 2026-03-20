@@ -6,14 +6,12 @@ Covers:
   quotes and handles all shell metacharacters.
 """
 
-import io
-import json
-import tarfile
 from datetime import timedelta
 import re
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from asgiref.sync import sync_to_async
@@ -35,9 +33,9 @@ from agents.models import (
 )
 from agents.services.lifecycle import (
     _atomic_reset_for_restart,
-    _sync_volume_to_sandbox,
     _build_agent_env,
     _create_lifecycle_attempt_sync,
+    _mark_provisioned_ready,
     _runtime_executor,
     _update_lifecycle_attempt_sync,
     transition_agent_status,
@@ -85,6 +83,33 @@ def test_agent_machine_is_canonical_and_volume_is_compat_alias():
     assert isinstance(machine, AgentMachine)
     assert isinstance(volume, Volume)
     assert machine.root == volume.root
+
+
+def test_agent_machine_resolves_store_from_runtime(monkeypatch):
+    agent = Agent(id=uuid.uuid4(), project_id=uuid.uuid4(), runtime="modal")
+
+    sentinel_store = object()
+
+    def _resolve(runtime_name: str):
+        assert runtime_name == "modal"
+        return sentinel_store
+
+    captured = {}
+
+    class _FakeMachine:
+        def __init__(self, project_id, agent_id, *, store=None):
+            captured["project_id"] = project_id
+            captured["agent_id"] = agent_id
+            captured["store"] = store
+
+    monkeypatch.setattr("agents.services.project_volume.resolve_project_volume_store", _resolve)
+    monkeypatch.setattr("agents.services.volume.AgentMachine", _FakeMachine)
+
+    agent.machine
+
+    assert captured["project_id"] == str(agent.project_id)
+    assert captured["agent_id"] == str(agent.id)
+    assert captured["store"] is sentinel_store
 
 
 def test_agent_machine_exposes_canonical_runtime_visible_paths():
@@ -159,74 +184,49 @@ def test_shell_escape_mixed_special_chars():
 
 
 @pytest.mark.asyncio
-async def test_modal_volume_sync_excludes_runtime_owned_files(tmp_path):
+async def test_mark_provisioned_ready_syncs_modal_machine_volume(tmp_path):
     vol = _make_volume(tmp_path)
     vol.initialize()
-    vol.write("_abox/state.json", json.dumps({"mode": "auto"}))
-    vol.write("home/agent/.relay_env", "RELAY_AUTH_TOKEN=test")
-    vol.write("mnt/abox-state/secrets/env", "export FOO=bar")
-    vol.write_secret("run/secrets/proxy_key", "secret")
-    vol.write("home/agent/workspace/.claude/skills/demo/SKILL.md", "# demo")
-    vol.write("_abox/status.json", json.dumps({"runtime_state": "ready"}))
-    vol.write("_abox/runtime-diagnostics.json", json.dumps({"fatal": True}))
-    vol.write("_abox/outbox.jsonl", '{"type":"event"}\n')
-    vol.write("_abox/inbox.pos", "12")
-
-    written = {}
 
     class _Runtime:
-        async def write_file(self, sandbox_id, content, dest):
-            written["sandbox_id"] = sandbox_id
-            written["content"] = content
-            written["dest"] = dest
-
-        async def exec(self, *args, **kwargs):
-            return ""
+        sync_machine_volume = AsyncMock(return_value=None)
 
     op_log = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
-    await _sync_volume_to_sandbox(_Runtime(), "sb-123", vol, "agent-test", op_log)
+    await _mark_provisioned_ready(
+        "modal",
+        _Runtime(),
+        "sb-123",
+        vol,
+        "agent-test",
+        "token-123",
+        op_log,
+    )
 
-    archive = tarfile.open(fileobj=io.BytesIO(written["content"]), mode="r:gz")
-    names = set(archive.getnames())
-
-    assert written["dest"] == "/tmp/vol-sync.tar.gz"
-    assert "agents/agent-test/_abox/state.json" in names
-    assert "agents/agent-test/home/agent/.relay_env" in names
-    assert "agents/agent-test/run/secrets/proxy_key" in names
-    assert "agents/agent-test/home/agent/workspace/.claude/skills/demo/SKILL.md" in names
-    assert "agents/agent-test/_abox/status.json" not in names
-    assert "agents/agent-test/_abox/outbox.jsonl" not in names
-    assert "agents/agent-test/_abox/inbox.pos" not in names
-    assert "agents/agent-test/_abox/runtime-diagnostics.json" not in names
+    assert vol.read("_abox/provisioned.ready") == "token-123"
+    _Runtime.sync_machine_volume.assert_awaited_once_with("sb-123", "/vol/agents/agent-test")
 
 
 @pytest.mark.asyncio
-async def test_modal_volume_sync_is_store_driven_not_root_walk(tmp_path):
+async def test_mark_provisioned_ready_skips_runtime_sync_for_docker(tmp_path):
     vol = _make_volume(tmp_path)
     vol.initialize()
-    vol.write("_abox/state.json", json.dumps({"mode": "auto"}))
-    vol.write("home/agent/.relay_env", "RELAY_AUTH_TOKEN=test")
-    vol.root = tmp_path / "missing-root"
-
-    written = {}
 
     class _Runtime:
-        async def write_file(self, sandbox_id, content, dest):
-            written["content"] = content
-            written["dest"] = dest
-
-        async def exec(self, *args, **kwargs):
-            return ""
+        sync_machine_volume = AsyncMock(return_value=None)
 
     op_log = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
-    await _sync_volume_to_sandbox(_Runtime(), "sb-123", vol, "agent-test", op_log)
+    await _mark_provisioned_ready(
+        "docker",
+        _Runtime(),
+        "ct-123",
+        vol,
+        "agent-test",
+        "token-456",
+        op_log,
+    )
 
-    archive = tarfile.open(fileobj=io.BytesIO(written["content"]), mode="r:gz")
-    names = set(archive.getnames())
-
-    assert written["dest"] == "/tmp/vol-sync.tar.gz"
-    assert "agents/agent-test/_abox/state.json" in names
-    assert "agents/agent-test/home/agent/.relay_env" in names
+    assert vol.read("_abox/provisioned.ready") == "token-456"
+    _Runtime.sync_machine_volume.assert_not_awaited()
 
 
 @pytest.mark.django_db(transaction=True)
