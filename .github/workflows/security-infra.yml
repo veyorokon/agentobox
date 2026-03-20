@@ -35,19 +35,17 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Write job summary
+      - name: Write summary header
         if: always()
         uses: ./.github/actions/summary-header
         with:
-          title: Security Infra Summary
-          overall: ${{ job.status }}
+          title: Security Infra
+          overall: ${{ job.status == 'success' && 'success' || 'attention-needed' }}
+          detail: ${{ job.status == 'success' && 'no findings' || 'findings detected' }}
       - name: Write scan details
-        if: always()
+        if: failure()
         run: |
           {
             echo
-            echo "### Scan"
-            echo "- scan_path: \`infra\`"
-            echo "- scanner: \`trivy config\`"
-            echo "- severity_threshold: \`HIGH,CRITICAL\`"
+            echo "trivy config scan · \`infra/\` · severity: HIGH,CRITICAL"
           } >> "$GITHUB_STEP_SUMMARY"

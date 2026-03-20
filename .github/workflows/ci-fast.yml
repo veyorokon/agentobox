@@ -371,39 +371,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Compute overall status
+      - name: Compute status
         id: status
         run: |
-          overall=success
-          for result in \
-            "${{ needs.backend-unit.result }}" \
-            "${{ needs.backend-chaos.result }}" \
-            "${{ needs.backend-integration.result }}" \
-            "${{ needs.backend-architecture.result }}" \
-            "${{ needs.backend-lint.result }}" \
-            "${{ needs.agent-unit.result }}" \
-            "${{ needs.agent-lint.result }}" \
-            "${{ needs.dashboard-unit.result }}" \
-            "${{ needs.dashboard-typecheck.result }}" \
-            "${{ needs.security-app.result }}"; do
-            if [ "$result" != "success" ]; then
-              overall=attention-needed
-              break
-            fi
-          done
-          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/summary-header
-        with:
-          title: CI Fast Summary
-          overall: ${{ steps.status.outputs.overall }}
-      - name: Write lanes and failure details
-        run: |
-          # Build lane checklist — failed lanes get unchecked box
-          {
-            echo
-            echo "### Lanes"
-          } >> "$GITHUB_STEP_SUMMARY"
-
           declare -A results hints
           results=(
             [backend-unit]="${{ needs.backend-unit.result }}"
@@ -428,33 +398,58 @@ jobs:
             [dashboard-typecheck]="${{ needs.dashboard-typecheck.outputs.failure-hint }}"
           )
 
-          has_failures=false
-          for lane in backend-unit backend-chaos backend-integration backend-architecture backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck security-app; do
+          lanes="backend-unit backend-chaos backend-integration backend-architecture backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck security-app"
+          total=0; failed=0; passed_list=""; failed_blocks=""
+
+          for lane in $lanes; do
+            total=$((total + 1))
             r="${results[$lane]}"
             if [ "$r" = "success" ]; then
-              echo "- [x] ${lane}" >> "$GITHUB_STEP_SUMMARY"
+              passed_list="${passed_list:+${passed_list}, }${lane}"
             else
-              echo "- [ ] ${lane} — \`${r}\`" >> "$GITHUB_STEP_SUMMARY"
-              has_failures=true
+              failed=$((failed + 1))
+              hint="${hints[$lane]:-}"
+              failed_blocks="${failed_blocks}<details><summary><b>${lane}</b> — <code>${r}</code></summary>"$'\n\n'
+              if [ -n "$hint" ]; then
+                failed_blocks="${failed_blocks}\`\`\`"$'\n'"${hint}"$'\n'"\`\`\`"$'\n\n'
+              fi
+              failed_blocks="${failed_blocks}</details>"$'\n'
             fi
           done
 
-          # Collapsible failure details for lanes with hints
-          if [ "$has_failures" = true ]; then
-            has_hints=false
-            details=""
-            for lane in backend-unit backend-chaos backend-integration backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck; do
-              hint="${hints[$lane]:-}"
-              if [ -n "$hint" ]; then
-                has_hints=true
-                details="${details}<details><summary><b>${lane}</b></summary>"$'\n\n'"\`\`\`"$'\n'"${hint}"$'\n'"\`\`\`"$'\n\n'"</details>"$'\n'
-              fi
-            done
-            if [ "$has_hints" = true ]; then
-              {
-                echo
-                echo "### Failure Details"
-                echo "$details"
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
+          if [ "$failed" -eq 0 ]; then
+            echo "overall=success" >> "$GITHUB_OUTPUT"
+            echo "detail=all ${total} lanes passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=${failed} of ${total} lanes failed" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Save for next step
+          echo "passed_list=${passed_list}" >> "$GITHUB_OUTPUT"
+          {
+            echo "failed_blocks<<GHEOF"
+            echo "$failed_blocks"
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/summary-header
+        with:
+          title: CI Fast
+          overall: ${{ steps.status.outputs.overall }}
+          detail: ${{ steps.status.outputs.detail }}
+
+      - name: Write body
+        run: |
+          failed_blocks="${{ steps.status.outputs.failed_blocks }}"
+          passed_list="${{ steps.status.outputs.passed_list }}"
+
+          if [ -n "$failed_blocks" ]; then
+            {
+              echo
+              echo "### Failed"
+              echo "$failed_blocks"
+              echo
+              echo "**Passed:** ${passed_list}"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi

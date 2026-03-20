@@ -161,61 +161,74 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Compute overall status
+      - name: Compute status
         id: status
-        run: |
-          overall=success
-          for result in "${{ needs.build-managed.result }}" "${{ needs.build-desktop-managed.result }}"; do
-            if [ "$result" != "success" ]; then
-              overall=attention-needed
-              break
-            fi
-          done
-          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/summary-header
-        with:
-          title: Agent Image Summary
-          overall: ${{ steps.status.outputs.overall }}
-      - name: Write image details
         run: |
           managed="${{ needs.build-managed.result }}"
           desktop="${{ needs.build-desktop-managed.result }}"
           contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
 
-          {
-            echo
-            echo "### Jobs"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$managed" = "success" ] && [ "$desktop" = "success" ]; then
+            echo "overall=success" >> "$GITHUB_OUTPUT"
+            echo "detail=images built and tested" >> "$GITHUB_OUTPUT"
+          elif [ "$managed" != "success" ]; then
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=managed build failed" >> "$GITHUB_OUTPUT"
+          elif [ "$contract" != "success" ] && [ "$contract" != "not-run" ]; then
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=contract test failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=desktop build failed" >> "$GITHUB_OUTPUT"
+          fi
 
-          for pair in "managed_build:${managed}" "desktop_build:${desktop}" "contract_test:${contract}"; do
-            name="${pair%%:*}"
-            result="${pair#*:}"
-            if [ "$result" = "success" ]; then
-              echo "- [x] ${name}" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- [ ] ${name} — \`${result}\`" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+      - uses: ./.github/actions/summary-header
+        with:
+          title: Agent Image
+          overall: ${{ steps.status.outputs.overall }}
+          detail: ${{ steps.status.outputs.detail }}
 
-          {
-            echo
-            echo "### Artifacts"
-            echo "- managed_image: \`${{ needs.build-managed.outputs.managed-image }}\`"
-            echo "- desktop_image: \`${{ needs.build-desktop-managed.outputs.desktop-image }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # Collapsible failure detail if contract test failed
+      - name: Write body
+        run: |
+          managed="${{ needs.build-managed.result }}"
+          desktop="${{ needs.build-desktop-managed.result }}"
+          contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
           hint="${{ needs.build-desktop-managed.outputs.contract-test-hint }}"
-          if [ -n "$hint" ]; then
+
+          # Only show detail if something failed
+          if [ "$managed" != "success" ] || [ "$desktop" != "success" ]; then
             {
               echo
-              echo "### Failure Details"
-              echo "<details><summary><b>contract_test</b></summary>"
+              echo "| Step | Status |"
+              echo "|------|--------|"
+              echo "| managed build | \`${managed}\` |"
+              echo "| desktop build | \`${desktop}\` |"
+              echo "| contract test | \`${contract}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ -n "$hint" ]; then
+              {
+                echo
+                echo "<details><summary><b>contract_test</b></summary>"
+                echo
+                echo '```'
+                echo "$hint"
+                echo '```'
+                echo
+                echo "</details>"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+          # Always show image refs if they exist
+          managed_ref="${{ needs.build-managed.outputs.managed-image }}"
+          desktop_ref="${{ needs.build-desktop-managed.outputs.desktop-image }}"
+          if [ -n "$managed_ref" ] || [ -n "$desktop_ref" ]; then
+            {
               echo
-              echo '```'
-              echo "$hint"
-              echo '```'
-              echo
-              echo "</details>"
+              echo "| Image | Ref |"
+              echo "|-------|-----|"
+              echo "| managed | \`${managed_ref:-—}\` |"
+              echo "| desktop | \`${desktop_ref:-—}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi

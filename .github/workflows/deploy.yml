@@ -345,60 +345,81 @@ jobs:
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
       - uses: actions/checkout@v5
-      - name: Compute overall status
+      - name: Compute status
         id: status
         run: |
-          overall=success
-          for result in \
-            "${{ needs.validate-secrets.result }}" \
-            "${{ needs.ci.result }}" \
-            "${{ needs.agent-image.result }}" \
-            "${{ needs.build.result }}" \
-            "${{ needs.deploy.result }}" \
-            "${{ needs.agent-bootstrap.result }}" \
-            "${{ needs.agent-smoke.result }}"; do
-            if [ "$result" != "success" ]; then
-              overall=attention-needed
-              break
-            fi
-          done
-          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/summary-header
-        with:
-          title: "Deploy Summary (${{ github.ref_name == 'main' && 'prod' || 'dev' }})"
-          overall: ${{ steps.status.outputs.overall }}
-      - name: Write deploy details
-        run: |
-          {
-            echo "- environment: \`${{ github.ref_name == 'main' && 'prod' || 'dev' }}\`"
-            echo "- domain: \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\`"
-            echo
-            echo "### Gates"
-          } >> "$GITHUB_STEP_SUMMARY"
-
           declare -A gates
           gates=(
-            [validate_secrets]="${{ needs.validate-secrets.result }}"
+            [secrets]="${{ needs.validate-secrets.result }}"
             [ci]="${{ needs.ci.result }}"
             [build]="${{ needs.build.result }}"
-            [agent_image]="${{ needs.agent-image.result }}"
+            [image]="${{ needs.agent-image.result }}"
             [deploy]="${{ needs.deploy.result }}"
-            [agent_bootstrap]="${{ needs.agent-bootstrap.result }}"
-            [agent_smoke]="${{ needs.agent-smoke.result }}"
+            [bootstrap]="${{ needs.agent-bootstrap.result }}"
+            [smoke]="${{ needs.agent-smoke.result }}"
           )
-          for gate in validate_secrets ci build agent_image deploy agent_bootstrap agent_smoke; do
+
+          # Find first failure in pipeline order
+          overall=success
+          blocked_at=""
+          for gate in secrets ci build image deploy bootstrap smoke; do
             r="${gates[$gate]}"
-            if [ "$r" = "success" ]; then
-              echo "- [x] ${gate}" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- [ ] ${gate} — \`${r}\`" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$r" != "success" ] && [ -z "$blocked_at" ]; then
+              overall=attention-needed
+              blocked_at="$gate"
             fi
           done
 
+          if [ "$overall" = "success" ]; then
+            echo "detail=DEPLOYED" >> "$GITHUB_OUTPUT"
+          else
+            echo "detail=BLOCKED AT ${blocked_at}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+
+          # Build pipeline graph with icons
+          graph_line1=""
+          graph_line2=""
+          for gate in secrets ci build image; do
+            r="${gates[$gate]}"
+            if [ "$r" = "success" ]; then icon="✅";
+            elif [ "$r" = "failure" ]; then icon="❌";
+            elif [ "$r" = "skipped" ]; then icon="⊘";
+            else icon="⊘"; fi
+            graph_line1="${graph_line1:+${graph_line1} → }${icon} ${gate}"
+          done
+          for gate in deploy bootstrap smoke; do
+            r="${gates[$gate]}"
+            if [ "$r" = "success" ]; then icon="✅";
+            elif [ "$r" = "failure" ]; then icon="❌";
+            elif [ "$r" = "skipped" ]; then icon="⊘";
+            else icon="⊘"; fi
+            graph_line2="${graph_line2:+${graph_line2} → }${icon} ${gate}"
+          done
+
+          echo "graph_line1=${graph_line1}" >> "$GITHUB_OUTPUT"
+          echo "graph_line2=${graph_line2}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/summary-header
+        with:
+          title: "Deploy (${{ github.ref_name == 'main' && 'prod' || 'dev' }})"
+          overall: ${{ steps.status.outputs.overall }}
+          detail: ${{ steps.status.outputs.detail }}
+
+      - name: Write body
+        run: |
           {
+            echo "\`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\`"
             echo
-            echo "### Artifacts"
-            echo "- backend_image: \`${{ needs.build.outputs.backend-image }}\`"
-            echo "- dashboard_image: \`${{ needs.build.outputs.dashboard-image }}\`"
-            echo "- agent_desktop_image: \`${{ needs.agent-image.outputs.desktop-image }}\`"
+            echo '```'
+            echo "${{ steps.status.outputs.graph_line1 }}"
+            echo "           ↓"
+            echo "     ${{ steps.status.outputs.graph_line2 }}"
+            echo '```'
+            echo
+            echo "| Image | Ref |"
+            echo "|-------|-----|"
+            echo "| backend | \`${{ needs.build.outputs.backend-image || '—' }}\` |"
+            echo "| dashboard | \`${{ needs.build.outputs.dashboard-image || '—' }}\` |"
+            echo "| agent | \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"

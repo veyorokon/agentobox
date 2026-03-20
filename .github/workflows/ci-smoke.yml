@@ -98,49 +98,34 @@ jobs:
           name: ci-smoke-roundtrip-output
           path: roundtrip-output.txt
           retention-days: 7
-      - name: Write job summary
+      - name: Write summary header
         if: always()
         uses: ./.github/actions/summary-header
         with:
-          title: CI Smoke Summary
-          overall: ${{ job.status }}
-      - name: Write smoke details
+          title: CI Smoke
+          overall: ${{ job.status == 'success' && 'success' || 'attention-needed' }}
+          detail: ${{ job.status == 'success' && 'stack healthy' || 'failed' }}
+
+      - name: Write smoke body
         if: always()
         run: |
-          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-            provider_key_present=true
-            mode=real-executor
-          else
-            provider_key_present=false
-            mode=echo-only
-          fi
-          if [ "${SKIP_SMOKE:-}" = "true" ]; then
-            mode=skipped
-            round_trip_smoke=skipped
-          else
-            round_trip_smoke="${{ steps.roundtrip.outcome || 'not-run' }}"
-          fi
           bootstrap="${{ steps.bootstrap.outcome || 'not-run' }}"
+          if [ "${SKIP_SMOKE:-}" = "true" ]; then
+            round_trip=skipped
+          else
+            round_trip="${{ steps.roundtrip.outcome || 'not-run' }}"
+          fi
 
-          {
-            echo
-            echo "### Tests"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          for pair in "bootstrap_test:${bootstrap}" "round_trip_smoke:${round_trip_smoke}"; do
-            name="${pair%%:*}"
-            result="${pair#*:}"
-            if [ "$result" = "success" ]; then
-              echo "- [x] ${name}" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- [ ] ${name} — \`${result}\`" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-
-          {
-            echo "- provider_key_present: \`${provider_key_present}\`"
-            echo "- mode: \`${mode}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Only show detail table on failure or partial runs
+          if [ "${{ job.status }}" != "success" ] || [ "$round_trip" = "skipped" ]; then
+            {
+              echo
+              echo "| Test | Status |"
+              echo "|------|--------|"
+              echo "| bootstrap | \`${bootstrap}\` |"
+              echo "| round-trip | \`${round_trip}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Dump backend logs on failure
         if: failure()
         run: docker compose -p agentobox-ci-smoke -f docker-compose.ci-smoke.yml logs backend --tail=500

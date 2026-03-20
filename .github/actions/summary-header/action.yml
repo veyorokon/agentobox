@@ -1,13 +1,17 @@
 name: Summary Header
-description: Writes the standard header block to $GITHUB_STEP_SUMMARY.
+description: Writes a compact status headline to $GITHUB_STEP_SUMMARY.
 
 inputs:
   title:
-    description: Summary heading (e.g. "CI Fast Summary")
+    description: Summary name (e.g. "CI Fast", "Deploy (dev)")
     required: true
   overall:
     description: Overall status — "success" or "attention-needed"
     required: true
+  detail:
+    description: One-line detail for the headline (e.g. "2 of 10 lanes failed", "DEPLOYED")
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -15,12 +19,24 @@ runs:
     - name: Write header
       shell: bash
       run: |
+        short_sha="${GITHUB_SHA::7}"
+        if [ "${{ inputs.overall }}" = "success" ]; then
+          icon="✅"
+        else
+          icon="❌"
+        fi
+
+        detail="${{ inputs.detail }}"
+        if [ -z "$detail" ]; then
+          if [ "${{ inputs.overall }}" = "success" ]; then
+            detail="passed"
+          else
+            detail="failed"
+          fi
+        fi
+
         {
           echo "## ${{ inputs.title }}"
           echo
-          echo "- ref: \`${{ github.ref_name }}\`"
-          echo "- sha: \`${{ github.sha }}\`"
-          echo "- trigger: \`${{ github.event_name }}\`"
-          echo "- overall: \`${{ inputs.overall }}\`"
-          echo "- run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          echo "${icon} **${detail}** &nbsp; \`${short_sha}\` · \`${{ github.ref_name }}\`"
         } >> "$GITHUB_STEP_SUMMARY"
