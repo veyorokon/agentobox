@@ -86,6 +86,19 @@ async def test_serialize_agent_derives_preview_contract(monkeypatch):
         relay_connected=True,
         sandbox_id="sb-123",
         vnc_url="ws://vnc",
+        runtime_status_projection={
+            "profile": "desktop",
+            "startup_stage": "managed_ready",
+            "runtime_state": "ready",
+            "transport": {"connected": True},
+            "services": {
+                "xvfb": "up",
+                "x11vnc": "up",
+                "websockify": "up",
+                "awesome": "up",
+                "firefox": "up",
+            },
+        },
         agent_type="claude-code",
     )
     desktop_not_ready = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
@@ -96,6 +109,19 @@ async def test_serialize_agent_derives_preview_contract(monkeypatch):
         relay_connected=True,
         sandbox_id="sb-234",
         vnc_url="ws://vnc-not-ready",
+        runtime_status_projection={
+            "profile": "desktop",
+            "startup_stage": "managed_ready",
+            "runtime_state": "ready",
+            "transport": {"connected": True},
+            "services": {
+                "xvfb": "up",
+                "x11vnc": "up",
+                "websockify": "up",
+                "awesome": "up",
+                "firefox": "down",
+            },
+        },
         agent_type="claude-code",
     )
     unavailable = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
@@ -115,37 +141,8 @@ async def test_serialize_agent_derives_preview_contract(monkeypatch):
         agent_type="claude-code",
     )
 
-    runtime_status_by_agent = {
-        str(ready.id): {
-            "profile": "desktop",
-            "startup_stage": "managed_ready",
-            "runtime_state": "ready",
-            "transport": {"connected": True},
-            "services": {
-                "xvfb": "up",
-                "x11vnc": "up",
-                "websockify": "up",
-                "awesome": "up",
-                "firefox": "up",
-            },
-        },
-        str(desktop_not_ready.id): {
-            "profile": "desktop",
-            "startup_stage": "managed_ready",
-            "runtime_state": "ready",
-            "transport": {"connected": True},
-            "services": {
-                "xvfb": "up",
-                "x11vnc": "up",
-                "websockify": "up",
-                "awesome": "up",
-                "firefox": "down",
-            },
-        },
-    }
-
     def fake_runtime_status(self):
-        return runtime_status_by_agent.get(self.root.name, {})
+        return {}
 
     monkeypatch.setattr(Volume, "runtime_status", fake_runtime_status)
 

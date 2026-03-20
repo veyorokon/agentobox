@@ -84,6 +84,30 @@ async def test_receive_json_ignores_task_update():
 
 
 @pytest.mark.asyncio
+async def test_receive_json_persists_runtime_status_projection():
+    consumer = _relay_consumer()
+    payload = {
+        "status_version": "2",
+        "profile": "desktop",
+        "startup_stage": "managed_ready",
+        "runtime_state": "ready",
+        "transport": {"enabled": True, "connected": True, "state": "connected", "last_error": ""},
+        "services": {"xvfb": "up", "x11vnc": "up", "websockify": "up", "awesome": "up"},
+    }
+
+    with (
+        patch("agents.models.Agent.objects.filter") as mock_filter,
+        patch("agents.services.broadcast.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+    ):
+        mock_filter.return_value.aupdate = AsyncMock()
+        await consumer.receive_json({"type": "runtime_status", "payload": payload})
+
+    mock_filter.return_value.aupdate.assert_awaited_once_with(runtime_status_projection=payload)
+    assert consumer.agent.runtime_status_projection == payload
+    mock_broadcast.assert_awaited_once_with(consumer.agent)
+
+
+@pytest.mark.asyncio
 async def test_relay_disconnect_broadcasts_updated_agent_state():
     consumer = _relay_consumer()
     consumer.group_name = "relay_agent-123"

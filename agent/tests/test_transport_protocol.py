@@ -13,8 +13,8 @@ from agent.transports.agentobox.commands import (
     ReloadCommand,
     SignalCommand,
 )
-from agent.transports.agentobox.upstream import TaskUpdateMessage, UpstreamMessageType
 from agent.transports.agentobox.upstream import ExecutionEventMessage
+from agent.transports.agentobox.upstream import RuntimeStatusMessage, TaskUpdateMessage, UpstreamMessageType
 
 
 def test_parse_reload_command():
@@ -89,4 +89,23 @@ def test_encode_upstream_execution_event_message():
         "event_type": "raw_message",
         "payload": {"type": "assistant"},
         "session_id": "sess-1",
+    }
+
+
+def test_encode_upstream_runtime_status_message():
+    message = RuntimeStatusMessage(
+        payload={
+            "status_version": "2",
+            "startup_stage": "managed_ready",
+            "runtime_state": "ready",
+        }
+    )
+
+    assert encode_upstream_message(message) == {
+        "type": "runtime_status",
+        "payload": {
+            "status_version": "2",
+            "startup_stage": "managed_ready",
+            "runtime_state": "ready",
+        },
     }

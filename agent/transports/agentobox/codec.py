@@ -20,7 +20,7 @@ def encode_downstream_command(command: DownstreamCommand) -> dict[str, str]:
     return command.to_dict()
 
 
-def encode_upstream_message(message: UpstreamMessage) -> dict[str, str]:
+def encode_upstream_message(message: UpstreamMessage) -> dict:
     """Serialize a typed upstream message into its wire payload."""
 
     return message.to_dict()

@@ -45,6 +45,7 @@ from agent.transports.agentobox.upstream import (
     CallbackRequestMessage,
     ExecutionEventMessage,
     RuntimeHelloMessage,
+    RuntimeStatusMessage,
     TaskUpdateMessage,
     UpstreamMessage,
 )
@@ -157,6 +158,9 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
 
     def drain_outbound_messages(self) -> list[UpstreamMessage]:
         return self._outbound_messages.drain()
+
+    def publish_runtime_status(self, payload: dict) -> None:
+        self._outbound_messages.publish(RuntimeStatusMessage(payload=payload))
 
     def on_task_queued(self, record: TaskRecord) -> None:
         self._publish_task_update(record)

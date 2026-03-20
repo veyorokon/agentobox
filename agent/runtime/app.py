@@ -64,6 +64,7 @@ class AgentApplication:
             config.platform,
             config.profile,
         )
+        self._managed_session: ManagedRelaySession | None = None
         self.status_projector = status_projector or RuntimeStatusProjector(config.root_dir)
         self.http_server: LocalIngressServer | None = None
         self.platform = platform or build_platform(config.platform)
@@ -153,6 +154,7 @@ class AgentApplication:
             self.state,
             theme_manager=self.theme_manager,
         )
+        self._managed_session = session
         self.runner.set_callback_handler(session)
         return build_transport(
             self.config,
@@ -187,4 +189,7 @@ class AgentApplication:
         self._project_status()
 
     def _project_status(self) -> None:
-        self.status_projector.project(self.status())
+        status = self.status()
+        changed = self.status_projector.project(status)
+        if changed and self._managed_session is not None:
+            self._managed_session.publish_runtime_status(status.to_dict())

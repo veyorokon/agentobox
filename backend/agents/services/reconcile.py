@@ -36,6 +36,7 @@ from agents.services.lifecycle import (
     fail_active_lifecycle_attempts,
     succeed_active_lifecycle_attempts,
 )
+from agents.services.runtime_projection import read_runtime_status
 from agents.services.utils import terminate_sandbox
 
 log = structlog.get_logger("abox.reconciler")
@@ -295,7 +296,7 @@ async def _detect_dead_containers():
             crash_info = await runtime.get_crash_info(agent.sandbox_id)
             runtime_events = await _read_runtime_log_tail(agent, limit=10)
             runtime_log_summary, recent_runtime_events = _summarize_runtime_log(runtime_events)
-            runtime_status = await sync_to_async(agent.volume.runtime_status, thread_sensitive=False)()
+            runtime_status = await sync_to_async(read_runtime_status, thread_sensitive=False)(agent)
             docker_events = await runtime.get_event_tail(agent.sandbox_id, limit=10)
             last_docker_action = docker_events[-1]["action"] if docker_events else ""
 

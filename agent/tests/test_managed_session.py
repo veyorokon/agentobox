@@ -348,6 +348,26 @@ def test_managed_session_publishes_execution_events(tmp_path):
     assert runner._state.snapshot().runtime.session_id == "sess-1"
 
 
+def test_managed_session_publishes_runtime_status(tmp_path):
+    runner = _build_runner()
+    session = ManagedRelaySession(_managed_runtime_config(tmp_path), runner, runner._state)
+    payload = {
+        "status_version": "2",
+        "startup_stage": "managed_ready",
+        "runtime_state": "ready",
+        "profile": "desktop",
+    }
+
+    session.publish_runtime_status(payload)
+
+    assert [message.to_dict() for message in session.drain_outbound_messages()] == [
+        {
+            "type": "runtime_status",
+            "payload": payload,
+        }
+    ]
+
+
 def test_managed_session_publishes_result_execution_events(tmp_path):
     runner = _build_runner()
     session = ManagedRelaySession(_managed_runtime_config(tmp_path), runner, runner._state)

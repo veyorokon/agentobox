@@ -276,6 +276,10 @@ class Agent(models.Model):
     # the source of truth is the StreamEvent log.
     session_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     capabilities = models.JSONField(null=True, blank=True)
+    # Last known runtime-owned machine status projected into the control plane.
+    # This is a backend-visible cache of agent-owned truth, not an independent
+    # source of runtime state.
+    runtime_status_projection = models.JSONField(default=dict, blank=True)
     # Current activity phase from stream_event (thinking, responding, tool-input, tool-use)
     phase = models.CharField(max_length=20, blank=True, default="")
 

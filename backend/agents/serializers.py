@@ -11,6 +11,8 @@ GraphQL types delegate computed fields to shared helpers here.
 from asgiref.sync import sync_to_async
 from decimal import Decimal
 
+from agents.services.runtime_projection import read_runtime_status
+
 PREVIEW_READY_STATUSES = {"idle", "running", "waiting"}
 DESKTOP_PREVIEW_REQUIRED_SERVICES = {"xvfb", "x11vnc", "websockify", "awesome"}
 PreviewState = str
@@ -107,10 +109,7 @@ async def fetch_lifecycle_attempts(agent_id) -> list[dict]:
 
 
 def _load_runtime_status(agent) -> dict:
-    try:
-        return agent.volume.runtime_status()
-    except Exception:  # intentional: runtime status is agent-owned and preview must degrade safely if unreadable
-        return {}
+    return read_runtime_status(agent)
 
 
 def _desktop_preview_ready(status: dict) -> bool:

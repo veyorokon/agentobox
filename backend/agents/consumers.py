@@ -189,6 +189,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
 
         The new runtime sends typed envelopes:
         - runtime_hello
+        - runtime_status
         - task_update
         - execution_event
         - callback_request
@@ -234,6 +235,23 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 profile=content.get("profile", ""),
                 protocol_version=content.get("protocol_version", ""),
             )
+            return
+
+        if event_type == "runtime_status":
+            payload = content.get("payload", {})
+            if isinstance(payload, dict):
+                from agents.models import Agent
+                from agents.services.broadcast import broadcast_agent_update
+
+                await Agent.objects.filter(id=self.agent_id).aupdate(runtime_status_projection=payload)
+                self.agent.runtime_status_projection = payload
+                await broadcast_agent_update(self.agent)
+                log.info(
+                    "relay.runtime_status",
+                    agent_id=self.agent_id,
+                    startup_stage=payload.get("startup_stage", ""),
+                    runtime_state=payload.get("runtime_state", ""),
+                )
             return
 
         if event_type == "task_update":

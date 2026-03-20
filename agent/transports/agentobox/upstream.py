@@ -17,6 +17,7 @@ UPSTREAM_PROTOCOL_VERSION = "1"
 
 class UpstreamMessageType(StrEnum):
     RUNTIME_HELLO = "runtime_hello"
+    RUNTIME_STATUS = "runtime_status"
     TASK_UPDATE = "task_update"
     EXECUTION_EVENT = "execution_event"
     CALLBACK_REQUEST = "callback_request"
@@ -68,6 +69,18 @@ class TaskUpdateMessage:
 
 
 @dataclass(frozen=True)
+class RuntimeStatusMessage:
+    payload: dict[str, Any]
+    type: UpstreamMessageType = UpstreamMessageType.RUNTIME_STATUS
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type.value,
+            "payload": self.payload,
+        }
+
+
+@dataclass(frozen=True)
 class ExecutionEventMessage:
     task_id: str
     event_type: str
@@ -103,4 +116,10 @@ class CallbackRequestMessage:
         }
 
 
-UpstreamMessage = RuntimeHelloMessage | TaskUpdateMessage | ExecutionEventMessage | CallbackRequestMessage
+UpstreamMessage = (
+    RuntimeHelloMessage
+    | RuntimeStatusMessage
+    | TaskUpdateMessage
+    | ExecutionEventMessage
+    | CallbackRequestMessage
+)
