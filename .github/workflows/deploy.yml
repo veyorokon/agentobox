@@ -181,9 +181,31 @@ jobs:
         run: echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
 
   # ─── Deploy ────────────────────────────────────────────────────────
+  agent-modal-contract:
+    name: Agent Modal Contract (${{ github.ref_name }})
+    needs: [validate-secrets, ci, agent-image]
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install agent test dependencies
+        run: uv --directory agent sync --group dev
+      - name: Run managed Modal contract test
+        env:
+          AGENTOBOX_RUN_MODAL_CONTRACT_TESTS: "1"
+          AGENTOBOX_MODAL_CONTRACT_IMAGE: ${{ needs.agent-image.outputs.desktop-image }}
+          AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
+          MODAL_TOKEN_ID: ${{ fromJson(secrets.APP_SECRETS).MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ fromJson(secrets.APP_SECRETS).MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ github.ref_name }}
+        run: PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/test_managed_modal_contract.py -q -o addopts=
+
   deploy:
     name: Deploy (${{ github.ref_name }})
-    needs: [build, ci, agent-image]
+    needs: [build, ci, agent-image, agent-modal-contract]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -341,6 +363,7 @@ jobs:
       - validate-secrets
       - ci
       - agent-image
+      - agent-modal-contract
       - build
       - deploy
       - agent-bootstrap
@@ -358,6 +381,7 @@ jobs:
             [ci]="${{ needs.ci.result }}"
             [build]="${{ needs.build.result }}"
             [image]="${{ needs.agent-image.result }}"
+            [modal_contract]="${{ needs.agent-modal-contract.result }}"
             [deploy]="${{ needs.deploy.result }}"
             [bootstrap]="${{ needs.agent-bootstrap.result }}"
             [smoke]="${{ needs.agent-smoke.result }}"
@@ -366,7 +390,7 @@ jobs:
           # Find first failure in pipeline order
           overall=success
           blocked_at=""
-          for gate in secrets ci build image deploy bootstrap smoke; do
+          for gate in secrets ci build image modal_contract deploy bootstrap smoke; do
             r="${gates[$gate]}"
             if [ "$r" != "success" ] && [ -z "$blocked_at" ]; then
               overall=attention-needed
@@ -384,7 +408,7 @@ jobs:
           # Build pipeline graph with icons
           graph_line1=""
           graph_line2=""
-          for gate in secrets ci build image; do
+          for gate in secrets ci build image modal_contract; do
             r="${gates[$gate]}"
             if [ "$r" = "success" ]; then icon="✅";
             elif [ "$r" = "failure" ]; then icon="❌";

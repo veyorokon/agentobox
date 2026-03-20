@@ -8,7 +8,6 @@ from pathlib import Path
 from agent.runtime.desktop.common import exec_process, wait_for_display
 from agent.runtime.desktop.config import (
     ensure_desktop_runtime_files,
-    ensure_firefox_system_files,
     prepare_firefox_profile,
 )
 
@@ -34,7 +33,6 @@ def main() -> None:
     agent_home = Path(os.environ.get("AGENT_HOME", "/home/agent"))
 
     ensure_desktop_runtime_files(root_dir, agent_home=agent_home)
-    ensure_firefox_system_files()
     profile_dir = prepare_firefox_profile(root_dir, agent_home=agent_home)
     wait_for_display(display)
     exec_process(

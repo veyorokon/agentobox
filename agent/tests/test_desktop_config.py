@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from agent.contracts.execution import ExecutorKind
 from agent.contracts.mode import AgentMode
@@ -54,6 +55,13 @@ def test_firefox_system_bridge_writes_autoconfig_files(tmp_path):
     assert autoconfig == render_firefox_autoconfig_js()
     assert mozilla_cfg == render_firefox_mozilla_cfg()
     assert 'let RELOAD_PORT = 9224;' in mozilla_cfg
+
+
+def test_baked_firefox_assets_match_rendered_bridge_files():
+    asset_root = Path(__file__).resolve().parents[1] / "desktop-assets/firefox"
+
+    assert (asset_root / "autoconfig.js").read_text() == render_firefox_autoconfig_js()
+    assert (asset_root / "mozilla.cfg").read_text() == render_firefox_mozilla_cfg()
 
 
 def test_prepare_firefox_profile_creates_deterministic_profile(tmp_path):

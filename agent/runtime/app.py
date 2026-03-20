@@ -13,14 +13,14 @@ from time import sleep
 from typing import Callable
 
 from agent.contracts.mode import AgentMode
-from agent.contracts.platform import PlatformAdapter, PlatformKind
+from agent.contracts.platform import PlatformAdapter
 from agent.contracts.profile import RuntimeProfile
 from agent.contracts.transport import ManagedTransport
 from agent.platform.factory import build_platform
 from agent.provisioning.providers.managed import ManagedProvisioningProvider
 from agent.provisioning.providers.standalone import StandaloneProvisioningProvider
 from agent.runtime.config import RuntimeConfig
-from agent.runtime.desktop.config import ensure_desktop_runtime_files, ensure_firefox_system_files
+from agent.runtime.desktop.config import ensure_desktop_runtime_files
 from agent.runtime.executors.factory import build_executor
 from agent.runtime.ingress import LocalIngressServer
 from agent.runtime.lifecycle import LifecycleCoordinator
@@ -96,8 +96,6 @@ class AgentApplication:
         self.theme_manager.project_if_present()
         if self.config.profile is RuntimeProfile.DESKTOP:
             ensure_desktop_runtime_files(self.config.root_dir)
-            if self.config.platform is not PlatformKind.LOCAL:
-                ensure_firefox_system_files()
 
         self.lifecycle.on_services_starting()
         self.platform.create()

@@ -50,6 +50,8 @@ RUN useradd -m -s /bin/bash agent || true
 COPY desktop-assets/textfox/defaults.css /opt/textfox/chrome/defaults.css
 COPY desktop-assets/firefox/firefox /usr/local/bin/firefox
 COPY desktop-assets/firefox/firefox-esr /usr/local/bin/firefox-esr
+COPY desktop-assets/firefox/autoconfig.js /usr/lib/firefox-esr/defaults/pref/autoconfig.js
+COPY desktop-assets/firefox/mozilla.cfg /usr/lib/firefox-esr/mozilla.cfg
 RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
 
 EXPOSE 6080
