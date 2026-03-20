@@ -125,6 +125,16 @@ class ModalRuntime:
 
         op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
 
+    async def sync_machine_volume(self, sandbox_id: str, mount_path: str = "/vol") -> None:
+        op = log.bind(op="sync_machine_volume", sandbox_id=sandbox_id, mount_path=mount_path)
+        op.info("runtime.sync_machine_volume_start")
+        t0 = time.monotonic()
+        # Modal mounted volumes require an explicit sync inside the sandbox
+        # before newly uploaded backend-side writes become visible to running
+        # processes.
+        await self.exec(sandbox_id, ["bash", "-lc", f"sync {mount_path}"])
+        op.info("runtime.sync_machine_volume_done", elapsed_s=round(time.monotonic() - t0, 2))
+
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", sandbox_id=sandbox_id)
         op.info("runtime.terminate_start")

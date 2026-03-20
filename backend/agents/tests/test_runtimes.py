@@ -206,3 +206,17 @@ class TestModalRuntimeExec:
 
         output = await runtime.exec("sandbox-1", ["true"])
         assert output == "ok"
+
+    @pytest.mark.asyncio
+    async def test_sync_machine_volume_uses_sync_command(self, monkeypatch):
+        runtime = ModalRuntime()
+
+        async def _exec(sandbox_id, cmd, user="agent"):
+            assert sandbox_id == "sandbox-1"
+            assert cmd == ["bash", "-lc", "sync /vol/agents/agent-1"]
+            assert user == "agent"
+            return ""
+
+        monkeypatch.setattr(runtime, "exec", _exec)
+
+        await runtime.sync_machine_volume("sandbox-1", "/vol/agents/agent-1")

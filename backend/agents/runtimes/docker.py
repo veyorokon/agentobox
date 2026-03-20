@@ -166,6 +166,10 @@ class DockerRuntime:
         await self._run_sync(_write)
         op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
 
+    async def sync_machine_volume(self, sandbox_id: str, mount_path: str = "/vol") -> None:
+        """Docker bind/named volumes are already runtime-visible."""
+        return None
+
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", container_id=sandbox_id[:12])
         op.info("runtime.terminate_start")

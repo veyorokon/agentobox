@@ -277,11 +277,10 @@ async def test_deliver_input_writes_canonical_task_envelope():
 
 @pytest.mark.asyncio
 async def test_deliver_input_syncs_inbox_to_modal_sandbox():
-    """deliver_input() must push the task line into the Modal sandbox.
+    """deliver_input() must refresh the Modal sandbox after appending inbox state.
 
-    Regression: messages written to local filesystem are invisible to Modal
-    sandboxes. The inbox append must be synced via runtime.exec so the
-    relay inside the sandbox can read it.
+    Regression: messages written to the canonical machine store are invisible
+    to a running Modal sandbox until the mounted /vol view is synced.
     """
     fake_agent = MagicMock()
     fake_agent.id = "agent-modal-1"
@@ -289,7 +288,7 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
     fake_agent.sandbox_id = "sb-abc123"
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
-    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
+    fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
 
     content = [{"type": "text", "text": "hello from modal"}]
     with (
@@ -297,28 +296,13 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         mock_runtime = MagicMock()
-        mock_runtime.exec = AsyncMock(return_value="")
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, content, task_id="modal-task-1")
 
     # Local write still happens (durable record)
     fake_agent.volume.append_task.assert_called_once()
-    # Sandbox exec must be called to append the line inside the container
-    mock_runtime.exec.assert_awaited_once()
-    exec_args = mock_runtime.exec.await_args
-    assert exec_args.args[0] == "sb-abc123"
-    cmd = exec_args.args[1]
-    assert ">> /vol/agents/agent-modal-1/_abox/inbox.jsonl" in cmd[-1]
-    # The base64-encoded payload must decode to valid JSONL with trailing newline.
-    # Without the newline, readline() in the relay never returns the line.
-    import base64
-    b64_token = cmd[-1].split("echo ", 1)[1].split(" |", 1)[0]
-    decoded = base64.b64decode(b64_token).decode()
-    assert decoded.endswith("\n"), f"inbox line must end with newline, got: {decoded!r}"
-    import json
-    parsed = json.loads(decoded.strip())
-    assert parsed["type"] == "task"
-    assert parsed["task_id"] == "modal-task-1"
+    mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-abc123", "/vol/agents/agent-modal-1")
 
 
 @pytest.mark.asyncio
@@ -344,10 +328,11 @@ async def test_deliver_input_skips_sandbox_sync_for_docker():
 
 @pytest.mark.asyncio
 async def test_update_volume_and_reload_syncs_to_modal_sandbox():
-    """update_volume_and_reload() must push file content into Modal sandbox.
+    """update_volume_and_reload() must refresh Modal volume visibility.
 
-    Regression: mode changes, theme updates, and state writes go through
-    this path. Without sandbox sync, the Modal agent never sees the update.
+    Regression: mode changes, theme updates, and state writes go through this
+    path. Without syncing the mounted /vol view, the Modal agent never sees
+    the updated canonical file.
     """
     fake_agent = MagicMock()
     fake_agent.id = "agent-modal-2"
@@ -355,7 +340,7 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
     fake_agent.sandbox_id = "sb-def456"
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
-    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
+    fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
     fake_agent.volume.mutate.return_value = ReloadCommand(path="_abox/state.json")
 
     with (
@@ -363,16 +348,12 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         mock_runtime = MagicMock()
-        mock_runtime.write_file = AsyncMock()
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         await update_volume_and_reload(fake_agent, "_abox/state.json", '{"mode": "plan"}')
 
     fake_agent.volume.mutate.assert_called_once_with("_abox/state.json", '{"mode": "plan"}')
-    mock_runtime.write_file.assert_awaited_once_with(
-        "sb-def456",
-        b'{"mode": "plan"}',
-        "/vol/agents/agent-modal-2/_abox/state.json",
-    )
+    mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-def456", "/vol/agents/agent-modal-2")
 
 
 @pytest.mark.asyncio

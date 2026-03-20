@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import json
 from typing import Protocol
 
 from agents.models import Agent
@@ -32,14 +30,11 @@ class LocalAgentMachineWriter:
 
 
 class ModalAgentMachineWriter(LocalAgentMachineWriter):
-    """Modal writer: keep backend machine state and mirror desired writes into sandbox."""
+    """Modal writer: store desired state canonically, then refresh /vol visibility."""
 
     def __init__(self, agent: Agent):
         super().__init__(agent)
         self._runtime = None
-
-    def _sandbox_dest(self, path: str) -> str:
-        return self.machine.mounted_path(path)
 
     @property
     def runtime(self):
@@ -47,33 +42,18 @@ class ModalAgentMachineWriter(LocalAgentMachineWriter):
             self._runtime = get_runtime("modal")
         return self._runtime
 
-    async def append_task(self, *, task_id: str, content: list, role: str = "user") -> None:
-        await super().append_task(task_id=task_id, content=content, role=role)
+    async def _sync_machine_volume(self) -> None:
         if not self.agent.sandbox_id:
             return
+        await self.runtime.sync_machine_volume(self.agent.sandbox_id, self.machine.mounted_root())
 
-        line = json.dumps({
-            "type": "task",
-            "task_id": task_id,
-            "input": {"role": role, "content": content},
-        })
-        encoded = base64.b64encode((line + "\n").encode()).decode()
-        await self.runtime.exec(
-            self.agent.sandbox_id,
-            ["bash", "-c", f"echo {encoded} | base64 -d >> {self._sandbox_dest('_abox/inbox.jsonl')}"],
-        )
+    async def append_task(self, *, task_id: str, content: list, role: str = "user") -> None:
+        await super().append_task(task_id=task_id, content=content, role=role)
+        await self._sync_machine_volume()
 
     async def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
         reload_cmd = await super().mutate(path, content)
-        if not self.agent.sandbox_id:
-            return reload_cmd
-
-        body = content if isinstance(content, bytes) else content.encode()
-        await self.runtime.write_file(
-            self.agent.sandbox_id,
-            body,
-            self._sandbox_dest(path),
-        )
+        await self._sync_machine_volume()
         return reload_cmd
 
 
