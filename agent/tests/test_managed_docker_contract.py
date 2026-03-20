@@ -453,6 +453,15 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         )
         assert chromium_version.stdout.strip().startswith("Chromium")
 
+        browser_home = _container_exec(
+            container_id,
+            "cat",
+            f"/var/lib/agentobox-agent/{CANONICAL_PATHS['browser_home_html']}",
+        )
+        assert "Agentobox" in browser_home.stdout
+        assert "../theme.css" in browser_home.stdout
+        assert "Chromium Baseline" in browser_home.stdout
+
         status_raw = _container_exec(
             container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['runtime_status']}"
         )
