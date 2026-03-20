@@ -182,7 +182,7 @@ class TestNamingConventions:
             "get_absolute_url", "get_queryset", "natural_key", "from_db",
         }
         # Properties that act as computed accessors — not verb-prefixed methods
-        exempt_properties = {"volume", "needs_reconcile"}
+        exempt_properties = {"machine", "volume", "needs_reconcile"}
         # QuerySet subclasses follow Django's queryset conventions (filter-style names)
         exempt_classes = {"AgentQuerySet"}
         allowed_prefixes = (

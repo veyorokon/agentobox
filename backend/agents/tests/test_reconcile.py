@@ -201,6 +201,10 @@ def test_mark_error_replaces_generic_error_with_richer_crash_details():
 @pytest.mark.asyncio
 async def test_detect_dead_containers_marks_missing_runtime_explicitly():
     written_diagnostics = {}
+    machine = SimpleNamespace(
+        runtime_log_tail=lambda limit=10: [],
+        write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
+    )
     agent = SimpleNamespace(
         id="agent-1",
         name="test-agent",
@@ -209,10 +213,8 @@ async def test_detect_dead_containers_marks_missing_runtime_explicitly():
         status=AgentStatus.IDLE,
         project_id="project-1",
         runtime_status_projection={"runtime_state": "ready"},
-        volume=SimpleNamespace(
-            runtime_log_tail=lambda limit=10: [],
-            write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
-        ),
+        machine=machine,
+        volume=machine,
     )
     marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
     mock_runtime = AsyncMock()
@@ -243,6 +245,14 @@ async def test_detect_dead_containers_marks_missing_runtime_explicitly():
 @pytest.mark.asyncio
 async def test_detect_dead_containers_includes_last_runtime_event_for_missing_runtime():
     written_diagnostics = {}
+    machine = SimpleNamespace(
+        runtime_log_tail=lambda limit=10: [
+            {"event": "provisioning.release_complete"},
+            {"event": "runtime.booting"},
+            {"event": "transport.connected"},
+        ],
+        write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
+    )
     agent = SimpleNamespace(
         id="agent-1",
         name="test-agent",
@@ -250,15 +260,9 @@ async def test_detect_dead_containers_includes_last_runtime_event_for_missing_ru
         runtime="docker",
         status=AgentStatus.IDLE,
         project_id="project-1",
-        volume=SimpleNamespace(
-            runtime_log_tail=lambda limit=10: [
-                {"event": "provisioning.release_complete"},
-                {"event": "runtime.booting"},
-                {"event": "transport.connected"},
-            ],
-            runtime_status=lambda: {"runtime_state": "stopped"},
-            write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
-        ),
+        runtime_status_projection={"runtime_state": "stopped"},
+        machine=machine,
+        volume=machine,
     )
     marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
     mock_runtime = AsyncMock()
