@@ -334,7 +334,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Backend dependency scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.34.0
         with:
           scan-type: fs
           scan-ref: backend
@@ -344,7 +344,7 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
       - name: Dashboard dependency scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.34.0
         with:
           scan-type: fs
           scan-ref: dashboard
