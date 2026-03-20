@@ -10,7 +10,7 @@ from agent.contracts.theme import THEME_SCHEMA_VERSION
 from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.app import AgentApplication
 from agent.runtime.config import RuntimeConfig
-from agent.runtime.desktop.config import ensure_desktop_runtime_files
+from agent.runtime.desktop.config import default_browser_url, ensure_desktop_runtime_files
 from agent.runtime.services import ServiceGraph
 
 
@@ -26,6 +26,7 @@ def test_ensure_desktop_runtime_files_writes_awesome_config(tmp_path):
     assert '/usr/bin/chromium' in source
     assert '--no-sandbox' in source
     assert '--user-data-dir=' in source
+    assert default_browser_url(tmp_path) in source
     assert 'launcher_terminal' in source
     assert str(tmp_path / CANONICAL_PATHS["theme_awesome_lua"]) in source
     assert "_G.agentobox_apply_theme = apply_theme" in source
@@ -99,5 +100,6 @@ def test_desktop_profile_boot_writes_runtime_owned_awesome_config(tmp_path):
         assert 'beautiful.init({' in source
         assert "_G.agentobox_apply_theme = apply_theme" in source
         assert 'launcher_browser' in source
+        assert default_browser_url(tmp_path) in source
     finally:
         app.shutdown()

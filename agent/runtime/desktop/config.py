@@ -12,6 +12,10 @@ from pathlib import Path
 from agent.provisioning.manifest import CANONICAL_PATHS
 
 
+def default_browser_url(root_dir: Path) -> str:
+    return (root_dir / CANONICAL_PATHS["browser_home_html"]).resolve().as_uri()
+
+
 def ensure_desktop_runtime_files(root_dir: Path, *, agent_home: Path = Path("/home/agent")) -> None:
     """Write the runtime-owned desktop config files for the desktop profile."""
 
@@ -25,7 +29,7 @@ def render_awesome_rc(root_dir: Path, *, agent_home: Path = Path("/home/agent"))
 
     theme_path = root_dir / CANONICAL_PATHS["theme_awesome_lua"]
     browser_bin = "/usr/bin/chromium"
-    browser_url = "about:blank"
+    browser_url = default_browser_url(root_dir)
     browser_icon = "/usr/share/icons/hicolor/48x48/apps/chromium.png"
     xterm_icon = "/usr/share/pixmaps/xterm-color_48x48.xpm"
 

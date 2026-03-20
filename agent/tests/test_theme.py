@@ -13,6 +13,7 @@ from agent.runtime.theme import (
     build_theme_manager,
     load_theme_document,
     render_awesome_theme_lua,
+    render_browser_home_html,
     render_theme_css,
 )
 
@@ -88,11 +89,30 @@ def test_theme_files_applier_writes_json_and_css(tmp_path):
     theme_json = json.loads((tmp_path / CANONICAL_PATHS["theme_json"]).read_text())
     theme_css = (tmp_path / CANONICAL_PATHS["theme_css"]).read_text()
     awesome_lua = (tmp_path / CANONICAL_PATHS["theme_awesome_lua"]).read_text()
+    browser_home = (tmp_path / CANONICAL_PATHS["browser_home_html"]).read_text()
     assert theme_json["name"] == "Demo"
     assert theme_json["tokens"]["surface"] == "#1a1a1a"
     assert "--abox-surface: #1a1a1a;" in theme_css
     assert "--abox-text-default: #f0f0f0;" in theme_css
     assert '["surface"] = "#1a1a1a"' in awesome_lua
+    assert "Agentobox" in browser_home
+    assert "Demo" in browser_home
+    assert "../theme.css" in browser_home
+
+
+def test_render_browser_home_html_uses_theme_name_and_branding():
+    html = render_browser_home_html(
+        ThemeDocument(
+            schema_version=THEME_SCHEMA_VERSION,
+            name="Night Shift",
+            tokens={"surface": "#101010", "accent": "#ffaa00"},
+        )
+    )
+
+    assert "<title>Agentobox</title>" in html
+    assert "Night Shift" in html
+    assert "Browser-ready workspace for autonomous operators." in html
+    assert "../theme.css" in html
 
 
 def test_render_awesome_theme_lua_roundtrips_tokens():
@@ -181,6 +201,9 @@ def test_runtime_theme_manager_reload_projects_and_notifies(tmp_path):
 
     assert document.name == "Reload Me"
     assert seen == ["Reload Me"]
+    browser_home = (tmp_path / CANONICAL_PATHS["browser_home_html"]).read_text()
+    assert "Reload Me" in browser_home
+    assert "Canonical Tokens" in browser_home
 
 
 

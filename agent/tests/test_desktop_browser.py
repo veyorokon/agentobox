@@ -4,14 +4,17 @@ from pathlib import Path
 
 from agent.runtime.desktop.browser import (
     DEFAULT_BROWSER_BIN,
-    DEFAULT_BROWSER_URL,
     browser_launch_command,
     browser_launch_env,
 )
+from agent.runtime.desktop.config import default_browser_url
+from agent.provisioning.manifest import CANONICAL_PATHS
 
 
 def test_browser_launch_env_forces_software_x11_path():
+    root_dir = Path("/tmp/agentobox-root")
     env = browser_launch_env(
+        root_dir=root_dir,
         agent_home=Path("/home/agent"),
         display=":99",
     )
@@ -19,7 +22,7 @@ def test_browser_launch_env_forces_software_x11_path():
     assert env["HOME"] == "/home/agent"
     assert env["DISPLAY"] == ":99"
     assert env["AGENTOBOX_BROWSER_BIN"] == DEFAULT_BROWSER_BIN
-    assert env["AGENTOBOX_BROWSER_URL"] == DEFAULT_BROWSER_URL
+    assert env["AGENTOBOX_BROWSER_URL"] == default_browser_url(root_dir)
     assert env["GDK_BACKEND"] == "x11"
     assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
 
@@ -43,3 +46,9 @@ def test_browser_launch_command_uses_chromium_profile_dir():
         entry == "--user-data-dir=/home/agent/.config/chromium/agentobox"
         for entry in command
     )
+
+
+def test_default_browser_url_points_at_local_browser_home(tmp_path):
+    expected = (tmp_path / CANONICAL_PATHS["browser_home_html"]).resolve().as_uri()
+
+    assert default_browser_url(tmp_path) == expected

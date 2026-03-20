@@ -6,21 +6,21 @@ import os
 from pathlib import Path
 
 from agent.runtime.desktop.common import exec_process, wait_for_display
-from agent.runtime.desktop.config import ensure_desktop_runtime_files
+from agent.runtime.desktop.config import default_browser_url, ensure_desktop_runtime_files
 
 
 DEFAULT_BROWSER_BIN = "/usr/bin/chromium"
 DEFAULT_BROWSER_URL = "about:blank"
 
 
-def browser_launch_env(*, agent_home: Path, display: str) -> dict[str, str]:
+def browser_launch_env(*, root_dir: Path, agent_home: Path, display: str) -> dict[str, str]:
     """Return a conservative Chromium launch environment for virtual desktops."""
 
     return {
         "HOME": str(agent_home),
         "DISPLAY": display,
         "AGENTOBOX_BROWSER_BIN": os.environ.get("AGENTOBOX_BROWSER_BIN", DEFAULT_BROWSER_BIN),
-        "AGENTOBOX_BROWSER_URL": os.environ.get("AGENTOBOX_BROWSER_URL", DEFAULT_BROWSER_URL),
+        "AGENTOBOX_BROWSER_URL": os.environ.get("AGENTOBOX_BROWSER_URL", default_browser_url(root_dir)),
         "GDK_BACKEND": "x11",
         "LIBGL_ALWAYS_SOFTWARE": "1",
     }
@@ -50,10 +50,10 @@ def main() -> None:
 
     ensure_desktop_runtime_files(root_dir, agent_home=agent_home)
     wait_for_display(display)
-    browser_url = os.environ.get("AGENTOBOX_BROWSER_URL", DEFAULT_BROWSER_URL)
+    browser_url = os.environ.get("AGENTOBOX_BROWSER_URL", default_browser_url(root_dir))
     exec_process(
         browser_launch_command(agent_home=agent_home, browser_url=browser_url),
-        extra_env=browser_launch_env(agent_home=agent_home, display=display),
+        extra_env=browser_launch_env(root_dir=root_dir, agent_home=agent_home, display=display),
     )
 
 

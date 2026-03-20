@@ -106,6 +106,9 @@ class ThemeFilesApplier:
         (self._root_dir / CANONICAL_PATHS["theme_awesome_lua"]).write_text(
             render_awesome_theme_lua(document)
         )
+        browser_home = self._root_dir / CANONICAL_PATHS["browser_home_html"]
+        browser_home.parent.mkdir(parents=True, exist_ok=True)
+        browser_home.write_text(render_browser_home_html(document))
 
 
 def load_theme_document(path: Path) -> ThemeDocument:
@@ -144,6 +147,310 @@ def render_awesome_theme_lua(document: ThemeDocument) -> str:
         for k, v in sorted(document.tokens.items())
     )
     return f"return {{ {entries} }}\n"
+
+
+def render_browser_home_html(document: ThemeDocument) -> str:
+    """Render a deterministic local Chromium home surface from canonical tokens."""
+
+    theme_name = document.name or "Agentobox"
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agentobox</title>
+    <link rel="stylesheet" href="../theme.css" />
+    <style>
+      :root {{
+        color-scheme: dark;
+      }}
+
+      * {{
+        box-sizing: border-box;
+      }}
+
+      html,
+      body {{
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, var(--abox-accent-subtle, rgb(255 122 89 / 0.18)), transparent 32rem),
+          linear-gradient(180deg, var(--abox-surface-raised, #202020), var(--abox-surface, #141414));
+        color: var(--abox-text-default, #f6f4ee);
+        font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+      }}
+
+      body {{
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+      }}
+
+      .shell {{
+        width: min(1040px, 100%);
+        min-height: min(720px, calc(100vh - 4rem));
+        border: 1px solid var(--abox-border-default, rgb(255 255 255 / 0.12));
+        border-radius: var(--abox-radius-2xl, 1rem);
+        background:
+          linear-gradient(180deg, rgb(255 255 255 / 0.03), transparent 24%),
+          var(--abox-surface-sunken, #101010);
+        box-shadow: var(--abox-shadow-2xl, 0 25px 50px -12px rgb(0 0 0 / 0.55));
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }}
+
+      .chrome {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--abox-border-subtle, rgb(255 255 255 / 0.08));
+        background: rgb(255 255 255 / 0.02);
+        backdrop-filter: blur(14px);
+      }}
+
+      .brand {{
+        display: grid;
+        gap: 0.25rem;
+      }}
+
+      .brand-kicker {{
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--abox-text-muted, #8c8c8c);
+      }}
+
+      .brand-title {{
+        font-size: clamp(1.5rem, 2vw, 2rem);
+        font-weight: 700;
+      }}
+
+      .brand-title strong {{
+        color: var(--abox-accent, #ff7a59);
+        font-weight: 700;
+      }}
+
+      .theme-pill {{
+        padding: 0.4rem 0.75rem;
+        border: 1px solid var(--abox-border-default, rgb(255 255 255 / 0.12));
+        border-radius: 999px;
+        background: var(--abox-surface-overlay, rgb(255 255 255 / 0.06));
+        color: var(--abox-text-secondary, #d0d0d0);
+        font-size: 0.78rem;
+      }}
+
+      .content {{
+        display: grid;
+        grid-template-columns: 1.35fr 0.9fr;
+        gap: 1rem;
+        padding: 1rem;
+      }}
+
+      .hero,
+      .panel {{
+        border-radius: var(--abox-radius-xl, 0.75rem);
+        border: 1px solid var(--abox-border-subtle, rgb(255 255 255 / 0.08));
+        background: linear-gradient(180deg, rgb(255 255 255 / 0.03), transparent 60%), var(--abox-surface-raised, #1d1d1d);
+      }}
+
+      .hero {{
+        padding: 1.5rem;
+        display: grid;
+        gap: 1.25rem;
+      }}
+
+      .hero h1 {{
+        margin: 0;
+        font-size: clamp(2.25rem, 4vw, 3.75rem);
+        line-height: 0.92;
+        max-width: 10ch;
+      }}
+
+      .hero p {{
+        margin: 0;
+        max-width: 42rem;
+        color: var(--abox-text-secondary, #b5b5b5);
+        line-height: 1.6;
+      }}
+
+      .action-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }}
+
+      .action {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.8rem 1rem;
+        border-radius: var(--abox-radius-lg, 0.5rem);
+        border: 1px solid var(--abox-border-default, rgb(255 255 255 / 0.12));
+        background: var(--abox-interactive, rgb(255 255 255 / 0.04));
+        color: inherit;
+        text-decoration: none;
+      }}
+
+      .action.primary {{
+        background: var(--abox-accent, #ff7a59);
+        border-color: color-mix(in srgb, var(--abox-accent, #ff7a59) 70%, black);
+        color: var(--abox-text-on-emphasis, white);
+      }}
+
+      .hero-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+      }}
+
+      .metric {{
+        padding: 1rem;
+        border-radius: var(--abox-radius-lg, 0.5rem);
+        background: rgb(255 255 255 / 0.03);
+        border: 1px solid var(--abox-border-subtle, rgb(255 255 255 / 0.08));
+      }}
+
+      .metric-label {{
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--abox-text-muted, #8c8c8c);
+      }}
+
+      .metric-value {{
+        margin-top: 0.45rem;
+        font-size: 1.1rem;
+      }}
+
+      .stack {{
+        display: grid;
+        gap: 1rem;
+      }}
+
+      .panel {{
+        padding: 1rem;
+      }}
+
+      .panel h2 {{
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--abox-text-muted, #8c8c8c);
+      }}
+
+      .list {{
+        display: grid;
+        gap: 0.65rem;
+      }}
+
+      .list-item {{
+        padding: 0.8rem 0.9rem;
+        border-radius: var(--abox-radius-md, 0.375rem);
+        background: rgb(255 255 255 / 0.03);
+        border: 1px solid var(--abox-border-subtle, rgb(255 255 255 / 0.08));
+      }}
+
+      .list-item strong {{
+        display: block;
+        margin-bottom: 0.25rem;
+        color: var(--abox-text-default, #f6f4ee);
+      }}
+
+      .list-item span {{
+        color: var(--abox-text-secondary, #b5b5b5);
+        font-size: 0.92rem;
+      }}
+
+      @media (max-width: 860px) {{
+        .content {{
+          grid-template-columns: 1fr;
+        }}
+
+        .hero-grid {{
+          grid-template-columns: 1fr;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="chrome">
+        <div class="brand">
+          <div class="brand-kicker">Agent Desktop</div>
+          <div class="brand-title">Agento<strong>box</strong></div>
+        </div>
+        <div class="theme-pill">{theme_name}</div>
+      </header>
+      <section class="content">
+        <section class="hero">
+          <div>
+            <h1>Browser-ready workspace for autonomous operators.</h1>
+            <p>
+              Chromium is the reliable desktop baseline. Theme identity comes from the
+              canonical Agentobox theme system, not browser-specific hacks.
+            </p>
+          </div>
+          <div class="action-row">
+            <a class="action primary" href="https://github.com/veyorokon/agentobox">Open Source</a>
+            <a class="action" href="https://dev.agentobox.com">Open Dev Control Plane</a>
+            <a class="action" href="about:blank">Blank Tab</a>
+          </div>
+          <div class="hero-grid">
+            <div class="metric">
+              <div class="metric-label">Browser</div>
+              <div class="metric-value">Chromium Baseline</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Theme Source</div>
+              <div class="metric-value">Canonical Tokens</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Desktop Shell</div>
+              <div class="metric-value">AwesomeWM + noVNC</div>
+            </div>
+          </div>
+        </section>
+        <aside class="stack">
+          <section class="panel">
+            <h2>Surface Contract</h2>
+            <div class="list">
+              <div class="list-item">
+                <strong>One browser baseline</strong>
+                <span>Chromium stays boring. Styling belongs in first-party surfaces.</span>
+              </div>
+              <div class="list-item">
+                <strong>One canonical theme</strong>
+                <span>Desktop and browser consume the same semantic token document.</span>
+              </div>
+              <div class="list-item">
+                <strong>One derived web layer</strong>
+                <span>theme.css feeds local browser UI without creating a second theme system.</span>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <h2>Next Up</h2>
+            <div class="list">
+              <div class="list-item">
+                <strong>Project-aware home</strong>
+                <span>Recent agents, quick actions, and runtime facts can land here next.</span>
+              </div>
+              <div class="list-item">
+                <strong>Optional ricing layer</strong>
+                <span>GTK/profile polish can be additive later, not part of correctness.</span>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>
+"""
 
 
 class NullThemeConsumer:
