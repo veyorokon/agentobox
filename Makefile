@@ -1,4 +1,4 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-contract test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-contract test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-agent-runtime-modal-contract modal-contract modal-debug test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
 	uv --directory backend run daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -109,6 +109,15 @@ test-agent-runtime-docker-contract:
 
 test-agent-runtime-desktop-docker-contract:
 	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts= -k desktop
+
+test-agent-runtime-modal-contract:
+	AGENTOBOX_RUN_MODAL_CONTRACT_TESTS=1 PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/test_managed_modal_contract.py -q -o addopts=
+
+modal-contract:
+	uv run --project agent python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}"
+
+modal-debug:
+	uv run --project agent python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --keep-alive
 
 lint:
 	uv --directory backend run ruff check agents/
