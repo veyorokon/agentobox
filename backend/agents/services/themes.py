@@ -12,7 +12,18 @@ from pathlib import Path
 
 THEME_SCHEMA_VERSION = "1"
 PROJECT_THEME_SCHEMA_VERSION = "1"
-_MANIFEST_PATH = Path(__file__).resolve().parents[3] / "shared" / "themes" / "builtins.json"
+
+
+def _discover_manifest_path() -> Path:
+    here = Path(__file__).resolve()
+    for candidate_root in here.parents:
+        candidate = candidate_root / "shared" / "themes" / "builtins.json"
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError("shared/themes/builtins.json not found from agents.services.themes")
+
+
+_MANIFEST_PATH = _discover_manifest_path()
 
 
 def _theme_key(theme: str, mode: str) -> str:
