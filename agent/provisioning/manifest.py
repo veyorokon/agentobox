@@ -63,10 +63,10 @@ def managed_manifest() -> ProvisioningManifest:
         required_files=(
             CANONICAL_PATHS["relay_env"],
             CANONICAL_PATHS["runtime_state"],
-            CANONICAL_PATHS["runtime_status"],
             CANONICAL_PATHS["provisioned_ready"],
         ),
         optional_files=(
+            CANONICAL_PATHS["runtime_status"],
             CANONICAL_PATHS["theme_tokens"],
             CANONICAL_PATHS["secret_env"],
             CANONICAL_PATHS["workspace_instructions"],
@@ -82,7 +82,6 @@ def managed_manifest() -> ProvisioningManifest:
         validators={
             CANONICAL_PATHS["relay_env"]: FileValidator.NONEMPTY_FILE,
             CANONICAL_PATHS["runtime_state"]: FileValidator.VALID_JSON,
-            CANONICAL_PATHS["runtime_status"]: FileValidator.VALID_JSON,
             CANONICAL_PATHS["provisioned_ready"]: FileValidator.EXISTS,
         },
     )

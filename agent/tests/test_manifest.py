@@ -15,6 +15,8 @@ def test_manifest_modes():
     assert managed_manifest().mode is AgentMode.MANAGED
     assert CANONICAL_PATHS["runtime_state"] in standalone_manifest().required_files
     assert CANONICAL_PATHS["relay_env"] in managed_manifest().required_files
+    assert CANONICAL_PATHS["runtime_status"] not in managed_manifest().required_files
+    assert CANONICAL_PATHS["runtime_status"] in managed_manifest().optional_files
     assert CANONICAL_PATHS["task_inbox"] in managed_manifest().optional_files
     assert CANONICAL_PATHS["desktop_awesome_rc"] in managed_manifest().derived_files
 
