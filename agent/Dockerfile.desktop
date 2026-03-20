@@ -14,12 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-utils \
     xdotool \
     awesome \
+    chromium \
     dbus \
     dbus-x11 \
     python3-websockify \
-    firefox-esr \
-    libegl1 \
-    libgl1-mesa-dri \
     xterm \
     git \
     ca-certificates \
@@ -39,19 +37,6 @@ RUN git clone --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git /opt/
     && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html \
     && rm -rf /opt/noVNC/.git
 
-ARG TEXTFOX_COMMIT=e86c0a3a77cbdd8dbbca51b0c190733c8e6788e1
-RUN git clone https://github.com/adriankarlen/textfox.git /opt/textfox \
-    && cd /opt/textfox \
-    && git checkout ${TEXTFOX_COMMIT} \
-    && rm -rf /opt/textfox/.git
-
 RUN useradd -m -s /bin/bash agent || true
-
-COPY desktop-assets/textfox/defaults.css /opt/textfox/chrome/defaults.css
-COPY desktop-assets/firefox/firefox /usr/local/bin/firefox
-COPY desktop-assets/firefox/firefox-esr /usr/local/bin/firefox-esr
-COPY desktop-assets/firefox/autoconfig.js /usr/lib/firefox-esr/defaults/pref/autoconfig.js
-COPY desktop-assets/firefox/mozilla.cfg /usr/lib/firefox-esr/mozilla.cfg
-RUN chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
 
 EXPOSE 6080

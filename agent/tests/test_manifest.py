@@ -17,8 +17,6 @@ def test_manifest_modes():
     assert CANONICAL_PATHS["relay_env"] in managed_manifest().required_files
     assert CANONICAL_PATHS["task_inbox"] in managed_manifest().optional_files
     assert CANONICAL_PATHS["desktop_awesome_rc"] in managed_manifest().derived_files
-    assert CANONICAL_PATHS["desktop_firefox_config_css"] in managed_manifest().derived_files
-    assert CANONICAL_PATHS["desktop_firefox_overrides_js"] in managed_manifest().derived_files
 
 
 def test_standalone_provider_creates_valid_manifest_tree(tmp_path):

@@ -400,7 +400,7 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
                 return None
             if services.get("websockify") != "up":
                 return None
-            if services.get("firefox") != "up":
+            if services.get("browser") != "up":
                 return None
             return status
 
@@ -420,7 +420,7 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert status["services"]["x11vnc"] == "up"
         assert status["services"]["websockify"] == "up"
         assert status["services"]["awesome"] == "up"
-        assert status["services"]["firefox"] == "up"
+        assert status["services"]["browser"] == "up"
 
         assert relay.wait_for_connection(timeout_s=10) is True
         status_msg = relay.wait_for_message_match(
@@ -446,27 +446,12 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         )
         assert "noVNC" in novnc_index
 
-        firefox_config = _container_exec(
-            container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['desktop_firefox_config_css']}"
-        )
-        firefox_overrides = _container_exec(
-            container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['desktop_firefox_overrides_js']}"
-        )
-        assert "userChrome.css" in firefox_config.stdout
-        assert 'user_pref("browser.aboutwelcome.enabled", false);' in firefox_overrides.stdout
-
-        autoconfig = _container_exec(
+        chromium_version = _container_exec(
             container_id,
-            "cat",
-            "/usr/lib/firefox-esr/defaults/pref/autoconfig.js",
+            "chromium",
+            "--version",
         )
-        mozilla_cfg = _container_exec(
-            container_id,
-            "cat",
-            "/usr/lib/firefox-esr/mozilla.cfg",
-        )
-        assert 'pref("general.config.filename", "mozilla.cfg");' in autoconfig.stdout
-        assert 'let RELOAD_PORT = 9224;' in mozilla_cfg.stdout
+        assert chromium_version.stdout.strip().startswith("Chromium")
 
         status_raw = _container_exec(
             container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['runtime_status']}"
@@ -477,7 +462,7 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert projected["services"]["x11vnc"] == "up"
         assert projected["services"]["websockify"] == "up"
         assert projected["services"]["awesome"] == "up"
-        assert projected["services"]["firefox"] == "up"
+        assert projected["services"]["browser"] == "up"
         failed = False
     except AssertionError as exc:
         logs = _container_logs(container_id)

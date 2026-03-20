@@ -1,7 +1,7 @@
 """Materialize canonical runtime files at the container-visible paths tools expect.
 
 The managed runtime treats ``AGENTOBOX_ROOT_DIR`` as the canonical provisioned
-tree, but external tools like Claude Code and Firefox still read conventional
+tree, but external tools like Claude Code and desktop applications still read conventional
 paths such as ``/home/agent/.claude`` and ``/run/secrets``. This module creates
 an explicit bridge from the canonical tree into those container-visible paths.
 """

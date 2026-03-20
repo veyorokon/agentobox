@@ -17,7 +17,7 @@ def test_desktop_profile_uses_python_launchers():
     assert graph.specs["x11vnc"].command == ("python", "-m", "agent.runtime.desktop.x11vnc")
     assert graph.specs["websockify"].command == ("python", "-m", "agent.runtime.desktop.websockify")
     assert graph.specs["awesome"].command == ("python", "-m", "agent.runtime.desktop.awesome")
-    assert graph.specs["firefox"].command == ("python", "-m", "agent.runtime.desktop.firefox")
+    assert graph.specs["browser"].command == ("python", "-m", "agent.runtime.desktop.browser")
 
 
 def test_core_profile_has_no_desktop_services():

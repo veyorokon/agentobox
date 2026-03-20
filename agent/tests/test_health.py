@@ -9,7 +9,7 @@ from agent.contracts.transport import TransportSnapshot, TransportState
 from agent.runtime.health import readyz_payload
 
 
-def _managed_desktop_status(*, firefox: ServiceState = ServiceState.UP) -> StatusDocument:
+def _managed_desktop_status(*, browser: ServiceState = ServiceState.UP) -> StatusDocument:
     return StatusDocument(
         mode=AgentMode.MANAGED,
         platform=PlatformKind.MODAL,
@@ -29,13 +29,13 @@ def _managed_desktop_status(*, firefox: ServiceState = ServiceState.UP) -> Statu
             "x11vnc": ServiceState.UP,
             "websockify": ServiceState.UP,
             "awesome": ServiceState.UP,
-            "firefox": firefox,
+            "browser": browser,
         },
     )
 
 
 def test_readyz_requires_desktop_services_for_managed_runtime():
-    code, payload = readyz_payload(_managed_desktop_status(firefox=ServiceState.DOWN))
+    code, payload = readyz_payload(_managed_desktop_status(browser=ServiceState.DOWN))
     assert code == 200
     assert payload["status"] == "ready"
 

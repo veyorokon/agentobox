@@ -14,12 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-utils \
     xdotool \
     awesome \
+    chromium \
     dbus \
     dbus-x11 \
     python3-websockify \
-    firefox-esr \
-    libegl1 \
-    libgl1-mesa-dri \
     xterm \
     gosu \
     ca-certificates \
@@ -51,22 +49,11 @@ RUN mkdir -p /opt/noVNC \
        | tar -xz --strip-components=1 -C /opt/noVNC \
     && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html
 
-ARG TEXTFOX_COMMIT=e86c0a3a77cbdd8dbbca51b0c190733c8e6788e1
-RUN mkdir -p /opt/textfox \
-    && curl -fsSL "https://github.com/adriankarlen/textfox/archive/${TEXTFOX_COMMIT}.tar.gz" \
-       | tar -xz --strip-components=1 -C /opt/textfox
-
-COPY desktop-assets/textfox/defaults.css /opt/textfox/chrome/defaults.css
-COPY desktop-assets/firefox/firefox /usr/local/bin/firefox
-COPY desktop-assets/firefox/firefox-esr /usr/local/bin/firefox-esr
-COPY desktop-assets/firefox/autoconfig.js /usr/lib/firefox-esr/defaults/pref/autoconfig.js
-COPY desktop-assets/firefox/mozilla.cfg /usr/lib/firefox-esr/mozilla.cfg
 RUN useradd -m -s /bin/bash agent || true \
     && mkdir -p /home/agent/.claude \
     && chown -R agent:agent /home/agent /app /tmp \
     && chmod 1777 /tmp \
-    && chown -R agent:agent /usr/lib/firefox-esr/ /opt/textfox 2>/dev/null || true \
-    && chmod +x /usr/local/bin/firefox /usr/local/bin/firefox-esr
+    && chown -R agent:agent /home/agent/.config 2>/dev/null || true
 
 # Entrypoint wrapper: fix volume permissions then drop to agent user.
 # Volume files are written by root (Docker API from backend). gosu preserves

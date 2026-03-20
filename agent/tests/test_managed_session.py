@@ -191,12 +191,10 @@ def test_managed_session_reloads_theme_tokens(tmp_path):
 
     theme_json = json.loads((tmp_path / CANONICAL_PATHS["theme_json"]).read_text())
     theme_css = (tmp_path / CANONICAL_PATHS["theme_css"]).read_text()
-    firefox_css = (tmp_path / CANONICAL_PATHS["theme_firefox_css"]).read_text()
     awesome_lua = (tmp_path / CANONICAL_PATHS["theme_awesome_lua"]).read_text()
     assert theme_json["name"] == "Night Shift"
     assert theme_json["tokens"]["surface"] == "#101010"
     assert "--abox-accent: #ffaa00;" in theme_css
-    assert "--toolbar-bgcolor: #101010" in firefox_css
     assert '["accent"] = "#ffaa00"' in awesome_lua
     assert session.drain_outbound_messages() == []
 

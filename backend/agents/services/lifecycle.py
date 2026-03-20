@@ -1207,7 +1207,7 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
             for line in output.splitlines()
             if any(
                 token in line
-                for token in ("Xvfb", "novnc", "websockify", "firefox", "awesome", "relay", "svc-relay")
+                for token in ("Xvfb", "novnc", "websockify", "chromium", "awesome", "relay", "svc-relay")
             )
         ]
         truncated = "\n".join(interesting)[:200] if interesting else "(empty)"

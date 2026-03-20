@@ -6,7 +6,6 @@ from agent.contracts.theme import THEME_SCHEMA_VERSION, ThemeDocument
 from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.theme import (
     AwesomeThemeConsumer,
-    FirefoxThemeConsumer,
     RuntimeThemeManager,
     ThemeConsumerGroup,
     ThemeFilesApplier,
@@ -14,7 +13,6 @@ from agent.runtime.theme import (
     build_theme_manager,
     load_theme_document,
     render_awesome_theme_lua,
-    render_firefox_theme_css,
     render_theme_css,
 )
 
@@ -89,36 +87,12 @@ def test_theme_files_applier_writes_json_and_css(tmp_path):
     assert applied.name == "Demo"
     theme_json = json.loads((tmp_path / CANONICAL_PATHS["theme_json"]).read_text())
     theme_css = (tmp_path / CANONICAL_PATHS["theme_css"]).read_text()
-    firefox_css = (tmp_path / CANONICAL_PATHS["theme_firefox_css"]).read_text()
     awesome_lua = (tmp_path / CANONICAL_PATHS["theme_awesome_lua"]).read_text()
     assert theme_json["name"] == "Demo"
     assert theme_json["tokens"]["surface"] == "#1a1a1a"
     assert "--abox-surface: #1a1a1a;" in theme_css
     assert "--abox-text-default: #f0f0f0;" in theme_css
-    assert "--toolbar-bgcolor: #1a1a1a" in firefox_css
     assert '["surface"] = "#1a1a1a"' in awesome_lua
-
-
-def test_render_firefox_theme_css_maps_semantic_tokens():
-    css = render_firefox_theme_css(
-        ThemeDocument(
-            schema_version=THEME_SCHEMA_VERSION,
-            tokens={
-                "surface": "#2B303B",
-                "surface-raised": "#343D46",
-                "text-default": "#C0C5CE",
-                "text-muted": "#65737E",
-                "accent": "#8FA1B3",
-                "border-default": "#343D46",
-                "border-subtle": "#343D46",
-            },
-        )
-    )
-
-    assert "--toolbar-bgcolor: #2B303B" in css
-    assert "--toolbar-field-color: #C0C5CE" in css
-    assert "--tf-accent: #8FA1B3" in css
-    assert "background-image: none !important;" in css
 
 
 def test_render_awesome_theme_lua_roundtrips_tokens():
@@ -208,51 +182,6 @@ def test_runtime_theme_manager_reload_projects_and_notifies(tmp_path):
     assert document.name == "Reload Me"
     assert seen == ["Reload Me"]
 
-
-def test_firefox_theme_consumer_uses_socket_reload():
-    seen = {}
-
-    def _connector(host: str, port: int, timeout_s: float) -> None:
-        seen["call"] = (host, port, timeout_s)
-
-    consumer = FirefoxThemeConsumer(connector=_connector)
-    consumer.notify_theme_changed(
-        ThemeDocument(schema_version=THEME_SCHEMA_VERSION, name="Socket", tokens={"surface": "#000"})
-    )
-
-    assert seen["call"] == ("127.0.0.1", 9224, 1.0)
-
-
-def test_firefox_theme_consumer_retries_until_browser_is_ready():
-    seen = {"count": 0, "sleeps": []}
-
-    def _connector(host: str, port: int, timeout_s: float) -> None:
-        seen["count"] += 1
-        if seen["count"] < 3:
-            raise OSError("refused")
-
-    consumer = FirefoxThemeConsumer(
-        connector=_connector,
-        attempts=4,
-        retry_delay_s=0.1,
-        sleeper=lambda delay: seen["sleeps"].append(delay),
-    )
-    consumer.notify_theme_changed(
-        ThemeDocument(schema_version=THEME_SCHEMA_VERSION, name="Retry", tokens={"surface": "#000"})
-    )
-
-    assert seen["count"] == 3
-    assert seen["sleeps"] == [0.1, 0.1]
-
-
-def test_firefox_theme_consumer_raises_clean_error_on_failure():
-    def _connector(host: str, port: int, timeout_s: float) -> None:
-        raise OSError("refused")
-
-    consumer = FirefoxThemeConsumer(connector=_connector, attempts=2, retry_delay_s=0.0, sleeper=lambda _: None)
-    consumer.notify_theme_changed(
-        ThemeDocument(schema_version=THEME_SCHEMA_VERSION, name="Broken", tokens={"surface": "#000"})
-    )
 
 
 def test_awesome_theme_consumer_runs_reload_command():
