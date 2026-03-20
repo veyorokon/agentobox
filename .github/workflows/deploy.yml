@@ -374,13 +374,28 @@ jobs:
             echo "- domain: \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\`"
             echo
             echo "### Gates"
-            echo "- validate_secrets: \`${{ needs.validate-secrets.result }}\`"
-            echo "- ci: \`${{ needs.ci.result }}\`"
-            echo "- build: \`${{ needs.build.result }}\`"
-            echo "- agent_image: \`${{ needs.agent-image.result }}\`"
-            echo "- deploy: \`${{ needs.deploy.result }}\`"
-            echo "- agent_bootstrap: \`${{ needs.agent-bootstrap.result }}\`"
-            echo "- agent_smoke: \`${{ needs.agent-smoke.result }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          declare -A gates
+          gates=(
+            [validate_secrets]="${{ needs.validate-secrets.result }}"
+            [ci]="${{ needs.ci.result }}"
+            [build]="${{ needs.build.result }}"
+            [agent_image]="${{ needs.agent-image.result }}"
+            [deploy]="${{ needs.deploy.result }}"
+            [agent_bootstrap]="${{ needs.agent-bootstrap.result }}"
+            [agent_smoke]="${{ needs.agent-smoke.result }}"
+          )
+          for gate in validate_secrets ci build agent_image deploy agent_bootstrap agent_smoke; do
+            r="${gates[$gate]}"
+            if [ "$r" = "success" ]; then
+              echo "- [x] ${gate}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- [ ] ${gate} — \`${r}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+          {
             echo
             echo "### Artifacts"
             echo "- backend_image: \`${{ needs.build.outputs.backend-image }}\`"

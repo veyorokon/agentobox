@@ -178,27 +178,44 @@ jobs:
           overall: ${{ steps.status.outputs.overall }}
       - name: Write image details
         run: |
+          managed="${{ needs.build-managed.result }}"
+          desktop="${{ needs.build-desktop-managed.result }}"
+          contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
+
           {
             echo
             echo "### Jobs"
-            echo "- managed_build: \`${{ needs.build-managed.result }}\`"
-            echo "- desktop_build: \`${{ needs.build-desktop-managed.result }}\`"
-            echo "- contract_test: \`${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for pair in "managed_build:${managed}" "desktop_build:${desktop}" "contract_test:${contract}"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            if [ "$result" = "success" ]; then
+              echo "- [x] ${name}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- [ ] ${name} — \`${result}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+          {
             echo
             echo "### Artifacts"
             echo "- managed_image: \`${{ needs.build-managed.outputs.managed-image }}\`"
             echo "- desktop_image: \`${{ needs.build-desktop-managed.outputs.desktop-image }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Append failure detail if contract test failed
+          # Collapsible failure detail if contract test failed
           hint="${{ needs.build-desktop-managed.outputs.contract-test-hint }}"
           if [ -n "$hint" ]; then
             {
               echo
               echo "### Failure Details"
-              echo "**contract_test:**"
+              echo "<details><summary><b>contract_test</b></summary>"
+              echo
               echo '```'
               echo "$hint"
               echo '```'
+              echo
+              echo "</details>"
             } >> "$GITHUB_STEP_SUMMARY"
           fi

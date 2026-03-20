@@ -396,45 +396,65 @@ jobs:
         with:
           title: CI Fast Summary
           overall: ${{ steps.status.outputs.overall }}
-      - name: Write lanes
+      - name: Write lanes and failure details
         run: |
+          # Build lane checklist — failed lanes get unchecked box
           {
             echo
             echo "### Lanes"
-            echo "- backend-unit: \`${{ needs.backend-unit.result }}\`"
-            echo "- backend-chaos: \`${{ needs.backend-chaos.result }}\`"
-            echo "- backend-integration: \`${{ needs.backend-integration.result }}\`"
-            echo "- backend-architecture: \`${{ needs.backend-architecture.result }}\`"
-            echo "- backend-lint: \`${{ needs.backend-lint.result }}\`"
-            echo "- agent-unit: \`${{ needs.agent-unit.result }}\`"
-            echo "- agent-lint: \`${{ needs.agent-lint.result }}\`"
-            echo "- dashboard-unit: \`${{ needs.dashboard-unit.result }}\`"
-            echo "- dashboard-typecheck: \`${{ needs.dashboard-typecheck.result }}\`"
-            echo "- security-app: \`${{ needs.security-app.result }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Append failure hints if any lane failed
-          hints=""
-          for lane in backend-unit backend-chaos backend-integration agent-unit agent-lint dashboard-unit dashboard-typecheck backend-lint; do
-            case "$lane" in
-              backend-unit)        hint="${{ needs.backend-unit.outputs.failure-hint }}" ;;
-              backend-chaos)       hint="${{ needs.backend-chaos.outputs.failure-hint }}" ;;
-              backend-integration) hint="${{ needs.backend-integration.outputs.failure-hint }}" ;;
-              agent-unit)          hint="${{ needs.agent-unit.outputs.failure-hint }}" ;;
-              agent-lint)          hint="${{ needs.agent-lint.outputs.failure-hint }}" ;;
-              dashboard-unit)      hint="${{ needs.dashboard-unit.outputs.failure-hint }}" ;;
-              dashboard-typecheck) hint="${{ needs.dashboard-typecheck.outputs.failure-hint }}" ;;
-              backend-lint)        hint="${{ needs.backend-lint.outputs.failure-hint }}" ;;
-            esac
-            if [ -n "$hint" ]; then
-              hints="${hints}\n**${lane}:**\n\`\`\`\n${hint}\n\`\`\`\n"
+          declare -A results hints
+          results=(
+            [backend-unit]="${{ needs.backend-unit.result }}"
+            [backend-chaos]="${{ needs.backend-chaos.result }}"
+            [backend-integration]="${{ needs.backend-integration.result }}"
+            [backend-architecture]="${{ needs.backend-architecture.result }}"
+            [backend-lint]="${{ needs.backend-lint.result }}"
+            [agent-unit]="${{ needs.agent-unit.result }}"
+            [agent-lint]="${{ needs.agent-lint.result }}"
+            [dashboard-unit]="${{ needs.dashboard-unit.result }}"
+            [dashboard-typecheck]="${{ needs.dashboard-typecheck.result }}"
+            [security-app]="${{ needs.security-app.result }}"
+          )
+          hints=(
+            [backend-unit]="${{ needs.backend-unit.outputs.failure-hint }}"
+            [backend-chaos]="${{ needs.backend-chaos.outputs.failure-hint }}"
+            [backend-integration]="${{ needs.backend-integration.outputs.failure-hint }}"
+            [backend-lint]="${{ needs.backend-lint.outputs.failure-hint }}"
+            [agent-unit]="${{ needs.agent-unit.outputs.failure-hint }}"
+            [agent-lint]="${{ needs.agent-lint.outputs.failure-hint }}"
+            [dashboard-unit]="${{ needs.dashboard-unit.outputs.failure-hint }}"
+            [dashboard-typecheck]="${{ needs.dashboard-typecheck.outputs.failure-hint }}"
+          )
+
+          has_failures=false
+          for lane in backend-unit backend-chaos backend-integration backend-architecture backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck security-app; do
+            r="${results[$lane]}"
+            if [ "$r" = "success" ]; then
+              echo "- [x] ${lane}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- [ ] ${lane} — \`${r}\`" >> "$GITHUB_STEP_SUMMARY"
+              has_failures=true
             fi
           done
 
-          if [ -n "$hints" ]; then
-            {
-              echo
-              echo "### Failure Details"
-              echo -e "$hints"
-            } >> "$GITHUB_STEP_SUMMARY"
+          # Collapsible failure details for lanes with hints
+          if [ "$has_failures" = true ]; then
+            has_hints=false
+            details=""
+            for lane in backend-unit backend-chaos backend-integration backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck; do
+              hint="${hints[$lane]:-}"
+              if [ -n "$hint" ]; then
+                has_hints=true
+                details="${details}<details><summary><b>${lane}</b></summary>"$'\n\n'"\`\`\`"$'\n'"${hint}"$'\n'"\`\`\`"$'\n\n'"</details>"$'\n'
+              fi
+            done
+            if [ "$has_hints" = true ]; then
+              {
+                echo
+                echo "### Failure Details"
+                echo "$details"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi

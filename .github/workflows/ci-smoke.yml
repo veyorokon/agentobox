@@ -120,11 +120,24 @@ jobs:
           else
             round_trip_smoke="${{ steps.roundtrip.outcome || 'not-run' }}"
           fi
+          bootstrap="${{ steps.bootstrap.outcome || 'not-run' }}"
+
           {
             echo
             echo "### Tests"
-            echo "- bootstrap_test: \`${{ steps.bootstrap.outcome || 'not-run' }}\`"
-            echo "- round_trip_smoke: \`${round_trip_smoke}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for pair in "bootstrap_test:${bootstrap}" "round_trip_smoke:${round_trip_smoke}"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            if [ "$result" = "success" ]; then
+              echo "- [x] ${name}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- [ ] ${name} — \`${result}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+          {
             echo "- provider_key_present: \`${provider_key_present}\`"
             echo "- mode: \`${mode}\`"
           } >> "$GITHUB_STEP_SUMMARY"
