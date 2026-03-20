@@ -213,12 +213,14 @@ Images are built and pushed to GHCR on every push to `main` (`:main`, `:sha-xxx`
 
 | Doc | Purpose |
 |-----|---------|
-| [FOUNDATIONS](docs/FOUNDATIONS.md) | Product axioms, principles, design decisions |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System topology, data flow, service lifecycle |
+| [TESTING](docs/testing.md) | Canonical test taxonomy and CI lane mapping |
+| [CONTRACTS](docs/contracts/README.md) | Ownership and invariants for provisioning, runtime, preview, and release |
+| [RUNTIME-FAILURE-AUDIT](docs/RUNTIME-FAILURE-AUDIT.md) | Standard runtime debugging and failure classification procedure |
 | [REFERENCE](docs/REFERENCE.md) | Auto-generated: backend modules, annotations (`make docs`) |
 | [DASHBOARD-REFERENCE](docs/DASHBOARD-REFERENCE.md) | Auto-generated: dashboard modules, annotations (`make docs`) |
 | [AGENT-REFERENCE](docs/AGENT-REFERENCE.md) | Auto-generated: agent modules, s6 services, annotations (`make docs`) |
-| [DASHBOARD-UX-SPEC](docs/DASHBOARD-UX-SPEC.md) | UX framework, component hierarchy |
+| [docs/archive/superseded](docs/archive/superseded/README.md) | Historical docs retained for context, not as current source of truth |
 
 ## Project Structure
 

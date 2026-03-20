@@ -138,13 +138,15 @@ Both are merged into `/opt/agentobox/.env` on deploy. Secrets override config if
 
 ## Documentation
 
-- `docs/FOUNDATIONS.md` — Product axioms, principles, design decisions, open questions
 - `docs/ARCHITECTURE.md` — Technical reference: system architecture, patterns, services, models
+- `docs/testing.md` — Canonical test taxonomy and CI lane mapping
+- `docs/contracts/README.md` — Operational contract index and ownership boundaries
+- `docs/RUNTIME-FAILURE-AUDIT.md` — Runtime debugging procedure and failure classes
 - `docs/REFERENCE.md` — Auto-generated from codebase docstrings and annotations. Regenerate with `make docs`.
-- `docs/DASHBOARD-UX-SPEC.md` — UX framework, feature inventory, component hierarchy
+- `docs/archive/superseded/` — Historical docs kept for context, not for current implementation guidance
 - `docs/archive/` — Historical research (experiments, binary analysis, Crush comparison)
 
-Read FOUNDATIONS before making product-level decisions. Read ARCHITECTURE before writing backend code, adding hook interceptions, or modifying agent provisioning. Read DASHBOARD-UX-SPEC before frontend work.
+Read ARCHITECTURE before changing backend/runtime structure. Read `docs/contracts/` before crossing a control-plane/runtime/UI boundary. Read `docs/testing.md` before adding or moving tests.
 
 ## Architecture
 
