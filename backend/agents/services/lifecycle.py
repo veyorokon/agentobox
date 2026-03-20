@@ -482,35 +482,28 @@ async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, 
 
     Docker volumes are shared between backend and agent containers —
     vol.write() writes to the same filesystem the container reads.
-    Modal volumes are separate — the backend writes to a local Docker
-    volume, but the Modal sandbox mounts its own Modal volume at /vol.
-    This function bridges the gap by tarring only backend-owned desired/
-    config/secrets files and extracting them inside the sandbox. Runtime-
+    Modal volumes are separate — the backend writes to one project-volume
+    implementation, while the Modal sandbox mounts its own runtime-visible
+    machine root at /vol. This bridge tars only backend-owned desired/
+    config/secrets files and extracts them inside the sandbox. Runtime-
     owned files such as _abox/status.json stay runtime-owned and must not
     be projected backend→sandbox.
     """
-    root = vol.root
-    if not root.exists():
-        op_log.warning("lifecycle.volume_sync_skip", reason="root_missing", root=str(root))
-        return
 
     buf = io.BytesIO()
     file_count = 0
     sync_paths = vol.provision_sync_paths()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for rel_path in sync_paths:
-            path = root / rel_path
-            if not path.is_file():
-                continue
             arcname = vol.archive_entry(rel_path)
+            body = vol.read_bytes(rel_path)
             info = tarfile.TarInfo(name=arcname)
-            info.size = path.stat().st_size
+            info.size = len(body)
             info.uid = 1000
             info.gid = 1000
             # Preserve restrictive permissions for secrets
-            info.mode = path.stat().st_mode & 0o777
-            with open(path, "rb") as f:
-                tar.addfile(info, f)
+            info.mode = vol.stat_mode(rel_path)
+            tar.addfile(info, io.BytesIO(body))
             file_count += 1
     buf.seek(0)
     tar_bytes = buf.read()

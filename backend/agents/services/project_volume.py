@@ -61,6 +61,10 @@ class ProjectVolumeStore(Protocol):
 
     def stat_size(self, machine: AgentMachinePaths, path: str) -> int: ...
 
+    def stat_mode(self, machine: AgentMachinePaths, path: str) -> int: ...
+
+    def list_files(self, machine: AgentMachinePaths, prefix: str) -> list[str]: ...
+
     def local_machine_root(self, machine: AgentMachinePaths) -> Path: ...
 
 
@@ -114,6 +118,19 @@ class LocalProjectVolumeStore:
 
     def stat_size(self, machine: AgentMachinePaths, path: str) -> int:
         return self._full_path(machine, path).stat().st_size
+
+    def stat_mode(self, machine: AgentMachinePaths, path: str) -> int:
+        return self._full_path(machine, path).stat().st_mode & 0o777
+
+    def list_files(self, machine: AgentMachinePaths, prefix: str) -> list[str]:
+        base = self._full_path(machine, prefix)
+        if not base.exists():
+            return []
+        return [
+            str(full_path.relative_to(self._full_path(machine)))
+            for full_path in sorted(base.rglob("*"))
+            if full_path.is_file()
+        ]
 
     def local_machine_root(self, machine: AgentMachinePaths) -> Path:
         return self._full_path(machine)

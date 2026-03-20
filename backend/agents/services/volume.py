@@ -245,6 +245,9 @@ class AgentMachine:
     def read_bytes(self, path: str) -> bytes:
         return self._store.read_bytes(self._machine, path)
 
+    def stat_mode(self, path: str) -> int:
+        return self._store.stat_mode(self._machine, path)
+
     def exists(self, path: str) -> bool:
         return self._store.exists(self._machine, path)
 
@@ -420,13 +423,7 @@ class AgentMachine:
                 seen.add(path)
 
         for prefix in PROVISION_SYNC_DIRS:
-            base = self.root / prefix
-            if not base.exists():
-                continue
-            for full_path in sorted(base.rglob("*")):
-                if not full_path.is_file():
-                    continue
-                rel = str(full_path.relative_to(self.root))
+            for rel in self._store.list_files(self._machine, prefix):
                 if rel not in seen:
                     paths.append(rel)
                     seen.add(rel)

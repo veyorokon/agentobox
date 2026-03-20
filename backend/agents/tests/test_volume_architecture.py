@@ -226,6 +226,16 @@ class TestProvisionSyncManifest:
         for prefix in PROVISION_SYNC_DIRS:
             assert prefix.startswith(("home/", "run/"))
 
+    def test_provision_sync_manifest_is_store_driven_not_root_walk(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.initialize()
+        vol.write("home/agent/workspace/.claude/skills/demo/SKILL.md", "# demo")
+        vol.root = tmp_path / "missing-root"
+
+        paths = vol.provision_sync_paths()
+
+        assert "home/agent/workspace/.claude/skills/demo/SKILL.md" in paths
+
 
 class TestSecretsAndMcpHelpers:
     """Secrets/MCP machine paths should be explicit helpers, not raw strings everywhere."""

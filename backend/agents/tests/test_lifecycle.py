@@ -200,6 +200,35 @@ async def test_modal_volume_sync_excludes_runtime_owned_files(tmp_path):
     assert "agents/agent-test/_abox/runtime-diagnostics.json" not in names
 
 
+@pytest.mark.asyncio
+async def test_modal_volume_sync_is_store_driven_not_root_walk(tmp_path):
+    vol = _make_volume(tmp_path)
+    vol.initialize()
+    vol.write("_abox/state.json", json.dumps({"mode": "auto"}))
+    vol.write("home/agent/.relay_env", "RELAY_AUTH_TOKEN=test")
+    vol.root = tmp_path / "missing-root"
+
+    written = {}
+
+    class _Runtime:
+        async def write_file(self, sandbox_id, content, dest):
+            written["content"] = content
+            written["dest"] = dest
+
+        async def exec(self, *args, **kwargs):
+            return ""
+
+    op_log = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
+    await _sync_volume_to_sandbox(_Runtime(), "sb-123", vol, "agent-test", op_log)
+
+    archive = tarfile.open(fileobj=io.BytesIO(written["content"]), mode="r:gz")
+    names = set(archive.getnames())
+
+    assert written["dest"] == "/tmp/vol-sync.tar.gz"
+    assert "agents/agent-test/_abox/state.json" in names
+    assert "agents/agent-test/home/agent/.relay_env" in names
+
+
 @pytest.mark.django_db(transaction=True)
 def test_create_lifecycle_attempt_sync_persists_attempt():
     owner = User.objects.create_user(username="owner", password="pw")
