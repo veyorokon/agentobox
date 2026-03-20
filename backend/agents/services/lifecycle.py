@@ -598,6 +598,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
         executor = env["AGENTOBOX_EXECUTOR"]
+        machine = agent.machine
 
         # Generate relay auth token for this agent.
         # Passed as env var for the new runtime (reads RELAY_AUTH_TOKEN at boot).
@@ -605,8 +606,8 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         relay_token = secrets.token_urlsafe(32)
         env["RELAY_AUTH_TOKEN"] = relay_token
         # New runtime reads provisioned files from AGENTOBOX_ROOT_DIR.
-        # Volume is mounted at /vol, agent files at /vol/agents/<agent_id>.
-        env["AGENTOBOX_ROOT_DIR"] = f"/vol/agents/{agent_id}"
+        # Volume is mounted at /vol and the machine helper owns the runtime-visible path.
+        env["AGENTOBOX_ROOT_DIR"] = machine.mounted_root()
 
         api_key = ""
         is_oauth = False
@@ -660,7 +661,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # as its readiness gate — once this directory exists, it creates
         # symlinks and all s6 services can start. Without this, the relay
         # service blocks forever waiting for its volume symlinks.
-        vol = agent.machine
+        vol = machine
         vol.initialize()
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="volume_initialized")
