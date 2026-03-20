@@ -108,10 +108,8 @@ For every runtime failure, collect the same bundle before guessing.
 - `_abox/state.json`
 - `_abox/status.json`
 - `tmp/abox-theme/tokens.json`
+- `tmp/abox-theme/theme.css`
 - `tmp/abox-theme/awesome.lua`
-- `tmp/abox-theme/userChrome.css`
-- `home/agent/.mozilla/firefox/profiles.ini`
-- `home/agent/.mozilla/firefox/agentobox.default/*`
 
 ### Process Snapshot
 
@@ -137,17 +135,18 @@ Use this exact order.
 
 ## Expected Contracts
 
-### Browser Profile Contract
+### Browser Contract
 
-If Firefox is launched by the managed desktop:
-- it must use the deterministic profile `agentobox.default`
-- reopening Firefox must not fall back to a stock ESR profile
-- `profiles.ini` must point default startup at `agentobox.default`
+If the managed desktop launches the browser:
+- the `browser` service must remain `up`
+- the launcher command must point at the configured baseline browser
+- the profile dir and startup URL must be deterministic
 
 ### Theme Convergence Contract
 
 When canonical theme tokens change:
 - `tokens.json` must update
+- `theme.css` must update
 - every active theme consumer must converge within a bounded delay
 - a missing or closed consumer must degrade gracefully without poisoning runtime state
 

@@ -58,7 +58,7 @@ Called from:
 2. Relay poke handler when tokens.json changes
 
 Input:  /vol/tmp/abox-theme/tokens.json (CSS design tokens)
-Output: /vol/tmp/abox-theme/userChrome.css (Firefox textfox overrides)
+Output: /vol/tmp/abox-theme/theme.css (generic browser/home-surface CSS)
         /vol/tmp/abox-theme/awesome.lua (AwesomeWM theme table)
         /vol/tmp/abox-theme/theme.json (reference copy)
 
@@ -148,8 +148,8 @@ Sleep forever so s6 doesn't restart-loop this service.
 
 ### agent/rootfs/etc/s6-overlay/s6-rc.d/svc-dbus/run
 
-Start a dbus session bus so Firefox IPC works between invocations.
-Write the address to a file that the firefox wrapper and awesome source.
+Start a dbus session bus for desktop/browser processes that expect one.
+Write the address to a file that desktop services can source.
 
 ### agent/rootfs/etc/s6-overlay/s6-rc.d/svc-mcp-gateway/run
 
@@ -175,10 +175,6 @@ reconnection logic (WS backoff + SDK retry) and the backend backfills
 missed messages on reconnect. After MAX_CRASHES consecutive failures,
 halt the container to avoid infinite loops.
 
-### agent/rootfs/etc/s6-overlay/scripts/firefox-setup
-
-Firefox profile setup — create default profile, inject textfox + Rose Pine Moon
-
 ### agent/rootfs/etc/s6-overlay/scripts/init-volume
 
 init-volume — create symlinks from the agent's volume subdir into the container.
@@ -201,7 +197,6 @@ with a broken key path.
 
 | Service | Type | Dependencies |
 |---------|------|-------------|
-| init-firefox | oneshot | svc-dbus, svc-xvfb |
 | init-volume | oneshot | base |
 | svc-apiproxy | longrun | base, init-volume |
 | svc-awesome | longrun | init-volume, svc-dbus, svc-xvfb |
@@ -211,10 +206,6 @@ with a broken key path.
 | svc-websockify | longrun | svc-x11vnc |
 | svc-x11vnc | longrun | svc-xvfb |
 | svc-xvfb | longrun | base |
-
-### init-firefox
-
-Firefox profile setup — create default profile, inject textfox + Rose Pine Moon
 
 ### init-volume
 
@@ -235,8 +226,8 @@ Sleep forever so s6 doesn't restart-loop this service.
 
 ### svc-dbus
 
-Start a dbus session bus so Firefox IPC works between invocations.
-Write the address to a file that the firefox wrapper and awesome source.
+Start a dbus session bus for desktop/browser processes that expect one.
+Write the address to a file that desktop services can source.
 
 ### svc-mcp-gateway
 
@@ -355,46 +346,15 @@ Secret loading from filesystem sources.
 
 Redaction of secrets from text and event dicts.
 
-### test_theme_chain.py — TestTextfoxVariableCoverage
+### test_theme.py — TestRenderThemeCss
 
-Generated CSS + config.css must cover ALL --tf-* variables from textfox.
+Generated CSS must reflect the semantic theme tokens without leaking stale defaults.
 
-This is the test that catches silent theme regression: if textfox defines
-a new --tf-* variable and we don't override it, the textfox default bleeds
-through on theme change. That's exactly the bug where the new tab page
-still showed "textfox" ASCII art after switching to blyss-dark.
+### test_theme.py — TestWriteThemeDocument
 
-### test_theme_chain.py — TestThemeActuallyApplied
+End-to-end: write a theme document and verify the derived runtime artifacts update.
 
-End-to-end: push a weird theme, verify the generated CSS uses ONLY those values.
-
-This is the test that catches the actual user bug: "I changed the theme
-to blyss-dark but Firefox still shows textfox defaults." The test uses
-an absurd all-red theme so any default value that bleeds through is
-instantly visible — if you see anything other than #ff0000 in a color
-property, the converter didn't apply the theme.
-
-### test_theme_chain.py — TestTokensToCSS
-
-tokens_to_css must produce valid CSS with the exact token values.
-
-### test_theme_chain.py — TestConvertTheme
-
-convert_theme writes all three derived files.
-
-### test_theme_chain.py — TestFirefoxConfig
-
-mozilla.cfg and config.css must point to /tmp/abox-theme/userChrome.css.
-
-### test_theme_chain.py — TestRelayPokeConfig
-
-Relay's _on_theme_changed reads from the correct path.
-
-### test_theme_chain.py — TestFirefoxSetup
-
-firefox-setup creates the profile and injects textfox + theme CSS.
-
-### test_theme_chain.py — TestInitVolumeSymlinks
+### test_theme.py — TestInitVolumeSymlinks
 
 init-volume must symlink /tmp/abox-theme so the volume files are visible.
 
