@@ -144,7 +144,7 @@ jobs:
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
-          context: backend
+          context: .
           file: backend/Dockerfile
           push: true
           tags: ${{ steps.backend-meta.outputs.tags }}
@@ -169,7 +169,7 @@ jobs:
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
-          context: dashboard
+          context: .
           file: dashboard/Dockerfile
           push: true
           tags: ${{ steps.dashboard-meta.outputs.tags }}

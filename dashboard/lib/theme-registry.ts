@@ -1,4 +1,4 @@
-import builtInThemeManifest from "../../shared/themes/builtins.json"
+import builtInThemeManifest from "../generated/themes/builtins.json"
 
 export type ThemeTokens = Record<string, string>
 

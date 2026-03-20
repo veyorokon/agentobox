@@ -36,7 +36,9 @@ services:
       start_period: 15s
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     mem_limit: 1g
     entrypoint: ["bash", "/app/entrypoint.sh"]
     command: ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
@@ -84,6 +86,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./shared:/shared:ro
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
       - ./agent:/agent:ro
@@ -92,7 +95,8 @@ services:
 
   dashboard:
     build:
-      context: ./dashboard
+      context: .
+      dockerfile: dashboard/Dockerfile
       target: dev
     restart: unless-stopped
     environment:
@@ -105,6 +109,7 @@ services:
       - backend
     volumes:
       - ./dashboard:/app
+      - ./shared:/shared:ro
       - /app/node_modules
       - /app/.next
 
