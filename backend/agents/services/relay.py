@@ -551,8 +551,6 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
     filesystem. No reload needed; CC reads .claude/skills/ at startup and
     picks up changes on the next invocation.
     """
-    import shutil
-
     all_agents = [
         a async for a in Agent.objects.filter(
             project_id=skill.project_id,
@@ -575,9 +573,7 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
             if operation == "write":
                 agent.volume.write(skill_path, skill.content)
             elif operation == "delete":
-                skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
-                if skill_dir.exists():
-                    shutil.rmtree(skill_dir)
+                agent.volume.remove_tree(agent.volume.skill_dir(safe_name))
         except Exception as exc:  # intentional: one agent's skill push failure must not block other agents
             log.exception(
                 "comms.skill_push_failed",
@@ -591,8 +587,6 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
 
 async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[str]) -> None:
     """Push skill deletion to specific agents by ID."""
-    import shutil
-
     safe_name = sanitize_skill_name(skill_name)
     if not safe_name:
         return
@@ -600,9 +594,7 @@ async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[s
     for agent_id in agent_ids:
         try:
             agent = await Agent.objects.aget(id=agent_id)
-            skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
-            if skill_dir.exists():
-                shutil.rmtree(skill_dir)
+            agent.volume.remove_tree(agent.volume.skill_dir(safe_name))
         except Exception as exc:  # intentional: one agent's skill cleanup failure must not block other agents
             log.exception(
                 "comms.skill_cleanup_failed",

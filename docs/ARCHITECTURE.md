@@ -5,6 +5,7 @@
 - [Testing](./testing.md)
 - [Runtime Failure Audit](./RUNTIME-FAILURE-AUDIT.md)
 - [Contracts](./contracts/README.md)
+- [Machine Contract](./contracts/machine.md)
 
 ## System Overview
 

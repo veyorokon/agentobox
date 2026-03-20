@@ -81,6 +81,10 @@ reads the file and reloads the relevant process.
 import json
 from pathlib import Path
 
+from agents.services.project_volume import (
+    AgentMachinePaths,
+    LocalProjectVolumeStore,
+)
 from agents.services.relay_commands import ReloadCommand
 from agents.services.themes import format_theme_document
 from config.app_config import app_config
@@ -174,7 +178,9 @@ class Volume:
     """
 
     def __init__(self, project_id: str, agent_id: str):
-        self.root = Path(app_config.volume_root) / "agents" / agent_id
+        self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
+        self._store = LocalProjectVolumeStore(Path(app_config.volume_root))
+        self.root = self._store.local_machine_root(self._machine)
 
     @staticmethod
     def _validate_path(path: str) -> None:
@@ -198,11 +204,8 @@ class Volume:
         atomicity — relay never sees a partial file.
         """
         self._validate_path(path)
-        full = self.root / path
-        full.parent.mkdir(parents=True, exist_ok=True)
-        tmp = full.with_suffix(".tmp")
-        tmp.write_bytes(content if isinstance(content, bytes) else content.encode())
-        tmp.rename(full)
+        body = content if isinstance(content, bytes) else content.encode()
+        self._store.write_bytes(self._machine, path, body)
 
     def write_secret(self, path: str, content: str | bytes, mode: int = 0o600) -> None:
         """Atomic write with restricted permissions.
@@ -211,16 +214,26 @@ class Volume:
         through Docker bind mount to the container.
         """
         self.write(path, content)
-        (self.root / path).chmod(mode)
+        self._store.chmod(self._machine, path, mode)
 
     def read(self, path: str) -> str:
-        return (self.root / path).read_text()
+        return self._store.read_text(self._machine, path)
 
     def read_bytes(self, path: str) -> bytes:
-        return (self.root / path).read_bytes()
+        return self._store.read_bytes(self._machine, path)
 
     def exists(self, path: str) -> bool:
-        return (self.root / path).exists()
+        return self._store.exists(self._machine, path)
+
+    def remove_tree(self, path: str) -> None:
+        self._validate_path(path)
+        self._store.remove_tree(self._machine, path)
+
+    def skill_dir(self, safe_name: str) -> str:
+        return self._machine.skill_dir(safe_name)
+
+    def skill_file(self, safe_name: str) -> str:
+        return self._machine.skill_file(safe_name)
 
     def runtime_status(self) -> dict:
         """Read the agent's runtime status document from _abox/status.json.
@@ -229,15 +242,15 @@ class Volume:
         (mode, platform, startup_stage, runtime_state, transport, services).
         Returns the parsed dict or empty dict if not yet written.
         """
-        path = self.root / "_abox" / "status.json"
-        return json.loads(path.read_text()) if path.exists() else {}
+        path = "_abox/status.json"
+        return json.loads(self.read(path)) if self.exists(path) else {}
 
     def runtime_log_tail(self, limit: int = 20) -> list[dict]:
         """Read the last structured runtime log events from _abox/logs/runtime.jsonl."""
-        path = self.root / "_abox" / "logs" / "runtime.jsonl"
-        if not path.exists():
+        path = "_abox/logs/runtime.jsonl"
+        if not self.exists(path):
             return []
-        lines = [line for line in path.read_text().splitlines() if line.strip()]
+        lines = [line for line in self.read(path).splitlines() if line.strip()]
         tail = lines[-max(1, limit):]
         events: list[dict] = []
         for line in tail:
@@ -260,12 +273,12 @@ class Volume:
         inbox.jsonl file size. When they match, the relay has read every
         line the backend appended.
         """
-        pos_path = self.root / "_abox" / "inbox.pos"
-        inbox_path = self.root / "_abox" / "inbox.jsonl"
-        if not inbox_path.exists():
+        pos_path = "_abox/inbox.pos"
+        inbox_path = "_abox/inbox.jsonl"
+        if not self.exists(inbox_path):
             return True
-        pos = int(pos_path.read_text()) if pos_path.exists() else 0
-        return pos >= inbox_path.stat().st_size
+        pos = int(self.read(pos_path)) if self.exists(pos_path) else 0
+        return pos >= self._store.stat_size(self._machine, inbox_path)
 
     def append_inbox(self, message: dict) -> None:
         """Append one JSON-line message to the agent's inbox.
@@ -277,10 +290,7 @@ class Volume:
         interleave. In practice, messages to a single agent are serialized
         through the GraphQL mutation layer.
         """
-        path = self.root / "_abox" / "inbox.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
-            f.write(json.dumps(message) + "\n")
+        self._store.append_text(self._machine, "_abox/inbox.jsonl", json.dumps(message) + "\n")
 
     def append_task(self, *, task_id: str, content: list, role: str = "user") -> None:
         """Append one canonical task envelope to the agent inbox."""
@@ -356,24 +366,20 @@ class Volume:
 
         Idempotent — safe to call multiple times.
         """
-        abox = self.root / "_abox"
-        abox.mkdir(parents=True, exist_ok=True)
+        self._store.mkdir(self._machine, "_abox")
         for f in ["inbox.jsonl", "outbox.jsonl"]:
-            (abox / f).touch(exist_ok=True)
+            if not self.exists(f"_abox/{f}"):
+                self._store.write_bytes(self._machine, f"_abox/{f}", b"")
         for f in ["inbox.pos", "outbox.pos"]:
-            p = abox / f
-            if not p.exists():
-                p.write_text("0")
-        status = abox / "status.json"
-        if not status.exists():
-            status.write_text("{}")
+            if not self.exists(f"_abox/{f}"):
+                self._store.write_bytes(self._machine, f"_abox/{f}", b"0")
+        if not self.exists("_abox/status.json"):
+            self._store.write_bytes(self._machine, "_abox/status.json", b"{}")
 
         # Clear any stale "provisioning complete" marker from a previous boot.
         # Re-provisioning must re-establish readiness only after the new config
         # set has been fully written.
-        sentinel = abox / "provisioned.ready"
-        if sentinel.exists():
-            sentinel.unlink()
+        self._store.unlink(self._machine, "_abox/provisioned.ready")
 
         # Pre-create all directories that init-volume symlinks into the
         # container. This eliminates the race between init-volume's
@@ -381,11 +387,11 @@ class Volume:
         for prefix in SYMLINKED_PREFIXES:
             if prefix == "_abox/":
                 continue  # already created above
-            (self.root / prefix.rstrip("/")).mkdir(parents=True, exist_ok=True)
+            self._store.mkdir(self._machine, prefix.rstrip("/"))
 
         # Ensure workspace dir exists even without a host bind mount.
         # The executor uses this as cwd for Claude Code.
-        (self.root / "home/agent/workspace").mkdir(parents=True, exist_ok=True)
+        self._store.mkdir(self._machine, "home/agent/workspace")
 
     def mark_provisioned(self, token: str = "") -> None:
         """Write the provisioning-ready sentinel.

@@ -21,6 +21,7 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.invariant]
 
 from agents.services.relay_commands import ReloadCommand
+from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
 from agents.services.volume import (
     MANAGED_CONFIG_FILES,
     PROVISIONING_SENTINEL,
@@ -35,7 +36,16 @@ from agents.services.volume import (
 
 def _make_vol(tmp_path: Path) -> Volume:
     """Create a Volume with root pointing at tmp_path."""
+    class _DirectStore(LocalProjectVolumeStore):
+        def local_machine_root(self, machine: AgentMachinePaths) -> Path:
+            return tmp_path
+
+        def _full_path(self, machine: AgentMachinePaths, path: str = "") -> Path:
+            return tmp_path / path if path else tmp_path
+
     vol = Volume.__new__(Volume)
+    vol._machine = AgentMachinePaths(project_id="proj-test", agent_id="agent-test")
+    vol._store = _DirectStore(tmp_path)
     vol.root = tmp_path
     return vol
 

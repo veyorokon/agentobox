@@ -17,6 +17,8 @@ Use these docs when:
 
 ## Contract Set
 
+- [Machine](./machine.md)
+- [Machine Migration Plan](./machine-migration-plan.md)
 - [Provisioning](./provisioning.md)
 - [Runtime](./runtime.md)
 - [Preview](./preview.md)

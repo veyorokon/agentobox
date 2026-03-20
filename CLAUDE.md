@@ -141,12 +141,13 @@ Both are merged into `/opt/agentobox/.env` on deploy. Secrets override config if
 - `docs/ARCHITECTURE.md` — Technical reference: system architecture, patterns, services, models
 - `docs/testing.md` — Canonical test taxonomy and CI lane mapping
 - `docs/contracts/README.md` — Operational contract index and ownership boundaries
+- `docs/contracts/machine.md` — Canonical machine-state model for project volumes and runtime parity
 - `docs/RUNTIME-FAILURE-AUDIT.md` — Runtime debugging procedure and failure classes
 - `docs/REFERENCE.md` — Auto-generated from codebase docstrings and annotations. Regenerate with `make docs`.
 - `docs/archive/superseded/` — Historical docs kept for context, not for current implementation guidance
 - `docs/archive/` — Historical research (experiments, binary analysis, Crush comparison)
 
-Read ARCHITECTURE before changing backend/runtime structure. Read `docs/contracts/` before crossing a control-plane/runtime/UI boundary. Read `docs/testing.md` before adding or moving tests.
+Read ARCHITECTURE before changing backend/runtime structure. Read `docs/contracts/` before crossing a control-plane/runtime/UI boundary. Read `docs/contracts/machine.md` before changing volume/state ownership. Read `docs/testing.md` before adding or moving tests.
 
 ## Architecture
 

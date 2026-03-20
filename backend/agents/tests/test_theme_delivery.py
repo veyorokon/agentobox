@@ -23,11 +23,24 @@ import pytest
 
 from accounts.models import User
 from agents.models import Agent, AgentStatus
+from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
 from agents.services.relay_commands import ReloadCommand
 from agents.services.themes import THEME_SCHEMA_VERSION
 from projects.models import Project
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.asyncio]
+
+
+class _DirectStore(LocalProjectVolumeStore):
+    def __init__(self, root: Path):
+        super().__init__(root)
+        self._direct_root = root
+
+    def local_machine_root(self, machine: AgentMachinePaths) -> Path:
+        return self._direct_root
+
+    def _full_path(self, machine: AgentMachinePaths, path: str = "") -> Path:
+        return self._direct_root / path if path else self._direct_root
 
 
 def _create_project_without_signals(*, name: str, owner: User) -> Project:
@@ -59,6 +72,8 @@ def setup_project_with_agent(tmp_path):
     )
     # Point the agent's volume at tmp_path so we can inspect files
     vol = agent.volume
+    vol._machine = AgentMachinePaths(project_id=str(project.id), agent_id=str(agent.id))
+    vol._store = _DirectStore(tmp_path)
     vol.root = tmp_path
     vol.initialize()
     return project, agent, vol, tmp_path
@@ -84,6 +99,8 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
         type(vol).__init__
 
         def patched_init(self, project_id, agent_id):
+            self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
+            self._store = _DirectStore(tmp_path)
             self.root = tmp_path
 
         with patch("agents.services.volume.Volume.__init__", patched_init):
@@ -149,6 +166,8 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
         type(vol).__init__
 
         def patched_init(self, project_id, agent_id):
+            self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
+            self._store = _DirectStore(tmp_path)
             self.root = tmp_path
 
         with patch("agents.services.volume.Volume.__init__", patched_init):
