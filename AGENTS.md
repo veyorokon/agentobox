@@ -293,6 +293,40 @@ Important:
 - live patching is for discovery, not the final solution
 - the final solution must be expressed in code, tests, and deployment artifacts
 
+### CI Is Confirmation, Not Discovery
+
+CI/CD is a safety net and a signal.
+It is not the primary discovery loop.
+
+Preferred order:
+1. reproduce locally at the earliest honest seam
+2. prove the fix locally
+3. push
+4. let CI confirm the result
+
+For platform-specific work, “locally” may still include the real remote platform.
+The important distinction is:
+- discovery happens in a fast, operator-controlled loop
+- CI confirms what is already believed to be true
+
+Do not rely on slow deploy pipelines to tell you facts that a focused local or direct-platform probe could have surfaced in seconds or minutes.
+
+### Local Proof Before Push
+
+Before pushing a fix for a runtime, bootstrap, or platform seam, gather explicit local proof.
+
+Examples:
+- focused unit or contract test for the adapter behavior
+- localhost backend against the real remote runtime
+- direct platform probe that exercises the exact mount, env, process, or transport contract
+
+“Passed locally” should mean:
+- the exact failing seam was exercised
+- the fix was observed at that seam
+- the proof is stronger than code inspection alone
+
+If that bar is not met, the change is not ready for CI.
+
 ### Reversible vs Irreversible Changes
 
 Agents should know whether a step is easy to undo.
@@ -370,6 +404,23 @@ Usually the answer is:
 - Treat Docker, Modal, local, etc. as adapter implementations of one contract.
 - Keep platform-specific behavior behind explicit interfaces.
 - Do not let platform hacks leak into shared business logic.
+
+### Environment Binding Must Be Explicit
+
+When a platform exposes named remote resources, bind the environment explicitly.
+
+Examples:
+- volumes
+- buckets
+- queues
+- apps
+- secrets
+
+Do not assume that “same name” implies “same resource.”
+
+If backend-side storage and runtime-side mounts both depend on a named platform resource, they must resolve that name in the same environment/scope. Otherwise the system may appear healthy while each side is talking to a different object.
+
+This is a contract, not an implementation detail.
 
 If a bug only reproduces on one platform:
 - first prove whether the contract differs
