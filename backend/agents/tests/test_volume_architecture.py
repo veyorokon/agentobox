@@ -618,3 +618,26 @@ class TestMutationBoundary:
             "Inline push functions in mutations — use relay.py instead:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
+
+
+class TestMachineBoundary:
+    """App-layer code should speak in terms of agent.machine, not agent.volume."""
+
+    def test_services_and_mutations_do_not_use_agent_volume(self):
+        backend_root = Path(__file__).resolve().parent.parent.parent
+        targets = list((backend_root / "agents" / "services").rglob("*.py"))
+        targets.extend((backend_root / "agents" / "graphql").rglob("mutations.py"))
+
+        violations = []
+        for path in sorted(targets):
+            if "__pycache__" in str(path) or path.name.startswith("test_"):
+                continue
+            src = path.read_text(encoding="utf-8")
+            for i, line in enumerate(src.splitlines(), 1):
+                if re.search(r"\bagent\.volume\b", line) and not line.strip().startswith("#"):
+                    violations.append(f"{path.relative_to(backend_root)}:{i}: {line.strip()}")
+
+        assert violations == [], (
+            "App-layer machine access must use agent.machine, not agent.volume:\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )

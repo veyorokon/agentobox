@@ -548,13 +548,13 @@ class AgentMutation:
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
                         skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
-                        agent.volume.write(skill_path, skill.content)
+                        agent.machine.write(skill_path, skill.content)
                 elif had_before and not should_have:
                     # Lost skill match — remove from volume
                     from agents.utils import sanitize_skill_name
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
-                        agent.volume.remove_tree(agent.volume.skill_dir(safe_name))
+                        agent.machine.remove_tree(agent.machine.skill_dir(safe_name))
 
         # No restart needed — return the updated agent
         return agent
