@@ -43,7 +43,7 @@ from agents.services.lifecycle import (
     transition_agent_status,
 )
 from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
-from agents.services.volume import Volume
+from agents.services.volume import AgentMachine, Volume
 from agents.services.reconcile import recover_lifecycle_attempts
 from agents.services.utils import mark_agent_runtime_unavailable
 from projects.models import Project
@@ -57,7 +57,7 @@ def _create_project_without_signals(*, name: str, owner: User) -> Project:
 pytestmark = pytest.mark.unit
 
 
-def _make_volume(tmp_path: Path) -> Volume:
+def _make_volume(tmp_path: Path) -> AgentMachine:
     class _DirectStore(LocalProjectVolumeStore):
         def local_machine_root(self, machine: AgentMachinePaths) -> Path:
             return tmp_path
@@ -65,7 +65,7 @@ def _make_volume(tmp_path: Path) -> Volume:
         def _full_path(self, machine: AgentMachinePaths, path: str = "") -> Path:
             return tmp_path / path if path else tmp_path
 
-    vol = Volume.__new__(Volume)
+    vol = AgentMachine.__new__(AgentMachine)
     vol._machine = AgentMachinePaths(project_id="proj-test", agent_id="agent-test")
     vol._store = _DirectStore(tmp_path)
     vol.root = tmp_path
@@ -82,7 +82,7 @@ def test_agent_machine_is_canonical_and_volume_is_compat_alias():
     machine = agent.machine
     volume = agent.volume
 
-    assert isinstance(machine, Volume)
+    assert isinstance(machine, AgentMachine)
     assert isinstance(volume, Volume)
     assert machine.root == volume.root
 

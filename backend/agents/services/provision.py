@@ -29,7 +29,7 @@ import structlog
 
 from agents.adapters import get_adapter
 from agents.runtimes.base import Runtime
-from agents.services.volume import Volume
+from agents.services.volume import AgentMachine
 from projects.models import Project
 
 log = structlog.get_logger("abox.lifecycle")
@@ -52,7 +52,7 @@ def _container_to_vol(container_path: str) -> str:
 
 
 async def provision_workspace(
-    vol: Volume,
+    vol: AgentMachine,
     project: Project,
     agent_type: str = "claude-code",
     api_key: str = "",
@@ -79,7 +79,7 @@ async def provision_workspace(
     mirror path.
 
     Args:
-        vol: Volume instance for this agent (from agent.machine)
+        vol: AgentMachine instance for this agent (from agent.machine)
         project: Project the agent belongs to
         agent_type: Adapter key (e.g. "claude-code")
         api_key: Resolved API key for the model's provider
@@ -188,7 +188,7 @@ async def provision_workspace(
 # ---------------------------------------------------------------------------
 
 def _provision_api_key_files_to_volume(
-    vol: Volume, file_specs: list[dict], op_log,
+    vol: AgentMachine, file_specs: list[dict], op_log,
 ) -> None:
     """Write API key files to the volume from adapter-provided specs.
 
@@ -257,7 +257,7 @@ async def provision_scoped_sudo(
 # ---------------------------------------------------------------------------
 
 async def _provision_skills_to_volume(
-    vol: Volume,
+    vol: AgentMachine,
     project: Project,
     agent_tags: list[str],
     skills_dir: str,

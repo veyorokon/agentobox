@@ -173,8 +173,8 @@ RELOAD_REGISTRY: dict[str, set[str]] = {
 VOLUME_OWNED_FIELDS: set[str] = set().union(*RELOAD_REGISTRY.values())
 
 
-class Volume:
-    """Filesystem interface for an agent's shared volume.
+class AgentMachine:
+    """Filesystem interface for one agent's canonical machine surface.
 
     All paths are relative to the volume root and mirror container paths
     exactly (Mirror, Don't Map principle). A path like "home/agent/.claude/settings.json"
@@ -186,11 +186,11 @@ class Volume:
     is guaranteed atomic by POSIX.
 
     Usage:
-        vol = agent.machine                         # from Agent model property
-        vol.write("home/agent/.claude/settings.json", json_content)
-        vol.write_secret("run/secrets/proxy_key", key, mode=0o600)
-        vol.append_inbox({"type": "task", "task_id": "...", "input": {...}})
-        status = vol.runtime_status()               # filesystem compatibility helper
+        machine = agent.machine                     # from Agent model property
+        machine.write("home/agent/.claude/settings.json", json_content)
+        machine.write_secret("run/secrets/proxy_key", key, mode=0o600)
+        machine.append_inbox({"type": "task", "task_id": "...", "input": {...}})
+        status = machine.runtime_status()           # filesystem compatibility helper
     """
 
     def __init__(self, project_id: str, agent_id: str):
@@ -466,3 +466,7 @@ class Volume:
         creates symlinks and allows services like svc-relay to start.
         """
         self.write(PROVISIONING_SENTINEL, token)
+
+
+# Compatibility alias while the codebase converges on the machine vocabulary.
+Volume = AgentMachine

@@ -339,8 +339,8 @@ class Agent(models.Model):
     @property
     def machine(self):
         """Canonical machine-state interface for this agent."""
-        from agents.services.volume import Volume
-        return Volume(str(self.project_id), str(self.id))
+        from agents.services.volume import AgentMachine
+        return AgentMachine(str(self.project_id), str(self.id))
 
     @property
     def volume(self):

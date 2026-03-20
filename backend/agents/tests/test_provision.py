@@ -7,10 +7,10 @@ import pytest
 
 from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
 from agents.services.provision import provision_workspace
-from agents.services.volume import Volume
+from agents.services.volume import AgentMachine
 
 
-def _make_vol(tmp_path: Path) -> Volume:
+def _make_vol(tmp_path: Path) -> AgentMachine:
     class _DirectStore(LocalProjectVolumeStore):
         def local_machine_root(self, machine: AgentMachinePaths) -> Path:
             return tmp_path
@@ -18,7 +18,7 @@ def _make_vol(tmp_path: Path) -> Volume:
         def _full_path(self, machine: AgentMachinePaths, path: str = "") -> Path:
             return tmp_path / path if path else tmp_path
 
-    vol = Volume.__new__(Volume)
+    vol = AgentMachine.__new__(AgentMachine)
     vol._machine = AgentMachinePaths(project_id="proj-test", agent_id="agent-test")
     vol._store = _DirectStore(tmp_path)
     vol.root = tmp_path
