@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import modal
 import pytest
 
 from agents.services.project_volume import AgentMachinePaths, ModalProjectVolumeStore
@@ -67,3 +68,23 @@ def test_modal_project_volume_store_reads_machine_relative_paths(monkeypatch):
     assert store.exists(machine, "_abox/state.json") is True
     assert store.read_text(machine, "_abox/state.json") == '{"mode":"auto"}'
     assert store.stat_size(machine, "_abox/state.json") == 15
+
+
+def test_modal_project_volume_store_treats_missing_invalid_error_as_absent(monkeypatch):
+    class FakeVolume:
+        def listdir(self, path, recursive=False):
+            raise modal.exception.InvalidError("No such file or directory.")
+
+        def remove_file(self, path, recursive=True):
+            raise modal.exception.InvalidError("No such file or directory.")
+
+    monkeypatch.setattr(
+        "agents.services.project_volume.modal.Volume.from_name",
+        lambda *args, **kwargs: FakeVolume(),
+    )
+
+    store = ModalProjectVolumeStore("agentobox_agent-volumes", environment_name="dev")
+    machine = AgentMachinePaths(project_id="proj-1", agent_id="agent-1")
+
+    assert store.exists(machine, "_abox/provisioned.ready") is False
+    store.unlink(machine, "_abox/provisioned.ready")

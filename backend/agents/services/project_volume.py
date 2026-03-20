@@ -147,6 +147,14 @@ class ModalProjectVolumeStore:
         entry = machine.archive_entry(path)
         return f"/{entry}"
 
+    @staticmethod
+    def _is_missing_path_error(exc: Exception) -> bool:
+        if isinstance(exc, modal.exception.NotFoundError):
+            return True
+        if isinstance(exc, modal.exception.InvalidError):
+            return "No such file or directory" in str(exc)
+        return False
+
     def write_bytes(self, machine: AgentMachinePaths, path: str, content: bytes) -> None:
         with self.volume.batch_upload(force=True) as batch:
             batch.put_file(io.BytesIO(content), self._volume_path(machine, path))
@@ -161,8 +169,10 @@ class ModalProjectVolumeStore:
         target = self._volume_path(machine, path).lstrip("/")
         try:
             entries = self.volume.listdir(self._volume_path(machine, path), recursive=False)
-        except modal.exception.NotFoundError:
-            return False
+        except (modal.exception.NotFoundError, modal.exception.InvalidError) as exc:
+            if self._is_missing_path_error(exc):
+                return False
+            raise
         return any(getattr(entry, "path", "") == target for entry in entries) or bool(entries)
 
     def chmod(self, machine: AgentMachinePaths, path: str, mode: int) -> None:
@@ -177,8 +187,10 @@ class ModalProjectVolumeStore:
     def unlink(self, machine: AgentMachinePaths, path: str) -> None:
         try:
             self.volume.remove_file(self._volume_path(machine, path), recursive=True)
-        except modal.exception.NotFoundError:
-            return None
+        except (modal.exception.NotFoundError, modal.exception.InvalidError) as exc:
+            if self._is_missing_path_error(exc):
+                return None
+            raise
 
     def append_text(self, machine: AgentMachinePaths, path: str, content: str) -> None:
         existing = self.read_text(machine, path) if self.exists(machine, path) else ""
@@ -193,8 +205,9 @@ class ModalProjectVolumeStore:
             for entry in self.volume.listdir(self._volume_path(machine, path), recursive=False):
                 if getattr(entry, "path", "") == target:
                     return int(getattr(entry, "size", 0))
-        except modal.exception.NotFoundError:
-            pass
+        except (modal.exception.NotFoundError, modal.exception.InvalidError) as exc:
+            if not self._is_missing_path_error(exc):
+                raise
         return len(self.read_bytes(machine, path))
 
     def local_machine_root(self, machine: AgentMachinePaths) -> Path:
