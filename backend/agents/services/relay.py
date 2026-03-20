@@ -415,7 +415,7 @@ async def push_theme_to_agents(project) -> None:
     """Push theme tokens to all running agents via volume write + reload.
 
     Writes tokens.json to each agent's volume. The relay's reload handler
-    runs converters.py to generate CSS/lua and reloads AwesomeWM + Firefox.
+    runs converters.py to generate CSS/lua and reloads the desktop theme.
     """
     from agents.models import Agent, AgentStatus
     from agents.services.themes import default_theme_tokens

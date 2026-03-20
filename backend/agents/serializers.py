@@ -125,9 +125,9 @@ def _desktop_preview_ready(status: dict) -> bool:
     if not transport.get("connected"):
         return False
     services = status.get("services") or {}
-    # Preview availability is a desktop-surface contract. Firefox is still
-    # supervised and reported, but it is app-level health, not a hard gate for
-    # showing the VNC desktop.
+    # Preview availability is a desktop-surface contract. Browser health is
+    # still supervised and reported, but it is app-level health, not a hard
+    # gate for showing the VNC desktop.
     return all(services.get(name) == "up" for name in DESKTOP_PREVIEW_REQUIRED_SERVICES)
 
 

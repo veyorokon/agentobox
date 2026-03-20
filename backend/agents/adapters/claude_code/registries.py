@@ -171,7 +171,7 @@ MCP_REGISTRY = {
             ### Desktop
 
             There is a dock bar at the bottom of the screen with app launchers
-            (Firefox, Terminal). To open an app, click its icon in the dock.
+            (Chromium, Terminal). To open an app, click its icon in the dock.
             If the app you need is not in the dock, you may launch it from
             bash — this is the only acceptable reason to use bash for GUI apps.
 
@@ -187,7 +187,7 @@ MCP_REGISTRY = {
 
             ### Browser
 
-            - Firefox is in the dock. Click its icon to open it.
+            - Chromium is in the dock. Click its icon to open it.
             - To navigate: click the address bar, type the URL, press Enter.
             - To follow a link: click it. To go back: click the back button.
             - To search: click the search/address bar, type your query, press

@@ -52,8 +52,13 @@ class AboxGraphQL:
             """
             query ($agentId: ID!) {
                 agent(agentId: $agentId) {
-                    id name lifecycleStatus errorMessage phase task
+                    id name runtime lifecycleStatus errorMessage phase task
                     mode attentionLevel role cost turns relayConnected
+                    desiredStatus isConverged previewState
+                    lifecycleAttempts {
+                        id kind status step attemptNo correlationId
+                        errorCode errorDetail startedAt finishedAt
+                    }
                 }
             }
             """,
@@ -66,8 +71,9 @@ class AboxGraphQL:
             """
             query ($projectId: ID!) {
                 agents(projectId: $projectId) {
-                    id name lifecycleStatus errorMessage phase task
+                    id name runtime lifecycleStatus errorMessage phase task
                     mode attentionLevel role relayConnected cost turns
+                    desiredStatus isConverged previewState
                 }
             }
             """,

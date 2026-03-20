@@ -21,7 +21,7 @@ reads the file and reloads the relevant process.
               .mcp.json                   # MCP config
           tmp/abox-theme/                 # mirrors /tmp/abox-theme/
             tokens.json                   # source: backend writes CSS tokens
-            userChrome.css                # derived: converter writes
+            theme.css                     # derived: converter writes
             awesome.lua                   # derived: converter writes
             theme.json                    # derived: reference copy
           run/                            # mirrors /run/

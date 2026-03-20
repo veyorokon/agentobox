@@ -547,7 +547,7 @@ class ClaudeCodeAdapter:
             "\n"
             f"- OS: {os_desc}\n"
             "- Display: X11 on `:1` (AwesomeWM window manager)\n"
-            "- Browser: Firefox ESR (pre-installed)\n"
+            "- Browser: Chromium (pre-installed)\n"
             "- Backend API: available at env var `ABOX_CALLBACK_URL`\n"
             "- Dashboard: available at env var `ABOX_DASHBOARD_URL`\n"
         )
