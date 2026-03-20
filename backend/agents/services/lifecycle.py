@@ -711,8 +711,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await _update_lifecycle_attempt(attempt_id, step="workspace_provisioned")
 
         # Write canonical theme document to volume (runtime derives CSS/lua at boot)
-        if project.theme_tokens:
-            vol.write_theme_document(project.theme_tokens, name=project.name)
+        tokens = project.resolved_theme_tokens()
+        if tokens:
+            vol.write_theme_document(tokens, name=project.name)
 
         # Build relay environment via adapter (single source of truth for
         # env var names, model normalization, mode vocabulary, etc.)

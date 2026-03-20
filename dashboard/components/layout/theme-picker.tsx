@@ -36,10 +36,10 @@ export function ThemePicker({ className }: { className?: string }) {
     setTheme(themeId, mode)
     setOpen(false)
 
-    // Persist the selected built-in theme directly so redeploy/provisioning
-    // uses the same canonical token set the UI just switched to.
+    // Persist the selected built-in theme by its canonical identity.
+    // The backend owns resolving that selection into the actual token set.
     if (projectId) {
-      setProjectTheme({ variables: { input: { projectId, tokens: selectedTheme.tokens } } }).catch(() => {
+      setProjectTheme({ variables: { input: { projectId, theme: selectedTheme.id, mode: selectedTheme.mode } } }).catch(() => {
         // intentional: theme sync to backend is best-effort — local switch already applied
       })
     }

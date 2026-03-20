@@ -43,6 +43,8 @@ type AgentType {
   computeSeconds: Int!
   errorMessage: String!
   lifecycleStatus: String!
+  previewState: String!
+  previewRuntimeId: String!
   lastOutput: String!
   liveAction: String
   cost: Float!
@@ -212,6 +214,7 @@ type ProjectType {
   name: String!
   description: String!
   settings: JSON!
+  themeDocument: JSON!
   themeTokens: JSON!
   createdAt: DateTime!
   archivedAt: DateTime
@@ -273,7 +276,10 @@ input SetAccountSecretInput {
 
 input SetProjectThemeInput {
   projectId: ID!
-  tokens: JSON!
+  theme: String = null
+  mode: String = null
+  overrides: JSON = null
+  tokens: JSON = null
 }
 
 input SetSecretInput {

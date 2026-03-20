@@ -89,8 +89,8 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
     project, agent, vol, tmp_path = setup_project_with_agent
 
     # Set theme on project (what the mutation does)
-    project.theme_tokens = theme_tokens
-    await project.asave(update_fields=["theme_tokens"])
+    project.set_theme_document(tokens=theme_tokens)
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
 
     # Patch push_to_relay (we dont have a real WS connection in tests)
     # AND patch agent.volume to use our tmp_path volume
@@ -114,15 +114,13 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
     )
 
     written_document = json.loads(tokens_path.read_text())
-    assert written_document == {
-        "schema_version": THEME_SCHEMA_VERSION,
-        "name": project.name,
-        "tokens": theme_tokens,
-    }, (
-        f"tokens.json has wrong content.\n"
-        f"Expected canonical theme document with tokens: {theme_tokens}\n"
-        f"Got: {written_document}"
-    )
+    assert written_document["schema_version"] == THEME_SCHEMA_VERSION
+    assert written_document["name"] == project.name
+    for key, value in project.resolved_theme_tokens().items():
+        assert written_document["tokens"].get(key) == value, (
+            f"tokens.json missing resolved token {key!r}={value!r}.\n"
+            f"Got: {written_document}"
+        )
 
     # Verify reload command was sent with exact wire payload
     mock_push.assert_called_once()
@@ -141,8 +139,8 @@ async def test_push_theme_no_running_agents_no_crash(setup_project_with_agent, t
     agent.status = AgentStatus.STOPPED
     await agent.asave(update_fields=["status"])
 
-    project.theme_tokens = theme_tokens
-    await project.asave(update_fields=["theme_tokens"])
+    project.set_theme_document(tokens=theme_tokens)
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
 
     with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push:
         from agents.services.relay import push_theme_to_agents
@@ -159,8 +157,9 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     project, agent, vol, tmp_path = setup_project_with_agent
 
     # No theme set on project
+    project.theme_document = {}
     project.theme_tokens = {}
-    await project.asave(update_fields=["theme_tokens"])
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
 
     with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock):
         type(vol).__init__

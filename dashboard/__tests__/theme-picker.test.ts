@@ -1,8 +1,8 @@
 /**
  * Theme picker persistence tests.
  *
- * Ensures the project theme written to the backend comes from the selected
- * built-in preset, not a racy DOM computed-style snapshot.
+ * Ensures the project theme written to the backend uses the selected
+ * built-in theme identity, not a racy DOM computed-style snapshot.
  *
  * @vitest-environment jsdom
  */
@@ -37,19 +37,19 @@ describe("theme picker", () => {
     expect(match?.mode).toBe("dark")
   })
 
-  it("sends the selected preset tokens to the backend", async () => {
+  it("sends the selected preset identity to the backend", async () => {
     const { ThemePicker } = await import("@/components/layout/theme-picker")
     render(React.createElement(ThemePicker))
 
     fireEvent.click(screen.getByTitle("Theme"))
     fireEvent.click(screen.getByRole("button", { name: /nord/i }))
 
-    const nord = BUILT_IN_THEMES.find((theme) => theme.id === "nord")
     expect(setProjectTheme).toHaveBeenCalledWith({
       variables: {
         input: {
           projectId: "proj-1",
-          tokens: nord?.tokens,
+          theme: "nord",
+          mode: "dark",
         },
       },
     })

@@ -53,7 +53,14 @@ export default function ProjectPage() {
 
   // ── Project name (for breadcrumb) ─────────────────────────────────
   const syncTheme = useThemeStore((s) => s.syncTheme)
-  const { data: projectData, loading: projectLoading } = useQuery<{ project: { id: string; name: string; themeTokens?: Record<string, string> | null } | null }>(GET_PROJECT, {
+  const { data: projectData, loading: projectLoading } = useQuery<{
+    project: {
+      id: string
+      name: string
+      themeTokens?: Record<string, string> | null
+      themeDocument?: { theme?: string; mode?: string } | null
+    } | null
+  }>(GET_PROJECT, {
     variables: { id: projectId },
     skip: !projectId,
   })
@@ -61,9 +68,20 @@ export default function ProjectPage() {
 
   useEffect(() => {
     const matchedTheme = findBuiltInThemeByTokens(projectData?.project?.themeTokens)
-    if (!matchedTheme) return
-    syncTheme({ theme: matchedTheme.id, mode: matchedTheme.mode })
-  }, [projectData?.project?.themeTokens, syncTheme])
+    const tokens = projectData?.project?.themeTokens
+    const themeDocument = projectData?.project?.themeDocument
+    if (matchedTheme) {
+      syncTheme({ theme: matchedTheme.id, mode: matchedTheme.mode, tokens: matchedTheme.tokens })
+      return
+    }
+    if (tokens && Object.keys(tokens).length > 0) {
+      syncTheme({
+        theme: themeDocument?.theme ?? "custom",
+        mode: themeDocument?.mode ?? "dark",
+        tokens,
+      })
+    }
+  }, [projectData?.project?.themeDocument, projectData?.project?.themeTokens, syncTheme])
 
   // ── Sidebar store (mobile tab) ──────────────────────────────────
   const mainTab = useSidebarStore(s => s.mainTab)

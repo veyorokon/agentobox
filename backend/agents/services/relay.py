@@ -418,11 +418,11 @@ async def push_theme_to_agents(project) -> None:
     runs converters.py to generate CSS/lua and reloads AwesomeWM + Firefox.
     """
     from agents.models import Agent, AgentStatus
-    from agents.services.themes import BUILTIN_THEMES
+    from agents.services.themes import default_theme_tokens
 
-    tokens = project.theme_tokens
+    tokens = project.resolved_theme_tokens()
     if not tokens:
-        tokens = BUILTIN_THEMES.get("claude-dark", {})
+        tokens = default_theme_tokens()
 
     if not tokens:
         return

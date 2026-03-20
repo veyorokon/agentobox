@@ -1,7 +1,9 @@
+import type { CSSProperties } from "react"
 import type { Metadata } from "next"
 import { GraphQLProvider } from "@/lib/graphql/provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ToastContainer } from "@/components/ui/toast-container"
+import { buildThemeInitScript, buildThemeStyleObject, DEFAULT_THEME } from "@/lib/theme-registry"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -9,21 +11,8 @@ export const metadata: Metadata = {
   description: "Agent orchestration dashboard",
 }
 
-/**
- * Inline script that runs BEFORE React hydrates to prevent theme flash.
- * Reads persisted theme from localStorage and sets data attributes on <html>.
- * If localStorage is empty or corrupt, claude/dark is the implicit fallback
- * (set as default attributes on the <html> tag).
- */
-const THEME_INIT_SCRIPT = `
-try {
-  var t = JSON.parse(localStorage.getItem('abox-theme'));
-  if (t && t.theme && t.mode) {
-    document.documentElement.setAttribute('data-theme', t.theme);
-    document.documentElement.setAttribute('data-mode', t.mode);
-  }
-} catch(e) {}
-`
+const THEME_INIT_SCRIPT = buildThemeInitScript()
+const DEFAULT_THEME_STYLE = buildThemeStyleObject(DEFAULT_THEME.tokens)
 
 export default function RootLayout({
   children,
@@ -31,7 +20,13 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" data-theme="claude" data-mode="dark" suppressHydrationWarning>
+    <html
+      lang="en"
+      data-theme={DEFAULT_THEME.id}
+      data-mode={DEFAULT_THEME.mode}
+      style={DEFAULT_THEME_STYLE as CSSProperties}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
