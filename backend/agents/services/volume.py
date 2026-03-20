@@ -83,6 +83,7 @@ from pathlib import Path
 from agents.services.project_volume import (
     AgentMachinePaths,
     LocalProjectVolumeStore,
+    ProjectVolumeStore,
 )
 from agents.services.relay_commands import ReloadCommand
 from agents.services.themes import format_theme_document
@@ -193,9 +194,15 @@ class AgentMachine:
         status = machine.runtime_status()           # filesystem compatibility helper
     """
 
-    def __init__(self, project_id: str, agent_id: str):
+    def __init__(
+        self,
+        project_id: str,
+        agent_id: str,
+        *,
+        store: ProjectVolumeStore | None = None,
+    ):
         self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
-        self._store = LocalProjectVolumeStore(Path(app_config.volume_root))
+        self._store = store or LocalProjectVolumeStore(Path(app_config.volume_root))
         self.root = self._store.local_machine_root(self._machine)
 
     @staticmethod

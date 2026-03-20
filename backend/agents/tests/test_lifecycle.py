@@ -95,6 +95,19 @@ def test_agent_machine_exposes_canonical_runtime_visible_paths():
     assert machine.mounted_path("_abox/state.json") == "/vol/agents/agent-1/_abox/state.json"
 
 
+def test_agent_machine_accepts_injected_store(tmp_path: Path):
+    class _DirectStore(LocalProjectVolumeStore):
+        def local_machine_root(self, machine: AgentMachinePaths) -> Path:
+            return tmp_path
+
+        def _full_path(self, machine: AgentMachinePaths, path: str = "") -> Path:
+            return tmp_path / path if path else tmp_path
+
+    machine = AgentMachine(project_id="proj-1", agent_id="agent-1", store=_DirectStore(tmp_path))
+
+    assert machine.root == tmp_path
+
+
 def test_runtime_executor_honors_override():
     assert _runtime_executor("claude-code", override="echo") == "echo"
 
