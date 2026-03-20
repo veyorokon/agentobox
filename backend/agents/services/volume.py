@@ -58,11 +58,10 @@ reads the file and reloads the relevant process.
 
 ## Runtime status
 
-    _abox/status.json is agent-owned — the runtime writes a structured
-    StatusDocument there (mode, platform, startup_stage, runtime_state,
-    transport, services). Backend reads it via Volume.runtime_status()
-    but never writes to it. Convergence is tracked via the desired_status
-    vs reported status model on the Agent model, not file hashes.
+    _abox/status.json remains an agent-owned machine artifact written by the
+    runtime. Backend-visible runtime truth is now consumed from the control-
+    plane projection published by the runtime over relay. Volume retains local
+    compatibility helpers for filesystem-backed tests and diagnostics only.
 
 ## Delivery guarantee (inbox/outbox)
 
@@ -126,6 +125,23 @@ MANAGED_CONFIG_FILES = [
     "_abox/state.json",
 ]
 
+# Backend-owned machine artifacts that must be present inside the runtime at
+# provision time. This is intentionally narrower than "everything under the
+# agent volume": runtime-owned files such as _abox/status.json, cursors, logs,
+# and diagnostics are never pushed backend→sandbox.
+PROVISION_SYNC_FILES = tuple(dict.fromkeys([
+    *MANAGED_CONFIG_FILES,
+    "home/agent/.claude/.credentials.json",
+    "mnt/abox-state/secrets/env",
+]))
+
+# Recursive backend-owned directories copied during provision-time sync.
+# Files within these trees are written by the backend and read by the runtime.
+PROVISION_SYNC_DIRS = (
+    "run/secrets",
+    "home/agent/workspace/.claude/skills",
+)
+
 # ── Reload registry ───────────────────────────────────────────────────
 #
 # The single contract between backend and relay for mutable runtime state.
@@ -174,7 +190,7 @@ class Volume:
         vol.write("home/agent/.claude/settings.json", json_content)
         vol.write_secret("run/secrets/proxy_key", key, mode=0o600)
         vol.append_inbox({"type": "task", "task_id": "...", "input": {...}})
-        status = vol.runtime_status()               # agent-owned status document
+        status = vol.runtime_status()               # filesystem compatibility helper
     """
 
     def __init__(self, project_id: str, agent_id: str):
@@ -350,6 +366,36 @@ class Volume:
         """
         state = {"model": model, "mode": mode, "allowed_tools": allowed_tools}
         return self.mutate("_abox/state.json", json.dumps(state))
+
+    def provision_sync_paths(self) -> list[str]:
+        """Return backend-owned files that should cross the Modal provision bridge.
+
+        This manifest is the authoritative backend→runtime sync boundary for
+        provision-time machine state. It intentionally excludes runtime-owned
+        artifacts such as _abox/status.json, cursors, logs, and diagnostics.
+        """
+
+        paths: list[str] = []
+        seen: set[str] = set()
+
+        for path in PROVISION_SYNC_FILES:
+            if self.exists(path) and path not in seen:
+                paths.append(path)
+                seen.add(path)
+
+        for prefix in PROVISION_SYNC_DIRS:
+            base = self.root / prefix
+            if not base.exists():
+                continue
+            for full_path in sorted(base.rglob("*")):
+                if not full_path.is_file():
+                    continue
+                rel = str(full_path.relative_to(self.root))
+                if rel not in seen:
+                    paths.append(rel)
+                    seen.add(rel)
+
+        return paths
 
     def initialize(self) -> None:
         """Create empty control plane files and directory structure for a new agent.

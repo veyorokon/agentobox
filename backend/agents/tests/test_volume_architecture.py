@@ -3,7 +3,7 @@
 Verifies that the volume-based state system maintains its design contracts:
 - Atomic writes (no partial reads)
 - Mirror, Don't Map (volume paths = container paths)
-- Convergence protocol (status.json tracks applied hashes)
+- Filesystem compatibility for local machine artifacts
 - Delivery guarantee (inbox.pos tracks consumed messages)
 - No orphan state (relay.py only sends reload commands + signals, never raw state)
 - Inbox/outbox symmetry
@@ -24,6 +24,8 @@ from agents.services.relay_commands import ReloadCommand
 from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
 from agents.services.volume import (
     MANAGED_CONFIG_FILES,
+    PROVISION_SYNC_DIRS,
+    PROVISION_SYNC_FILES,
     PROVISIONING_SENTINEL,
     SYMLINKED_PREFIXES,
     Volume,
@@ -156,11 +158,11 @@ class TestMirrorDontMap:
 
 
 # ---------------------------------------------------------------------------
-# Convergence protocol: status.json hashes
+# Filesystem compatibility: local status artifact helper
 # ---------------------------------------------------------------------------
 
 class TestRuntimeStatus:
-    """_abox/status.json is agent-owned — a structured runtime status document."""
+    """Volume retains a local helper for runtime-written status artifacts."""
 
     def test_runtime_status_empty_when_no_file(self, tmp_path):
         vol = _make_vol(tmp_path)
@@ -188,6 +190,41 @@ class TestRuntimeStatus:
         assert result["mode"] == "standalone"
         assert result["startup_stage"] == "runtime_ready"
         assert result["runtime"]["client_active"] is False
+
+
+class TestProvisionSyncManifest:
+    """Provision-time Modal sync only carries backend-owned machine artifacts."""
+
+    def test_provision_sync_manifest_excludes_runtime_owned_artifacts(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.initialize()
+        vol.write("_abox/state.json", '{"mode": "auto"}')
+        vol.write("home/agent/.relay_env", "RELAY_AUTH_TOKEN=test")
+        vol.write("mnt/abox-state/secrets/env", "export FOO=bar")
+        vol.write_secret("run/secrets/proxy_key", "secret")
+        vol.write("home/agent/workspace/.claude/skills/demo/SKILL.md", "# demo")
+        vol.write("_abox/runtime-diagnostics.json", '{"fatal": true}')
+        vol.write("_abox/outbox.jsonl", '{"type": "event"}\n')
+        vol.write("_abox/inbox.pos", "12")
+        vol.write("_abox/status.json", '{"runtime_state": "ready"}')
+
+        paths = vol.provision_sync_paths()
+
+        assert "_abox/state.json" in paths
+        assert "home/agent/.relay_env" in paths
+        assert "mnt/abox-state/secrets/env" in paths
+        assert "run/secrets/proxy_key" in paths
+        assert "home/agent/workspace/.claude/skills/demo/SKILL.md" in paths
+        assert "_abox/status.json" not in paths
+        assert "_abox/outbox.jsonl" not in paths
+        assert "_abox/inbox.pos" not in paths
+        assert "_abox/runtime-diagnostics.json" not in paths
+
+    def test_provision_sync_manifest_stays_under_backend_owned_prefixes(self):
+        for path in PROVISION_SYNC_FILES:
+            assert path.startswith(("home/", "tmp/", "run/", "mnt/", "_abox/"))
+        for prefix in PROVISION_SYNC_DIRS:
+            assert prefix.startswith(("home/", "run/"))
 
 
 # ---------------------------------------------------------------------------

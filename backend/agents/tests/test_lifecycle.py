@@ -6,6 +6,9 @@ Covers:
   quotes and handles all shell metacharacters.
 """
 
+import io
+import json
+import tarfile
 from datetime import timedelta
 import re
 import uuid
@@ -32,12 +35,15 @@ from agents.models import (
 )
 from agents.services.lifecycle import (
     _atomic_reset_for_restart,
+    _sync_volume_to_sandbox,
     _build_agent_env,
     _create_lifecycle_attempt_sync,
     _runtime_executor,
     _update_lifecycle_attempt_sync,
     transition_agent_status,
 )
+from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
+from agents.services.volume import Volume
 from agents.services.reconcile import recover_lifecycle_attempts
 from agents.services.utils import mark_agent_runtime_unavailable
 from projects.models import Project
@@ -49,6 +55,21 @@ def _create_project_without_signals(*, name: str, owner: User) -> Project:
     return project
 
 pytestmark = pytest.mark.unit
+
+
+def _make_volume(tmp_path: Path) -> Volume:
+    class _DirectStore(LocalProjectVolumeStore):
+        def local_machine_root(self, machine: AgentMachinePaths) -> Path:
+            return tmp_path
+
+        def _full_path(self, machine: AgentMachinePaths, path: str = "") -> Path:
+            return tmp_path / path if path else tmp_path
+
+    vol = Volume.__new__(Volume)
+    vol._machine = AgentMachinePaths(project_id="proj-test", agent_id="agent-test")
+    vol._store = _DirectStore(tmp_path)
+    vol.root = tmp_path
+    return vol
 
 
 def test_runtime_executor_maps_claude_code_agent_type():
@@ -103,6 +124,48 @@ def test_shell_escape_mixed_special_chars():
     result = _shell_escape("it's $HOME `pwd`")
     # shlex.quote wraps in single quotes, breaks out for the apostrophe
     assert result == "'it'\"'\"'s $HOME `pwd`'"
+
+
+@pytest.mark.asyncio
+async def test_modal_volume_sync_excludes_runtime_owned_files(tmp_path):
+    vol = _make_volume(tmp_path)
+    vol.initialize()
+    vol.write("_abox/state.json", json.dumps({"mode": "auto"}))
+    vol.write("home/agent/.relay_env", "RELAY_AUTH_TOKEN=test")
+    vol.write("mnt/abox-state/secrets/env", "export FOO=bar")
+    vol.write_secret("run/secrets/proxy_key", "secret")
+    vol.write("home/agent/workspace/.claude/skills/demo/SKILL.md", "# demo")
+    vol.write("_abox/status.json", json.dumps({"runtime_state": "ready"}))
+    vol.write("_abox/runtime-diagnostics.json", json.dumps({"fatal": True}))
+    vol.write("_abox/outbox.jsonl", '{"type":"event"}\n')
+    vol.write("_abox/inbox.pos", "12")
+
+    written = {}
+
+    class _Runtime:
+        async def write_file(self, sandbox_id, content, dest):
+            written["sandbox_id"] = sandbox_id
+            written["content"] = content
+            written["dest"] = dest
+
+        async def exec(self, *args, **kwargs):
+            return ""
+
+    op_log = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
+    await _sync_volume_to_sandbox(_Runtime(), "sb-123", vol, "agent-test", op_log)
+
+    archive = tarfile.open(fileobj=io.BytesIO(written["content"]), mode="r:gz")
+    names = set(archive.getnames())
+
+    assert written["dest"] == "/tmp/vol-sync.tar.gz"
+    assert "agents/agent-test/_abox/state.json" in names
+    assert "agents/agent-test/home/agent/.relay_env" in names
+    assert "agents/agent-test/run/secrets/proxy_key" in names
+    assert "agents/agent-test/home/agent/workspace/.claude/skills/demo/SKILL.md" in names
+    assert "agents/agent-test/_abox/status.json" not in names
+    assert "agents/agent-test/_abox/outbox.jsonl" not in names
+    assert "agents/agent-test/_abox/inbox.pos" not in names
+    assert "agents/agent-test/_abox/runtime-diagnostics.json" not in names
 
 
 @pytest.mark.django_db(transaction=True)

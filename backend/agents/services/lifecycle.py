@@ -478,14 +478,16 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
 
 
 async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, op_log):
-    """Copy provisioning files from local volume into Modal sandbox.
+    """Copy backend-owned provisioning files from local volume into Modal sandbox.
 
     Docker volumes are shared between backend and agent containers —
     vol.write() writes to the same filesystem the container reads.
     Modal volumes are separate — the backend writes to a local Docker
     volume, but the Modal sandbox mounts its own Modal volume at /vol.
-    This function bridges the gap by tarring local files and extracting
-    them inside the sandbox.
+    This function bridges the gap by tarring only backend-owned desired/
+    config/secrets files and extracting them inside the sandbox. Runtime-
+    owned files such as _abox/status.json stay runtime-owned and must not
+    be projected backend→sandbox.
     """
     root = vol.root
     if not root.exists():
@@ -494,11 +496,13 @@ async def _sync_volume_to_sandbox(runtime, sandbox_id: str, vol, agent_id: str, 
 
     buf = io.BytesIO()
     file_count = 0
+    sync_paths = vol.provision_sync_paths()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for path in sorted(root.rglob("*")):
+        for rel_path in sync_paths:
+            path = root / rel_path
             if not path.is_file():
                 continue
-            arcname = f"agents/{path.relative_to(root.parent)}"
+            arcname = f"agents/{agent_id}/{rel_path}"
             info = tarfile.TarInfo(name=arcname)
             info.size = path.stat().st_size
             info.uid = 1000
