@@ -10,6 +10,7 @@ Modal Sandbox.create is natively async (.aio suffix), so no executor
 wrapping needed unlike DockerRuntime.
 """
 import time
+from pathlib import PurePosixPath
 
 import modal
 import structlog
@@ -129,10 +130,13 @@ class ModalRuntime:
         op = log.bind(op="sync_machine_volume", sandbox_id=sandbox_id, mount_path=mount_path)
         op.info("runtime.sync_machine_volume_start")
         t0 = time.monotonic()
-        # Modal mounted volumes require an explicit sync inside the sandbox
-        # before newly uploaded backend-side writes become visible to running
-        # processes.
-        await self.exec(sandbox_id, ["bash", "-lc", f"sync {mount_path}"])
+        # Modal sync operates on the mounted volume root, not an arbitrary
+        # agent subdirectory. Callers may pass a deeper machine path
+        # (/vol/agents/<id>/...), but the runtime must normalize that back to
+        # the actual mount root to avoid exit_code=1 during provisioning.
+        parts = PurePosixPath(mount_path).parts
+        sync_target = f"/{parts[1]}" if len(parts) >= 2 else "/vol"
+        await self.exec(sandbox_id, ["bash", "-lc", f"sync {sync_target}"])
         op.info("runtime.sync_machine_volume_done", elapsed_s=round(time.monotonic() - t0, 2))
 
     async def terminate(self, sandbox_id: str) -> None:

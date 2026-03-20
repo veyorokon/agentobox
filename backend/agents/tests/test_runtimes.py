@@ -213,7 +213,7 @@ class TestModalRuntimeExec:
 
         async def _exec(sandbox_id, cmd, user="agent"):
             assert sandbox_id == "sandbox-1"
-            assert cmd == ["bash", "-lc", "sync /vol/agents/agent-1"]
+            assert cmd == ["bash", "-lc", "sync /vol"]
             assert user == "agent"
             return ""
 
