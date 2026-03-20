@@ -7,8 +7,6 @@ import pytest
 from agents.models import AgentStatus
 from agents.services.relay import (
     _normalize_content,
-    _sync_append_to_sandbox,
-    _sync_write_to_sandbox,
     deliver_input,
     send_message,
     set_agent_mode,
@@ -258,15 +256,18 @@ async def test_deliver_input_writes_canonical_task_envelope():
     """deliver_input() writes the new task envelope to inbox, not the legacy input/payload shape."""
     fake_agent = MagicMock()
     fake_agent.id = "agent-123"
-    fake_agent.volume = MagicMock()
+    mock_writer = MagicMock()
+    mock_writer.append_task = AsyncMock()
 
     content = [{"type": "text", "text": "hello"}]
-    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=False) as mock_push:
+    with (
+        patch("agents.services.relay.get_machine_writer", return_value=mock_writer),
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=False) as mock_push,
+    ):
         result = await deliver_input(fake_agent, content, task_id="test-task-1")
 
     assert result is False
-    # Assert the canonical task envelope — not the legacy {"type": "input", "payload": ...}
-    fake_agent.volume.append_task.assert_called_once_with(task_id="test-task-1", content=content)
+    mock_writer.append_task.assert_awaited_once_with(task_id="test-task-1", content=content)
     # Assert reload command
     mock_push.assert_awaited_once()
     cmd = mock_push.await_args.args[1]
@@ -288,14 +289,14 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
     fake_agent.sandbox_id = "sb-abc123"
     fake_agent.volume = MagicMock()
 
-    mock_runtime = MagicMock()
-    mock_runtime.exec = AsyncMock(return_value="")
-
     content = [{"type": "text", "text": "hello from modal"}]
     with (
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
-        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+        patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
+        mock_runtime = MagicMock()
+        mock_runtime.exec = AsyncMock(return_value="")
+        mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, content, task_id="modal-task-1")
 
     # Local write still happens (durable record)
@@ -330,7 +331,7 @@ async def test_deliver_input_skips_sandbox_sync_for_docker():
     content = [{"type": "text", "text": "hello from docker"}]
     with (
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
-        patch("agents.runtimes.get_runtime") as mock_get_runtime,
+        patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         await deliver_input(fake_agent, content, task_id="docker-task-1")
 
@@ -352,13 +353,13 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
     fake_agent.volume = MagicMock()
     fake_agent.volume.mutate.return_value = ReloadCommand(path="_abox/state.json")
 
-    mock_runtime = MagicMock()
-    mock_runtime.write_file = AsyncMock()
-
     with (
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
-        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+        patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
+        mock_runtime = MagicMock()
+        mock_runtime.write_file = AsyncMock()
+        mock_get_runtime.return_value = mock_runtime
         await update_volume_and_reload(fake_agent, "_abox/state.json", '{"mode": "plan"}')
 
     fake_agent.volume.mutate.assert_called_once_with("_abox/state.json", '{"mode": "plan"}')
@@ -370,16 +371,21 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
 
 
 @pytest.mark.asyncio
-async def test_sync_append_skips_when_no_sandbox_id():
-    """Sync helpers must be no-ops when sandbox_id is empty (agent not yet provisioned)."""
+async def test_deliver_input_skips_modal_append_when_no_sandbox_id():
+    """Modal writer must keep durable local state even before sandbox exists."""
     fake_agent = MagicMock()
+    fake_agent.id = "agent-modal-empty"
     fake_agent.runtime = "modal"
     fake_agent.sandbox_id = ""
+    fake_agent.volume = MagicMock()
 
-    with patch("agents.runtimes.get_runtime") as mock_get_runtime:
-        await _sync_append_to_sandbox(fake_agent, "_abox/inbox.jsonl", '{"test": true}')
-        await _sync_write_to_sandbox(fake_agent, "_abox/state.json", '{"mode": "auto"}')
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
+    ):
+        await deliver_input(fake_agent, [{"type": "text", "text": "hello"}], task_id="modal-task-2")
 
+    fake_agent.volume.append_task.assert_called_once()
     mock_get_runtime.assert_not_called()
 
 
@@ -388,13 +394,17 @@ async def test_deliver_input_generates_task_id_when_omitted():
     """deliver_input() generates a task_id if not provided."""
     fake_agent = MagicMock()
     fake_agent.id = "agent-123"
-    fake_agent.volume = MagicMock()
+    mock_writer = MagicMock()
+    mock_writer.append_task = AsyncMock()
 
-    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True):
+    with (
+        patch("agents.services.relay.get_machine_writer", return_value=mock_writer),
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+    ):
         await deliver_input(fake_agent, [{"type": "text", "text": "hello"}])
 
-    fake_agent.volume.append_task.assert_called_once()
-    _, kwargs = fake_agent.volume.append_task.call_args
+    mock_writer.append_task.assert_awaited_once()
+    _, kwargs = mock_writer.append_task.await_args
     assert len(kwargs["task_id"]) == 16  # uuid hex[:16]
     assert kwargs["content"][0]["type"] == "text"
 
