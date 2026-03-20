@@ -152,6 +152,8 @@ class ModalRuntime:
         # (/vol/agents/<id>/...), but the runtime must normalize that back to
         # the actual mount root to avoid exit_code=1 during provisioning.
         sync_target = self._mount_root(mount_path)
+        sb = await modal.Sandbox.from_id.aio(sandbox_id)
+        await sb.reload_volumes.aio()
         await self.exec(sandbox_id, ["bash", "-lc", f"sync {sync_target}"])
         op.info("runtime.sync_machine_volume_done", elapsed_s=round(time.monotonic() - t0, 2))
 

@@ -230,6 +230,7 @@ class TestModalRuntimeExec:
     @pytest.mark.asyncio
     async def test_sync_machine_volume_uses_sync_command(self, monkeypatch):
         runtime = ModalRuntime()
+        captured = {}
 
         async def _exec(sandbox_id, cmd, user="agent"):
             assert sandbox_id == "sandbox-1"
@@ -237,9 +238,25 @@ class TestModalRuntimeExec:
             assert user == "agent"
             return ""
 
+        class FakeReloadVolumes:
+            @staticmethod
+            async def aio():
+                captured["reloaded"] = True
+
+        class FakeSandbox:
+            reload_volumes = FakeReloadVolumes()
+
+        class FakeSandboxAPI:
+            @staticmethod
+            async def aio(sandbox_id):
+                assert sandbox_id == "sandbox-1"
+                return FakeSandbox()
+
+        monkeypatch.setattr("agents.runtimes.modal.modal.Sandbox.from_id", FakeSandboxAPI)
         monkeypatch.setattr(runtime, "exec", _exec)
 
         await runtime.sync_machine_volume("sandbox-1", "/vol/agents/agent-1")
+        assert captured["reloaded"] is True
 
     @pytest.mark.asyncio
     async def test_await_machine_path_visible_retries_until_expected_content(self, monkeypatch):
