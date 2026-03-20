@@ -9,8 +9,10 @@ VNC is exposed via Modal's encrypted tunnel on port 6080.
 Modal Sandbox.create is natively async (.aio suffix), so no executor
 wrapping needed unlike DockerRuntime.
 """
-import time
+import asyncio
 import os
+import shlex
+import time
 from pathlib import PurePosixPath
 
 import modal
@@ -30,6 +32,11 @@ class ModalRuntime:
     @staticmethod
     def _environment_name() -> str:
         return os.environ.get("MODAL_ENVIRONMENT") or app_config.environment
+
+    @staticmethod
+    def _mount_root(path: str) -> str:
+        parts = PurePosixPath(path).parts
+        return f"/{parts[1]}" if len(parts) >= 2 else "/vol"
 
     async def create(
         self, name: str, env: dict[str, str],
@@ -144,10 +151,58 @@ class ModalRuntime:
         # agent subdirectory. Callers may pass a deeper machine path
         # (/vol/agents/<id>/...), but the runtime must normalize that back to
         # the actual mount root to avoid exit_code=1 during provisioning.
-        parts = PurePosixPath(mount_path).parts
-        sync_target = f"/{parts[1]}" if len(parts) >= 2 else "/vol"
+        sync_target = self._mount_root(mount_path)
         await self.exec(sandbox_id, ["bash", "-lc", f"sync {sync_target}"])
         op.info("runtime.sync_machine_volume_done", elapsed_s=round(time.monotonic() - t0, 2))
+
+    async def await_machine_path_visible(
+        self,
+        sandbox_id: str,
+        path: str,
+        *,
+        expected_content: str = "",
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.25,
+    ) -> None:
+        op = log.bind(
+            op="await_machine_path_visible",
+            sandbox_id=sandbox_id,
+            path=path,
+        )
+        op.info("runtime.machine_path_wait_start")
+        t0 = time.monotonic()
+        deadline = t0 + timeout_s
+        expected = expected_content.strip()
+        mount_root = self._mount_root(path)
+        quoted_path = shlex.quote(path)
+        last_output = ""
+        attempts = 0
+        sb = await modal.Sandbox.from_id.aio(sandbox_id)
+
+        while time.monotonic() < deadline:
+            attempts += 1
+            await self.sync_machine_volume(sandbox_id, mount_root)
+            process = await sb.exec.aio(
+                "bash",
+                "-lc",
+                f"[ -f {quoted_path} ] && cat {quoted_path} || true",
+            )
+            await process.wait.aio()
+            output = await process.stdout.read.aio()
+            last_output = (output or "").strip()
+            if not expected or last_output == expected:
+                op.info(
+                    "runtime.machine_path_wait_done",
+                    elapsed_s=round(time.monotonic() - t0, 2),
+                    attempts=attempts,
+                )
+                return
+            await asyncio.sleep(poll_interval_s)
+
+        raise RuntimeError(
+            "Modal machine path never became visible "
+            f"(path={path!r}, expected={expected!r}, last_output={last_output!r})"
+        )
 
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", sandbox_id=sandbox_id)

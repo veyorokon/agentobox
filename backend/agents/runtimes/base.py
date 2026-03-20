@@ -59,6 +59,16 @@ class Runtime(Protocol):
         self, sandbox_id: str, mount_path: str = "/vol"
     ) -> None: ...
 
+    async def await_machine_path_visible(
+        self,
+        sandbox_id: str,
+        path: str,
+        *,
+        expected_content: str = "",
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.25,
+    ) -> None: ...
+
     async def terminate(self, sandbox_id: str) -> None: ...
 
     async def list_sandboxes(self) -> list[SandboxInstance]: ...

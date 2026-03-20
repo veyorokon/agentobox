@@ -189,7 +189,7 @@ async def test_mark_provisioned_ready_syncs_modal_machine_volume(tmp_path):
     vol.initialize()
 
     class _Runtime:
-        sync_machine_volume = AsyncMock(return_value=None)
+        await_machine_path_visible = AsyncMock(return_value=None)
 
     op_log = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
     await _mark_provisioned_ready(
@@ -203,7 +203,11 @@ async def test_mark_provisioned_ready_syncs_modal_machine_volume(tmp_path):
     )
 
     assert vol.read("_abox/provisioned.ready") == "token-123"
-    _Runtime.sync_machine_volume.assert_awaited_once_with("sb-123", "/vol/agents/agent-test")
+    _Runtime.await_machine_path_visible.assert_awaited_once_with(
+        "sb-123",
+        "/vol/agents/agent-test/_abox/provisioned.ready",
+        expected_content="token-123",
+    )
 
 
 @pytest.mark.asyncio
@@ -212,7 +216,7 @@ async def test_mark_provisioned_ready_skips_runtime_sync_for_docker(tmp_path):
     vol.initialize()
 
     class _Runtime:
-        sync_machine_volume = AsyncMock(return_value=None)
+        await_machine_path_visible = AsyncMock(return_value=None)
 
     op_log = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
     await _mark_provisioned_ready(
@@ -226,7 +230,7 @@ async def test_mark_provisioned_ready_skips_runtime_sync_for_docker(tmp_path):
     )
 
     assert vol.read("_abox/provisioned.ready") == "token-456"
-    _Runtime.sync_machine_volume.assert_not_awaited()
+    _Runtime.await_machine_path_visible.assert_not_awaited()
 
 
 @pytest.mark.django_db(transaction=True)

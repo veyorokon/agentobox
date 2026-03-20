@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from types import SimpleNamespace
 
 import pytest
@@ -241,3 +240,73 @@ class TestModalRuntimeExec:
         monkeypatch.setattr(runtime, "exec", _exec)
 
         await runtime.sync_machine_volume("sandbox-1", "/vol/agents/agent-1")
+
+    @pytest.mark.asyncio
+    async def test_await_machine_path_visible_retries_until_expected_content(self, monkeypatch):
+        runtime = ModalRuntime()
+        sync_calls: list[tuple[str, str]] = []
+
+        async def _sync(sandbox_id, mount_path="/vol"):
+            sync_calls.append((sandbox_id, mount_path))
+
+        monkeypatch.setattr(runtime, "sync_machine_volume", _sync)
+
+        outputs = iter(["", "token-123"])
+
+        class FakeStdout:
+            def __init__(self, text):
+                self._text = text
+
+            @property
+            def read(self):
+                text = self._text
+
+                class _Reader:
+                    @staticmethod
+                    async def aio():
+                        return text
+
+                return _Reader()
+
+        class FakeProcess:
+            def __init__(self, text):
+                self.returncode = 0
+                self.stdout = FakeStdout(text)
+
+            class wait:
+                @staticmethod
+                async def aio():
+                    return None
+
+        class FakeExec:
+            @staticmethod
+            async def aio(*cmd):
+                return FakeProcess(next(outputs))
+
+        class FakeSandbox:
+            exec = FakeExec()
+
+        class FakeSandboxAPI:
+            @staticmethod
+            async def aio(sandbox_id):
+                assert sandbox_id == "sandbox-1"
+                return FakeSandbox()
+
+        async def _sleep(_seconds):
+            return None
+
+        monkeypatch.setattr("agents.runtimes.modal.modal.Sandbox.from_id", FakeSandboxAPI)
+        monkeypatch.setattr("agents.runtimes.modal.asyncio.sleep", _sleep)
+
+        await runtime.await_machine_path_visible(
+            "sandbox-1",
+            "/vol/agents/agent-1/_abox/provisioned.ready",
+            expected_content="token-123",
+            timeout_s=1.0,
+            poll_interval_s=0.0,
+        )
+
+        assert sync_calls == [
+            ("sandbox-1", "/vol"),
+            ("sandbox-1", "/vol"),
+        ]

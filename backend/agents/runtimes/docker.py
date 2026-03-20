@@ -170,6 +170,18 @@ class DockerRuntime:
         """Docker bind/named volumes are already runtime-visible."""
         return None
 
+    async def await_machine_path_visible(
+        self,
+        sandbox_id: str,
+        path: str,
+        *,
+        expected_content: str = "",
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.25,
+    ) -> None:
+        """Docker bind/named volumes are already runtime-visible."""
+        return None
+
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", container_id=sandbox_id[:12])
         op.info("runtime.terminate_start")

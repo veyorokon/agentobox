@@ -489,7 +489,11 @@ async def _mark_provisioned_ready(
         op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
         return
 
-    await runtime.sync_machine_volume(sandbox_id, vol.mounted_root())
+    await runtime.await_machine_path_visible(
+        sandbox_id,
+        vol.mounted_path("_abox/provisioned.ready"),
+        expected_content=provisioning_token,
+    )
     op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
 
 
