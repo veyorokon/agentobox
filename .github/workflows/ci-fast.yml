@@ -14,6 +14,8 @@ jobs:
   backend-unit:
     name: backend-unit
     runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -22,12 +24,30 @@ jobs:
       - name: Install dependencies
         run: uv --directory backend sync --group dev
       - name: Run unit and invariant tests
-        run: uv --directory backend run pytest -m "unit or invariant" --tb=short -q
+        id: tests
+        run: |
+          uv --directory backend run pytest -m "unit or invariant" --tb=short -q 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unit-output
+          path: test-output.txt
+          retention-days: 7
 
   backend-chaos:
     name: backend-chaos
     runs-on: ubuntu-latest
     needs: backend-unit
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
     env:
       SECRET_KEY: ci-test-secret-key-not-for-production
       DJANGO_SETTINGS_MODULE: config.settings_test
@@ -39,12 +59,30 @@ jobs:
       - name: Install dependencies
         run: uv --directory backend sync --group dev
       - name: Run chaos tests
-        run: uv --directory backend run pytest -m "chaos" --tb=short -q
+        id: tests
+        run: |
+          uv --directory backend run pytest -m "chaos" --tb=short -q 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-chaos-output
+          path: test-output.txt
+          retention-days: 7
 
   backend-integration:
     name: backend-integration
     runs-on: ubuntu-latest
     needs: backend-unit
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
     services:
       postgres:
         image: postgres:17
@@ -86,7 +124,23 @@ jobs:
       - name: Run migrations
         run: uv --directory backend run python manage.py migrate --noinput
       - name: Run integration tests
-        run: uv --directory backend run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+        id: tests
+        run: |
+          uv --directory backend run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings" 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-output
+          path: test-output.txt
+          retention-days: 7
 
   backend-architecture:
     name: backend-architecture
@@ -104,6 +158,8 @@ jobs:
   agent-unit:
     name: agent-unit
     runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -112,11 +168,29 @@ jobs:
       - name: Install agent dependencies
         run: uv --directory agent sync --group dev
       - name: Run agent unit tests
-        run: PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/ -q -o addopts=
+        id: tests
+        run: |
+          PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/ -q -o addopts= 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-unit-output
+          path: test-output.txt
+          retention-days: 7
 
   agent-lint:
     name: agent-lint
     runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.lint.outputs.failure_hint }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -125,11 +199,29 @@ jobs:
       - name: Install agent dependencies
         run: uv --directory agent sync --group dev
       - name: Run ruff
-        run: uv --directory agent run ruff check .
+        id: lint
+        run: |
+          uv --directory agent run ruff check . 2>&1 | tee lint-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(head -5 lint-output.txt)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload lint output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-lint-output
+          path: lint-output.txt
+          retention-days: 7
 
   dashboard-unit:
     name: dashboard-unit
     runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -143,13 +235,31 @@ jobs:
       - name: Install dashboard dependencies
         run: cd dashboard && pnpm install --frozen-lockfile
       - name: Run dashboard vitest suite
+        id: tests
         env:
           SKIP_E2E: "1"
-        run: cd dashboard && pnpm exec vitest run
+        run: |
+          cd dashboard && pnpm exec vitest run 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "(FAIL|AssertionError|Error:)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-unit-output
+          path: dashboard/test-output.txt
+          retention-days: 7
 
   dashboard-typecheck:
     name: dashboard-typecheck
     runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.typecheck.outputs.failure_hint }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -163,11 +273,29 @@ jobs:
       - name: Install dashboard dependencies
         run: cd dashboard && pnpm install --frozen-lockfile
       - name: Run dashboard typecheck
-        run: cd dashboard && pnpm exec tsc --noEmit
+        id: typecheck
+        run: |
+          cd dashboard && pnpm exec tsc --noEmit 2>&1 | tee typecheck-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "error TS" typecheck-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload typecheck output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-typecheck-output
+          path: dashboard/typecheck-output.txt
+          retention-days: 7
 
   backend-lint:
     name: backend-lint
     runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.lint.outputs.failure_hint }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -176,7 +304,23 @@ jobs:
       - name: Install backend dependencies
         run: uv --directory backend sync --group dev
       - name: Run ruff
-        run: uv --directory backend run ruff check agents/
+        id: lint
+        run: |
+          uv --directory backend run ruff check agents/ 2>&1 | tee lint-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(head -5 lint-output.txt)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload lint output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lint-output
+          path: lint-output.txt
+          retention-days: 7
 
   security-app:
     name: security-app
@@ -226,7 +370,9 @@ jobs:
       - security-app
     runs-on: ubuntu-latest
     steps:
-      - name: Write job summary
+      - uses: actions/checkout@v5
+      - name: Compute overall status
+        id: status
         run: |
           overall=success
           for result in \
@@ -245,13 +391,14 @@ jobs:
               break
             fi
           done
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/summary-header
+        with:
+          title: CI Fast Summary
+          overall: ${{ steps.status.outputs.overall }}
+      - name: Write lanes
+        run: |
           {
-            echo "## CI Fast Summary"
-            echo
-            echo "- ref: \`${{ github.ref_name }}\`"
-            echo "- sha: \`${{ github.sha }}\`"
-            echo "- trigger: \`${{ github.event_name }}\`"
-            echo "- overall: \`${overall}\`"
             echo
             echo "### Lanes"
             echo "- backend-unit: \`${{ needs.backend-unit.result }}\`"
@@ -265,3 +412,29 @@ jobs:
             echo "- dashboard-typecheck: \`${{ needs.dashboard-typecheck.result }}\`"
             echo "- security-app: \`${{ needs.security-app.result }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Append failure hints if any lane failed
+          hints=""
+          for lane in backend-unit backend-chaos backend-integration agent-unit agent-lint dashboard-unit dashboard-typecheck backend-lint; do
+            case "$lane" in
+              backend-unit)        hint="${{ needs.backend-unit.outputs.failure-hint }}" ;;
+              backend-chaos)       hint="${{ needs.backend-chaos.outputs.failure-hint }}" ;;
+              backend-integration) hint="${{ needs.backend-integration.outputs.failure-hint }}" ;;
+              agent-unit)          hint="${{ needs.agent-unit.outputs.failure-hint }}" ;;
+              agent-lint)          hint="${{ needs.agent-lint.outputs.failure-hint }}" ;;
+              dashboard-unit)      hint="${{ needs.dashboard-unit.outputs.failure-hint }}" ;;
+              dashboard-typecheck) hint="${{ needs.dashboard-typecheck.outputs.failure-hint }}" ;;
+              backend-lint)        hint="${{ needs.backend-lint.outputs.failure-hint }}" ;;
+            esac
+            if [ -n "$hint" ]; then
+              hints="${hints}\n**${lane}:**\n\`\`\`\n${hint}\n\`\`\`\n"
+            fi
+          done
+
+          if [ -n "$hints" ]; then
+            {
+              echo
+              echo "### Failure Details"
+              echo -e "$hints"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -344,7 +344,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
-      - name: Write job summary
+      - uses: actions/checkout@v5
+      - name: Compute overall status
+        id: status
         run: |
           overall=success
           for result in \
@@ -360,14 +362,16 @@ jobs:
               break
             fi
           done
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/summary-header
+        with:
+          title: "Deploy Summary (${{ github.ref_name == 'main' && 'prod' || 'dev' }})"
+          overall: ${{ steps.status.outputs.overall }}
+      - name: Write deploy details
+        run: |
           {
-            echo "## Deploy Summary"
-            echo
             echo "- environment: \`${{ github.ref_name == 'main' && 'prod' || 'dev' }}\`"
             echo "- domain: \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\`"
-            echo "- ref: \`${{ github.ref_name }}\`"
-            echo "- sha: \`${{ github.sha }}\`"
-            echo "- overall: \`${overall}\`"
             echo
             echo "### Gates"
             echo "- validate_secrets: \`${{ needs.validate-secrets.result }}\`"

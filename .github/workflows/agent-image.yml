@@ -74,6 +74,7 @@ jobs:
     outputs:
       desktop-image: ${{ steps.image-ref.outputs.ref }}
       desktop-tags: ${{ steps.meta.outputs.tags }}
+      contract-test-outcome: ${{ steps.contract-test.outcome }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -103,6 +104,7 @@ jobs:
       - name: Install test dependencies
         run: uv --directory agent sync --group dev
       - name: Run managed Docker contract test
+        id: contract-test
         run: PYTHONPATH=${{ github.workspace }} AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 uv --directory agent run pytest tests/test_managed_docker_contract.py -q -o addopts=
 
       # Push the exact tested desktop image to GHCR
@@ -142,7 +144,9 @@ jobs:
     needs: [build-managed, build-desktop-managed]
     runs-on: ubuntu-latest
     steps:
-      - name: Write job summary
+      - uses: actions/checkout@v5
+      - name: Compute overall status
+        id: status
         run: |
           overall=success
           for result in "${{ needs.build-managed.result }}" "${{ needs.build-desktop-managed.result }}"; do
@@ -151,18 +155,21 @@ jobs:
               break
             fi
           done
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/summary-header
+        with:
+          title: Agent Image Summary
+          overall: ${{ steps.status.outputs.overall }}
+      - name: Write image details
+        run: |
           {
-            echo "## Agent Image Summary"
             echo
-            echo "- ref: \`${{ github.ref_name }}\`"
-            echo "- sha: \`${{ github.sha }}\`"
-            echo "- overall: \`${overall}\`"
-            echo "- registry: \`${{ env.REGISTRY }}\`"
-            echo "- managed_result: \`${{ needs.build-managed.result }}\`"
-            echo "- desktop_result: \`${{ needs.build-desktop-managed.result }}\`"
-            echo "- managed_image_ref: \`${{ needs.build-managed.outputs.managed-image }}\`"
-            echo "- desktop_image_ref: \`${{ needs.build-desktop-managed.outputs.desktop-image }}\`"
-            echo "- managed_tags: \`${{ needs.build-managed.outputs.managed-tags }}\`"
-            echo "- desktop_tags: \`${{ needs.build-desktop-managed.outputs.desktop-tags }}\`"
-            echo "- contract_test: \`${{ needs.build-desktop-managed.result }}\`"
+            echo "### Jobs"
+            echo "- managed_build: \`${{ needs.build-managed.result }}\`"
+            echo "- desktop_build: \`${{ needs.build-desktop-managed.result }}\`"
+            echo "- contract_test: \`${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}\`"
+            echo
+            echo "### Artifacts"
+            echo "- managed_image: \`${{ needs.build-managed.outputs.managed-image }}\`"
+            echo "- desktop_image: \`${{ needs.build-desktop-managed.outputs.desktop-image }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

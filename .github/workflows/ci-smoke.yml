@@ -57,10 +57,18 @@ jobs:
             sleep 3
           done
       - name: Run docker bootstrap tests
+        id: bootstrap
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
-        run: uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+        run: uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts=" 2>&1 | tee bootstrap-output.txt || { exit_code=$?; exit "$exit_code"; }
+      - name: Upload bootstrap output
+        if: failure() && steps.bootstrap.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-smoke-bootstrap-output
+          path: bootstrap-output.txt
+          retention-days: 7
       - name: Restart backend stack with real executor
         if: env.ANTHROPIC_API_KEY != ''
         run: |
@@ -77,12 +85,26 @@ jobs:
           echo "::warning::ANTHROPIC_API_KEY not set — skipping docker smoke test"
           echo "SKIP_SMOKE=true" >> $GITHUB_ENV
       - name: Run docker round-trip smoke tests
+        id: roundtrip
         if: env.SKIP_SMOKE != 'true'
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
-        run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+        run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts=" 2>&1 | tee roundtrip-output.txt || { exit_code=$?; exit "$exit_code"; }
+      - name: Upload roundtrip output
+        if: failure() && steps.roundtrip.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-smoke-roundtrip-output
+          path: roundtrip-output.txt
+          retention-days: 7
       - name: Write job summary
+        if: always()
+        uses: ./.github/actions/summary-header
+        with:
+          title: CI Smoke Summary
+          overall: ${{ job.status }}
+      - name: Write smoke details
         if: always()
         run: |
           if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
@@ -96,17 +118,12 @@ jobs:
             mode=skipped
             round_trip_smoke=skipped
           else
-            round_trip_smoke=attempted
+            round_trip_smoke="${{ steps.roundtrip.outcome || 'not-run' }}"
           fi
           {
-            echo "## CI Smoke Summary"
             echo
-            echo "- ref: \`${{ github.ref_name }}\`"
-            echo "- sha: \`${{ github.sha }}\`"
-            echo "- overall: \`${{ job.status }}\`"
-            echo "- compose_project: \`${{ env.CI_SMOKE_PROJECT_NAME }}\`"
-            echo "- backend_url: \`http://localhost:8000/graphql\`"
-            echo "- bootstrap_test: \`completed\`"
+            echo "### Tests"
+            echo "- bootstrap_test: \`${{ steps.bootstrap.outcome || 'not-run' }}\`"
             echo "- round_trip_smoke: \`${round_trip_smoke}\`"
             echo "- provider_key_present: \`${provider_key_present}\`"
             echo "- mode: \`${mode}\`"

@@ -1,0 +1,26 @@
+name: Summary Header
+description: Writes the standard header block to $GITHUB_STEP_SUMMARY.
+
+inputs:
+  title:
+    description: Summary heading (e.g. "CI Fast Summary")
+    required: true
+  overall:
+    description: Overall status — "success" or "attention-needed"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write header
+      shell: bash
+      run: |
+        {
+          echo "## ${{ inputs.title }}"
+          echo
+          echo "- ref: \`${{ github.ref_name }}\`"
+          echo "- sha: \`${{ github.sha }}\`"
+          echo "- trigger: \`${{ github.event_name }}\`"
+          echo "- overall: \`${{ inputs.overall }}\`"
+          echo "- run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+        } >> "$GITHUB_STEP_SUMMARY"
