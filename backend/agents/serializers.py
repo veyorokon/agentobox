@@ -12,7 +12,7 @@ from asgiref.sync import sync_to_async
 from decimal import Decimal
 
 PREVIEW_READY_STATUSES = {"idle", "running", "waiting"}
-DESKTOP_PREVIEW_REQUIRED_SERVICES = {"xvfb", "x11vnc", "websockify", "awesome", "firefox"}
+DESKTOP_PREVIEW_REQUIRED_SERVICES = {"xvfb", "x11vnc", "websockify", "awesome"}
 PreviewState = str
 
 
@@ -126,6 +126,9 @@ def _desktop_preview_ready(status: dict) -> bool:
     if not transport.get("connected"):
         return False
     services = status.get("services") or {}
+    # Preview availability is a desktop-surface contract. Firefox is still
+    # supervised and reported, but it is app-level health, not a hard gate for
+    # showing the VNC desktop.
     return all(services.get(name) == "up" for name in DESKTOP_PREVIEW_REQUIRED_SERVICES)
 
 

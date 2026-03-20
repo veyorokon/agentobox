@@ -63,6 +63,8 @@ def _desktop_runtime_specs(mode: AgentMode) -> list[ServiceSpec]:
             name="firefox",
             command=("python", "-m", "agent.runtime.desktop.firefox"),
             depends_on=("awesome",),
-            required_for_readiness=True,
+            # Firefox is an app-level desktop service, not a prerequisite for
+            # the VNC desktop surface itself being previewable.
+            required_for_readiness=False,
         ),
     ]

@@ -36,8 +36,8 @@ def _managed_desktop_status(*, firefox: ServiceState = ServiceState.UP) -> Statu
 
 def test_readyz_requires_desktop_services_for_managed_runtime():
     code, payload = readyz_payload(_managed_desktop_status(firefox=ServiceState.DOWN))
-    assert code == 503
-    assert payload["status"] == "not_ready"
+    assert code == 200
+    assert payload["status"] == "ready"
 
 
 def test_readyz_accepts_fully_ready_desktop_runtime():

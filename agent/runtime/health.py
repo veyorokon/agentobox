@@ -4,19 +4,21 @@ from agent.contracts.lifecycle import ServiceState
 from agent.contracts.mode import AgentMode
 from agent.contracts.profile import RuntimeProfile
 from agent.contracts.status import StatusDocument
+from agent.runtime.service_catalog import service_graph_for_platform
 
 
 def livez_payload() -> dict:
     return {"status": "ok"}
 
 
-DESKTOP_REQUIRED_SERVICES = ("xvfb", "x11vnc", "websockify", "awesome", "firefox")
-
-
 def _required_services_ready(status: StatusDocument) -> bool:
     if status.profile is not RuntimeProfile.DESKTOP:
         return True
-    return all(status.services.get(name) is ServiceState.UP for name in DESKTOP_REQUIRED_SERVICES)
+    graph = service_graph_for_platform(status.platform, status.mode, status.profile)
+    return all(
+        status.services.get(spec.name) is ServiceState.UP
+        for spec in graph.required_services()
+    )
 
 
 def readyz_payload(status: StatusDocument) -> tuple[int, dict]:
