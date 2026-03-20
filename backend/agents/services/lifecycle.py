@@ -660,7 +660,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # as its readiness gate — once this directory exists, it creates
         # symlinks and all s6 services can start. Without this, the relay
         # service blocks forever waiting for its volume symlinks.
-        vol = agent.volume
+        vol = agent.machine
         vol.initialize()
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="volume_initialized")

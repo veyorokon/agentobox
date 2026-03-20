@@ -241,7 +241,7 @@ async def _persist_allowed_tool(item: TeamFeedItem) -> None:
     )
     if agent is not None:
         # Reload relay so allowed_tools take effect immediately (no redeploy needed).
-        reload_cmd = agent.volume.mutate_state(
+        reload_cmd = agent.machine.mutate_state(
             agent.model or "", agent.mode or "auto", agent.allowed_tools or []
         )
         from agents.services.relay import push_to_relay

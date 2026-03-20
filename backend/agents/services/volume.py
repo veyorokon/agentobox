@@ -186,7 +186,7 @@ class Volume:
     is guaranteed atomic by POSIX.
 
     Usage:
-        vol = agent.volume                          # from Agent model property
+        vol = agent.machine                         # from Agent model property
         vol.write("home/agent/.claude/settings.json", json_content)
         vol.write_secret("run/secrets/proxy_key", key, mode=0o600)
         vol.append_inbox({"type": "task", "task_id": "...", "input": {...}})

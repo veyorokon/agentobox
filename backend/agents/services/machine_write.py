@@ -22,13 +22,13 @@ class LocalAgentMachineWriter:
 
     def __init__(self, agent: Agent):
         self.agent = agent
-        self.volume = agent.volume
+        self.machine = agent.machine
 
     async def append_task(self, *, task_id: str, content: list, role: str = "user") -> None:
-        self.volume.append_task(task_id=task_id, content=content, role=role)
+        self.machine.append_task(task_id=task_id, content=content, role=role)
 
     async def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
-        return self.volume.mutate(path, content)
+        return self.machine.mutate(path, content)
 
 
 class ModalAgentMachineWriter(LocalAgentMachineWriter):

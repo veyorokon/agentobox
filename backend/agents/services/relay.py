@@ -405,7 +405,7 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
     )
 
     # Write state.json and reload relay
-    reload_cmd = agent.volume.mutate_state(agent.model, frontend_mode, agent.allowed_tools or [])
+    reload_cmd = agent.machine.mutate_state(agent.model, frontend_mode, agent.allowed_tools or [])
     await push_to_relay(agent_id, reload_cmd)
 
     op_log.info("comms.mode_changed")
@@ -437,7 +437,7 @@ async def push_theme_to_agents(project) -> None:
 
     for agent in running_agents:
         try:
-            reload_cmd = agent.volume.mutate_theme_document(tokens, name=project.name)
+            reload_cmd = agent.machine.mutate_theme_document(tokens, name=project.name)
             await push_to_relay(str(agent.id), reload_cmd)
         except Exception as exc:  # intentional: theme push is best-effort — one agent failure must not block others
             log.exception(
@@ -526,9 +526,9 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
         try:
             skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
             if operation == "write":
-                agent.volume.write(skill_path, skill.content)
+                agent.machine.write(skill_path, skill.content)
             elif operation == "delete":
-                agent.volume.remove_tree(agent.volume.skill_dir(safe_name))
+                agent.machine.remove_tree(agent.machine.skill_dir(safe_name))
         except Exception as exc:  # intentional: one agent's skill push failure must not block other agents
             log.exception(
                 "comms.skill_push_failed",
@@ -549,7 +549,7 @@ async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[s
     for agent_id in agent_ids:
         try:
             agent = await Agent.objects.aget(id=agent_id)
-            agent.volume.remove_tree(agent.volume.skill_dir(safe_name))
+            agent.machine.remove_tree(agent.machine.skill_dir(safe_name))
         except Exception as exc:  # intentional: one agent's skill cleanup failure must not block other agents
             log.exception(
                 "comms.skill_cleanup_failed",

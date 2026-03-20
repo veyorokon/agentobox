@@ -177,11 +177,11 @@ def _summarize_runtime_log(events: list[dict]) -> tuple[str, list[str]]:
 
 
 async def _read_runtime_log_tail(agent, *, limit: int = 10) -> list[dict]:
-    return await sync_to_async(agent.volume.runtime_log_tail, thread_sensitive=False)(limit=limit)
+    return await sync_to_async(agent.machine.runtime_log_tail, thread_sensitive=False)(limit=limit)
 
 
 async def _write_runtime_diagnostics(agent, payload: dict) -> None:
-    await sync_to_async(agent.volume.write_runtime_diagnostics, thread_sensitive=False)(payload)
+    await sync_to_async(agent.machine.write_runtime_diagnostics, thread_sensitive=False)(payload)
 
 
 @_db

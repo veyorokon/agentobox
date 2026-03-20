@@ -79,7 +79,7 @@ async def provision_workspace(
     mirror path.
 
     Args:
-        vol: Volume instance for this agent (from agent.volume)
+        vol: Volume instance for this agent (from agent.machine)
         project: Project the agent belongs to
         agent_type: Adapter key (e.g. "claude-code")
         api_key: Resolved API key for the model's provider
@@ -353,7 +353,7 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
     from agents.services.relay import push_to_relay
     from agents.services.relay_commands import ReloadCommand
 
-    vol = agent.volume
+    vol = agent.machine
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
     workspace = "/home/agent/workspace"
     paths = adapter.provision_paths(workspace)

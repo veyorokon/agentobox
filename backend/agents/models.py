@@ -337,9 +337,15 @@ class Agent(models.Model):
         return f"{self.name} ({self.status})"
 
     @property
-    def volume(self):
+    def machine(self):
+        """Canonical machine-state interface for this agent."""
         from agents.services.volume import Volume
         return Volume(str(self.project_id), str(self.id))
+
+    @property
+    def volume(self):
+        """Compatibility alias for the older storage-centric name."""
+        return self.machine
 
     @property
     def is_converged(self):

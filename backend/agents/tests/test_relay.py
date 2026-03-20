@@ -288,6 +288,7 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
     fake_agent.runtime = "modal"
     fake_agent.sandbox_id = "sb-abc123"
     fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
 
     content = [{"type": "text", "text": "hello from modal"}]
     with (
@@ -327,6 +328,7 @@ async def test_deliver_input_skips_sandbox_sync_for_docker():
     fake_agent.runtime = "docker"
     fake_agent.sandbox_id = "container-xyz"
     fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
 
     content = [{"type": "text", "text": "hello from docker"}]
     with (
@@ -351,6 +353,7 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
     fake_agent.runtime = "modal"
     fake_agent.sandbox_id = "sb-def456"
     fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
     fake_agent.volume.mutate.return_value = ReloadCommand(path="_abox/state.json")
 
     with (
@@ -378,6 +381,7 @@ async def test_deliver_input_skips_modal_append_when_no_sandbox_id():
     fake_agent.runtime = "modal"
     fake_agent.sandbox_id = ""
     fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
 
     with (
         patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),

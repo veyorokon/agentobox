@@ -76,6 +76,17 @@ def test_runtime_executor_maps_claude_code_agent_type():
     assert _runtime_executor("claude-code") == "claude_code"
 
 
+def test_agent_machine_is_canonical_and_volume_is_compat_alias():
+    agent = Agent(id=uuid.uuid4(), project_id=uuid.uuid4())
+
+    machine = agent.machine
+    volume = agent.volume
+
+    assert isinstance(machine, Volume)
+    assert isinstance(volume, Volume)
+    assert machine.root == volume.root
+
+
 def test_runtime_executor_honors_override():
     assert _runtime_executor("claude-code", override="echo") == "echo"
 
