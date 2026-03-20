@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus-x11 \
     python3-websockify \
     firefox-esr \
+    libegl1 \
+    libgl1-mesa-dri \
     xterm \
     gosu \
     ca-certificates \

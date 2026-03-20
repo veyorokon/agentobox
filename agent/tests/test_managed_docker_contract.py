@@ -100,6 +100,24 @@ class FakeRelayServer:
     def wait_for_message(self, timeout_s: float = 10.0) -> dict:
         return self._messages.get(timeout=timeout_s)
 
+    def wait_for_message_type(self, message_type: str, timeout_s: float = 10.0) -> dict:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            remaining = max(0.01, deadline - time.monotonic())
+            message = self.wait_for_message(timeout_s=remaining)
+            if message.get("type") == message_type:
+                return message
+        raise TimeoutError(f"timed out waiting for relay message type {message_type}")
+
+    def wait_for_message_match(self, predicate, timeout_s: float = 10.0) -> dict:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            remaining = max(0.01, deadline - time.monotonic())
+            message = self.wait_for_message(timeout_s=remaining)
+            if predicate(message):
+                return message
+        raise TimeoutError("timed out waiting for matching relay message")
+
     def _serve(self) -> None:
         def handler(connection: ServerConnection) -> None:
             self._connected.set()
@@ -283,9 +301,12 @@ def test_managed_docker_image_waits_for_provisioning_then_reaches_ready(tmp_path
         assert status["transport"]["connected"] is True
 
         assert relay.wait_for_connection(timeout_s=10) is True
-        upstream = relay.wait_for_message(timeout_s=10)
-        assert upstream["type"] == "runtime_hello"
-
+        status_msg = relay.wait_for_message_match(
+            lambda message: message.get("type") == "runtime_status"
+            and message.get("payload", {}).get("runtime_state") == "ready",
+            timeout_s=10,
+        )
+        assert status_msg["payload"]["runtime_state"] == "ready"
         settings = _container_exec(container_id, "cat", "/home/agent/.claude/settings.json")
         onboarding = _container_exec(container_id, "cat", "/home/agent/.claude.json")
         proxy_key = _container_exec(container_id, "cat", "/run/secrets/proxy_key")
@@ -402,10 +423,12 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert status["services"]["firefox"] == "up"
 
         assert relay.wait_for_connection(timeout_s=10) is True
-        upstream = relay.wait_for_message(timeout_s=10)
-        assert upstream["type"] == "runtime_hello"
-        assert upstream["profile"] == "desktop"
-
+        status_msg = relay.wait_for_message_match(
+            lambda message: message.get("type") == "runtime_status"
+            and message.get("payload", {}).get("runtime_state") == "ready",
+            timeout_s=10,
+        )
+        assert status_msg["payload"]["runtime_state"] == "ready"
         settings = _container_exec(container_id, "cat", "/home/agent/.claude/settings.json")
         onboarding = _container_exec(container_id, "cat", "/home/agent/.claude.json")
         proxy_key = _container_exec(container_id, "cat", "/run/secrets/proxy_key")
