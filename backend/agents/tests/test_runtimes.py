@@ -110,25 +110,46 @@ class TestModalRuntimeExec:
                 captured["create_kwargs"] = kwargs
                 return FakeSandbox()
 
+        class FakeVolumeAPI:
+            @staticmethod
+            def from_name(name, create_if_missing=True, environment_name=None):
+                captured.setdefault("volumes", []).append(
+                    {
+                        "name": name,
+                        "create_if_missing": create_if_missing,
+                        "environment_name": environment_name,
+                    }
+                )
+                return ("volume", name, environment_name)
+
         monkeypatch.setattr("agents.runtimes.modal.modal.Image", FakeImageAPI)
         monkeypatch.setattr("agents.runtimes.modal.modal.App.lookup", FakeAppLookup)
         monkeypatch.setattr("agents.runtimes.modal.modal.Secret", FakeSecretAPI)
         monkeypatch.setattr("agents.runtimes.modal.modal.Sandbox.create", FakeSandboxCreate)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Volume", FakeVolumeAPI)
         monkeypatch.setattr("agents.runtimes.modal.app_config.modal.app_name", "agentobox")
         monkeypatch.setattr(
             "agents.runtimes.modal.app_config.modal.agent_image",
             "ghcr.io/test/managed:sha-1234567",
         )
         monkeypatch.setattr("agents.runtimes.modal.app_config.modal.agent_image_map", {})
+        monkeypatch.setattr("agents.runtimes.modal.app_config.environment", "dev")
 
         sandbox = await runtime.create(
             "team-lead",
             {"AGENT_ID": "agent-123", "AGENT_TYPE": "claude-code"},
-            volumes=None,
+            volumes=[SimpleNamespace(name="agentobox_agent-volumes", mount_path="/vol")],
         )
 
         assert captured["image_ref"] == "ghcr.io/test/managed:sha-1234567"
         assert captured["create_kwargs"]["image"] is fake_image
+        assert captured["volumes"] == [
+            {
+                "name": "agentobox_agent-volumes",
+                "create_if_missing": True,
+                "environment_name": "dev",
+            }
+        ]
         assert sandbox.id == "sb-test"
         assert sandbox.vnc_url == "wss://vnc.example"
         assert sandbox.health_url == "https://health.example"

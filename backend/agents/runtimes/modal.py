@@ -10,6 +10,7 @@ Modal Sandbox.create is natively async (.aio suffix), so no executor
 wrapping needed unlike DockerRuntime.
 """
 import time
+import os
 from pathlib import PurePosixPath
 
 import modal
@@ -25,6 +26,10 @@ MODAL_DEFAULT_MEMORY_MB = 4096
 
 class ModalRuntime:
     """Modal Python SDK runtime. Implements Runtime protocol."""
+
+    @staticmethod
+    def _environment_name() -> str:
+        return os.environ.get("MODAL_ENVIRONMENT") or app_config.environment
 
     async def create(
         self, name: str, env: dict[str, str],
@@ -54,8 +59,13 @@ class ModalRuntime:
         # mount.name is used directly as the Modal volume label.
         modal_volumes = {}
         if volumes:
+            environment_name = self._environment_name()
             for mount in volumes:
-                vol = modal.Volume.from_name(mount.name, create_if_missing=True)
+                vol = modal.Volume.from_name(
+                    mount.name,
+                    create_if_missing=True,
+                    environment_name=environment_name,
+                )
                 modal_volumes[mount.mount_path] = vol
             op.info("runtime.volumes_attached", names=[m.name for m in volumes])
 
