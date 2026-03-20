@@ -339,6 +339,26 @@ class Volume:
             "allowed_tools": allowed_tools,
         }))
 
+    def write_workspace_mcp_config(self, content: str | bytes) -> None:
+        """Write the canonical workspace MCP config document."""
+
+        self.write("home/agent/workspace/.mcp.json", content)
+
+    def write_gateway_config(self, content: str | bytes) -> None:
+        """Write the canonical MCP gateway config document."""
+
+        self.write("run/mcp-gateway/config.json", content)
+
+    def write_secrets_env_document(self, content: str | bytes) -> None:
+        """Write the shared shell-sourceable secrets export."""
+
+        self.write_secret("mnt/abox-state/secrets/env", content)
+
+    def write_mcp_secret(self, server_name: str, key: str, value: str | bytes) -> None:
+        """Write one scoped MCP secret under the canonical machine path."""
+
+        self.write_secret(f"run/secrets/mcp-{server_name}/{key}", value)
+
     def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
         """Write a reload-registered file and return the reload command.
 

@@ -144,12 +144,12 @@ async def provision_workspace(
             merged.update(json.loads(mcp_config))
             vol.write(_container_to_vol(mcp_config_path), json.dumps(merged, indent=2))
         else:
-            vol.write(_container_to_vol(mcp_config_path), mcp_config)
+            vol.write_workspace_mcp_config(mcp_config)
 
     # MCP Gateway config (commands + ports, no secrets)
     if mcp_servers and hasattr(adapter, "build_gateway_config"):
         gateway_config = adapter.build_gateway_config(mcp_servers=mcp_servers)
-        vol.write("run/mcp-gateway/config.json", gateway_config)
+        vol.write_gateway_config(gateway_config)
 
         # Write per-MCP scoped secrets to volume
         if secret_envs:
@@ -159,16 +159,13 @@ async def provision_workspace(
                     continue
                 for key in needed:
                     if key in secret_envs:
-                        vol.write_secret(
-                            f"run/secrets/mcp-{name}/{key}",
-                            secret_envs[key],
-                        )
+                        vol.write_mcp_secret(name, key, secret_envs[key])
 
     # Prevent host .mcp.json from bleeding through workspace bind mount.
     # Each agent gets its own .mcp.json on the volume; the workspace
     # bind-mount's .mcp.json is masked by the volume symlink.
     if workspace_path:
-        vol.write("home/agent/workspace/.mcp.json", '{"mcpServers": {}}')
+        vol.write_workspace_mcp_config('{"mcpServers": {}}')
 
     # Write project skills that match this agent's tags
     skills_dir = paths["skills_dir"]
@@ -376,7 +373,7 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
         vol.write(_container_to_vol(mcp_config_path), mcp_config)
 
     # Write secrets env file
-    vol.write_secret("mnt/abox-state/secrets/env", build_secrets_env_content(secret_envs))
+    vol.write_secrets_env_document(build_secrets_env_content(secret_envs))
 
     # Rewrite per-MCP scoped secrets
     mcp_servers = agent.mcp_servers
@@ -387,7 +384,7 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
                 continue
             for key in needed:
                 if key in secret_envs:
-                    vol.write_secret(f"run/secrets/mcp-{name}/{key}", secret_envs[key])
+                    vol.write_mcp_secret(name, key, secret_envs[key])
         # Reload gateway config
         await push_to_relay(str(agent.id), ReloadCommand(path="run/mcp-gateway/config.json"))
 

@@ -668,7 +668,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # Write shared secrets env file to volume
         from agents.services.provision import build_secrets_env_content
         secrets_content = build_secrets_env_content(secret_envs)
-        vol.write_secret("mnt/abox-state/secrets/env", secrets_content)
+        vol.write_secrets_env_document(secrets_content)
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)

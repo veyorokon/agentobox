@@ -227,6 +227,28 @@ class TestProvisionSyncManifest:
             assert prefix.startswith(("home/", "run/"))
 
 
+class TestSecretsAndMcpHelpers:
+    """Secrets/MCP machine paths should be explicit helpers, not raw strings everywhere."""
+
+    def test_write_secrets_and_mcp_helpers_use_canonical_paths(self, tmp_path):
+        vol = _make_vol(tmp_path)
+        vol.initialize()
+
+        vol.write_workspace_mcp_config('{"mcpServers": {}}')
+        vol.write_gateway_config('{"servers": []}')
+        vol.write_secrets_env_document("export API_KEY='secret'\n")
+        vol.write_mcp_secret("playwright", "PW_KEY", "pw-secret")
+
+        assert (tmp_path / "home/agent/workspace/.mcp.json").read_text() == '{"mcpServers": {}}'
+        assert (tmp_path / "run/mcp-gateway/config.json").read_text() == '{"servers": []}'
+        secrets_env = tmp_path / "mnt/abox-state/secrets/env"
+        assert secrets_env.read_text() == "export API_KEY='secret'\n"
+        assert oct(secrets_env.stat().st_mode & 0o777) == oct(0o600)
+        mcp_secret = tmp_path / "run/secrets/mcp-playwright/PW_KEY"
+        assert mcp_secret.read_text() == "pw-secret"
+        assert oct(mcp_secret.stat().st_mode & 0o777) == oct(0o600)
+
+
 # ---------------------------------------------------------------------------
 # Delivery guarantee: inbox.pos tracks consumed messages
 # ---------------------------------------------------------------------------
