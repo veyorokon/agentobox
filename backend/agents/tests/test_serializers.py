@@ -56,11 +56,10 @@ async def test_serialize_agent_cost_accumulates_latest_total_per_session():
 
 @pytest.mark.django_db
 @pytest.mark.asyncio
-async def test_serialize_agent_derives_preview_contract(monkeypatch):
+async def test_serialize_agent_derives_preview_contract():
     from django.contrib.auth import get_user_model
 
     from agents.serializers import serialize_agent
-    from agents.services.volume import Volume
     from projects.models import Project
 
     User = get_user_model()
@@ -140,11 +139,6 @@ async def test_serialize_agent_derives_preview_contract(monkeypatch):
         error_message="runtime crashed",
         agent_type="claude-code",
     )
-
-    def fake_runtime_status(self):
-        return {}
-
-    monkeypatch.setattr(Volume, "runtime_status", fake_runtime_status)
 
     deploying_payload = await serialize_agent(deploying)
     ready_payload = await serialize_agent(ready)

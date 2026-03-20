@@ -208,9 +208,9 @@ async def test_detect_dead_containers_marks_missing_runtime_explicitly():
         runtime="docker",
         status=AgentStatus.IDLE,
         project_id="project-1",
+        runtime_status_projection={"runtime_state": "ready"},
         volume=SimpleNamespace(
             runtime_log_tail=lambda limit=10: [],
-            runtime_status=lambda: {"runtime_state": "ready"},
             write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
         ),
     )
