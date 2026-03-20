@@ -110,9 +110,6 @@ jobs:
       DATABASE_URL: postgres://agentobox:agentobox@localhost:5432/agentobox_test
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-test-secret-key-not-for-production
-      AGENT_RUNTIME: docker
-      AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:ci
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:dev
       DJANGO_SETTINGS_MODULE: config.settings
     steps:
       - uses: actions/checkout@v5
@@ -170,7 +167,7 @@ jobs:
       - name: Run agent unit tests
         id: tests
         run: |
-          PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/ -q -o addopts= 2>&1 | tee test-output.txt || exit_code=$?
+          PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/ -m "not contract and not docker_contract" -q -o addopts= 2>&1 | tee test-output.txt || exit_code=$?
           if [ "${exit_code:-0}" -ne 0 ]; then
             hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
             echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
