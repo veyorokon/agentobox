@@ -392,21 +392,18 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
           <div className="flex-1 bg-surface p-1.5 flex items-center justify-center">
               {/* Unified boot surface: deploying → token fetch → connecting → VNC handshake */}
               {isBooting ? (
-                <div className="flex flex-col items-center justify-center gap-3 relative overflow-hidden w-full h-full">
+                <div className="flex flex-col items-center justify-center gap-3 relative overflow-hidden w-full h-full" style={{ containerType: "inline-size" }}>
                   <style>{`
                     @keyframes abox-scanline {
-                      0% { left: -2%; opacity: 0; }
-                      3% { opacity: 0.6; }
-                      15% { left: 40%; opacity: 0.35; }
-                      50% { left: 70%; opacity: 0.2; }
-                      90% { left: 95%; opacity: 0.08; }
-                      100% { left: 100%; opacity: 0; }
+                      0% { transform: translateX(-1px); opacity: 0; }
+                      4% { opacity: 0.5; }
+                      100% { transform: translateX(calc(100cqw + 1px)); opacity: 0; }
                     }
                     @keyframes abox-scan-wash {
-                      0% { opacity: 0; }
-                      8% { opacity: 0.04; }
-                      40% { opacity: 0.015; }
-                      100% { opacity: 0; }
+                      0% { opacity: 0; transform: scaleX(0); transform-origin: left; }
+                      8% { opacity: 0.035; transform: scaleX(0.4); }
+                      50% { opacity: 0.01; transform: scaleX(0.7); }
+                      100% { opacity: 0; transform: scaleX(1); }
                     }
                     @keyframes abox-blink-soft {
                       0%, 100% { opacity: 0.2; }
@@ -422,17 +419,20 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                     className="absolute inset-0 pointer-events-none"
                     style={{
                       background: "linear-gradient(90deg, var(--color-accent, #ff7a59) 0%, transparent 60%)",
-                      animation: "abox-scan-wash 3.5s ease-out infinite",
+                      willChange: "transform, opacity",
+                      animation: "abox-scan-wash 3.5s cubic-bezier(0.16, 1, 0.3, 1) infinite",
+                      animationDelay: "0.15s",
                     }}
                   />
-                  {/* Scanline — thin vertical line sweeps left to right, fast start, slow finish */}
+                  {/* Scanline — thin vertical line sweeps left to right, fast start decelerating */}
                   <div
-                    className="absolute inset-y-0 pointer-events-none"
+                    className="absolute left-0 inset-y-0 pointer-events-none"
                     style={{
                       width: "1px",
                       background: "linear-gradient(180deg, transparent 10%, var(--color-accent, #ff7a59) 50%, transparent 90%)",
                       boxShadow: "0 0 6px 1px var(--color-accent, #ff7a59)",
-                      animation: "abox-scanline 3.5s ease-out infinite",
+                      willChange: "transform, opacity",
+                      animation: "abox-scanline 3.5s cubic-bezier(0.16, 1, 0.3, 1) infinite",
                     }}
                   />
                   <div className="flex items-center gap-1.5 relative" style={{ animation: "abox-fade-in-up 0.6s ease-out both" }}>
