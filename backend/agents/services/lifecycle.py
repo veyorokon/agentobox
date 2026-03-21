@@ -696,9 +696,9 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         # Release the managed provisioning gate only after all files are
         # present in the canonical machine store and the backend has already
-        # recorded the fresh relay token. Modal sandboxes require an explicit
-        # mounted-volume sync before the running runtime can observe those
-        # backend-side writes.
+        # recorded the fresh relay token. The runtime adapter owns whatever
+        # visibility/sync behavior is required before the running sandbox can
+        # observe those backend-side writes.
         await _mark_provisioned_ready(
             runtime_name,
             runtime,
