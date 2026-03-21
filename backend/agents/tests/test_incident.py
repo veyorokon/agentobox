@@ -54,7 +54,7 @@ def setup_project_with_agents():
         runtime="docker",
         status=AgentStatus.IDLE,
         sandbox_id="sandbox-target",
-        relay_token="secret-relay-token-value",
+        relay_token="test-relay-token-abc",
         session_id="session-123",
     )
 
