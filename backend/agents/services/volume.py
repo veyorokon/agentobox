@@ -224,6 +224,10 @@ class AgentMachine:
     def read_bytes(self, path: str) -> bytes:
         return self._store.read_bytes(self._machine, path)
 
+    def read_bytes_limited(self, path: str, max_bytes: int) -> tuple[bytes, bool]:
+        """Read up to max_bytes from a file. Returns (data, was_truncated)."""
+        return self._store.read_bytes_limited(self._machine, path, max_bytes)
+
     def exists(self, path: str) -> bool:
         return self._store.exists(self._machine, path)
 

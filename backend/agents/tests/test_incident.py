@@ -11,7 +11,7 @@ Proves:
 
 import uuid
 from datetime import timedelta
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from django.utils import timezone
@@ -170,6 +170,7 @@ async def test_bundle_has_required_fields(setup_project_with_agents):
         "desired",
         "observed",
         "applied",
+        "raw_support",
         "agent",
         "lifecycle_attempts",
         "stream_events",
@@ -401,3 +402,80 @@ async def test_applied_theme_fingerprint_is_file_backed(setup_project_with_agent
         "applied.theme_fingerprint must not come from log events"
     )
     assert applied["theme_fingerprint_source"] == "runtime_file"
+
+
+async def test_raw_support_bundle_captures_files_with_provenance(setup_project_with_agents):
+    """Raw support bundle reads canonical artifacts with hash and truncation flag."""
+    _, target, _, _ = setup_project_with_agents
+
+    state_json = b'{"model": "claude-sonnet", "mode": "auto"}'
+    status_json = b'{"startup_stage": "managed_ready", "profile": "desktop"}'
+
+    # Use _bounded_read_sync mock via patching the function directly
+    def mock_bounded_read(machine, path, max_bytes):
+        if path == "_abox/state.json":
+            return state_json, False
+        if path == "_abox/status.json":
+            return status_json, False
+        raise FileNotFoundError(path)
+
+    mock_runtime = MagicMock()
+    mock_runtime.exec = AsyncMock(return_value="root  1  0.0  /sbin/init\nagent 42  0.1  python")
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.services.incident._bounded_read_sync", side_effect=mock_bounded_read),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, errors = await capture_incident_bundle(target)
+
+    raw = bundle["raw_support"]
+    assert raw["source"] == "agent_volume+runtime_exec"
+    assert raw["max_file_bytes"] > 0
+
+    files = {a["path"]: a for a in raw["files"]}
+
+    # state.json should be captured
+    state = files["_abox/state.json"]
+    assert state["content"] == state_json.decode()
+    assert state["sha256"] is not None
+    assert state["truncated"] is False
+    assert state["error"] is None
+
+    # missing files should report not_found
+    tokens = files["tmp/abox-theme/tokens.json"]
+    assert tokens["content"] is None
+    assert tokens["error"] == "not_found"
+
+    # command-based evidence (process list)
+    commands = {c["name"]: c for c in raw["commands"]}
+    assert "process_list" in commands
+    assert "root" in commands["process_list"]["content"]
+
+
+async def test_raw_support_bundle_truncates_at_read_time(setup_project_with_agents):
+    """Files are bounded at READ time, not post-load truncation."""
+    from agents.services.incident import MAX_RAW_FILE_BYTES
+
+    _, target, _, _ = setup_project_with_agents
+
+    # Simulate bounded read returning truncated content
+    truncated_bytes = b"x" * MAX_RAW_FILE_BYTES
+
+    def mock_bounded_read(machine, path, max_bytes):
+        return truncated_bytes, True  # truncated=True
+
+    mock_runtime = MagicMock()
+    mock_runtime.exec = AsyncMock(return_value="")
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.services.incident._bounded_read_sync", side_effect=mock_bounded_read),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, _ = await capture_incident_bundle(target)
+
+    for artifact in bundle["raw_support"]["files"]:
+        if artifact["content"] is not None:
+            assert len(artifact["content"].encode()) <= MAX_RAW_FILE_BYTES
+            assert artifact["truncated"] is True

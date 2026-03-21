@@ -19,13 +19,31 @@ from agents.models import Agent, StreamEvent, TeamFeedItem
 
 log = structlog.get_logger("abox.incident")
 
-BUNDLE_SCHEMA_VERSION = "1"
+BUNDLE_SCHEMA_VERSION = "2"
 
 # Caps to keep bundles bounded
 MAX_STREAM_EVENTS = 200
 MAX_FEED_ITEMS = 100
 MAX_RUNTIME_LOG_LINES = 50
 MAX_LIFECYCLE_ATTEMPTS = 10
+
+# Raw support bundle limits
+MAX_RAW_FILE_BYTES = 8192  # 8KB per file read limit (enforced at read time)
+RAW_BUNDLE_FILES = (
+    # Control plane desired state
+    "_abox/state.json",
+    # Runtime observed state
+    "_abox/status.json",
+    # Applied theme artifacts
+    "tmp/abox-theme/tokens.json",
+    "tmp/abox-theme/theme.json",
+    # Desktop config
+    "home/agent/.config/awesome/rc.lua",
+)
+# Commands to capture generic runtime evidence (best-effort, bounded output)
+RAW_BUNDLE_COMMANDS = (
+    {"name": "process_list", "cmd": ["ps", "aux", "--no-header"], "max_bytes": 4096},
+)
 
 # Field names that must be redacted from the bundle.
 REDACTED_FIELDS = frozenset({
@@ -221,6 +239,14 @@ async def capture_incident_bundle(
     observed = _extract_observed(agent, runtime_status)
     applied = _extract_applied(agent, runtime_logs)
 
+    # -- Raw support bundle (bounded file snapshots from agent volume) --
+    raw_support = {}
+    try:
+        raw_support = await _collect_raw_support(agent, errors)
+    except Exception as exc:  # intentional: best-effort — raw bundle is supplementary evidence
+        log.warning("incident.source_failed", source="raw_support", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+        errors.append(f"raw_support: {type(exc).__name__}: {exc}")
+
     bundle = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
         "captured_at": now.isoformat(),
@@ -236,6 +262,7 @@ async def capture_incident_bundle(
         "desired": desired,
         "observed": observed,
         "applied": applied,
+        "raw_support": raw_support,
         "agent": agent_snapshot,
         "lifecycle_attempts": lifecycle_attempts,
         "stream_events": stream_events,
@@ -391,3 +418,85 @@ def _extract_applied(agent: Agent, runtime_logs: list[dict]) -> dict:
         if handler:
             handler(snapshot, event)
     return snapshot
+
+
+# ---------------------------------------------------------------------------
+# Raw support bundle — bounded file snapshots from agent volume
+# ---------------------------------------------------------------------------
+
+
+def _bounded_read_sync(machine, path: str, max_bytes: int) -> tuple[bytes, bool]:
+    """Read a file from the machine volume with a byte limit.
+
+    Returns (content_bytes, was_truncated). Uses the public
+    machine.read_bytes_limited() seam for bounded reads.
+    """
+    if not machine.exists(path):
+        raise FileNotFoundError(path)
+    return machine.read_bytes_limited(path, max_bytes)
+
+
+async def _collect_raw_support(agent: Agent, errors: list[str]) -> dict:
+    """Collect bounded raw evidence from canonical runtime artifacts.
+
+    Files are read with a strict byte cap at read time (not post-load
+    truncation). Process list and other command-based evidence is
+    collected via runtime.exec when a sandbox exists.
+    """
+    import hashlib
+    from asgiref.sync import sync_to_async
+
+    file_artifacts: list[dict] = []
+
+    for path in RAW_BUNDLE_FILES:
+        entry: dict[str, Any] = {
+            "path": path,
+            "content": None,
+            "sha256": None,
+            "truncated": False,
+            "error": None,
+        }
+        try:
+            raw_bytes, truncated = await sync_to_async(
+                _bounded_read_sync, thread_sensitive=False
+            )(agent.machine, path, MAX_RAW_FILE_BYTES)
+            entry["sha256"] = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            entry["truncated"] = truncated
+            entry["content"] = raw_bytes.decode("utf-8", errors="replace")
+        except FileNotFoundError:
+            entry["error"] = "not_found"
+        except Exception as exc:  # intentional: best-effort per file — one failure must not block others
+            log.debug("incident.raw_file_failed", path=path, error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            errors.append(f"raw_support:{path}: {type(exc).__name__}: {exc}")
+        file_artifacts.append(entry)
+
+    # Command-based evidence (process list, etc.) — requires live sandbox
+    command_artifacts: list[dict] = []
+    if agent.sandbox_id:
+        from agents.runtimes import get_runtime
+        runtime = get_runtime(agent.runtime)
+        for spec in RAW_BUNDLE_COMMANDS:
+            cmd_entry: dict[str, Any] = {
+                "name": spec["name"],
+                "content": None,
+                "truncated": False,
+                "error": None,
+            }
+            try:
+                output = await runtime.exec(agent.sandbox_id, spec["cmd"])
+                max_cmd = spec.get("max_bytes", MAX_RAW_FILE_BYTES)
+                raw = output.encode("utf-8") if isinstance(output, str) else output
+                cmd_entry["truncated"] = len(raw) > max_cmd
+                cmd_entry["content"] = raw[:max_cmd].decode("utf-8", errors="replace")
+            except Exception as exc:  # intentional: best-effort per command — sandbox may be dead
+                log.debug("incident.raw_cmd_failed", name=spec["name"], error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+                cmd_entry["error"] = f"{type(exc).__name__}: {exc}"
+            command_artifacts.append(cmd_entry)
+
+    return {
+        "files": file_artifacts,
+        "commands": command_artifacts,
+        "max_file_bytes": MAX_RAW_FILE_BYTES,
+        "source": "agent_volume+runtime_exec",
+    }

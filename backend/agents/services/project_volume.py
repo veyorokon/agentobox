@@ -53,6 +53,10 @@ class ProjectVolumeStore(Protocol):
 
     def read_bytes(self, machine: AgentMachinePaths, path: str) -> bytes: ...
 
+    def read_bytes_limited(self, machine: AgentMachinePaths, path: str, max_bytes: int) -> tuple[bytes, bool]:
+        """Read up to max_bytes from a file. Returns (data, was_truncated)."""
+        ...
+
     def exists(self, machine: AgentMachinePaths, path: str) -> bool: ...
 
     def chmod(self, machine: AgentMachinePaths, path: str, mode: int) -> None: ...
@@ -92,6 +96,13 @@ class LocalProjectVolumeStore:
 
     def read_bytes(self, machine: AgentMachinePaths, path: str) -> bytes:
         return self._full_path(machine, path).read_bytes()
+
+    def read_bytes_limited(self, machine: AgentMachinePaths, path: str, max_bytes: int) -> tuple[bytes, bool]:
+        full = self._full_path(machine, path)
+        with open(full, "rb") as f:
+            data = f.read(max_bytes + 1)
+        truncated = len(data) > max_bytes
+        return data[:max_bytes], truncated
 
     def exists(self, machine: AgentMachinePaths, path: str) -> bool:
         return self._full_path(machine, path).exists()
@@ -164,6 +175,12 @@ class ModalProjectVolumeStore:
 
     def read_bytes(self, machine: AgentMachinePaths, path: str) -> bytes:
         return b"".join(self.volume.read_file(self._volume_path(machine, path)))
+
+    def read_bytes_limited(self, machine: AgentMachinePaths, path: str, max_bytes: int) -> tuple[bytes, bool]:
+        # Modal API does not support partial reads — read full then truncate.
+        data = self.read_bytes(machine, path)
+        truncated = len(data) > max_bytes
+        return data[:max_bytes], truncated
 
     def exists(self, machine: AgentMachinePaths, path: str) -> bool:
         target = self._volume_path(machine, path).lstrip("/")
