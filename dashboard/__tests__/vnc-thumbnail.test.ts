@@ -191,6 +191,24 @@ describe("VncThumbnail", () => {
     expect(screen.queryByRole("button", { name: /redeploy/i })).toBeNull()
   })
 
+  it("shows boot surface not error fallback when preview=unavailable during lifecycle deploy", async () => {
+    render(React.createElement(VncThumbnail, {
+      agent: {
+        ...baseAgent,
+        lifecycleStatus: "deploying",
+        previewState: "unavailable",
+        previewRuntimeId: "",
+        relayConnected: false,
+      },
+    }))
+
+    // Should show calm boot surface, NOT the red error fallback
+    expect(screen.getByText("starting desktop")).toBeTruthy()
+    expect(screen.queryByText("preview unavailable")).toBeNull()
+    expect(screen.queryByText("runtime crashed")).toBeNull()
+    expect(screen.queryByRole("button", { name: /redeploy/i })).toBeNull()
+  })
+
   it("shows calm loading surface when previewState=deploying even after lifecycle reaches idle", async () => {
     render(React.createElement(VncThumbnail, {
       agent: {
