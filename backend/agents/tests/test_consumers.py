@@ -234,7 +234,21 @@ def test_marks_runtime_unavailable_for_ready_agent_with_missing_upstream():
     ) is True
 
 
-def test_does_not_mark_runtime_unavailable_for_connection_refused_on_ready_agent():
+def test_marks_runtime_unavailable_for_connection_reset_on_ready_agent():
+    agent = MagicMock(
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        sandbox_id="sandbox-123",
+        deployed_at=None,
+    )
+
+    assert _should_mark_vnc_runtime_unavailable(
+        agent,
+        ConnectionResetError(),
+    ) is True
+
+
+def test_does_not_mark_runtime_unavailable_for_recent_connection_refused_on_ready_agent():
     agent = MagicMock(
         status=AgentStatus.IDLE,
         relay_connected=True,

@@ -68,8 +68,11 @@ def _is_transient_vnc_upstream_failure(agent, exc: Exception) -> bool:
 def _should_mark_vnc_runtime_unavailable(agent, exc: Exception) -> bool:
     from agents.models import AgentStatus
 
+    if _is_transient_vnc_upstream_failure(agent, exc):
+        return False
+
     return (
-        isinstance(exc, socket.gaierror)
+        isinstance(exc, (socket.gaierror, ConnectionRefusedError, ConnectionResetError, TimeoutError, OSError))
         and getattr(agent, "status", "") in {AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING}
         and bool(getattr(agent, "relay_connected", False))
         and bool(getattr(agent, "sandbox_id", ""))
