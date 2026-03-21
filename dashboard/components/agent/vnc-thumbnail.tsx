@@ -399,7 +399,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
               ) : !vncRevealed && previewReady && connState !== "error" ? (
                 <div className="flex flex-col items-center gap-1">
                   <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-                  <span className="text-[7px] font-mono text-muted/40">connecting...</span>
+                  <span className="text-[8px] font-mono text-muted/60 tracking-wider">connecting...</span>
                 </div>
               ) : connState === "error" && previewReady ? (
                 <div className="flex flex-col items-center gap-2">
