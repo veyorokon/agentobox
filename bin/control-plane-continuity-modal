@@ -376,12 +376,13 @@ def wait_for_deploy_completion(run_id: str) -> None:
         return
     deadline = time.time() + TIMEOUT_S
     last = None
+    current_run_id = run_id
     while time.time() < deadline:
         payload = sh([
             "gh",
             "run",
             "view",
-            run_id,
+            current_run_id,
             "--repo",
             DEPLOY_REPO,
             "--json",
@@ -399,13 +400,45 @@ def wait_for_deploy_completion(run_id: str) -> None:
         if status == "completed":
             if conclusion == "success":
                 return
+            if conclusion == "cancelled":
+                latest_payload = sh([
+                    "gh",
+                    "run",
+                    "list",
+                    "--repo",
+                    DEPLOY_REPO,
+                    "--workflow",
+                    DEPLOY_WORKFLOW,
+                    "--branch",
+                    DEPLOY_REF,
+                    "--limit",
+                    "5",
+                    "--json",
+                    "databaseId,status,conclusion,url,createdAt",
+                ])
+                latest_rows = json.loads(latest_payload or "[]")
+                newer = [
+                    row for row in latest_rows
+                    if str(row.get("databaseId", "")) != current_run_id
+                    and int(str(row.get("databaseId", "0"))) > int(current_run_id)
+                ]
+                if newer:
+                    newest = newer[0]
+                    newest_id = str(newest["databaseId"])
+                    log(
+                        "deploy "
+                        f"run {current_run_id} was cancelled; following newer deploy run {newest_id}"
+                    )
+                    current_run_id = newest_id
+                    time.sleep(5)
+                    continue
             raise HarnessError(
-                f"deploy run {run_id} did not succeed: "
+                f"deploy run {current_run_id} did not succeed: "
                 f"conclusion={conclusion or 'unknown'} "
                 f"url={last.get('url', '')}"
             )
         time.sleep(5)
-    raise HarnessError(f"timed out waiting for deploy run {run_id}; last={last}")
+    raise HarnessError(f"timed out waiting for deploy run {current_run_id}; last={last}")
 
 
 def cleanup(state: HarnessState | None) -> None:
