@@ -15,6 +15,15 @@ from agents.services.runtime_projection import read_runtime_status
 
 PREVIEW_READY_STATUSES = {"idle", "running", "waiting"}
 DESKTOP_PREVIEW_REQUIRED_SERVICES = {"xvfb", "x11vnc", "websockify", "awesome"}
+PREVIEW_BOOTING_STAGES = {
+    "config_loading",
+    "config_validated",
+    "provisioning_wait",
+    "provisioning_validated",
+    "services_starting",
+    "runtime_ready",
+    "transport_connecting",
+}
 PreviewState = str
 
 
@@ -129,6 +138,17 @@ def _desktop_preview_ready(status: dict) -> bool:
     return all(services.get(name) == "up" for name in DESKTOP_PREVIEW_REQUIRED_SERVICES)
 
 
+def _desktop_preview_booting(agent, status: dict) -> bool:
+    """Treat managed desktop warmup as deploying until preview can honestly render."""
+    if not bool(agent.sandbox_id) or not bool(agent.vnc_url):
+        return False
+    if not bool(getattr(agent, "relay_connected", False)):
+        return False
+    if not status:
+        return True
+    return status.get("startup_stage") in PREVIEW_BOOTING_STAGES
+
+
 def derive_preview_state(agent) -> PreviewState:
     """Collapse runtime/VNC-specific state into a frontend preview contract."""
     if agent.status == "deploying":
@@ -140,7 +160,12 @@ def derive_preview_state(agent) -> PreviewState:
         and bool(agent.sandbox_id)
         and bool(agent.vnc_url)
     ):
-        return "ready" if _desktop_preview_ready(_load_runtime_status(agent)) else "unavailable"
+        runtime_status = _load_runtime_status(agent)
+        if _desktop_preview_ready(runtime_status):
+            return "ready"
+        if _desktop_preview_booting(agent, runtime_status):
+            return "deploying"
+        return "unavailable"
     return "unavailable"
 
 

@@ -123,6 +123,40 @@ async def test_serialize_agent_derives_preview_contract():
         },
         agent_type="claude-code",
     )
+    booting = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="booting-agent",
+        project=project,
+        runtime="modal",
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        sandbox_id="sb-boot",
+        vnc_url="ws://vnc-booting",
+        runtime_status_projection={
+            "profile": "desktop",
+            "startup_stage": "transport_connecting",
+            "runtime_state": "starting",
+            "transport": {"connected": False},
+            "services": {
+                "xvfb": "up",
+                "x11vnc": "down",
+                "websockify": "down",
+                "awesome": "up",
+                "browser": "down",
+            },
+        },
+        agent_type="claude-code",
+    )
+    booting_without_status = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="booting-no-status-agent",
+        project=project,
+        runtime="modal",
+        status=AgentStatus.IDLE,
+        relay_connected=True,
+        sandbox_id="sb-boot-empty",
+        vnc_url="ws://vnc-booting-empty",
+        runtime_status_projection={},
+        agent_type="claude-code",
+    )
     desktop_not_ready = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
         name="desktop-not-ready-agent",
         project=project,
@@ -166,6 +200,8 @@ async def test_serialize_agent_derives_preview_contract():
     deploying_payload = await serialize_agent(deploying)
     ready_payload = await serialize_agent(ready)
     running_payload = await serialize_agent(running)
+    booting_payload = await serialize_agent(booting)
+    booting_without_status_payload = await serialize_agent(booting_without_status)
     desktop_not_ready_payload = await serialize_agent(desktop_not_ready)
     unavailable_payload = await serialize_agent(unavailable)
     errored_payload = await serialize_agent(errored)
@@ -176,6 +212,10 @@ async def test_serialize_agent_derives_preview_contract():
     assert ready_payload["previewRuntimeId"] == "sb-123"
     assert running_payload["previewState"] == "ready"
     assert running_payload["previewRuntimeId"] == "sb-789"
+    assert booting_payload["previewState"] == "deploying"
+    assert booting_payload["previewRuntimeId"] == ""
+    assert booting_without_status_payload["previewState"] == "deploying"
+    assert booting_without_status_payload["previewRuntimeId"] == ""
     assert desktop_not_ready_payload["previewState"] == "ready"
     assert desktop_not_ready_payload["previewRuntimeId"] == "sb-234"
     assert unavailable_payload["previewState"] == "unavailable"

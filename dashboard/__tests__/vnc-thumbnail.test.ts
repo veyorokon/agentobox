@@ -190,6 +190,23 @@ describe("VncThumbnail", () => {
     expect(screen.getByRole("button", { name: /redeploying/i }).hasAttribute("disabled")).toBe(true)
   })
 
+  it("treats previewState=deploying as transitional even after lifecycle reaches idle", async () => {
+    render(React.createElement(VncThumbnail, {
+      agent: {
+        ...baseAgent,
+        lifecycleStatus: "idle",
+        previewState: "deploying",
+        previewRuntimeId: "",
+        relayConnected: true,
+      },
+    }))
+
+    expect(screen.getByText("deploying")).toBeTruthy()
+    expect(screen.queryByText("preview unavailable")).toBeNull()
+    expect(screen.queryByText("runtime crashed")).toBeNull()
+    expect(screen.queryByRole("button", { name: /redeploy/i })).toBeNull()
+  })
+
   it("recovers from an error fallback when the agent returns to idle", async () => {
     const { rerender } = render(React.createElement(VncThumbnail, {
       agent: {
