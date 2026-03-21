@@ -35,6 +35,7 @@ from agents.services.lifecycle import (
     _atomic_reset_for_restart,
     _build_agent_env,
     _create_lifecycle_attempt_sync,
+    _load_provision_inputs,
     _mark_provisioned_ready,
     _runtime_executor,
     _update_lifecycle_attempt_sync,
@@ -301,6 +302,42 @@ def test_update_lifecycle_attempt_sync_marks_failure():
     assert updated.error_detail == "boom"
     assert updated.finished_at is not None
     assert updated.metadata_json["sandbox_id"] == "sandbox-1"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_load_provision_inputs_reloads_latest_project_theme_state():
+    owner = await sync_to_async(User.objects.create_user, thread_sensitive=True)(
+        username="owner-theme-refresh",
+        password="pw",
+    )
+    project = await sync_to_async(_create_project_without_signals, thread_sensitive=True)(
+        name="Theme Refresh Project",
+        owner=owner,
+    )
+    agent = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="theme-worker",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.DEPLOYING,
+    )
+
+    stale_agent, stale_project = await Agent.objects.select_related("project").aget(id=agent.id), project
+    stale_tokens = stale_project.resolved_theme_tokens()
+
+    await sync_to_async(
+        Project.objects.filter(id=project.id).update,
+        thread_sensitive=True,
+    )(
+        theme_document={"theme": "ember", "mode": "dark", "overrides": {}},
+    )
+
+    fresh_agent, fresh_project = await _load_provision_inputs(str(agent.id))
+
+    assert fresh_agent.id == stale_agent.id
+    assert fresh_project.id == stale_project.id
+    assert fresh_project.resolved_theme_tokens() != stale_tokens
+    assert fresh_project.resolved_theme_document()["theme"] == "ember"
 
 
 @pytest.mark.django_db(transaction=True)

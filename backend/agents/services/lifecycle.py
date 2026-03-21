@@ -137,6 +137,21 @@ def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
     return ""
 
 
+async def _load_provision_inputs(agent_id: str) -> tuple[Agent, object]:
+    """Reload the latest agent/project state for a long-lived provision task.
+
+    Background lifecycle tasks can outlive the request that spawned them, so
+    hydrated ORM instances crossing that seam are only snapshots. Reload the
+    authoritative rows before using mutable agent/project state to build the
+    runtime image environment or write canonical machine files.
+    """
+    agent = await sync_to_async(
+        lambda: Agent.objects.select_related("project").get(id=agent_id),
+        thread_sensitive=False,
+    )()
+    return agent, agent.project
+
+
 
 async def create_agent(
     project_id: str,
@@ -245,8 +260,7 @@ async def create_agent(
 
     spawn_logged_task(
         _provision_agent(
-            agent,
-            project,
+            str(agent.id),
             runtime_name,
             op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
             secret_envs,
@@ -493,7 +507,7 @@ async def _mark_provisioned_ready(
     op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
 
 
-async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None,
+async def _provision_agent(agent_id: str, runtime_name, op_log, secret_envs=None,
                            resume_session_id: str = "", attempt_id: str = ""):
     """
     Background task: create container, provision workspace, launch relay.
@@ -513,7 +527,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
     runtime = None
     sandbox_id = None
-    agent_id = str(agent.id)
+    agent, project = await _load_provision_inputs(agent_id)
 
     # Bind agent context for all logs in this task
     bind_agent_context(
@@ -599,6 +613,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         vol.initialize()
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="volume_initialized")
+
+        # Refresh authoritative agent/project rows at the machine-state write
+        # boundary. Theme/config changes can land while provisioning is in
+        # flight; boot should consume current DB truth, not task-start
+        # snapshots.
+        agent, project = await _load_provision_inputs(agent_id)
 
         # Write shared secrets env file to volume
         from agents.services.provision import build_secrets_env_content
@@ -1074,8 +1094,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     # new container can --resume the prior conversation.
     spawn_logged_task(
         _provision_agent(
-            agent,
-            agent.project,
+            agent_id,
             runtime_name,
             op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
             secret_envs,
