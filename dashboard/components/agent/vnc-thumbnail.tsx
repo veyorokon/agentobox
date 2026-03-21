@@ -325,13 +325,25 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     fetchTokenAndConnect()
   }, [fetchTokenAndConnect])
 
-  const showVnc = Boolean(VncScreen && wsUrl && previewReady && (connState === "connecting" || connState === "connected"))
+  // VNC mounts as soon as we have a URL, but stays invisible until connected.
+  // This eliminates the black-frame flash during RFB handshake.
+  const mountVnc = Boolean(VncScreen && wsUrl && previewReady)
+  const vncRevealed = mountVnc && connState === "connected"
   const VncScreenComponent = VncScreen
+  const isPreviewDeploying = agent.previewState === "deploying"
   const showRuntimeFallback =
     agent.previewState === "error" || agent.previewState === "unavailable" || isStopped
 
+  // Unified boot surface: covers deploying + token fetch + connecting.
+  // Only hidden once VNC is actually connected (one visual transition).
+  const isBooting = isPreviewDeploying || (
+    !vncRevealed && !showRuntimeFallback && !isPreviewError
+    && connState !== "error"
+    && (previewReady || isPreviewDeploying)
+  )
+
   useEffect(() => {
-    if (!showVnc) return
+    if (!mountVnc) return
     const raf = requestAnimationFrame(() => {
       const origWarn = console.warn
       console.warn = (...args: unknown[]) => {
@@ -342,31 +354,82 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       console.warn = origWarn
     })
     return () => cancelAnimationFrame(raf)
-  }, [showVnc])
+  }, [mountVnc])
 
   return (
     <div className="overflow-hidden bg-surface flex flex-col">
       <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
-        {showVnc && VncScreenComponent ? (
-          <VncErrorBoundary key={wsUrl}>
-            <VncScreenComponent
-              ref={vncRef}
-              url={wsUrl}
-              autoConnect={false}
-              scaleViewport
-              background="var(--p-surface, #1e1e1e)"
-              style={VIEWPORT_STYLE}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
-            />
-          </VncErrorBoundary>
-        ) : (
-          <div className="absolute inset-0 flex flex-col">
-            <div className="flex-1 bg-surface p-1.5 flex items-center justify-center">
-              {connState === "fetching-token" || connState === "connecting" || (connState === "idle" && previewReady) ? (
-                <div className="flex flex-col items-center gap-1">
-                  <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-                  <span className="text-[7px] font-mono text-muted/40">connecting...</span>
+        {/* VNC layer: mounts early but invisible until connected */}
+        {mountVnc && VncScreenComponent && (
+          <div
+            className="transition-opacity duration-500"
+            style={{
+              ...VIEWPORT_STYLE,
+              opacity: vncRevealed ? 1 : 0,
+              pointerEvents: vncRevealed ? "auto" : "none",
+            }}
+          >
+            <VncErrorBoundary key={wsUrl}>
+              <VncScreenComponent
+                ref={vncRef}
+                url={wsUrl}
+                autoConnect={false}
+                scaleViewport
+                background="var(--p-surface, #1e1e1e)"
+                style={VIEWPORT_STYLE}
+                onConnect={handleConnect}
+                onDisconnect={handleDisconnect}
+              />
+            </VncErrorBoundary>
+          </div>
+        )}
+
+        {/* Overlay surfaces: boot, error, stopped — cross-fades with VNC */}
+        <div
+          className="absolute inset-0 flex flex-col transition-opacity duration-500"
+          style={{
+            opacity: vncRevealed ? 0 : 1,
+            pointerEvents: vncRevealed ? "none" : "auto",
+          }}
+        >
+          <div className="flex-1 bg-surface p-1.5 flex items-center justify-center">
+              {/* Unified boot surface: deploying → token fetch → connecting → VNC handshake */}
+              {isBooting ? (
+                <div className="flex flex-col items-center justify-center gap-3 relative overflow-hidden w-full h-full">
+                  <style>{`
+                    @keyframes abox-sweep {
+                      0% { transform: translateX(-100%); opacity: 0; }
+                      10% { opacity: 1; }
+                      90% { opacity: 1; }
+                      100% { transform: translateX(200%); opacity: 0; }
+                    }
+                    @keyframes abox-blink-soft {
+                      0%, 100% { opacity: 0.2; }
+                      50% { opacity: 0.7; }
+                    }
+                    @keyframes abox-fade-in-up {
+                      0% { opacity: 0; transform: translateY(4px); }
+                      100% { opacity: 1; transform: translateY(0); }
+                    }
+                  `}</style>
+                  {/* Vertical bar sweep — moves left to right behind text */}
+                  <div
+                    className="absolute inset-y-0 w-12 pointer-events-none"
+                    style={{
+                      background: "linear-gradient(90deg, transparent, var(--color-accent, #ff7a59) 50%, transparent)",
+                      opacity: 0.06,
+                      animation: "abox-sweep 5s ease-in-out infinite",
+                    }}
+                  />
+                  <div className="flex items-center gap-1.5 relative" style={{ animation: "abox-fade-in-up 0.6s ease-out both" }}>
+                    <span
+                      className="h-1 w-1 rounded-full bg-accent/60"
+                      style={{ animation: "abox-blink-soft 2.5s ease-in-out infinite" }}
+                    />
+                    <span className="text-[7px] font-mono text-muted/40 tracking-[0.2em] uppercase">
+                      starting desktop
+                    </span>
+                  </div>
                 </div>
               ) : connState === "error" && previewReady ? (
                 <div className="flex flex-col items-center gap-2">
@@ -386,7 +449,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                     <div className="flex items-center gap-1.5">
                       <span className={`h-1.5 w-1.5 rounded-full ${isStopped ? "bg-muted/40" : "bg-danger/60"}`} />
                       <span className={isStopped ? "text-muted/50" : "text-danger/60"}>
-                        {isStopped ? "session ended" : isDeploying ? "redeploying" : isPreviewError ? "runtime crashed" : "preview unavailable"}
+                        {isStopped ? "session ended" : isPreviewError ? "runtime crashed" : "preview unavailable"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -395,11 +458,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       {!isStopped && (
                         <button
                           type="button"
-                          disabled={isDeploying}
                           onClick={() => hardRestartAgent(agent.id)}
-                          className="rounded border border-accent/25 bg-accent/8 px-2 py-0.5 text-[8px] text-accent/70 transition hover:bg-accent/15 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded border border-accent/25 bg-accent/8 px-2 py-0.5 text-[8px] text-accent/70 transition hover:bg-accent/15 hover:text-accent"
                         >
-                          {isDeploying ? "redeploying" : "redeploy"}
+                          redeploy
                         </button>
                       )}
                     </div>
@@ -418,22 +480,19 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       <span className="text-muted/25 text-center">
                         {isStopped
                           ? "session ended cleanly"
-                          : isDeploying
-                            ? "desktop is redeploying"
-                            : isPreviewError
-                              ? "container exited — no diagnostics captured"
-                              : "preview is not currently available"}
+                          : isPreviewError
+                            ? "container exited — no diagnostics captured"
+                            : "preview is not currently available"}
                       </span>
                     )}
                   </div>
                 </div>
               ) : (
-                <span className="text-[7px] font-mono text-muted/25">{isDeploying ? "deploying" : agent.previewState}</span>
+                <span className="text-[7px] font-mono text-muted/25">{agent.previewState}</span>
               )}
             </div>
           </div>
-        )}
+        </div>
       </div>
-    </div>
   )
 }

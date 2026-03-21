@@ -174,23 +174,24 @@ describe("VncThumbnail", () => {
     expect(hardRestartAgent).toHaveBeenCalledWith("agent-1")
   })
 
-  it("shows redeploying state and disables redeploy while lifecycle is deploying", async () => {
+  it("shows calm loading surface when preview is deploying during lifecycle deploy", async () => {
     render(React.createElement(VncThumbnail, {
       agent: {
         ...baseAgent,
         lifecycleStatus: "deploying",
-        previewState: "unavailable",
+        previewState: "deploying",
         previewRuntimeId: "",
         relayConnected: false,
       },
     }))
 
-    expect(screen.getAllByText("redeploying")).toHaveLength(2)
-    expect(screen.getByText("desktop is redeploying")).toBeTruthy()
-    expect(screen.getByRole("button", { name: /redeploying/i }).hasAttribute("disabled")).toBe(true)
+    expect(screen.getByText("starting desktop")).toBeTruthy()
+    expect(screen.queryByText("runtime crashed")).toBeNull()
+    expect(screen.queryByText("preview unavailable")).toBeNull()
+    expect(screen.queryByRole("button", { name: /redeploy/i })).toBeNull()
   })
 
-  it("treats previewState=deploying as transitional even after lifecycle reaches idle", async () => {
+  it("shows calm loading surface when previewState=deploying even after lifecycle reaches idle", async () => {
     render(React.createElement(VncThumbnail, {
       agent: {
         ...baseAgent,
@@ -201,7 +202,7 @@ describe("VncThumbnail", () => {
       },
     }))
 
-    expect(screen.getByText("deploying")).toBeTruthy()
+    expect(screen.getByText("starting desktop")).toBeTruthy()
     expect(screen.queryByText("preview unavailable")).toBeNull()
     expect(screen.queryByText("runtime crashed")).toBeNull()
     expect(screen.queryByRole("button", { name: /redeploy/i })).toBeNull()
