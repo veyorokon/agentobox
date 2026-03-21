@@ -209,7 +209,7 @@ async def capture_incident_bundle(
     # -- Structural diagnosis layers --
     desired = _extract_desired(agent, agent_snapshot)
     observed = _extract_observed(agent, runtime_status)
-    applied = _extract_applied(runtime_logs)
+    applied = _extract_applied(agent, runtime_logs)
 
     bundle = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
@@ -238,12 +238,28 @@ async def capture_incident_bundle(
     return _redact(_json_safe(bundle)), errors
 
 
+def _canonical_theme_fingerprint(agent: Agent) -> str | None:
+    """Compute fingerprint of the canonical theme for desired vs applied comparison."""
+    try:
+        import hashlib
+        from agents.services.themes import format_theme_document
+        project = agent.project
+        tokens = project.resolved_theme_tokens()
+        if tokens:
+            payload = format_theme_document(tokens, name=project.name)
+            return hashlib.sha256(payload.encode()).hexdigest()[:12]
+    except Exception as exc:  # intentional: best-effort — supplementary diagnosis field
+        log.debug("incident.source_failed", source="canonical_theme_fingerprint", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+    return None
+
+
 def _extract_desired(agent: Agent, agent_snapshot: dict) -> dict:
     """What the control plane wanted."""
     return {
         "desired_status": getattr(agent, "desired_status", None),
         "model": agent.model or None,
         "mode": agent.mode or None,
+        "theme_fingerprint": _canonical_theme_fingerprint(agent),
         "source": "agent_model",
     }
 
@@ -252,7 +268,7 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
     """What the backend/runtime believes is true."""
     return {
         "lifecycle_status": agent.status,
-        "preview_state": agent_snapshot_preview_state(agent),
+        "preview_state": _derive_preview_state_safe(agent),
         "relay_connected": getattr(agent, "relay_connected", None),
         "runtime_startup_stage": runtime_status.get("startup_stage"),
         "runtime_profile": runtime_status.get("profile"),
@@ -261,60 +277,111 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
     }
 
 
-def agent_snapshot_preview_state(agent: Agent) -> str | None:
-    """Derive preview state without importing the full serializer."""
+def _derive_preview_state_safe(agent: Agent) -> str | None:
     from agents.serializers import derive_preview_state
     try:
         return derive_preview_state(agent)
     except Exception as exc:  # intentional: best-effort — preview state is derived, not critical
-        log.warning(
-            "incident.source_failed",
-            source="preview_state",
-            error_code=ERR_INCIDENT_SOURCE_FAILED,
-            error_class=type(exc).__name__,
-        )
+        log.debug("incident.source_failed", source="preview_state", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         return None
 
 
-def _extract_applied(runtime_logs: list[dict]) -> dict:
+# ---------------------------------------------------------------------------
+# Applied state — registry-based projection from runtime logs
+# ---------------------------------------------------------------------------
+
+# Stable schema: every field is always present, nullable when no signal.
+_APPLIED_SCHEMA: dict[str, Any] = {
+    "theme_fingerprint": None,
+    "theme_fingerprint_source": "runtime_file",
+    "theme_projected_at": None,
+    "theme_notify_result": None,
+    "theme_notify_error": None,
+    "last_launcher_request": None,
+    "display_ready": None,
+    "display_ready_attempts": None,
+    "source": "runtime_file+runtime_log",
+}
+
+
+def _on_theme_projected(s: dict, e: dict) -> None:
+    # theme_fingerprint is file-backed (set before registry scan).
+    # only capture the ephemeral timestamp from the event.
+    if s["theme_projected_at"] is None:
+        s["theme_projected_at"] = e.get("ts")
+
+
+def _on_theme_consumer_applied(s: dict, e: dict) -> None:
+    if s["theme_notify_result"] is None:
+        s["theme_notify_result"] = "succeeded"
+
+
+def _on_theme_consumer_failed(s: dict, e: dict) -> None:
+    if s["theme_notify_result"] is None:
+        s["theme_notify_result"] = "failed"
+        s["theme_notify_error"] = e.get("error")
+
+
+def _on_desktop_launch_requested(s: dict, e: dict) -> None:
+    if s["last_launcher_request"] is None:
+        s["last_launcher_request"] = e.get("command")
+
+
+def _on_desktop_display_ready(s: dict, e: dict) -> None:
+    if s["display_ready"] is None:
+        s["display_ready"] = True
+        s["display_ready_attempts"] = e.get("attempts")
+
+
+def _on_desktop_display_timeout(s: dict, e: dict) -> None:
+    if s["display_ready"] is None:
+        s["display_ready"] = False
+
+
+# Registry: event name → updater. Adding a new event = one entry + one function.
+_APPLIED_HANDLERS: dict[str, Any] = {
+    "theme.projected": _on_theme_projected,
+    "theme.consumer_applied": _on_theme_consumer_applied,
+    "theme.consumer_failed": _on_theme_consumer_failed,
+    "desktop.launch_requested": _on_desktop_launch_requested,
+    "desktop.display_ready": _on_desktop_display_ready,
+    "desktop.display_timeout": _on_desktop_display_timeout,
+}
+
+
+def _read_runtime_theme_fingerprint(agent: Agent) -> str | None:
+    """Read theme fingerprint from the canonical runtime file, not from logs.
+
+    Source: tmp/abox-theme/tokens.json on the agent volume.
+    """
+    try:
+        import hashlib
+        content = agent.machine.read("tmp/abox-theme/tokens.json")
+        if content:
+            return hashlib.sha256(content.encode()).hexdigest()[:12]
+    except Exception as exc:  # intentional: best-effort — file may not exist or volume may not be mounted
+        log.debug("incident.source_failed", source="runtime_theme_fingerprint", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+    return None
+
+
+def _extract_applied(agent: Agent, runtime_logs: list[dict]) -> dict:
     """What the desktop/runtime consumer actually applied.
 
-    Extracts the latest relevant events from runtime_logs. Each field
-    includes source provenance so the summary doesn't create its own
-    ambiguity layer.
+    Durable state (theme fingerprint) comes from canonical runtime files.
+    Ephemeral outcomes (consumer result, launcher, display) come from
+    runtime log events via the handler registry.
+
+    Every field in _APPLIED_SCHEMA is always present (nullable when no signal).
     """
-    applied: dict = {
-        "theme_fingerprint": None,
-        "theme_projected_at": None,
-        "theme_notify_result": None,
-        "last_launcher_request": None,
-        "display_ready": None,
-        "source": "runtime_log",
-    }
+    snapshot = dict(_APPLIED_SCHEMA)
 
-    # Walk logs in reverse to find the latest of each event type
+    # File-backed durable state
+    snapshot["theme_fingerprint"] = _read_runtime_theme_fingerprint(agent)
+    snapshot["theme_fingerprint_source"] = "runtime_file"
+
+    # Event-backed ephemeral outcomes
     for event in reversed(runtime_logs):
-        event_name = event.get("event", "")
-
-        if event_name == "theme.projected" and applied["theme_fingerprint"] is None:
-            applied["theme_fingerprint"] = event.get("fingerprint")
-            applied["theme_projected_at"] = event.get("ts")
-
-        elif event_name == "theme.consumer_applied" and applied["theme_notify_result"] is None:
-            applied["theme_notify_result"] = "succeeded"
-
-        elif event_name == "theme.consumer_failed" and applied["theme_notify_result"] is None:
-            applied["theme_notify_result"] = "failed"
-            applied["theme_notify_error"] = event.get("error")
-
-        elif event_name == "desktop.launch_requested" and applied["last_launcher_request"] is None:
-            applied["last_launcher_request"] = event.get("command")
-
-        elif event_name == "desktop.display_ready" and applied["display_ready"] is None:
-            applied["display_ready"] = True
-            applied["display_ready_attempts"] = event.get("attempts")
-
-        elif event_name == "desktop.display_timeout" and applied["display_ready"] is None:
-            applied["display_ready"] = False
-
-    return applied
+        handler = _APPLIED_HANDLERS.get(event.get("event", ""))
+        if handler:
+            handler(snapshot, event)
+    return snapshot

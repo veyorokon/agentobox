@@ -167,6 +167,9 @@ async def test_bundle_has_required_fields(setup_project_with_agents):
         "screenshot_url",
         "window_minutes",
         "ids",
+        "desired",
+        "observed",
+        "applied",
         "agent",
         "lifecycle_attempts",
         "stream_events",
@@ -275,3 +278,78 @@ async def test_partial_source_failure_captured(setup_project_with_agents):
         f"Expected runtime_logs error in collection_errors, got: {errors}"
     )
     assert len(bundle["collection_errors"]) > 0
+
+
+async def test_bundle_desired_observed_applied_structure(setup_project_with_agents):
+    """Bundle must have desired/observed/applied sections with provenance."""
+    _, target, _, _ = setup_project_with_agents
+
+    mock_logs = [
+        {"event": "theme.projected", "ts": 1.0, "fingerprint": "abc123def456", "theme_name": "Test"},
+        {"event": "theme.consumer_applied", "ts": 2.0, "consumer": "awesome"},
+        {"event": "desktop.display_ready", "ts": 3.0, "display": ":99", "attempts": 5},
+        {"event": "desktop.launch_requested", "ts": 4.0, "command": "chromium"},
+    ]
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=mock_logs):
+        bundle, _ = await capture_incident_bundle(target)
+
+    # desired section — includes canonical theme fingerprint
+    desired = bundle["desired"]
+    assert "desired_status" in desired
+    assert "theme_fingerprint" in desired
+    assert desired["source"] == "agent_model"
+
+    # observed section
+    observed = bundle["observed"]
+    assert "lifecycle_status" in observed
+    assert "relay_connected" in observed
+    assert observed["source"] == "agent_model+runtime_projection"
+
+    # applied section — stable schema, all fields always present
+    applied = bundle["applied"]
+    assert applied["source"] == "runtime_file+runtime_log"
+    assert applied["theme_fingerprint_source"] == "runtime_file"
+    # theme_fingerprint is file-backed (read from volume), not from mock logs
+    # ephemeral outcomes from events:
+    assert applied["theme_notify_result"] == "succeeded"
+    assert applied["theme_notify_error"] is None  # no error when succeeded
+    assert applied["last_launcher_request"] == "chromium"
+    assert applied["display_ready"] is True
+    assert applied["display_ready_attempts"] == 5
+
+
+async def test_applied_section_nullable_when_no_events(setup_project_with_agents):
+    """Applied section should be null for ephemeral fields when no events exist."""
+    _, target, _, _ = setup_project_with_agents
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(target)
+
+    applied = bundle["applied"]
+    # theme_fingerprint may be null (file not on volume) or populated (file exists)
+    assert applied["theme_fingerprint_source"] == "runtime_file"
+    # ephemeral fields should all be null
+    assert applied["theme_notify_result"] is None
+    assert applied["theme_notify_error"] is None
+    assert applied["last_launcher_request"] is None
+    assert applied["display_ready"] is None
+    assert applied["display_ready_attempts"] is None
+    assert applied["source"] == "runtime_file+runtime_log"
+
+
+async def test_applied_section_captures_consumer_failure(setup_project_with_agents):
+    """Applied section should surface consumer failure with error."""
+    _, target, _, _ = setup_project_with_agents
+
+    mock_logs = [
+        {"event": "theme.projected", "ts": 1.0, "fingerprint": "xyz789"},
+        {"event": "theme.consumer_failed", "ts": 2.0, "error": "awesome not ready"},
+    ]
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=mock_logs):
+        bundle, _ = await capture_incident_bundle(target)
+
+    applied = bundle["applied"]
+    assert applied["theme_notify_result"] == "failed"
+    assert applied["theme_notify_error"] == "awesome not ready"
