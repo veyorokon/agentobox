@@ -395,10 +395,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                 <div className="flex flex-col items-center justify-center gap-3 relative overflow-hidden w-full h-full">
                   <style>{`
                     @keyframes abox-scanline {
-                      0% { top: -8%; opacity: 0; }
+                      0% { left: -8%; opacity: 0; }
                       5% { opacity: 1; }
                       80% { opacity: 0.4; }
-                      100% { top: 100%; opacity: 0; }
+                      100% { left: 100%; opacity: 0; }
                     }
                     @keyframes abox-blink-soft {
                       0%, 100% { opacity: 0.2; }
@@ -411,10 +411,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                   `}</style>
                   {/* Scanline — thin line sweeps top to bottom with fading trail */}
                   <div
-                    className="absolute inset-x-0 pointer-events-none"
+                    className="absolute inset-y-0 pointer-events-none"
                     style={{
-                      height: "1px",
-                      background: "linear-gradient(90deg, transparent 10%, var(--color-accent, #ff7a59) 50%, transparent 90%)",
+                      width: "1px",
+                      background: "linear-gradient(180deg, transparent 10%, var(--color-accent, #ff7a59) 50%, transparent 90%)",
                       opacity: 0.25,
                       boxShadow: "0 0 8px 1px var(--color-accent, #ff7a59)",
                       animation: "abox-scanline 3.5s cubic-bezier(0.4, 0, 0.2, 1) infinite",
