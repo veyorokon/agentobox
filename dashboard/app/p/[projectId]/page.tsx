@@ -91,7 +91,15 @@ export default function ProjectPage() {
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
   const headerReady = !projectLoading && !agentsLoading && !!projectName
-  const backendError = projectError ?? agentsError ?? providerError ?? null
+  // Only show error banner when data hasn't loaded yet. Apollo can keep
+  // a stale error object even after a successful refetch/WS snapshot.
+  const hasProjectData = Boolean(projectData?.project)
+  const hasAgentData = Boolean(agentsData?.agents)
+  const hasProviderData = providers.length > 0
+  const backendError = (!hasProjectData && projectError)
+    || (!hasAgentData && agentsError)
+    || (!hasProviderData && providerError)
+    || null
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)

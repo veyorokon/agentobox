@@ -31,10 +31,11 @@ jobs:
         with:
           scan-type: fs
           scan-ref: infra
-          scanners: config
+          scanners: misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          trivyignores: infra/.trivyignore
       - name: Write summary header
         if: always()
         uses: ./.github/actions/summary-header

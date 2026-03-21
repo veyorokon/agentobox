@@ -1,0 +1,8 @@
+# Known-acceptable infra findings for a public web service.
+#
+# DIG-0001: Firewall ingress from 0.0.0.0/0 — required for HTTP/HTTPS/SSH
+# DIG-0003: Firewall egress to 0.0.0.0/0 — required for Docker registries, APIs, etc.
+# AWS-0132: S3 tfstate bucket uses AES256 not CMK — acceptable for terraform state
+DIG-0001
+DIG-0003
+AWS-0132
