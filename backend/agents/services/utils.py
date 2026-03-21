@@ -151,6 +151,7 @@ async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_me
         agent.relay_disconnected_at = timezone.now()
         agent.sandbox_id = ""
         agent.vnc_url = ""
+        agent.runtime_status_projection = {}
         update_fields = [
             "status",
             "deployed_at",
@@ -158,6 +159,7 @@ async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_me
             "relay_disconnected_at",
             "sandbox_id",
             "vnc_url",
+            "runtime_status_projection",
             "updated_at",
         ]
         if _should_replace_error_message(agent.error_message, error_message):

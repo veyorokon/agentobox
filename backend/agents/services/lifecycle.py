@@ -69,6 +69,7 @@ from agents.utils import sanitize_name as _sanitize_name
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 ERR_LIFECYCLE_STUCK_DEPLOY = "ERR-LIFECYCLE-STUCK-DEPLOY"
 ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
+ERR_LIFECYCLE_RUNTIME_LIMBO = "ERR-LIFECYCLE-RUNTIME-LIMBO"
 
 log = structlog.get_logger("abox.lifecycle")
 
@@ -977,6 +978,7 @@ def _atomic_reset_for_restart(agent_id):
         agent.relay_token = ""
         agent.relay_connected = False
         agent.relay_disconnected_at = None
+        agent.runtime_status_projection = {}
         agent.deployed_at = None
         agent.latest_snapshot = {}
         agent.task = ""
@@ -993,7 +995,7 @@ def _atomic_reset_for_restart(agent_id):
         agent.mode = mode
         agent.save(update_fields=[
             "status", "desired_status", "sandbox_id", "vnc_url", "session_id",
-            "relay_token", "relay_connected", "relay_disconnected_at",
+            "relay_token", "relay_connected", "relay_disconnected_at", "runtime_status_projection",
             "deployed_at", "latest_snapshot",
             "task", "phase", "attention_level", "error_message",
             "runtime", "model", "mcp_servers", "workspace_path",

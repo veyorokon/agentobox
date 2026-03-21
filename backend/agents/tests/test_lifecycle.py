@@ -351,6 +351,12 @@ async def test_recover_lifecycle_attempts_marks_available_agent_succeeded():
             project=project,
             runtime="docker",
             status="idle",
+            relay_connected=True,
+            runtime_status_projection={
+                "profile": "desktop",
+                "startup_stage": "managed_ready",
+                "runtime_state": "ready",
+            },
         )
         attempt = AgentLifecycleAttempt.objects.create(
             agent=agent,
@@ -367,8 +373,40 @@ async def test_recover_lifecycle_attempts_marks_available_agent_succeeded():
 
     attempt = await AgentLifecycleAttempt.objects.aget(id=attempt_id)
     assert attempt.status == AgentLifecycleAttemptStatus.SUCCEEDED
-    assert attempt.step == "agent_available"
+    assert attempt.step == "runtime_ready"
     assert attempt.finished_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_recover_lifecycle_attempts_keeps_idle_agent_running_until_runtime_ready():
+    def _setup():
+        owner = User.objects.create_user(username="owner3b", password="pw")
+        project = _create_project_without_signals(name="Test Project 3b", owner=owner)
+        agent = Agent.objects.create(
+            name="worker-3b",
+            project=project,
+            runtime="docker",
+            status="idle",
+            relay_connected=True,
+            runtime_status_projection={},
+        )
+        attempt = AgentLifecycleAttempt.objects.create(
+            agent=agent,
+            kind=AgentLifecycleKind.CREATE,
+            correlation_id="corr-789b",
+            status=AgentLifecycleAttemptStatus.RUNNING,
+            step="waiting_for_runtime_ready",
+        )
+        return attempt.id
+
+    attempt_id = await sync_to_async(_setup, thread_sensitive=True)()
+
+    await recover_lifecycle_attempts()
+
+    attempt = await AgentLifecycleAttempt.objects.aget(id=attempt_id)
+    assert attempt.status == AgentLifecycleAttemptStatus.RUNNING
+    assert attempt.step == "waiting_for_runtime_ready"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -417,6 +455,7 @@ async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
             relay_connected=True,
             sandbox_id="dead-sandbox",
             vnc_url="http://agentobox-agent-dead:6080",
+            runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
             deployed_at=timezone.now() - timedelta(seconds=9),
         )
 
@@ -441,6 +480,7 @@ async def test_mark_agent_runtime_unavailable_clears_stale_runtime_projection():
     assert updated.relay_connected is False
     assert updated.sandbox_id == ""
     assert updated.vnc_url == ""
+    assert updated.runtime_status_projection == {}
     assert updated.error_message == "Desktop runtime is unavailable. Redeploy to restore preview."
     segment = await RuntimeSegment.objects.aget(agent_id=agent.id)
     assert segment.close_reason == "vnc_upstream_missing"
@@ -485,6 +525,40 @@ async def test_atomic_reset_for_restart_normalizes_legacy_runtime_to_current_pol
     reset_agent, _old_sandbox_id, _previous_runtime, _resume_session_id, config = result
     assert config["runtime"] == "modal"
     assert reset_agent.runtime == "modal"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_atomic_reset_for_restart_clears_stale_runtime_projection():
+    def _setup():
+        owner = User.objects.create_user(username="owner6b", password="pw")
+        project = _create_project_without_signals(name="Test Project 6b", owner=owner)
+        return Agent.objects.create(
+            name="legacy-worker-projection",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            desired_status=DesiredStatus.DEPLOYED,
+            relay_connected=True,
+            runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+            config_snapshot={
+                "runtime": "docker",
+                "model": "claude-sonnet-4-5-20250929",
+                "agent_type": "claude-code",
+                "mcp_servers": {},
+                "workspace_path": "",
+                "instructions": "",
+                "role": "worker",
+                "volume_mounts": [],
+            },
+        )
+
+    agent = await sync_to_async(_setup, thread_sensitive=True)()
+
+    result = await _atomic_reset_for_restart(str(agent.id))
+    assert result is not None
+    reset_agent, _old_sandbox_id, _previous_runtime, _resume_session_id, _config = result
+    assert reset_agent.runtime_status_projection == {}
 
 
 # ── Lifecycle state machine tests ──
@@ -695,20 +769,48 @@ class TestConvergence:
     """is_converged / needs_reconcile reflect desired vs reported state."""
 
     @staticmethod
-    def _converged(desired, status):
+    def _converged(desired, status, *, relay_connected=False, runtime_status_projection=None):
         """Evaluate Agent.is_converged property logic without a DB instance."""
         return Agent.is_converged.fget(
-            SimpleNamespace(desired_status=desired, status=status)
+            SimpleNamespace(
+                desired_status=desired,
+                status=status,
+                relay_connected=relay_connected,
+                runtime_status_projection=runtime_status_projection or {},
+            )
         )
 
     def test_deployed_and_running_is_converged(self):
-        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.RUNNING) is True
+        assert self._converged(
+            DesiredStatus.DEPLOYED,
+            AgentStatus.RUNNING,
+            relay_connected=True,
+            runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+        ) is True
 
     def test_deployed_and_idle_is_converged(self):
-        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.IDLE) is True
+        assert self._converged(
+            DesiredStatus.DEPLOYED,
+            AgentStatus.IDLE,
+            relay_connected=True,
+            runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+        ) is True
 
     def test_deployed_and_waiting_is_converged(self):
-        assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.WAITING) is True
+        assert self._converged(
+            DesiredStatus.DEPLOYED,
+            AgentStatus.WAITING,
+            relay_connected=True,
+            runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+        ) is True
+
+    def test_deployed_but_idle_without_runtime_ready_needs_reconcile(self):
+        assert self._converged(
+            DesiredStatus.DEPLOYED,
+            AgentStatus.IDLE,
+            relay_connected=True,
+            runtime_status_projection={},
+        ) is False
 
     def test_deployed_but_stopped_needs_reconcile(self):
         assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.STOPPED) is False
@@ -730,8 +832,21 @@ class TestConvergence:
         """needs_reconcile is always the inverse of is_converged."""
         for desired in DesiredStatus:
             for status in AgentStatus:
-                converged = self._converged(desired, status)
-                ns = SimpleNamespace(desired_status=desired, status=status)
+                kwargs = {}
+                if desired == DesiredStatus.DEPLOYED and status in {
+                    AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING,
+                }:
+                    kwargs = {
+                        "relay_connected": True,
+                        "runtime_status_projection": {"profile": "desktop", "startup_stage": "managed_ready"},
+                    }
+                converged = self._converged(desired, status, **kwargs)
+                ns = SimpleNamespace(
+                    desired_status=desired,
+                    status=status,
+                    relay_connected=kwargs.get("relay_connected", False),
+                    runtime_status_projection=kwargs.get("runtime_status_projection", {}),
+                )
                 reconcile = Agent.needs_reconcile.fget(ns)
                 assert reconcile == (not converged), (
                     f"desired={desired}, status={status}: "

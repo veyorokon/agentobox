@@ -27,16 +27,18 @@ from agents.errors import (
     ERR_RECONCILER_STATUS_CHECK_FAILED,
 )
 from agents.models import Agent, AgentLifecycleAttempt, AgentLifecycleAttemptStatus, AgentStatus
+from agents.models import DesiredStatus
 from agents.services.lifecycle import transition_agent_status
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item
 from agents.services.lifecycle import (
+    ERR_LIFECYCLE_RUNTIME_LIMBO,
     ERR_LIFECYCLE_RUNTIME_DEAD,
     ERR_LIFECYCLE_STUCK_DEPLOY,
     fail_active_lifecycle_attempts,
     succeed_active_lifecycle_attempts,
 )
-from agents.services.runtime_projection import read_runtime_status
+from agents.services.runtime_projection import agent_meets_ready_boundary, read_runtime_status
 from agents.services.utils import mark_agent_runtime_unavailable, terminate_sandbox
 
 log = structlog.get_logger("abox.reconciler")
@@ -47,6 +49,7 @@ DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container
 REASON_RECONCILER_DEAD_RUNTIME = "reconciler.dead_runtime"
 REASON_RECONCILER_RUNTIME_MISSING = "reconciler.runtime_missing"
 REASON_RECONCILER_STUCK_DEPLOY = "reconciler.stuck_deploy"
+REASON_RECONCILER_RUNTIME_LIMBO = "reconciler.runtime_limbo"
 REASON_RECONCILER_ERROR_REAP = "reconciler.error_reap"
 
 _task: asyncio.Task | None = None
@@ -86,6 +89,7 @@ async def reconcile_agents():
     await _reap_orphans()
     await _detect_dead_containers()
     await _detect_stuck_deploys(now)
+    await _detect_runtime_limbo(now)
     await _reap_errored_agents(now)
     await _reconcile_lifecycle_attempts(now)
 
@@ -394,6 +398,43 @@ async def _detect_stuck_deploys(now):
         )
 
 
+async def _detect_runtime_limbo(now):
+    """Recover agents that connected transport but never crossed ready boundary."""
+
+    limbo_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
+    limbo_agents = await _get_agents(
+        status__in=[AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING],
+        desired_status=DesiredStatus.DEPLOYED,
+        relay_connected=True,
+        updated_at__lt=limbo_cutoff,
+    )
+
+    for agent in limbo_agents:
+        if agent_meets_ready_boundary(agent):
+            continue
+
+        error_detail = "Relay connected but runtime never reached ready state"
+        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id), reason=REASON_RECONCILER_RUNTIME_LIMBO))
+        agent = await _mark_error(
+            agent.id,
+            error_message=error_detail,
+            reason=REASON_RECONCILER_RUNTIME_LIMBO,
+        )
+        await fail_active_lifecycle_attempts(
+            str(agent.id),
+            step="runtime_limbo",
+            error_code=ERR_LIFECYCLE_RUNTIME_LIMBO,
+            error_detail=error_detail,
+            metadata={"relay_connected": True},
+        )
+        await broadcast_agent_update(agent)
+        log.info(
+            "reconciler.runtime_limbo",
+            agent_id=str(agent.id),
+            agent_name=agent.name,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Step 4: Auto-reap errored agents
 # ---------------------------------------------------------------------------
@@ -439,11 +480,12 @@ async def _reconcile_lifecycle_attempts(now):
     for attempt in attempts:
         agent = attempt.agent
         if agent.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING):
-            await succeed_active_lifecycle_attempts(
-                str(agent.id),
-                step="agent_available",
-                metadata={"attempt_id": str(attempt.id)},
-            )
+            if agent_meets_ready_boundary(agent):
+                await succeed_active_lifecycle_attempts(
+                    str(agent.id),
+                    step="runtime_ready",
+                    metadata={"attempt_id": str(attempt.id)},
+                )
             continue
 
         if agent.status in (AgentStatus.ERROR, AgentStatus.STOPPED):

@@ -25,6 +25,39 @@ def _relay_consumer() -> RelayConsumer:
 
 
 @pytest.mark.asyncio
+async def test_connect_marks_relay_connected_without_premature_ready_transition():
+    consumer = RelayConsumer()
+    consumer.scope = {
+        "url_route": {"kwargs": {"agent_id": "agent-123"}},
+        "headers": [(b"authorization", b"Bearer test-token")],
+    }
+    consumer.channel_name = "channel-123"
+    consumer.channel_layer = MagicMock()
+    consumer.channel_layer.group_add = AsyncMock()
+    consumer.accept = AsyncMock()
+    consumer.close = AsyncMock()
+
+    agent = MagicMock()
+    agent.id = "agent-123"
+    agent.status = AgentStatus.DEPLOYING
+    agent.relay_connected = False
+    agent.deployed_at = None
+    agent.asave = AsyncMock()
+
+    with (
+        patch("agents.services.auth_relay.get_relay_agent", new_callable=AsyncMock, return_value=agent),
+        patch("agents.services.reconcile.ensure_running"),
+        patch("agents.services.broadcast.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+    ):
+        await consumer.connect()
+
+    agent.asave.assert_awaited_once()
+    assert agent.relay_connected is True
+    assert agent.deployed_at is not None
+    mock_broadcast.assert_awaited_once_with(agent)
+
+
+@pytest.mark.asyncio
 async def test_receive_json_routes_callback_request_to_callback_service():
     consumer = _relay_consumer()
     content = {
@@ -86,6 +119,7 @@ async def test_receive_json_ignores_task_update():
 @pytest.mark.asyncio
 async def test_receive_json_persists_runtime_status_projection():
     consumer = _relay_consumer()
+    consumer.agent.relay_connected = False
     payload = {
         "status_version": "2",
         "profile": "desktop",
@@ -104,6 +138,38 @@ async def test_receive_json_persists_runtime_status_projection():
 
     mock_filter.return_value.aupdate.assert_awaited_once_with(runtime_status_projection=payload)
     assert consumer.agent.runtime_status_projection == payload
+    mock_broadcast.assert_awaited_once_with(consumer.agent)
+
+
+@pytest.mark.asyncio
+async def test_receive_json_runtime_ready_promotes_deploying_agent_and_completes_attempt():
+    consumer = _relay_consumer()
+    consumer.agent.status = AgentStatus.DEPLOYING
+    consumer.agent.relay_connected = True
+    payload = {
+        "status_version": "2",
+        "profile": "desktop",
+        "startup_stage": "managed_ready",
+        "runtime_state": "ready",
+        "transport": {"enabled": True, "connected": True, "state": "connected", "last_error": ""},
+        "services": {"xvfb": "up", "x11vnc": "up", "websockify": "up", "awesome": "up"},
+    }
+
+    with (
+        patch("agents.models.Agent.objects.filter") as mock_filter,
+        patch("agents.models.Agent.objects.aget", new_callable=AsyncMock, return_value=consumer.agent),
+        patch("agents.services.broadcast.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+        patch("agents.services.lifecycle.succeed_active_lifecycle_attempts", new_callable=AsyncMock) as mock_succeed,
+    ):
+        mock_filter.return_value.aupdate = AsyncMock()
+        await consumer.receive_json({"type": "runtime_status", "payload": payload})
+
+    kwargs = mock_filter.return_value.aupdate.await_args.kwargs
+    assert kwargs["status"] == AgentStatus.IDLE
+    assert kwargs["runtime_status_projection"] == payload
+    assert "deployed_at" not in kwargs
+    assert consumer.agent.status == AgentStatus.IDLE
+    mock_succeed.assert_awaited_once()
     mock_broadcast.assert_awaited_once_with(consumer.agent)
 
 

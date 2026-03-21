@@ -356,8 +356,13 @@ class Agent(models.Model):
     @property
     def is_converged(self):
         """Desired state matches reported state — no action needed."""
+        from agents.services.runtime_projection import agent_meets_ready_boundary
+
         if self.desired_status == DesiredStatus.DEPLOYED:
-            return self.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
+            return (
+                self.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
+                and agent_meets_ready_boundary(self)
+            )
         return self.status == AgentStatus.STOPPED
 
     @property

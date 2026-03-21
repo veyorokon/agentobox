@@ -19,8 +19,10 @@ from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
     REASON_RECONCILER_DEAD_RUNTIME,
+    REASON_RECONCILER_RUNTIME_LIMBO,
     REASON_RECONCILER_RUNTIME_MISSING,
     _detect_dead_containers,
+    _detect_runtime_limbo,
     _detect_stuck_deploys,
     _reap_errored_agents,
     _reap_orphans_sync,
@@ -248,6 +250,65 @@ async def test_detect_dead_containers_includes_last_runtime_event_for_missing_ru
     mock_feed_item.assert_awaited_once()
     assert mock_feed_item.await_args.kwargs["text"] == "Runtime container is missing"
     assert written_diagnostics["docker_event_tail"] == [{"action": "kill", "signal": "15"}]
+
+
+@pytest.mark.asyncio
+async def test_detect_runtime_limbo_marks_connected_nonready_agent_error():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        status=AgentStatus.IDLE,
+        desired_status="deployed",
+        relay_connected=True,
+        sandbox_id="sb-123",
+        vnc_url="ws://vnc",
+        runtime_status_projection={},
+        updated_at=timezone.now() - timedelta(seconds=DEPLOY_GRACE_S + 10),
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent")
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock) as mock_fail_attempt,
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+    ):
+        await _detect_runtime_limbo(timezone.now())
+
+    mock_terminate.assert_awaited_once()
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Relay connected but runtime never reached ready state",
+        reason=REASON_RECONCILER_RUNTIME_LIMBO,
+    )
+    mock_fail_attempt.assert_awaited_once()
+    mock_broadcast.assert_awaited_once_with(marked)
+
+
+@pytest.mark.asyncio
+async def test_detect_runtime_limbo_skips_ready_agent():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        status=AgentStatus.IDLE,
+        desired_status="deployed",
+        relay_connected=True,
+        sandbox_id="sb-123",
+        vnc_url="ws://vnc",
+        runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+        updated_at=timezone.now() - timedelta(seconds=DEPLOY_GRACE_S + 10),
+    )
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock) as mock_mark_error,
+    ):
+        await _detect_runtime_limbo(timezone.now())
+
+    mock_terminate.assert_not_awaited()
+    mock_mark_error.assert_not_awaited()
 
 
 class TestReapOrphans:

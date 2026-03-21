@@ -124,34 +124,21 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         await self.accept()
 
         # Track relay connection state
+        from agents.models import AgentStatus
+
         self.agent.relay_connected = True
-        await self.agent.asave(update_fields=["relay_connected"])
+        update_fields = ["relay_connected"]
+        if self.agent.status == AgentStatus.DEPLOYING and not getattr(self.agent, "deployed_at", None):
+            self.agent.deployed_at = timezone.now()
+            update_fields.append("deployed_at")
+        await self.agent.asave(update_fields=update_fields)
 
         # Start the background reconciliation loop on first relay connect
         from agents.services.reconcile import ensure_running
         ensure_running()
 
-        # Transition DEPLOYING → IDLE. No backfill needed — messages are
-        # on the volume (inbox.jsonl) and the relay reads them on startup.
-        # Theme is also on the volume (tokens.json), applied by init-volume.
-        from agents.models import Agent, AgentStatus
-        from agents.services.lifecycle import transition_agent_status
-        if self.agent.status == AgentStatus.DEPLOYING:
-            now = timezone.now()
-            transition_agent_status(self.agent, AgentStatus.IDLE, reason="relay_connected")
-            await Agent.objects.filter(id=self.agent_id).aupdate(
-                status=AgentStatus.IDLE,
-                deployed_at=now,
-            )
-            self.agent.deployed_at = now
-            from agents.services.lifecycle import succeed_active_lifecycle_attempts
-            await succeed_active_lifecycle_attempts(
-                self.agent_id,
-                step="relay_connected",
-                metadata={"relay_connected_at": now.isoformat()},
-            )
-            from agents.services.broadcast import broadcast_agent_update
-            await broadcast_agent_update(self.agent)
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(self.agent)
 
         log.info("relay.connected", agent_id=self.agent_id)
 
@@ -240,11 +227,35 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         if event_type == "runtime_status":
             payload = content.get("payload", {})
             if isinstance(payload, dict):
-                from agents.models import Agent
+                from agents.models import Agent, AgentStatus
                 from agents.services.broadcast import broadcast_agent_update
+                from agents.services.lifecycle import succeed_active_lifecycle_attempts, transition_agent_status
+                from agents.services.runtime_projection import runtime_status_meets_ready_boundary
 
-                await Agent.objects.filter(id=self.agent_id).aupdate(runtime_status_projection=payload)
-                self.agent.runtime_status_projection = payload
+                update_fields = {"runtime_status_projection": payload}
+                ready_boundary = runtime_status_meets_ready_boundary(
+                    payload,
+                    relay_connected=bool(getattr(self.agent, "relay_connected", False)),
+                )
+                if ready_boundary and self.agent.status == "deploying":
+                    transition_agent_status(self.agent, AgentStatus.IDLE, reason="runtime_ready")
+                    update_fields["status"] = AgentStatus.IDLE
+                    if not getattr(self.agent, "deployed_at", None):
+                        now = timezone.now()
+                        update_fields["deployed_at"] = now
+                await Agent.objects.filter(id=self.agent_id).aupdate(**update_fields)
+                if ready_boundary:
+                    self.agent = await Agent.objects.aget(id=self.agent_id)
+                else:
+                    self.agent.runtime_status_projection = payload
+                    if "deployed_at" in update_fields:
+                        self.agent.deployed_at = update_fields["deployed_at"]
+                if ready_boundary:
+                    await succeed_active_lifecycle_attempts(
+                        self.agent_id,
+                        step="runtime_ready",
+                        metadata={"startup_stage": payload.get("startup_stage", "")},
+                    )
                 await broadcast_agent_update(self.agent)
                 log.info(
                     "relay.runtime_status",
