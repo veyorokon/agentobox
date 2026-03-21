@@ -394,11 +394,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
               {isBooting ? (
                 <div className="flex flex-col items-center justify-center gap-3 relative overflow-hidden w-full h-full">
                   <style>{`
-                    @keyframes abox-sweep {
-                      0% { transform: translateX(-100%); opacity: 0; }
-                      10% { opacity: 1; }
-                      90% { opacity: 1; }
-                      100% { transform: translateX(200%); opacity: 0; }
+                    @keyframes abox-scanline {
+                      0% { top: -8%; opacity: 0; }
+                      5% { opacity: 1; }
+                      80% { opacity: 0.4; }
+                      100% { top: 100%; opacity: 0; }
                     }
                     @keyframes abox-blink-soft {
                       0%, 100% { opacity: 0.2; }
@@ -409,13 +409,15 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       100% { opacity: 1; transform: translateY(0); }
                     }
                   `}</style>
-                  {/* Vertical bar sweep — moves left to right behind text */}
+                  {/* Scanline — thin line sweeps top to bottom with fading trail */}
                   <div
-                    className="absolute inset-y-0 w-12 pointer-events-none"
+                    className="absolute inset-x-0 pointer-events-none"
                     style={{
-                      background: "linear-gradient(90deg, transparent, var(--color-accent, #ff7a59) 50%, transparent)",
-                      opacity: 0.06,
-                      animation: "abox-sweep 5s ease-in-out infinite",
+                      height: "1px",
+                      background: "linear-gradient(90deg, transparent 10%, var(--color-accent, #ff7a59) 50%, transparent 90%)",
+                      opacity: 0.25,
+                      boxShadow: "0 0 8px 1px var(--color-accent, #ff7a59)",
+                      animation: "abox-scanline 3.5s cubic-bezier(0.4, 0, 0.2, 1) infinite",
                     }}
                   />
                   <div className="flex items-center gap-1.5 relative" style={{ animation: "abox-fade-in-up 0.6s ease-out both" }}>
