@@ -49,6 +49,27 @@ SAFE_FIELDS = frozenset({
 REDACTED = "[REDACTED]"
 
 
+def _json_safe(obj: Any) -> Any:
+    """Recursively convert UUIDs, datetimes, and other non-JSON types to strings."""
+    import uuid as _uuid
+    from datetime import date, datetime
+
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(item) for item in obj]
+    if isinstance(obj, _uuid.UUID):
+        return str(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    from decimal import Decimal
+    if isinstance(obj, Decimal):
+        return float(obj)
+    return obj
+
+
 def _redact(obj: Any) -> Any:
     """Recursively redact sensitive field values from a dict/list tree."""
     if isinstance(obj, dict):
@@ -206,4 +227,4 @@ async def capture_incident_bundle(
         "collection_errors": errors,
     }
 
-    return _redact(bundle), errors
+    return _redact(_json_safe(bundle)), errors
