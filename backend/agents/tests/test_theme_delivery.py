@@ -92,6 +92,7 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
 
     runtime = MagicMock()
     runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.mirror_machine_write = AsyncMock(return_value=None)
     runtime.sync_machine_volume = AsyncMock(return_value=None)
 
     # Patch push_to_relay (we dont have a real WS connection in tests)
@@ -159,6 +160,7 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
 
     runtime = MagicMock()
     runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.mirror_machine_write = AsyncMock(return_value=None)
     runtime.sync_machine_volume = AsyncMock(return_value=None)
 
     with (
@@ -190,6 +192,7 @@ async def test_push_theme_routes_live_write_through_canonical_helper(setup_proje
 
     runtime = MagicMock()
     runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.mirror_machine_write = AsyncMock(return_value=None)
     runtime.sync_machine_volume = AsyncMock(return_value=None)
 
     with (
@@ -267,6 +270,7 @@ async def test_push_theme_writes_tokens_to_deploying_agent_with_sandbox(setup_pr
 
     runtime = MagicMock()
     runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.mirror_machine_write = AsyncMock(return_value=None)
     runtime.sync_machine_volume = AsyncMock(return_value=None)
 
     with (
@@ -329,6 +333,7 @@ async def test_push_theme_writes_tokens_to_waiting_agent(setup_project_with_agen
 
     runtime = MagicMock()
     runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.mirror_machine_write = AsyncMock(return_value=None)
     runtime.sync_machine_volume = AsyncMock(return_value=None)
 
     with (

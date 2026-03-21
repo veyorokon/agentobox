@@ -56,11 +56,23 @@ class RuntimeBackedAgentMachineWriter:
 
     async def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
         reload_cmd = self.machine.mutate(path, content)
+        if self.agent.sandbox_id:
+            await self.runtime.mirror_machine_write(
+                self.agent.sandbox_id,
+                self.machine.mounted_path(path),
+                content,
+            )
         await self._sync_machine_volume()
         return reload_cmd
 
     async def write(self, path: str, content: str | bytes) -> None:
         self.machine.write(path, content)
+        if self.agent.sandbox_id:
+            await self.runtime.mirror_machine_write(
+                self.agent.sandbox_id,
+                self.machine.mounted_path(path),
+                content,
+            )
         await self._sync_machine_volume()
 
     async def remove_tree(self, path: str) -> None:

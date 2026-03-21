@@ -79,6 +79,13 @@ class Runtime(Protocol):
         content: str,
     ) -> None: ...
 
+    async def mirror_machine_write(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str | bytes,
+    ) -> None: ...
+
     async def await_machine_path_visible(
         self,
         sandbox_id: str,

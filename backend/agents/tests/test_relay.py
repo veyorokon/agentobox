@@ -295,6 +295,7 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
     fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
 
     content = [{"type": "text", "text": "hello from modal"}]
     with (
@@ -323,6 +324,7 @@ async def test_deliver_input_uses_runtime_writer_for_docker():
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
     fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
 
     content = [{"type": "text", "text": "hello from docker"}]
     with (
@@ -356,6 +358,7 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
     fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
     fake_agent.volume.mutate.return_value = ReloadCommand(path="_abox/state.json")
 
     with (
@@ -363,11 +366,17 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         mock_runtime = MagicMock()
+        mock_runtime.mirror_machine_write = AsyncMock(return_value=None)
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         await update_volume_and_reload(fake_agent, "_abox/state.json", '{"mode": "plan"}')
 
     fake_agent.volume.mutate.assert_called_once_with("_abox/state.json", '{"mode": "plan"}')
+    mock_runtime.mirror_machine_write.assert_awaited_once_with(
+        "sb-def456",
+        "/vol/agents/agent-modal-2/_abox/state.json",
+        '{"mode": "plan"}',
+    )
     mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-def456", "/vol/agents/agent-modal-2")
 
 
@@ -380,9 +389,11 @@ async def test_runtime_backed_writer_write_syncs_to_modal_sandbox():
     fake_agent.volume = MagicMock()
     fake_agent.machine = fake_agent.volume
     fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
 
     with patch("agents.services.machine_write.get_runtime") as mock_get_runtime:
         mock_runtime = MagicMock()
+        mock_runtime.mirror_machine_write = AsyncMock(return_value=None)
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         writer = get_machine_writer(fake_agent)
@@ -392,7 +403,42 @@ async def test_runtime_backed_writer_write_syncs_to_modal_sandbox():
         "home/agent/workspace/.claude/skills/test/SKILL.md",
         "content",
     )
+    mock_runtime.mirror_machine_write.assert_awaited_once_with(
+        "sb-write123",
+        "/vol/agents/agent-modal-write/home/agent/workspace/.claude/skills/test/SKILL.md",
+        "content",
+    )
     mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-write123", "/vol/agents/agent-modal-write")
+
+
+@pytest.mark.asyncio
+async def test_runtime_backed_writer_mutate_mirrors_overwrite_to_modal_sandbox():
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-modal-mutate"
+    fake_agent.runtime = "modal"
+    fake_agent.sandbox_id = "sb-mutate123"
+    fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
+    fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+    fake_agent.machine.mounted_path.side_effect = lambda path: f"/vol/agents/{fake_agent.id}/{path}"
+    fake_agent.volume.mutate.return_value = ReloadCommand(path="tmp/abox-theme/tokens.json")
+
+    with patch("agents.services.machine_write.get_runtime") as mock_get_runtime:
+        mock_runtime = MagicMock()
+        mock_runtime.mirror_machine_write = AsyncMock(return_value=None)
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
+        mock_get_runtime.return_value = mock_runtime
+        writer = get_machine_writer(fake_agent)
+        cmd = await writer.mutate("tmp/abox-theme/tokens.json", '{"theme":"ember"}')
+
+    assert isinstance(cmd, ReloadCommand)
+    fake_agent.volume.mutate.assert_called_once_with("tmp/abox-theme/tokens.json", '{"theme":"ember"}')
+    mock_runtime.mirror_machine_write.assert_awaited_once_with(
+        "sb-mutate123",
+        "/vol/agents/agent-modal-mutate/tmp/abox-theme/tokens.json",
+        '{"theme":"ember"}',
+    )
+    mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-mutate123", "/vol/agents/agent-modal-mutate")
 
 
 @pytest.mark.asyncio

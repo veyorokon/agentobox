@@ -206,6 +206,11 @@ async def capture_incident_bundle(
         log.warning("incident.source_failed", source="runtime_status", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         errors.append(f"runtime_status: {type(exc).__name__}: {exc}")
 
+    # -- Structural diagnosis layers --
+    desired = _extract_desired(agent, agent_snapshot)
+    observed = _extract_observed(agent, runtime_status)
+    applied = _extract_applied(runtime_logs)
+
     bundle = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
         "captured_at": now.isoformat(),
@@ -218,6 +223,9 @@ async def capture_incident_bundle(
             "sandbox_id": agent.sandbox_id or "",
             "session_id": agent.session_id or "",
         },
+        "desired": desired,
+        "observed": observed,
+        "applied": applied,
         "agent": agent_snapshot,
         "lifecycle_attempts": lifecycle_attempts,
         "stream_events": stream_events,
@@ -228,3 +236,85 @@ async def capture_incident_bundle(
     }
 
     return _redact(_json_safe(bundle)), errors
+
+
+def _extract_desired(agent: Agent, agent_snapshot: dict) -> dict:
+    """What the control plane wanted."""
+    return {
+        "desired_status": getattr(agent, "desired_status", None),
+        "model": agent.model or None,
+        "mode": agent.mode or None,
+        "source": "agent_model",
+    }
+
+
+def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
+    """What the backend/runtime believes is true."""
+    return {
+        "lifecycle_status": agent.status,
+        "preview_state": agent_snapshot_preview_state(agent),
+        "relay_connected": getattr(agent, "relay_connected", None),
+        "runtime_startup_stage": runtime_status.get("startup_stage"),
+        "runtime_profile": runtime_status.get("profile"),
+        "runtime_state": runtime_status.get("runtime_state"),
+        "source": "agent_model+runtime_projection",
+    }
+
+
+def agent_snapshot_preview_state(agent: Agent) -> str | None:
+    """Derive preview state without importing the full serializer."""
+    from agents.serializers import derive_preview_state
+    try:
+        return derive_preview_state(agent)
+    except Exception as exc:  # intentional: best-effort — preview state is derived, not critical
+        log.warning(
+            "incident.source_failed",
+            source="preview_state",
+            error_code=ERR_INCIDENT_SOURCE_FAILED,
+            error_class=type(exc).__name__,
+        )
+        return None
+
+
+def _extract_applied(runtime_logs: list[dict]) -> dict:
+    """What the desktop/runtime consumer actually applied.
+
+    Extracts the latest relevant events from runtime_logs. Each field
+    includes source provenance so the summary doesn't create its own
+    ambiguity layer.
+    """
+    applied: dict = {
+        "theme_fingerprint": None,
+        "theme_projected_at": None,
+        "theme_notify_result": None,
+        "last_launcher_request": None,
+        "display_ready": None,
+        "source": "runtime_log",
+    }
+
+    # Walk logs in reverse to find the latest of each event type
+    for event in reversed(runtime_logs):
+        event_name = event.get("event", "")
+
+        if event_name == "theme.projected" and applied["theme_fingerprint"] is None:
+            applied["theme_fingerprint"] = event.get("fingerprint")
+            applied["theme_projected_at"] = event.get("ts")
+
+        elif event_name == "theme.consumer_applied" and applied["theme_notify_result"] is None:
+            applied["theme_notify_result"] = "succeeded"
+
+        elif event_name == "theme.consumer_failed" and applied["theme_notify_result"] is None:
+            applied["theme_notify_result"] = "failed"
+            applied["theme_notify_error"] = event.get("error")
+
+        elif event_name == "desktop.launch_requested" and applied["last_launcher_request"] is None:
+            applied["last_launcher_request"] = event.get("command")
+
+        elif event_name == "desktop.display_ready" and applied["display_ready"] is None:
+            applied["display_ready"] = True
+            applied["display_ready_attempts"] = event.get("attempts")
+
+        elif event_name == "desktop.display_timeout" and applied["display_ready"] is None:
+            applied["display_ready"] = False
+
+    return applied

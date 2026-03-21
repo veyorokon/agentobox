@@ -321,6 +321,30 @@ class TestModalRuntimeExec:
         assert '{"type":"task"}\\n' in captured["cmd"][2]
 
     @pytest.mark.asyncio
+    async def test_mirror_machine_write_writes_bytes_to_sandbox_path(self, monkeypatch):
+        runtime = ModalRuntime()
+        captured = {}
+
+        async def _write_file(sandbox_id, content, dest):
+            captured["sandbox_id"] = sandbox_id
+            captured["content"] = content
+            captured["dest"] = dest
+
+        monkeypatch.setattr(runtime, "write_file", _write_file)
+
+        await runtime.mirror_machine_write(
+            "sandbox-1",
+            "/vol/agents/agent-1/tmp/abox-theme/tokens.json",
+            '{"name":"Rose Pine"}',
+        )
+
+        assert captured == {
+            "sandbox_id": "sandbox-1",
+            "content": b'{"name":"Rose Pine"}',
+            "dest": "/vol/agents/agent-1/tmp/abox-theme/tokens.json",
+        }
+
+    @pytest.mark.asyncio
     async def test_await_machine_path_visible_retries_until_expected_content(self, monkeypatch):
         runtime = ModalRuntime()
         sync_calls: list[tuple[str, str]] = []

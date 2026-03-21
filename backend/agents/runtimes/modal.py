@@ -196,6 +196,21 @@ class ModalRuntime:
         ).strip()
         await self.exec(sandbox_id, ["python3", "-c", script])
 
+    async def mirror_machine_write(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str | bytes,
+    ) -> None:
+        """Mirror a live overwrite into the mounted sandbox path.
+
+        Some mounted files in a running Modal sandbox do not reflect backend-side
+        overwrites reliably, even after reload_volumes(). Write the same bytes
+        directly into the mounted path so the relay consumes the updated state.
+        """
+        payload = content.encode() if isinstance(content, str) else content
+        await self.write_file(sandbox_id, payload, path)
+
     async def await_machine_path_visible(
         self,
         sandbox_id: str,
