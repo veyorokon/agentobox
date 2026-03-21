@@ -47,7 +47,7 @@ This image provides:
 
 - Python runtime
 - system packages
-- Firefox binary
+- Chromium binary
 - desktop tooling
 - s6/process supervision
 - Agentobox runtime code
@@ -222,6 +222,73 @@ Nothing about the machine-volume model conflicts with:
 It makes them more explicit by placing them inside the canonical machine
 surface instead of scattering them across special cases.
 
+## State Layer Mapping
+
+Every canonical file belongs to one of four layers. This mapping is the
+contract for incident diagnosis, bundle assembly, and future subsystem
+design.
+
+### Desired (backend-owned intent)
+
+| Path | Purpose |
+|------|---------|
+| `_abox/state.json` | model, mode, allowed tools |
+| `_abox/inbox.jsonl` | pending tasks/messages |
+| `tmp/abox-theme/tokens.json` | canonical theme document |
+| `home/agent/.relay_env` | relay configuration |
+| `home/agent/.claude/settings.json` | CC settings |
+| `home/agent/workspace/CLAUDE.md` | agent instructions |
+| `run/secrets/*` | materialized secrets |
+| `run/mcp-gateway/config.json` | MCP gateway configuration |
+
+### Observed (runtime-reported truth)
+
+| Path / Source | Purpose |
+|------|---------|
+| `_abox/status.json` | live runtime status (startup stage, services, transport) |
+| `_abox/facts.json` | slower-changing machine facts (future) |
+| `Agent.runtime_status_projection` (DB) | backend-visible cache of status.json |
+
+### Applied (runtime-consumer truth)
+
+| Path | Purpose |
+|------|---------|
+| `tmp/abox-theme/theme.json` | derived theme document |
+| `tmp/abox-theme/theme.css` | derived CSS variables |
+| `tmp/abox-theme/awesome.lua` | derived AwesomeWM theme table |
+| `tmp/abox-theme/browser-home/index.html` | derived browser home surface |
+
+These are produced by the runtime theme service from the desired
+`tokens.json`. They are the durable applied state for theme.
+
+Launcher, display, and process status do not yet have canonical applied
+artifacts. They are currently event-only (runtime.jsonl). If they become
+important enough to diagnose durably, add a canonical runtime artifact
+(e.g. `_abox/desktop-status.json`) rather than growing log parsing.
+
+### Events (supporting evidence)
+
+| Path | Purpose |
+|------|---------|
+| `_abox/logs/runtime.jsonl` | structured runtime events (transitions, attempts, failures) |
+
+Events are not a state layer. They are supporting evidence for
+transitions and ephemeral outcomes. Incident bundles read canonical
+artifacts first, events second.
+
+### Rules for new subsystems
+
+When adding a new runtime-managed subsystem:
+
+1. If it has durable state, give it a canonical artifact under the
+   machine surface.
+2. Consumers must read from canonical/derived artifacts, not ad hoc
+   local state.
+3. Ephemeral transitions and attempt outcomes go through `emit_event()`
+   to `runtime.jsonl`.
+4. The incident bundle should read durable applied state from files,
+   not from log parsing.
+
 ## Preview Contract
 
 Preview must be derived from machine truth, not inferred from unrelated app
@@ -237,9 +304,9 @@ Desktop preview readiness means:
 
 It does not mean:
 
-- Firefox is healthy
+- Chromium is healthy
 
-Firefox is an app-level service, not a gate for whether the desktop exists.
+Chromium is an app-level service, not a gate for whether the desktop exists.
 
 ## Docker and Modal
 
