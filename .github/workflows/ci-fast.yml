@@ -327,13 +327,40 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
-      - name: Secret scan
+      - uses: actions/checkout@v5
+        if: github.event_name != 'pull_request'
+      - name: Secret scan (PR diff/history-aware)
+        if: github.event_name == 'pull_request'
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: false
+      - name: Install gitleaks CLI
+        if: github.event_name != 'pull_request'
+        run: |
+          version=8.24.3
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+      - name: Secret scan (current tree only)
+        if: github.event_name != 'pull_request'
+        run: |
+          gitleaks dir . \
+            --redact \
+            --no-banner \
+            --report-format sarif \
+            --report-path results.sarif \
+            --log-level=debug
+      - name: Upload gitleaks report
+        if: failure() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results.sarif
+          path: results.sarif
+          retention-days: 7
       - name: Backend dependency scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
