@@ -334,13 +334,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   const showRuntimeFallback =
     agent.previewState === "error" || agent.previewState === "unavailable" || isStopped
 
-  // Unified boot surface: covers deploying + token fetch + connecting.
-  // Only hidden once VNC is actually connected (one visual transition).
-  const isBooting = isPreviewDeploying || (
-    !vncRevealed && !showRuntimeFallback && !isPreviewError
-    && connState !== "error"
-    && (previewReady || isPreviewDeploying)
-  )
+  // Boot surface only for previewState=deploying (desktop not ready yet).
+  // Once previewState=ready, the connecting spinner takes over briefly
+  // until VNC connects and cross-fades in.
+  const isBooting = isPreviewDeploying && !isPreviewError
 
   useEffect(() => {
     if (!mountVnc) return
@@ -430,6 +427,11 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       starting desktop
                     </span>
                   </div>
+                </div>
+              ) : !vncRevealed && previewReady && connState !== "error" ? (
+                <div className="flex flex-col items-center gap-1">
+                  <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+                  <span className="text-[7px] font-mono text-muted/40">connecting...</span>
                 </div>
               ) : connState === "error" && previewReady ? (
                 <div className="flex flex-col items-center gap-2">
