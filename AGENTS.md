@@ -166,6 +166,47 @@ Prefer, in roughly this order:
 
 Intuition is useful for generating hypotheses. It is not the final authority.
 
+### Proof Levels
+
+Not all proof is equal.
+
+When saying something is “fixed” or “working,” be explicit about the proof level.
+
+Common proof levels:
+- unit proof
+- invariant proof
+- contract proof
+- local integration proof
+- local deployed-equivalent proof
+- real remote proof
+
+Stronger proof is not always required, but the claimed confidence should match
+the proof level that actually exists.
+
+Questions:
+- What proof level do we have right now?
+- What proof level is required to close this thread honestly?
+- Are we claiming remote confidence based only on local proof?
+
+### Diagnosis-First Failures
+
+Failures should identify the broken seam, not just emit raw symptoms.
+
+A good failure tells you:
+- what contract was being tested
+- what seam failed
+- what first broke
+- what evidence supports that conclusion
+- what the next debugging target is
+
+Logs are evidence.
+They are not a diagnosis format by themselves.
+
+Preferred pattern:
+1. emit a compact diagnosis artifact
+2. surface the key fields in summaries/output
+3. keep raw logs as secondary evidence
+
 ### Duplicate Overlapping Code Paths
 
 Duplicate paths are especially dangerous when they both “mostly work.”
@@ -286,6 +327,26 @@ Do not confuse them.
 Discovery mode is how you learn the right answer.
 Codification mode is how you make the system keep the answer.
 
+### Incidents vs Refactors
+
+Treat active breakage and structural cleanup differently.
+
+- incident
+  - the system is red now
+  - user-visible or deployment-visible failure exists
+  - priority is reproduction, isolation, diagnosis, fix, regression
+
+- refactor
+  - the system is stable enough
+  - priority is cleanup, simplification, deletion, and stronger contracts
+
+When a thread becomes an incident:
+1. stop broad cleanup
+2. reproduce the failure at the right proof level
+3. fix the failing seam
+4. add the regression
+5. resume refactor work after stability returns
+
 ## Empirical Development
 
 Use reality as the primary guide.
@@ -309,6 +370,25 @@ Sources of reality:
 5. test the smallest plausible fix
 6. confirm the result in the real environment
 7. formalize the fix in code
+
+### Deployed-Equivalent Local Reproduction
+
+Local reproduction should match the failing environment as closely as the seam requires.
+
+Examples:
+- localhost backend + Modal runtime
+- local test runner against `dev` GraphQL
+- exact smoke/bootstrap command run from this machine before push
+
+This is often the right bridge between:
+- pure local tests
+- slow CI/CD confirmation
+
+Preferred pattern:
+1. run the exact failing test locally first
+2. point it at the honest environment for the seam
+3. debug there
+4. use CI/CD to confirm, not to discover
 
 This matters most for remote or platform-specific systems where local reproduction is incomplete.
 
