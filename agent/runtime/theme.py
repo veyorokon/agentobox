@@ -8,6 +8,7 @@ live theme updates follow the same path.
 from __future__ import annotations
 
 import colorsys
+import hashlib
 import json
 import re
 import subprocess
@@ -70,6 +71,12 @@ class ThemeConsumerError(RuntimeError):
     """Raised when a theme consumer cannot apply a newly projected theme."""
 
 
+def theme_fingerprint(document: ThemeDocument) -> str:
+    """Short hash of a theme document for log/incident comparison."""
+    payload = json.dumps(document.to_dict(), sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
+
 class ThemeFilesApplier:
     """Load theme tokens and write the runtime-owned derived theme files."""
 
@@ -90,6 +97,14 @@ class ThemeFilesApplier:
         self._write_theme_json(document)
         self._write_theme_css(document)
         self._current_document = document
+        fingerprint = theme_fingerprint(document)
+        emit_event(
+            "theme.projected",
+            theme_name=document.name,
+            token_count=len(document.tokens),
+            fingerprint=fingerprint,
+            source_path=rel_path,
+        )
         return document
 
     def current_document(self) -> ThemeDocument | None:
@@ -648,6 +663,12 @@ def _clamp_percent(raw: str) -> float:
 
 
 def _notify_theme_consumer(consumer: ThemeConsumer, document: ThemeDocument) -> bool:
+    fingerprint = theme_fingerprint(document)
+    emit_event(
+        "theme.notify_started",
+        theme_name=document.name,
+        fingerprint=fingerprint,
+    )
     try:
         consumer.notify_theme_changed(document)
     except ThemeConsumerError as exc:
@@ -655,7 +676,7 @@ def _notify_theme_consumer(consumer: ThemeConsumer, document: ThemeDocument) -> 
             "theme.consumer_failed",
             error=str(exc),
             theme_name=document.name,
-            token_count=len(document.tokens),
+            fingerprint=fingerprint,
         )
         return False
     return True
