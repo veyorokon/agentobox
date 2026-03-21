@@ -18,7 +18,7 @@ ACTIVE_STATUSES = (
 
 
 @dataclass(frozen=True)
-class LimboCandidate:
+class NonConvergedActiveAgentCandidate:
     agent_id: str
     project_id: str
     agent_name: str
@@ -43,7 +43,7 @@ def _derive_preview_state_safe(agent) -> str | None:
 
     try:
         return derive_preview_state(agent)
-    except Exception as exc:  # intentional: best-effort — preview state is supplementary for limbo classification
+    except Exception as exc:  # intentional: best-effort — preview state is supplementary for non-converged classification
         import structlog
         structlog.get_logger("abox.lifecycle").debug(
             "lifecycle.preview_state_failed",
@@ -53,13 +53,13 @@ def _derive_preview_state_safe(agent) -> str | None:
         return None
 
 
-def classify_limbo_agent(
+def classify_non_converged_active_agent(
     agent,
     *,
     now: datetime | None = None,
     grace_seconds: int = 120,
-) -> LimboCandidate | None:
-    """Return a concrete limbo signature when an agent is half-alive but not converged."""
+) -> NonConvergedActiveAgentCandidate | None:
+    """Return a concrete non-converged signature when an active agent is half-alive but not converged."""
 
     now = now or timezone.now()
     updated_at = getattr(agent, "updated_at", None)
@@ -91,7 +91,7 @@ def classify_limbo_agent(
     if not signature or not reason:
         return None
 
-    return LimboCandidate(
+    return NonConvergedActiveAgentCandidate(
         agent_id=str(agent.id),
         project_id=str(agent.project_id),
         agent_name=str(getattr(agent, "name", "")),
@@ -109,12 +109,12 @@ def classify_limbo_agent(
     )
 
 
-def list_limbo_candidates(
+def list_non_converged_active_agent_candidates(
     *,
     now: datetime | None = None,
     grace_seconds: int = 120,
-) -> list[LimboCandidate]:
-    """Return all currently visible agents matching a known limbo signature."""
+) -> list[NonConvergedActiveAgentCandidate]:
+    """Return all currently visible active agents matching a known non-converged signature."""
 
     now = now or timezone.now()
     agents = Agent.objects.filter(
@@ -122,9 +122,9 @@ def list_limbo_candidates(
         status__in=ACTIVE_STATUSES,
     ).select_related("project")
 
-    matches: list[LimboCandidate] = []
+    matches: list[NonConvergedActiveAgentCandidate] = []
     for agent in agents:
-        candidate = classify_limbo_agent(
+        candidate = classify_non_converged_active_agent(
             agent,
             now=now,
             grace_seconds=grace_seconds,
