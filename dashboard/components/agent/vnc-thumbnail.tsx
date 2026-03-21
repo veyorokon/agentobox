@@ -394,7 +394,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
               {isBooting ? (
                 <div className="flex flex-col items-center justify-center gap-2 w-full h-full">
                   <span className="h-3 w-3 border-2 border-accent/20 border-t-accent/50 rounded-full animate-spin" style={{ animationDuration: "1.5s" }} />
-                  <span className="text-[7px] font-mono text-muted/35 tracking-[0.15em] uppercase">starting desktop</span>
+                  <span className="text-[8px] font-mono text-muted/60 tracking-wider">starting desktop</span>
                 </div>
               ) : !vncRevealed && previewReady && connState !== "error" ? (
                 <div className="flex flex-col items-center gap-1">
