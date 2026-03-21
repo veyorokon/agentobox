@@ -1,7 +1,11 @@
+import pytest
+
 from agent.contracts.execution import ExecutorKind
 from agent.contracts.lifecycle import RuntimeState, StartupStage
 from agent.contracts.mode import AgentMode
 from agent.runtime.config import RuntimeConfig
+
+pytestmark = pytest.mark.contract
 
 
 def test_managed_mode_requires_explicit_flag():

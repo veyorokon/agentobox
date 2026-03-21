@@ -98,10 +98,13 @@ make test-e2e-full
 ```text
 tests/
   README.md
+  diagnosis.py                  # shared CI failure diagnosis helper
+  test_diagnosis_schema.py      # schema shape enforcement
   integration/
     conftest.py
     test_relay_ws.py
   smoke/
+    conftest.py
     test_agent_smoke.py
   e2e/
     conftest.py
@@ -109,10 +112,10 @@ tests/
       graphql.py
       docker_ops.py
       polling.py
-    lifecycle/
-    messaging/
-    dashboard/
-    control/
+    lifecycle/                  # agent boot, error capture, message delivery
+    messaging/                  # (placeholder for future messaging e2e)
+    dashboard/                  # (placeholder for future dashboard e2e)
+    control/                    # (placeholder for future control e2e)
 ```
 
 ## Backend Tests
@@ -159,10 +162,13 @@ pytest (host) -> /graphql       -> query feed / agent status
 
 Full stack tests including browser automation via Playwright.
 
-Keep `e2e` broader than `smoke`.
+`smoke` and `e2e` are different test types, not a containment hierarchy.
 
 - `smoke` should answer: "is the critical path alive?"
 - `e2e` should answer: "does the user-visible flow behave correctly?"
+
+Smoke tests may carry `e2e` markers for pytest selection convenience,
+but they remain smoke tests by taxonomy.
 
 ### Marker Gating
 

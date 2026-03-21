@@ -12,8 +12,12 @@ narrowest owning layer.
 | `integration` | multiple live components | `backend/**/tests` and `tests/integration/` | prove service wiring with real dependencies |
 | `contract` | boundary and bootstrap contracts | `agent/tests/test_*contract*.py`, `agent/tests/test_bootstrap.py` | prove runtime-visible contracts and boot gates |
 | `smoke` | critical path end to end | `tests/smoke/` | prove one real round trip through the shipped system |
+| `e2e` | broader user-facing flows | `tests/e2e/` | prove user-visible flows across multiple steps |
 | `chaos` | failure and recovery behavior | backend chaos tests | prove degraded paths and reconciler behavior |
 | `security` | secrets, dependency, config policy | workflow lanes | prove shipped artifacts and infra meet policy |
+
+Harnesses (`bin/`) are not part of this taxonomy. They are purpose-built
+proof rigs for deployed-equivalent checks. See [bin/README.md](../bin/README.md).
 
 ## Marker Authority
 
