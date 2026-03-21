@@ -234,6 +234,51 @@ def check_no_cross_module_private_imports():
                         )
 
 
+def check_no_direct_live_machine_mutations():
+    """Service code must not bypass the runtime-backed live-write seam.
+
+    Direct machine/volume mutable writes in service code are dangerous because
+    they skip runtime visibility refresh on adapters like Modal. Shared
+    services must route live mutable writes through get_machine_writer() or
+    relay.update_volume_and_reload().
+    """
+    allowed_files = {"machine_write.py", "volume.py"}
+    target_dirs = (SERVICES_DIR, GRAPHQL_DIR)
+
+    for directory in target_dirs:
+        for f in _python_files(directory):
+            if f.name in allowed_files:
+                continue
+            src = _read_source(f)
+            tree = ast.parse(src)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+
+                attr = node.func.attr
+                if attr == "append_inbox":
+                    pass
+                elif attr == "mutate" or attr.startswith("mutate_"):
+                    pass
+                elif attr in {"write", "remove_tree"}:
+                    pass
+                else:
+                    continue
+
+                owner = node.func.value
+                if not isinstance(owner, ast.Attribute):
+                    continue
+                if owner.attr not in {"machine", "volume"}:
+                    continue
+
+                target = ast.get_source_segment(src, node.func) or attr
+                fail(
+                    f"{f.name} bypasses runtime-backed live writes via '{target}' — "
+                    "use get_machine_writer(...).write/remove_tree/mutate/append_task() "
+                    "or relay.update_volume_and_reload()"
+                )
+
+
 def check_orchestrators_use_spawn_logged_task():
     """Lifecycle background work must use the monitored task helper."""
     targets = [
@@ -428,9 +473,10 @@ def main() -> int:
         check_no_relay_imports_in_graphql,
         check_no_direct_input_pushes,
         check_no_cross_module_private_imports,
+        check_no_direct_live_machine_mutations,
         check_orchestrators_use_spawn_logged_task,
         check_mutable_models_have_updated_at,
-check_no_direct_status_writes,
+        check_no_direct_status_writes,
         check_broad_except_has_error_metadata,
     ]
 

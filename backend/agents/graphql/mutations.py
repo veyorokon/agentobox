@@ -529,12 +529,14 @@ class AgentMutation:
         # Tags changed — hot-update skills on the volume without restart
         if input.tags is not None and agent.tags != old_tags:
             from agents.models import Skill
+            from agents.services.machine_write import get_machine_writer
             from asgiref.sync import sync_to_async
 
             skills = await sync_to_async(
                 lambda: list(Skill.objects.filter(project_id=agent.project_id)),
                 thread_sensitive=False,
             )()
+            writer = get_machine_writer(agent)
             for skill in skills:
                 should_have = skill.assigned_to_all or any(
                     tag in (agent.tags or []) for tag in (skill.assigned_tags or [])
@@ -548,13 +550,13 @@ class AgentMutation:
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
                         skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
-                        agent.machine.write(skill_path, skill.content)
+                        await writer.write(skill_path, skill.content)
                 elif had_before and not should_have:
                     # Lost skill match — remove from volume
                     from agents.utils import sanitize_skill_name
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
-                        agent.machine.remove_tree(agent.machine.skill_dir(safe_name))
+                        await writer.remove_tree(agent.machine.skill_dir(safe_name))
 
         # No restart needed — return the updated agent
         return agent

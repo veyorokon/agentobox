@@ -17,13 +17,14 @@ Tests:
 import json
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from accounts.models import User
 from agents.models import Agent, AgentStatus
 from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
+from agents.services.volume import Volume
 from agents.services.relay_commands import ReloadCommand
 from agents.services.themes import THEME_SCHEMA_VERSION
 from projects.models import Project
@@ -71,10 +72,7 @@ def setup_project_with_agent(tmp_path):
         sandbox_id="fake-sandbox-id",
     )
     # Point the agent's volume at tmp_path so we can inspect files
-    vol = agent.volume
-    vol._machine = AgentMachinePaths(project_id=str(project.id), agent_id=str(agent.id))
-    vol._store = _DirectStore(tmp_path)
-    vol.root = tmp_path
+    vol = Volume(str(project.id), str(agent.id), store=_DirectStore(tmp_path))
     vol.initialize()
     return project, agent, vol, tmp_path
 
@@ -92,20 +90,18 @@ async def test_push_theme_writes_tokens_to_volume(setup_project_with_agent, them
     project.set_theme_document(tokens=theme_tokens)
     await project.asave(update_fields=["theme_document", "theme_tokens"])
 
+    runtime = MagicMock()
+    runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.sync_machine_volume = AsyncMock(return_value=None)
+
     # Patch push_to_relay (we dont have a real WS connection in tests)
-    # AND patch agent.volume to use our tmp_path volume
-    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push:
-        # Patch Volume.__init__ so the agent's volume points at tmp_path
-        type(vol).__init__
-
-        def patched_init(self, project_id, agent_id):
-            self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
-            self._store = _DirectStore(tmp_path)
-            self.root = tmp_path
-
-        with patch("agents.services.volume.Volume.__init__", patched_init):
-            from agents.services.relay import push_theme_to_agents
-            await push_theme_to_agents(project)
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push,
+        patch("agents.runtimes.get_runtime", return_value=runtime),
+        patch("agents.services.machine_write.get_runtime", return_value=runtime),
+    ):
+        from agents.services.relay import push_theme_to_agents
+        await push_theme_to_agents(project)
 
     # THE ACTUAL CHECK: does the file exist with the right content?
     tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
@@ -161,17 +157,17 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     project.theme_tokens = {}
     await project.asave(update_fields=["theme_document", "theme_tokens"])
 
-    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock):
-        type(vol).__init__
+    runtime = MagicMock()
+    runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.sync_machine_volume = AsyncMock(return_value=None)
 
-        def patched_init(self, project_id, agent_id):
-            self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
-            self._store = _DirectStore(tmp_path)
-            self.root = tmp_path
-
-        with patch("agents.services.volume.Volume.__init__", patched_init):
-            from agents.services.relay import push_theme_to_agents
-            await push_theme_to_agents(project)
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock),
+        patch("agents.runtimes.get_runtime", return_value=runtime),
+        patch("agents.services.machine_write.get_runtime", return_value=runtime),
+    ):
+        from agents.services.relay import push_theme_to_agents
+        await push_theme_to_agents(project)
 
     tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
     assert tokens_path.exists(), "Default theme not written when project has no theme_tokens"
@@ -180,6 +176,38 @@ async def test_push_theme_empty_tokens_uses_default(setup_project_with_agent):
     assert written["name"] == project.name
     # Should have content from BUILTIN_THEMES["claude-dark"]
     assert len(written["tokens"]) > 0, "Default theme is empty — BUILTIN_THEMES broken"
+
+
+async def test_push_theme_routes_live_write_through_canonical_helper(setup_project_with_agent, theme_tokens):
+    """Theme pushes must use the runtime-backed live-write helper.
+
+    Regression: direct agent.machine.mutate_theme_document() bypassed the
+    runtime-backed writer seam, so adapters like Modal could miss the update.
+    """
+    project, agent, vol, tmp_path = setup_project_with_agent
+    project.set_theme_document(tokens=theme_tokens)
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
+
+    runtime = MagicMock()
+    runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.sync_machine_volume = AsyncMock(return_value=None)
+
+    with (
+        patch("agents.services.relay.update_volume_and_reload", new_callable=AsyncMock) as mock_update,
+        patch("agents.runtimes.get_runtime", return_value=runtime),
+        patch("agents.services.machine_write.get_runtime", return_value=runtime),
+    ):
+        from agents.services.relay import push_theme_to_agents
+        await push_theme_to_agents(project)
+
+    mock_update.assert_awaited_once()
+    args = mock_update.await_args.args
+    assert args[0].id == agent.id
+    assert args[1] == "tmp/abox-theme/tokens.json"
+    written_document = json.loads(args[2])
+    assert written_document["schema_version"] == THEME_SCHEMA_VERSION
+    assert written_document["name"] == project.name
+    assert written_document["tokens"] == project.resolved_theme_tokens()
 
 
 async def test_mutation_calls_relay_not_inline():

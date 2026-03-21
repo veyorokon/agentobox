@@ -5,6 +5,8 @@ This is the materialized view layer. StreamEvent = raw audit log.
 TeamFeedItem = curated dashboard feed items created when feed-worthy events occur.
 """
 
+import json
+
 import structlog
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
@@ -241,11 +243,16 @@ async def _persist_allowed_tool(item: TeamFeedItem) -> None:
     )
     if agent is not None:
         # Reload relay so allowed_tools take effect immediately (no redeploy needed).
-        reload_cmd = agent.machine.mutate_state(
-            agent.model or "", agent.mode or "auto", agent.allowed_tools or []
+        from agents.services.relay import update_volume_and_reload
+        await update_volume_and_reload(
+            agent,
+            "_abox/state.json",
+            json.dumps({
+                "model": agent.model or "",
+                "mode": agent.mode or "auto",
+                "allowed_tools": agent.allowed_tools or [],
+            }),
         )
-        from agents.services.relay import push_to_relay
-        await push_to_relay(str(agent.id), reload_cmd)
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
 

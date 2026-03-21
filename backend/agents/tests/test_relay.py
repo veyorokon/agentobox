@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents.models import AgentStatus
+from agents.services.machine_write import get_machine_writer
 from agents.services.relay import (
     _normalize_content,
     deliver_input,
@@ -371,6 +372,51 @@ async def test_update_volume_and_reload_syncs_to_modal_sandbox():
 
 
 @pytest.mark.asyncio
+async def test_runtime_backed_writer_write_syncs_to_modal_sandbox():
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-modal-write"
+    fake_agent.runtime = "modal"
+    fake_agent.sandbox_id = "sb-write123"
+    fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
+    fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+
+    with patch("agents.services.machine_write.get_runtime") as mock_get_runtime:
+        mock_runtime = MagicMock()
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
+        mock_get_runtime.return_value = mock_runtime
+        writer = get_machine_writer(fake_agent)
+        await writer.write("home/agent/workspace/.claude/skills/test/SKILL.md", "content")
+
+    fake_agent.volume.write.assert_called_once_with(
+        "home/agent/workspace/.claude/skills/test/SKILL.md",
+        "content",
+    )
+    mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-write123", "/vol/agents/agent-modal-write")
+
+
+@pytest.mark.asyncio
+async def test_runtime_backed_writer_remove_tree_syncs_to_modal_sandbox():
+    fake_agent = MagicMock()
+    fake_agent.id = "agent-modal-delete"
+    fake_agent.runtime = "modal"
+    fake_agent.sandbox_id = "sb-delete123"
+    fake_agent.volume = MagicMock()
+    fake_agent.machine = fake_agent.volume
+    fake_agent.machine.mounted_root.return_value = f"/vol/agents/{fake_agent.id}"
+
+    with patch("agents.services.machine_write.get_runtime") as mock_get_runtime:
+        mock_runtime = MagicMock()
+        mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
+        mock_get_runtime.return_value = mock_runtime
+        writer = get_machine_writer(fake_agent)
+        await writer.remove_tree("home/agent/workspace/.claude/skills/test")
+
+    fake_agent.volume.remove_tree.assert_called_once_with("home/agent/workspace/.claude/skills/test")
+    mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-delete123", "/vol/agents/agent-modal-delete")
+
+
+@pytest.mark.asyncio
 async def test_deliver_input_skips_modal_append_when_no_sandbox_id():
     """Modal writer must keep durable local state even before sandbox exists."""
     fake_agent = MagicMock()
@@ -454,9 +500,6 @@ async def test_set_agent_mode_recomputes_intervention_attention_for_supervised_m
     fake_agent.latest_snapshot = {"result": {"type": "result", "session_id": "session-1"}}
     fake_agent.arefresh_from_db = AsyncMock()
     fake_agent.asave = AsyncMock()
-    fake_agent.volume = MagicMock()
-    fake_agent.volume.mutate_state.return_value = ReloadCommand(path="_abox/state.json")
-
     fake_adapter = MagicMock()
     fake_adapter.mode_to_wire.return_value = "default"
 
@@ -464,7 +507,7 @@ async def test_set_agent_mode_recomputes_intervention_attention_for_supervised_m
         patch("agents.services.relay.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
         patch("agents.services.relay.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
         patch("agents.services.relay.create_stream_event", new_callable=AsyncMock),
-        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.services.relay.update_volume_and_reload", new_callable=AsyncMock, return_value=True) as mock_update,
         patch("agents.adapters.get_adapter", return_value=fake_adapter),
         patch("agents.services.feed.recompute_attention", new_callable=AsyncMock) as mock_recompute,
     ):
@@ -473,6 +516,11 @@ async def test_set_agent_mode_recomputes_intervention_attention_for_supervised_m
     assert result is fake_agent
     mock_recompute.assert_awaited_once_with("proj-456", "agent-123")
     mock_broadcast.assert_awaited_once()
+    mock_update.assert_awaited_once_with(
+        fake_agent,
+        "_abox/state.json",
+        '{"model": "claude-haiku", "mode": "supervised", "allowed_tools": []}',
+    )
 
 
 @pytest.mark.asyncio
@@ -488,9 +536,6 @@ async def test_set_agent_mode_recomputes_attention_when_leaving_supervised():
     fake_agent.latest_snapshot = {"result": {"type": "result", "session_id": "session-1"}}
     fake_agent.arefresh_from_db = AsyncMock()
     fake_agent.asave = AsyncMock()
-    fake_agent.volume = MagicMock()
-    fake_agent.volume.mutate_state.return_value = ReloadCommand(path="_abox/state.json")
-
     fake_adapter = MagicMock()
     fake_adapter.mode_to_wire.return_value = "acceptEdits"
 
@@ -498,10 +543,15 @@ async def test_set_agent_mode_recomputes_attention_when_leaving_supervised():
         patch("agents.services.relay.Agent.objects.aget", new_callable=AsyncMock, return_value=fake_agent),
         patch("agents.services.relay.broadcast_agent_update", new_callable=AsyncMock),
         patch("agents.services.relay.create_stream_event", new_callable=AsyncMock),
-        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock, return_value=True),
+        patch("agents.services.relay.update_volume_and_reload", new_callable=AsyncMock, return_value=True) as mock_update,
         patch("agents.adapters.get_adapter", return_value=fake_adapter),
         patch("agents.services.feed.recompute_attention", new_callable=AsyncMock) as mock_recompute,
     ):
         await set_agent_mode("agent-123", "auto")
 
     mock_recompute.assert_awaited_once_with("proj-456", "agent-123")
+    mock_update.assert_awaited_once_with(
+        fake_agent,
+        "_abox/state.json",
+        '{"model": "claude-haiku", "mode": "auto", "allowed_tools": []}',
+    )

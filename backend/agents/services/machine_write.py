@@ -13,6 +13,10 @@ class AgentMachineWriter(Protocol):
 
     async def append_task(self, *, task_id: str, content: list, role: str = "user") -> None: ...
 
+    async def write(self, path: str, content: str | bytes) -> None: ...
+
+    async def remove_tree(self, path: str) -> None: ...
+
     async def mutate(self, path: str, content: str | bytes) -> ReloadCommand: ...
 
 
@@ -54,6 +58,14 @@ class RuntimeBackedAgentMachineWriter:
         reload_cmd = self.machine.mutate(path, content)
         await self._sync_machine_volume()
         return reload_cmd
+
+    async def write(self, path: str, content: str | bytes) -> None:
+        self.machine.write(path, content)
+        await self._sync_machine_volume()
+
+    async def remove_tree(self, path: str) -> None:
+        self.machine.remove_tree(path)
+        await self._sync_machine_volume()
 
 
 def get_machine_writer(agent: Agent) -> AgentMachineWriter:

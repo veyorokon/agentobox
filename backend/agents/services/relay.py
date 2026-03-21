@@ -15,6 +15,7 @@ control signals, not state.
 """
 
 import copy
+import json
 import uuid
 
 import structlog
@@ -39,6 +40,7 @@ from agents.services.relay_commands import (
     SignalAction,
     SignalCommand,
 )
+from agents.services.themes import format_theme_document
 from agents.services.utils import create_stream_event
 from agents.utils import sanitize_skill_name
 
@@ -403,9 +405,16 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
         agent, event_type="mode_change", data={"mode": frontend_mode},
     )
 
-    # Write state.json and reload relay
-    reload_cmd = agent.machine.mutate_state(agent.model, frontend_mode, agent.allowed_tools or [])
-    await push_to_relay(agent_id, reload_cmd)
+    # Write state.json and reload relay through the canonical live-write seam.
+    await update_volume_and_reload(
+        agent,
+        "_abox/state.json",
+        json.dumps({
+            "model": agent.model,
+            "mode": frontend_mode,
+            "allowed_tools": agent.allowed_tools or [],
+        }),
+    )
 
     op_log.info("comms.mode_changed")
     return agent
@@ -436,8 +445,11 @@ async def push_theme_to_agents(project) -> None:
 
     for agent in running_agents:
         try:
-            reload_cmd = agent.machine.mutate_theme_document(tokens, name=project.name)
-            await push_to_relay(str(agent.id), reload_cmd)
+            await update_volume_and_reload(
+                agent,
+                "tmp/abox-theme/tokens.json",
+                format_theme_document(tokens, name=project.name),
+            )
         except Exception as exc:  # intentional: theme push is best-effort — one agent failure must not block others
             log.exception(
                 "comms.theme_push_failed",
@@ -524,10 +536,11 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
     for agent in matching_agents:
         try:
             skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
+            writer = get_machine_writer(agent)
             if operation == "write":
-                agent.machine.write(skill_path, skill.content)
+                await writer.write(skill_path, skill.content)
             elif operation == "delete":
-                agent.machine.remove_tree(agent.machine.skill_dir(safe_name))
+                await writer.remove_tree(agent.machine.skill_dir(safe_name))
         except Exception as exc:  # intentional: one agent's skill push failure must not block other agents
             log.exception(
                 "comms.skill_push_failed",
@@ -548,7 +561,8 @@ async def push_skill_delete_to_specific_agents(skill_name: str, agent_ids: set[s
     for agent_id in agent_ids:
         try:
             agent = await Agent.objects.aget(id=agent_id)
-            agent.machine.remove_tree(agent.machine.skill_dir(safe_name))
+            writer = get_machine_writer(agent)
+            await writer.remove_tree(agent.machine.skill_dir(safe_name))
         except Exception as exc:  # intentional: one agent's skill cleanup failure must not block other agents
             log.exception(
                 "comms.skill_cleanup_failed",
