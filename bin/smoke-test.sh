@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
-# Post-deploy smoke test — verifies the deployed app is healthy.
+# Post-deploy smoke harness.
+#
+# Seam:
+#   deployed HTTP/GraphQL surface -> live environment health
+#
+# Contract:
+#   does the deployed control plane respond honestly enough to be considered up
+#   after deploy?
+#
+# What it proves:
+#   basic dashboard, GraphQL, auth, and OAuth redirect health
+#
+# What it does not prove:
+#   full agent runtime continuity or complete end-to-end task execution
+#
 # Runs against a live URL. Exits non-zero on any failure.
 #
 # Usage: ./bin/smoke-test.sh https://dev.agentobox.com

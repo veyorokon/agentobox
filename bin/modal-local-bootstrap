@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+# Local Modal bootstrap harness.
+#
+# Seam:
+#   local backend/control plane -> Modal runtime bootstrap
+#
+# Contract:
+#   can a local backend instance bootstrap a Modal agent honestly enough to
+#   reach the managed boot contract?
+#
+# What it proves:
+#   local deployed-equivalent bootstrap wiring for Modal
+#
+# What it does not prove:
+#   full post-deploy continuity, preview UX, or long-running work preservation
+#
+# Usage:
+#   ABOX_CALLBACK_URL=https://... ./bin/modal-local-bootstrap
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

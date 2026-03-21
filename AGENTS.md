@@ -632,6 +632,17 @@ Work is done when:
 - the system is more legible than before
 - future failures at the same seam should be faster to diagnose
 
+## Repo Docs
+
+Start with:
+
+- `README.md`
+  - product, architecture, commands
+- `CONTRIBUTING.md`
+  - issue taxonomy, labels, contributor workflow
+- `bin/README.md`
+  - harness conventions and when to use `bin/` instead of `tests/`
+
 ## Prior Art
 
 Before building a non-trivial new mechanism:

@@ -12,6 +12,10 @@ The repo has three Python test authorities:
 
 Use this file to decide where a new test belongs before adding it.
 
+Harnesses are documented separately in [bin/README.md](../bin/README.md).
+Use `bin/` for deployed-equivalent proof rigs and operator/debug scripts, not
+for normal automated test layers.
+
 ## Test Layers
 
 | Type | Location | Runs on | What it proves |
@@ -126,3 +130,4 @@ containers, and verify actual state transitions. Test what you ship.
 
 - [Testing taxonomy](../docs/testing.md)
 - [Operational contracts](../docs/contracts/README.md)
+- [Harnesses](../bin/README.md)

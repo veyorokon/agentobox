@@ -150,6 +150,31 @@ When saying something is fixed or working, be explicit about the proof level.
 Use the strongest proof that actually exists.
 Do not claim remote confidence based only on local proof.
 
+## Harnesses
+
+`bin/` is the canonical home for harnesses.
+
+Use a harness when you need a deployed-equivalent or operator-facing proof rig
+that would be dishonest, too heavy, or too environment-specific for the normal
+test taxonomy.
+
+Split:
+
+- `tests/`
+  - repeatable automated test layers
+- `bin/`
+  - harnesses, proof rigs, and operator/debug scripts
+
+Harness requirements:
+
+- name as `bin/<topic>-<scope>`
+- state the seam and contract at the top of the file
+- print the key IDs/states relied on
+- exit non-zero on failed proof
+- avoid becoming a parallel hidden code path
+
+See [bin/README.md](bin/README.md) for the repo-local harness convention.
+
 ## Hygiene
 
 - Close issues aggressively once the actual question is resolved.
