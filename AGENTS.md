@@ -4,6 +4,24 @@ This file describes how agents should reason, collaborate, and execute in this r
 
 It is intentionally generic. The goal is not to encode local implementation trivia, but to preserve the working style that leads to clean systems and boring operations.
 
+## Repo Docs
+
+Use the repo-facing docs for process and project context:
+
+- `README.md`
+  - product overview
+  - architecture summary
+  - local commands
+  - documentation map
+- `CONTRIBUTING.md`
+  - issue taxonomy
+  - label policy
+  - incident vs work-thread workflow
+  - proof-level expectations for contributors
+
+`AGENTS.md` is the agent working model.
+`README.md` and `CONTRIBUTING.md` are the repo operating docs.
+
 ## Core Posture
 
 - Understand before changing.
