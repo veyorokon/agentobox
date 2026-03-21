@@ -45,7 +45,11 @@ def _derive_preview_state_safe(agent) -> str | None:
         return derive_preview_state(agent)
     except Exception as exc:  # intentional: best-effort — preview state is supplementary for limbo classification
         import structlog
-        structlog.get_logger("abox.lifecycle").debug("limbo.preview_state_failed", error_code="ERR-LIMBO-PREVIEW-DERIVE", error_class=type(exc).__name__)
+        structlog.get_logger("abox.lifecycle").debug(
+            "lifecycle.preview_state_failed",
+            error_code="ERR-LIMBO-PREVIEW-DERIVE",
+            error_class=type(exc).__name__,
+        )
         return None
 
 
