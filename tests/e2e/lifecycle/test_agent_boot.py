@@ -14,12 +14,16 @@ Verifies:
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 
 import pytest
 
 from helpers.graphql import AboxGraphQL
-from helpers.polling import poll_agent_status
+from helpers.polling import AgentTerminalError, PollTimeout, poll_agent_status
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from diagnosis import Diagnosis
 
 API_URL = os.environ.get("ABOX_API_URL", "http://localhost:8000/graphql")
 SMOKE_RUNTIME = os.environ.get("SMOKE_RUNTIME", "docker")
@@ -29,6 +33,42 @@ pytestmark = [pytest.mark.e2e, pytest.mark.agent, pytest.mark.slow]
 # Timeouts
 BOOT_TIMEOUT_S = 120
 BOOT_POLL_INTERVAL_S = 3
+
+
+def _build_bootstrap_diagnosis(agent_dict, *, seam, contract, observed_steps, next_debug_target=""):
+    """Build and write a structured failure diagnosis artifact for bootstrap."""
+    diag = Diagnosis(
+        job="agent-bootstrap",
+        seam=seam,
+        contract=contract,
+        next_debug_target=next_debug_target,
+    )
+
+    for step in observed_steps:
+        diag.expect(step, True)
+    for step, value in observed_steps.items():
+        diag.observe(step, value)
+
+    agent_id = agent_dict.get("id", "") if agent_dict else ""
+    diag.set_ids(agent_id=agent_id)
+    diag.set_refs(runtime=SMOKE_RUNTIME)
+
+    if agent_dict:
+        diag.refs["agent_status"] = agent_dict.get("lifecycleStatus", "")
+        diag.refs["relay_connected"] = str(agent_dict.get("relayConnected", ""))
+        diag.refs["error_message"] = agent_dict.get("errorMessage", "")
+
+        # Include lifecycle attempt details if available
+        attempts = agent_dict.get("lifecycleAttempts", [])
+        if attempts:
+            latest = attempts[0]
+            diag.refs["attempt_step"] = latest.get("step", "")
+            diag.refs["attempt_status"] = latest.get("status", "")
+            diag.refs["attempt_error_code"] = latest.get("errorCode", "")
+            diag.refs["attempt_error_detail"] = latest.get("errorDetail", "")
+
+    path = diag.write("failure-diagnosis-agent-bootstrap")
+    return diag, path
 
 
 @pytest.mark.bootstrap
@@ -49,13 +89,51 @@ class TestAgentBoot:
         agent_id = agent["id"]
 
         # Wait for idle — proves provisioning + relay connect worked
-        idle_agent = poll_agent_status(
-            gql,
-            agent_id,
-            target_statuses=["idle"],
-            timeout_s=BOOT_TIMEOUT_S,
-            interval_s=BOOT_POLL_INTERVAL_S,
-        )
+        try:
+            idle_agent = poll_agent_status(
+                gql,
+                agent_id,
+                target_statuses=["idle"],
+                timeout_s=BOOT_TIMEOUT_S,
+                interval_s=BOOT_POLL_INTERVAL_S,
+            )
+        except AgentTerminalError as exc:
+            # Agent hit error/failed — immediate diagnosis
+            _build_bootstrap_diagnosis(
+                exc.agent,
+                seam="agent_provisioning",
+                contract="agent must reach idle after create (provision + relay connect)",
+                observed_steps={
+                    "agent_created": True,
+                    "status_not_terminal": False,
+                    "relay_connected": bool(exc.agent.get("relayConnected")),
+                    "status_idle": False,
+                },
+                next_debug_target=(
+                    f"agent reached terminal state '{exc.agent.get('lifecycleStatus')}': "
+                    f"check lifecycle attempts and error message"
+                ),
+            )
+            raise
+        except PollTimeout as exc:
+            # Timed out — fetch latest agent state for diagnosis
+            latest = exc.last_value or {}
+            _build_bootstrap_diagnosis(
+                latest,
+                seam="agent_provisioning",
+                contract="agent must reach idle within timeout",
+                observed_steps={
+                    "agent_created": True,
+                    "status_not_terminal": latest.get("lifecycleStatus") not in ("error", "failed", "crashed"),
+                    "relay_connected": bool(latest.get("relayConnected")),
+                    "status_idle": latest.get("lifecycleStatus") == "idle",
+                },
+                next_debug_target=(
+                    f"agent stuck in '{latest.get('lifecycleStatus', 'unknown')}' after {BOOT_TIMEOUT_S}s: "
+                    f"check container status and relay logs"
+                ),
+            )
+            raise
 
         yield {"agent": idle_agent, "gql": gql}
 

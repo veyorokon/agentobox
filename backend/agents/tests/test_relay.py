@@ -301,12 +301,14 @@ async def test_deliver_input_syncs_inbox_to_modal_sandbox():
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         mock_runtime = MagicMock()
+        mock_runtime.mirror_machine_append = AsyncMock(return_value=None)
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, content, task_id="modal-task-1")
 
     # Local write still happens (durable record)
-    fake_agent.volume.append_task.assert_called_once()
+    fake_agent.volume.append_inbox.assert_called_once()
+    mock_runtime.mirror_machine_append.assert_awaited_once()
     mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-abc123", "/vol/agents/agent-modal-1")
 
 
@@ -327,12 +329,14 @@ async def test_deliver_input_uses_runtime_writer_for_docker():
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         mock_runtime = MagicMock()
+        mock_runtime.mirror_machine_append = AsyncMock(return_value=None)
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, content, task_id="docker-task-1")
 
-    fake_agent.volume.append_task.assert_called_once()
+    fake_agent.volume.append_inbox.assert_called_once()
     mock_get_runtime.assert_called_once_with("docker")
+    mock_runtime.mirror_machine_append.assert_awaited_once()
     mock_runtime.sync_machine_volume.assert_awaited_once_with("container-xyz", "/vol/agents/agent-docker-1")
 
 
@@ -381,12 +385,14 @@ async def test_deliver_input_skips_modal_append_when_no_sandbox_id():
         patch("agents.services.machine_write.get_runtime") as mock_get_runtime,
     ):
         mock_runtime = MagicMock()
+        mock_runtime.mirror_machine_append = AsyncMock(return_value=None)
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         await deliver_input(fake_agent, [{"type": "text", "text": "hello"}], task_id="modal-task-2")
 
-    fake_agent.volume.append_task.assert_called_once()
+    fake_agent.volume.append_inbox.assert_called_once()
     mock_get_runtime.assert_called_once_with("modal")
+    mock_runtime.mirror_machine_append.assert_not_awaited()
     mock_runtime.sync_machine_volume.assert_not_awaited()
 
 

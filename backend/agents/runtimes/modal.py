@@ -13,6 +13,7 @@ import asyncio
 import os
 import shlex
 import time
+import textwrap
 from decimal import Decimal
 from pathlib import PurePosixPath
 
@@ -170,6 +171,30 @@ class ModalRuntime:
         await sb.reload_volumes.aio()
         await self.exec(sandbox_id, ["bash", "-lc", f"sync {sync_target}"])
         op.info("runtime.sync_machine_volume_done", elapsed_s=round(time.monotonic() - t0, 2))
+
+    async def mirror_machine_append(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str,
+    ) -> None:
+        """Mirror a live append into the mounted sandbox path.
+
+        Canonical state still lives in the Modal-backed store, but long-lived
+        mounted files do not reliably reflect backend-side append updates in a
+        running sandbox. Mirror the append into the mounted path so the relay
+        consumes the same bytes the backend just persisted.
+        """
+        script = textwrap.dedent(
+            f"""
+            from pathlib import Path
+            path = Path({path!r})
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write({content!r})
+            """
+        ).strip()
+        await self.exec(sandbox_id, ["python3", "-c", script])
 
     async def await_machine_path_visible(
         self,

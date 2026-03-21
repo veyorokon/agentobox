@@ -34,11 +34,14 @@ import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "e2e"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from helpers.polling import poll_until
+from diagnosis import Diagnosis
 
 # Timeouts — generous because cold boot + LLM inference can be slow.
 BOOT_TIMEOUT_S = 120
 RESPONSE_TIMEOUT_S = 180
+SMOKE_RUNTIME = os.environ.get("SMOKE_RUNTIME", "docker")
 
 pytestmark = [pytest.mark.e2e, pytest.mark.smoke]
 
@@ -85,6 +88,46 @@ def _collect_failure_artifacts(gql, docker_ops, agent_id, agent_name, health_url
     return "\n".join(lines)
 
 
+def _build_smoke_diagnosis(
+    gql, docker_ops, agent_id, agent_name, project_id,
+    *, seam, contract, observed_steps, next_debug_target="",
+):
+    """Build and write a structured failure diagnosis artifact.
+
+    observed_steps: dict of step_name → observed_value.
+    Expected values are always True (each step should succeed).
+    """
+    diag = Diagnosis(
+        job="agent-smoke",
+        seam=seam,
+        contract=contract,
+        next_debug_target=next_debug_target,
+    )
+
+    # All steps in the smoke path are expected to be True
+    for step in observed_steps:
+        diag.expect(step, True)
+    for step, value in observed_steps.items():
+        diag.observe(step, value)
+
+    diag.set_ids(agent_id=agent_id or "", project_id=project_id or "")
+    diag.set_refs(runtime=SMOKE_RUNTIME)
+
+    # Enrich with agent snapshot if available
+    try:
+        agent_snapshot = gql.query_agent(agent_id) if agent_id else None
+        if agent_snapshot:
+            diag.set_ids(sandbox_id=agent_snapshot.get("sandboxId", ""))
+            diag.refs["agent_status"] = agent_snapshot.get("lifecycleStatus", "")
+            diag.refs["relay_connected"] = str(agent_snapshot.get("relayConnected", ""))
+            diag.refs["error_message"] = agent_snapshot.get("errorMessage", "")
+    except Exception:
+        pass
+
+    path = diag.write("failure-diagnosis-agent-smoke")
+    return diag, path
+
+
 # ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------
@@ -120,6 +163,18 @@ class TestAgentSmoke:
                 description=f"team-lead for project {project_id} ready",
             )
         except Exception:
+            # Emit structured diagnosis before failing
+            _build_smoke_diagnosis(
+                gql, docker_ops, "", "team-lead", project_id,
+                seam="agent_boot",
+                contract="team-lead must reach idle with relay connected",
+                observed_steps={
+                    "team_lead_exists": _team_lead_ready() is not None,
+                    "status_idle": False,
+                    "relay_connected": False,
+                },
+                next_debug_target="check agent lifecycle attempts and container logs",
+            )
             artifacts = _collect_failure_artifacts(
                 gql, docker_ops, "", "team-lead", ""
             )
@@ -148,20 +203,58 @@ class TestAgentSmoke:
         agent_id = smoke_agent["agent_id"]
         project_id = smoke_agent["project_id"]
 
-        # Send deterministic prompt — include the token in the message
-        # so the LLM has it in context (instructions alone aren't reliable)
-        gql.send_message(
-            project_id,
-            text=(
-                f"Respond with exactly this text and nothing else: {self.SMOKE_TOKEN}"
-            ),
-            recipients=[{"type": "agent", "value": agent_id}],
-        )
+        # Track each step of the message send path
+        steps = {
+            "mutation_accepted": False,
+            "agent_running_or_idle": False,
+            "feed_response_seen": False,
+            "smoke_token_in_response": False,
+        }
 
-        # Wait for a response feed item from this agent.
-        # Don't poll for running→idle transitions — the agent can process
-        # so fast that we miss the running state entirely. Instead, poll
-        # the feed directly for a response.
+        # Step 1: Send deterministic prompt
+        try:
+            result = gql.send_message(
+                project_id,
+                text=(
+                    f"Respond with exactly this text and nothing else: {self.SMOKE_TOKEN}"
+                ),
+                recipients=[{"type": "agent", "value": agent_id}],
+            )
+            steps["mutation_accepted"] = bool(result)
+        except Exception:
+            _build_smoke_diagnosis(
+                gql, docker_ops, agent_id, smoke_agent["agent_name"], project_id,
+                seam="send_message_to_runtime",
+                contract="sendMessage mutation must accept and deliver message",
+                observed_steps=steps,
+                next_debug_target="check GraphQL error response and agent recipient resolution",
+            )
+            raise
+
+        if not steps["mutation_accepted"]:
+            diag, path = _build_smoke_diagnosis(
+                gql, docker_ops, agent_id, smoke_agent["agent_name"], project_id,
+                seam="send_message_to_runtime",
+                contract="sendMessage mutation must return true (recipient resolved, inbox written, reload sent)",
+                observed_steps=steps,
+                next_debug_target="check recipient resolution — agent may not exist or status may prevent delivery",
+            )
+            pytest.fail(
+                f"sendMessage returned False. Diagnosis: {path}\n"
+                + "\n".join(diag.summary_lines())
+            )
+
+        # Step 2: Verify agent is processing (check status)
+        try:
+            agent_state = gql.query_agent(agent_id)
+            if agent_state:
+                steps["agent_running_or_idle"] = agent_state.get("lifecycleStatus") in (
+                    "running", "idle", "waiting",
+                )
+        except Exception:
+            pass  # non-fatal — continue to feed poll
+
+        # Step 3: Wait for a response feed item from this agent
         def _has_agent_response():
             feed = gql.query_feed(project_id)
             return [
@@ -178,7 +271,15 @@ class TestAgentSmoke:
                 interval_s=3,
                 description=f"agent {agent_id} response in feed",
             )
+            steps["feed_response_seen"] = True
         except Exception:
+            _build_smoke_diagnosis(
+                gql, docker_ops, agent_id, smoke_agent["agent_name"], project_id,
+                seam="send_message_to_runtime",
+                contract="message sent to agent must produce feed response within timeout",
+                observed_steps=steps,
+                next_debug_target="check relay logs for inbox processing and SDK query invocation",
+            )
             artifacts = _collect_failure_artifacts(
                 gql, docker_ops, agent_id,
                 smoke_agent["agent_name"], "",
@@ -187,13 +288,23 @@ class TestAgentSmoke:
                 f"No response from agent within {RESPONSE_TIMEOUT_S}s.{artifacts}"
             )
 
-        # At least one response should contain the smoke token
+        # Step 4: Verify smoke token in response
         response_texts = [
             (item.get("text") or "") + (item.get("summary") or "")
             for item in agent_responses
         ]
         token_found = any(self.SMOKE_TOKEN in text for text in response_texts)
-        assert token_found, (
-            f"Smoke token '{self.SMOKE_TOKEN}' not found in agent responses. "
-            f"Got: {response_texts}"
-        )
+        steps["smoke_token_in_response"] = token_found
+
+        if not token_found:
+            _build_smoke_diagnosis(
+                gql, docker_ops, agent_id, smoke_agent["agent_name"], project_id,
+                seam="agent_response_content",
+                contract="agent response must contain the smoke token",
+                observed_steps=steps,
+                next_debug_target="check agent response content — LLM may have reformatted or refused",
+            )
+            pytest.fail(
+                f"Smoke token '{self.SMOKE_TOKEN}' not found in agent responses. "
+                f"Got: {response_texts}"
+            )

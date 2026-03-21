@@ -329,12 +329,25 @@ jobs:
         run: uv sync --project . --group e2e
 
       - name: Run agent bootstrap test
+        id: test
         env:
           ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
-        run: uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+          DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
+        run: |
+          mkdir -p diagnosis-artifacts
+          uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+
+      - name: Upload failure diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-agent-bootstrap
+          path: diagnosis-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # ─── Agent Smoke (Modal) ───────────────────────────────────────────
   # Final deploy confidence: a fully booted agent can complete one
@@ -352,12 +365,25 @@ jobs:
       - name: Install test dependencies
         run: uv sync --project . --group e2e
       - name: Run agent smoke test
+        id: test
         env:
           ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
-        run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+          DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
+        run: |
+          mkdir -p diagnosis-artifacts
+          uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+
+      - name: Upload failure diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-agent-smoke
+          path: diagnosis-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
 
   summary:
     name: summary
@@ -463,3 +489,19 @@ jobs:
             echo "| agent-bootstrap | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy control plane + runtime handoff |"
             echo "| agent-smoke | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy round-trip message |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Surface diagnosis artifact pointers for failed seam tests
+          blocked_at="${{ steps.status.outputs.overall == 'success' && '' || steps.status.outputs.detail }}"
+          if echo "$blocked_at" | grep -qi "bootstrap"; then
+            {
+              echo
+              echo "### Diagnosis"
+              echo "Bootstrap failed. Download \`failure-diagnosis-agent-bootstrap\` artifact for structured seam/step analysis."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif echo "$blocked_at" | grep -qi "smoke"; then
+            {
+              echo
+              echo "### Diagnosis"
+              echo "Smoke failed. Download \`failure-diagnosis-agent-smoke\` artifact for structured seam/step analysis."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

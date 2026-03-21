@@ -296,6 +296,31 @@ class TestModalRuntimeExec:
         assert captured["reloaded"] is True
 
     @pytest.mark.asyncio
+    async def test_mirror_machine_append_writes_to_sandbox_path(self, monkeypatch):
+        runtime = ModalRuntime()
+        captured = {}
+
+        async def _exec(sandbox_id, cmd, user="agent"):
+            captured["sandbox_id"] = sandbox_id
+            captured["cmd"] = cmd
+            captured["user"] = user
+            return ""
+
+        monkeypatch.setattr(runtime, "exec", _exec)
+
+        await runtime.mirror_machine_append(
+            "sandbox-1",
+            "/vol/agents/agent-1/_abox/inbox.jsonl",
+            '{"type":"task"}\n',
+        )
+
+        assert captured["sandbox_id"] == "sandbox-1"
+        assert captured["user"] == "agent"
+        assert captured["cmd"][:2] == ["python3", "-c"]
+        assert "/vol/agents/agent-1/_abox/inbox.jsonl" in captured["cmd"][2]
+        assert '{"type":"task"}\\n' in captured["cmd"][2]
+
+    @pytest.mark.asyncio
     async def test_await_machine_path_visible_retries_until_expected_content(self, monkeypatch):
         runtime = ModalRuntime()
         sync_calls: list[tuple[str, str]] = []

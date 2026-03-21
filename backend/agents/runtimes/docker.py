@@ -178,6 +178,15 @@ class DockerRuntime:
         """Docker bind/named volumes are already runtime-visible."""
         return None
 
+    async def mirror_machine_append(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str,
+    ) -> None:
+        """Docker bind/named volumes already reflect canonical appends."""
+        return None
+
     async def await_machine_path_visible(
         self,
         sandbox_id: str,

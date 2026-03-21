@@ -39,6 +39,7 @@ jobs:
             printf 'ANTHROPIC_API_KEY=%s\n' "$PROVIDER_TOKEN" >> "$GITHUB_ENV"
           fi
       - name: Build agent runtime images
+        id: build-managed
         uses: docker/build-push-action@v7
         with:
           context: agent
@@ -50,18 +51,16 @@ jobs:
           cache-from: type=gha,scope=ci-smoke-managed
           cache-to: type=gha,scope=ci-smoke-managed,mode=max
       - name: Build desktop runtime image
-        uses: docker/build-push-action@v7
-        with:
-          context: agent
-          file: agent/Dockerfile.desktop.managed
-          load: true
-          tags: agentobox-agent-runtime-desktop-managed:latest
-          build-args: |
-            BASE_IMAGE=agentobox-agent-runtime-managed:latest
-            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
-          cache-from: type=gha,scope=ci-smoke-desktop
-          cache-to: type=gha,scope=ci-smoke-desktop,mode=max
+        id: build-desktop
+        run: |
+          docker build \
+            -f agent/Dockerfile.desktop.managed \
+            -t agentobox-agent-runtime-desktop-managed:latest \
+            --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest \
+            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
+            agent
       - name: Start backend stack
+        id: stack-boot
         env:
           AGENT_EXECUTOR_OVERRIDE: echo
         run: |
@@ -76,7 +75,10 @@ jobs:
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
-        run: uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts=" 2>&1 | tee bootstrap-output.txt || { exit_code=$?; exit "$exit_code"; }
+          DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
+        run: |
+          mkdir -p diagnosis-artifacts
+          uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts=" 2>&1 | tee bootstrap-output.txt || { exit_code=$?; exit "$exit_code"; }
       - name: Upload bootstrap output
         if: failure() && steps.bootstrap.outcome == 'failure'
         uses: actions/upload-artifact@v4
@@ -105,7 +107,10 @@ jobs:
         env:
           ABOX_API_URL: http://localhost:8000/graphql
           SMOKE_RUNTIME: docker
-        run: uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts=" 2>&1 | tee roundtrip-output.txt || { exit_code=$?; exit "$exit_code"; }
+          DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
+        run: |
+          mkdir -p diagnosis-artifacts
+          uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts=" 2>&1 | tee roundtrip-output.txt || { exit_code=$?; exit "$exit_code"; }
       - name: Upload roundtrip output
         if: failure() && steps.roundtrip.outcome == 'failure'
         uses: actions/upload-artifact@v4
@@ -113,6 +118,89 @@ jobs:
           name: ci-smoke-roundtrip-output
           path: roundtrip-output.txt
           retention-days: 7
+
+      # --- Structured failure diagnosis ---
+      - name: Emit docker-smoke failure diagnosis
+        if: failure()
+        run: |
+          # Determine which seam failed based on step outcomes
+          if [ "${{ steps.build-managed.outcome }}" = "failure" ]; then
+            seam="image_build"
+            first_broken="managed_image_build"
+            next_debug="check Dockerfile.managed build logs"
+          elif [ "${{ steps.build-desktop.outcome }}" = "failure" ]; then
+            seam="image_build"
+            first_broken="desktop_image_build"
+            next_debug="check Dockerfile.desktop.managed build logs"
+          elif [ "${{ steps.stack-boot.outcome }}" = "failure" ]; then
+            seam="stack_boot"
+            first_broken="backend_health"
+            next_debug="check docker compose logs for postgres/redis/backend startup"
+          elif [ "${{ steps.bootstrap.outcome }}" = "failure" ]; then
+            seam="agent_provisioning"
+            first_broken="bootstrap_test"
+            next_debug="see failure-diagnosis-agent-bootstrap.json artifact or bootstrap-output.txt"
+          elif [ "${{ steps.roundtrip.outcome }}" = "failure" ]; then
+            seam="message_round_trip"
+            first_broken="roundtrip_test"
+            next_debug="see failure-diagnosis-agent-smoke.json artifact or roundtrip-output.txt"
+          else
+            seam="unknown"
+            first_broken="unknown"
+            next_debug="check raw workflow logs"
+          fi
+
+          # Collect container/service state
+          backend_health="false"
+          curl -sf http://localhost:8000/health -o /dev/null 2>/dev/null && backend_health="true"
+
+          agent_containers=$(docker ps -aq --filter "label=agentobox.managed=true" 2>/dev/null | wc -l | tr -d ' ')
+
+          mkdir -p diagnosis-artifacts
+          python3 - <<PYEOF > diagnosis-artifacts/failure-diagnosis-docker-smoke.json
+          import json
+          print(json.dumps({
+              "job": "docker-smoke",
+              "seam": "${seam}",
+              "contract": "full docker stack must build, boot, provision agent, and pass smoke tests",
+              "first_broken_step": "${first_broken}",
+              "expected": {
+                  "managed_image_build": True,
+                  "desktop_image_build": True,
+                  "backend_health": True,
+                  "bootstrap_test": True,
+                  "roundtrip_test": True
+              },
+              "observed": {
+                  "managed_image_build": "${{ steps.build-managed.outcome }}" == "success",
+                  "desktop_image_build": "${{ steps.build-desktop.outcome }}" == "success",
+                  "backend_health": ${backend_health},
+                  "bootstrap_test": "${{ steps.bootstrap.outcome }}" == "success",
+                  "roundtrip_test": "${{ steps.roundtrip.outcome || 'skipped' }}" == "success"
+              },
+              "ids": {
+                  "compose_project": "${CI_SMOKE_PROJECT_NAME}",
+                  "agent_containers_count": "${agent_containers}"
+              },
+              "refs": {
+                  "runtime": "docker",
+                  "managed_image": "agentobox-agent-runtime-managed:latest",
+                  "desktop_image": "agentobox-agent-runtime-desktop-managed:latest",
+                  "commit": "${{ github.sha }}"
+              },
+              "next_debug_target": "${next_debug}"
+          }, indent=2))
+          PYEOF
+
+      - name: Upload failure diagnosis artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-docker-smoke
+          path: diagnosis-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Write summary header
         if: always()
         uses: ./.github/actions/summary-header
@@ -140,6 +228,24 @@ jobs:
               echo "| bootstrap | \`${bootstrap}\` |"
               echo "| round-trip | \`${round_trip}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # On failure, surface diagnosis in summary
+          if [ "${{ job.status }}" != "success" ]; then
+            diag_file="diagnosis-artifacts/failure-diagnosis-docker-smoke.json"
+            if [ -f "$diag_file" ]; then
+              seam=$(python3 -c "import json; d=json.load(open('$diag_file')); print(d.get('seam',''))")
+              broken=$(python3 -c "import json; d=json.load(open('$diag_file')); print(d.get('first_broken_step',''))")
+              next_target=$(python3 -c "import json; d=json.load(open('$diag_file')); print(d.get('next_debug_target',''))")
+              {
+                echo
+                echo "### Diagnosis"
+                echo "**Seam:** \`${seam}\` · **First broken step:** \`${broken}\`"
+                echo "**Next:** ${next_target}"
+                echo
+                echo "Full diagnosis: \`failure-diagnosis-docker-smoke\` artifact"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
           {

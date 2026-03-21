@@ -72,6 +72,13 @@ class Runtime(Protocol):
         self, sandbox_id: str, mount_path: str = "/vol"
     ) -> None: ...
 
+    async def mirror_machine_append(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str,
+    ) -> None: ...
+
     async def await_machine_path_visible(
         self,
         sandbox_id: str,
