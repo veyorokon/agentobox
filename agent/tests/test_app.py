@@ -142,6 +142,62 @@ def test_standalone_app_serves_http_health_and_tasks(tmp_path):
         app.shutdown()
 
 
+def test_standalone_app_serves_browser_home_and_theme_assets(tmp_path):
+    theme_path = tmp_path / CANONICAL_PATHS["theme_tokens"]
+    theme_path.parent.mkdir(parents=True, exist_ok=True)
+    theme_path.write_text(
+        json.dumps(
+            {
+                "schema_version": THEME_SCHEMA_VERSION,
+                "name": "HTTP Theme",
+                "tokens": {
+                    "surface": "#181818",
+                    "accent": "#ff8800",
+                },
+            }
+        )
+    )
+    config = RuntimeConfig(
+        mode=AgentMode.STANDALONE,
+        platform=PlatformKind.LOCAL,
+        executor=ExecutorKind.ECHO,
+        bind_host="127.0.0.1",
+        port=0,
+        root_dir=tmp_path,
+        managed=None,
+    )
+
+    class FakeServiceGroup:
+        def __init__(self, graph: ServiceGraph):
+            self._graph = graph
+
+        def start_all(self) -> None:
+            return None
+
+        def stop_all(self) -> None:
+            return None
+
+        def statuses(self):
+            return {}
+
+    app = AgentApplication(config, service_group_factory=FakeServiceGroup)
+    app.boot()
+    try:
+        assert app.http_server is not None
+        base_url = f"http://{app.http_server.host}:{app.http_server.port}"
+        browser_home = _get_text(f"{base_url}/browser-home")
+        theme_json = _get_json(f"{base_url}/theme.json")
+        theme_css = _get_text(f"{base_url}/theme.css")
+
+        assert "HTTP Theme" in browser_home
+        assert "/theme.json?ts=" in browser_home
+        assert theme_json["name"] == "HTTP Theme"
+        assert theme_json["tokens"]["surface"] == "#181818"
+        assert "--abox-accent: #ff8800;" in theme_css
+    finally:
+        app.shutdown()
+
+
 def test_standalone_app_applies_provisioned_theme_on_boot(tmp_path):
     theme_path = tmp_path / CANONICAL_PATHS["theme_tokens"]
     theme_path.parent.mkdir(parents=True, exist_ok=True)
@@ -278,6 +334,11 @@ def test_standalone_app_projects_live_status_to_runtime_status_file(tmp_path):
 def _get_json(url: str) -> dict:
     with urllib.request.urlopen(url) as response:
         return json.load(response)
+
+
+def _get_text(url: str) -> str:
+    with urllib.request.urlopen(url) as response:
+        return response.read().decode("utf-8")
 
 
 def _post_json(url: str, payload: dict) -> dict:

@@ -11,8 +11,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 
-import { BUILT_IN_THEMES, findBuiltInThemeByTokens } from "@/lib/config"
-
 const setProjectTheme = vi.fn(() => Promise.resolve({ data: { setProjectTheme: true } }))
 
 vi.mock("next/navigation", () => ({
@@ -29,12 +27,6 @@ describe("theme picker", () => {
     document.documentElement.setAttribute("data-theme", "claude")
     document.documentElement.setAttribute("data-mode", "dark")
     setProjectTheme.mockReset()
-  })
-
-  it("matches saved project tokens back to a built-in theme", () => {
-    const match = findBuiltInThemeByTokens(BUILT_IN_THEMES.find((theme) => theme.id === "nord")?.tokens)
-    expect(match?.id).toBe("nord")
-    expect(match?.mode).toBe("dark")
   })
 
   it("sends the selected preset identity to the backend", async () => {

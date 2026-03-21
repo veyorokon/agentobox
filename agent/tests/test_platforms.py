@@ -69,4 +69,4 @@ def test_desktop_service_graph_declares_visual_stack():
     )
 
     names = [spec.name for spec in graph.startup_order()]
-    assert names == ["xvfb", "x11vnc", "websockify", "awesome", "browser"]
+    assert names == ["xvfb", "x11vnc", "websockify", "awesome"]

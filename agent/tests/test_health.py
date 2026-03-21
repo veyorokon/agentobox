@@ -9,7 +9,7 @@ from agent.contracts.transport import TransportSnapshot, TransportState
 from agent.runtime.health import readyz_payload
 
 
-def _managed_desktop_status(*, browser: ServiceState = ServiceState.UP) -> StatusDocument:
+def _managed_desktop_status(*, x11vnc: ServiceState = ServiceState.UP) -> StatusDocument:
     return StatusDocument(
         mode=AgentMode.MANAGED,
         platform=PlatformKind.MODAL,
@@ -26,18 +26,17 @@ def _managed_desktop_status(*, browser: ServiceState = ServiceState.UP) -> Statu
         ),
         services={
             "xvfb": ServiceState.UP,
-            "x11vnc": ServiceState.UP,
+            "x11vnc": x11vnc,
             "websockify": ServiceState.UP,
             "awesome": ServiceState.UP,
-            "browser": browser,
         },
     )
 
 
 def test_readyz_requires_desktop_services_for_managed_runtime():
-    code, payload = readyz_payload(_managed_desktop_status(browser=ServiceState.DOWN))
-    assert code == 200
-    assert payload["status"] == "ready"
+    code, payload = readyz_payload(_managed_desktop_status(x11vnc=ServiceState.DOWN))
+    assert code == 503
+    assert payload["status"] == "not_ready"
 
 
 def test_readyz_accepts_fully_ready_desktop_runtime():

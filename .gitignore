@@ -78,3 +78,4 @@ pages_html/
 # Conversation transcripts
 convo.txt
 backend/dev.db
+backend/test.db

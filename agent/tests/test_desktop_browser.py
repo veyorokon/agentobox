@@ -8,7 +8,6 @@ from agent.runtime.desktop.browser import (
     browser_launch_env,
 )
 from agent.runtime.desktop.config import default_browser_url
-from agent.provisioning.manifest import CANONICAL_PATHS
 
 
 def test_browser_launch_env_forces_software_x11_path():
@@ -37,6 +36,7 @@ def test_browser_launch_command_uses_chromium_profile_dir():
     assert "--no-sandbox" in command
     assert "--disable-dev-shm-usage" in command
     assert "--disable-gpu" in command
+    assert "--test-type" in command
     assert "--no-first-run" in command
     assert "--no-default-browser-check" in command
     assert "--ozone-platform=x11" in command
@@ -49,6 +49,6 @@ def test_browser_launch_command_uses_chromium_profile_dir():
 
 
 def test_default_browser_url_points_at_local_browser_home(tmp_path):
-    expected = (tmp_path / CANONICAL_PATHS["browser_home_html"]).resolve().as_uri()
+    expected = "http://127.0.0.1:8080/browser-home"
 
     assert default_browser_url(tmp_path) == expected

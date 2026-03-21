@@ -400,8 +400,6 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
                 return None
             if services.get("websockify") != "up":
                 return None
-            if services.get("browser") != "up":
-                return None
             return status
 
         status = _wait_for(
@@ -420,7 +418,6 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert status["services"]["x11vnc"] == "up"
         assert status["services"]["websockify"] == "up"
         assert status["services"]["awesome"] == "up"
-        assert status["services"]["browser"] == "up"
 
         assert relay.wait_for_connection(timeout_s=10) is True
         status_msg = relay.wait_for_message_match(
@@ -459,7 +456,8 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
             f"/var/lib/agentobox-agent/{CANONICAL_PATHS['browser_home_html']}",
         )
         assert "Agentobox" in browser_home.stdout
-        assert "../theme.css" in browser_home.stdout
+        assert '/theme.css' in browser_home.stdout
+        assert '/theme.json?ts=' in browser_home.stdout
         assert "Chromium Baseline" in browser_home.stdout
 
         status_raw = _container_exec(
@@ -471,7 +469,6 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         assert projected["services"]["x11vnc"] == "up"
         assert projected["services"]["websockify"] == "up"
         assert projected["services"]["awesome"] == "up"
-        assert projected["services"]["browser"] == "up"
         failed = False
     except AssertionError as exc:
         logs = _container_logs(container_id)

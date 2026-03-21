@@ -104,6 +104,32 @@ async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_me
     from agents.services.lifecycle import transition_agent_status
     from agents.services.runtime_segments import record_runtime_segment_sync
 
+    def _should_replace_error_message(current: str, incoming: str) -> bool:
+        if not incoming:
+            return False
+        if not current:
+            return True
+
+        current_clean = current.strip()
+        incoming_clean = incoming.strip()
+        if not incoming_clean:
+            return False
+
+        generic_prefixes = (
+            "Container exited unexpectedly",
+            "Process exited with code ",
+        )
+        current_is_generic = current_clean.startswith(generic_prefixes)
+        incoming_is_generic = incoming_clean.startswith(generic_prefixes)
+
+        if current_is_generic and not incoming_is_generic:
+            return True
+        if current_is_generic and len(incoming_clean) > len(current_clean):
+            return True
+        if "\n" not in current_clean and "\n" in incoming_clean:
+            return True
+        return False
+
     @_db
     def _mark() -> Agent:
         agent = Agent.objects.get(id=agent_id)
@@ -125,19 +151,19 @@ async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_me
         agent.relay_disconnected_at = timezone.now()
         agent.sandbox_id = ""
         agent.vnc_url = ""
-        agent.error_message = error_message[:2000]
-        agent.save(
-            update_fields=[
-                "status",
-                "deployed_at",
-                "relay_connected",
-                "relay_disconnected_at",
-                "sandbox_id",
-                "vnc_url",
-                "error_message",
-                "updated_at",
-            ]
-        )
+        update_fields = [
+            "status",
+            "deployed_at",
+            "relay_connected",
+            "relay_disconnected_at",
+            "sandbox_id",
+            "vnc_url",
+            "updated_at",
+        ]
+        if _should_replace_error_message(agent.error_message, error_message):
+            agent.error_message = error_message[:2000]
+            update_fields.append("error_message")
+        agent.save(update_fields=update_fields)
         return agent
 
     return await _mark()

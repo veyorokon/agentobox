@@ -97,7 +97,8 @@ def test_theme_files_applier_writes_json_and_css(tmp_path):
     assert '["surface"] = "#1a1a1a"' in awesome_lua
     assert "Agentobox" in browser_home
     assert "Demo" in browser_home
-    assert "../theme.css" in browser_home
+    assert '/theme.css' in browser_home
+    assert '/theme.json?ts=' in browser_home
 
 
 def test_render_browser_home_html_uses_theme_name_and_branding():
@@ -112,7 +113,8 @@ def test_render_browser_home_html_uses_theme_name_and_branding():
     assert "<title>Agentobox</title>" in html
     assert "Night Shift" in html
     assert "Browser-ready workspace for autonomous operators." in html
-    assert "../theme.css" in html
+    assert '/theme.css' in html
+    assert '/theme.json?ts=' in html
 
 
 def test_render_awesome_theme_lua_roundtrips_tokens():

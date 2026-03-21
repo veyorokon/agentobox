@@ -28,8 +28,6 @@ def test_load_managed_runtime_env_uses_relay_and_runtime_state_only(tmp_path):
     relay_env = tmp_path / CANONICAL_PATHS["relay_env"]
     relay_env.parent.mkdir(parents=True, exist_ok=True)
     relay_env.write_text(
-        "export CLAUDE_MODEL='claude-sonnet-4-5'\n"
-        "export AGENT_MODE=plan\n"
         "export ANTHROPIC_BASE_URL='http://localhost:9999'\n"
     )
 

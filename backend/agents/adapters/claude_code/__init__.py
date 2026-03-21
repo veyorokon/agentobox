@@ -841,8 +841,6 @@ class ClaudeCodeAdapter:
             f"export PARENT_SESSION_ID={_shell_escape(parent_session_id)}",
             f"export ABOX_CALLBACK_URL={_shell_escape(callback_url)}",
             f"export RELAY_AUTH_TOKEN={_shell_escape(relay_token)}",
-            f"export CLAUDE_MODEL={_shell_escape(_normalize_model_id(model))}",
-            f"export AGENT_MODE={_shell_escape(mode)}",
         ]
 
         # OAuth path: CC authenticates via .credentials.json on disk.
@@ -870,9 +868,6 @@ class ClaudeCodeAdapter:
 
         if resume_session_id:
             lines.append(f"export RESUME_SESSION_ID={_shell_escape(resume_session_id)}")
-
-        if allowed_tools:
-            lines.append(f"export ALLOWED_TOOLS={_shell_escape(json.dumps(allowed_tools))}")
 
         if mcp_config_path:
             lines.append(f"export MCP_CONFIG={_shell_escape(mcp_config_path)}")

@@ -37,7 +37,7 @@ from agents.services.lifecycle import (
     succeed_active_lifecycle_attempts,
 )
 from agents.services.runtime_projection import read_runtime_status
-from agents.services.utils import terminate_sandbox
+from agents.services.utils import mark_agent_runtime_unavailable, terminate_sandbox
 
 log = structlog.get_logger("abox.reconciler")
 
@@ -104,67 +104,12 @@ def _get_agents(**filters):
     return list(Agent.objects.filter(**filters))
 
 
-@_db
-def _mark_error(agent_id, error_message="", *, reason=REASON_RECONCILER_DEAD_RUNTIME):
-    agent = Agent.objects.get(id=agent_id)
-
-    # Accumulate compute time atomically before status change
-    if agent.deployed_at:
-        elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
-        Agent.objects.filter(id=agent_id).update(
-            compute_seconds=F("compute_seconds") + elapsed,
-        )
-
-    # Force=True: reconciler is a recovery path — it must be able to fix
-    # any stuck state, even if the transition isn't normally legal.
-    transition_agent_status(agent, AgentStatus.ERROR, reason=reason, force=True)
-    agent.deployed_at = None
-    agent.relay_connected = False
-    agent.relay_disconnected_at = timezone.now()
-    agent.sandbox_id = ""
-    agent.vnc_url = ""
-    update_fields = [
-        "status",
-        "deployed_at",
-        "relay_connected",
-        "relay_disconnected_at",
-        "sandbox_id",
-        "vnc_url",
-        "updated_at",
-    ]
-    # Prefer richer crash diagnostics over generic earlier placeholders.
-    if _should_replace_error_message(agent.error_message, error_message):
-        agent.error_message = error_message[:2000]
-        update_fields.append("error_message")
-    agent.save(update_fields=update_fields)
-    return agent
-
-
-def _should_replace_error_message(current: str, incoming: str) -> bool:
-    if not incoming:
-        return False
-    if not current:
-        return True
-
-    current_clean = current.strip()
-    incoming_clean = incoming.strip()
-    if not incoming_clean:
-        return False
-
-    generic_prefixes = (
-        "Container exited unexpectedly",
-        "Process exited with code ",
+async def _mark_error(agent_id, error_message="", *, reason=REASON_RECONCILER_DEAD_RUNTIME):
+    return await mark_agent_runtime_unavailable(
+        str(agent_id),
+        reason=reason,
+        error_message=error_message,
     )
-    current_is_generic = current_clean.startswith(generic_prefixes)
-    incoming_is_generic = incoming_clean.startswith(generic_prefixes)
-
-    if current_is_generic and not incoming_is_generic:
-        return True
-    if current_is_generic and len(incoming_clean) > len(current_clean):
-        return True
-    if "\n" not in current_clean and "\n" in incoming_clean:
-        return True
-    return False
 
 
 def _summarize_runtime_log(events: list[dict]) -> tuple[str, list[str]]:

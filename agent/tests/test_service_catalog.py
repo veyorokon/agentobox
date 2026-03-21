@@ -25,7 +25,5 @@ def test_service_catalog_desktop_profile_declares_dependencies():
 
     assert graph.specs["x11vnc"].depends_on == ("xvfb",)
     assert graph.specs["websockify"].depends_on == ("x11vnc",)
-    assert graph.specs["browser"].depends_on == ("awesome",)
     required = [spec.name for spec in graph.required_services()]
     assert required == ["xvfb", "x11vnc", "websockify", "awesome"]
-    assert graph.specs["browser"].required_for_readiness is False

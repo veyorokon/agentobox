@@ -36,9 +36,8 @@ reads the file and reloads the relevant process.
             state.json                    # {model, mode, allowed_tools}
             status.json                   # runtime status document (agent-owned projection)
             inbox.jsonl                   # messages to agent (backend appends)
-            inbox.pos                     # byte offset of last consumed message (relay writes)
-            outbox.jsonl                  # events from agent (hooks/relay append)
-            outbox.pos                    # byte offset of last collected event (backend writes)
+            inbox.cursor.json             # durable runtime-owned inbox cursor
+            provisioned.ready             # managed bootstrap release sentinel
 
 ## From agent perspective (inside container)
 
@@ -59,16 +58,14 @@ reads the file and reloads the relevant process.
 ## Runtime status
 
     _abox/status.json remains an agent-owned machine artifact written by the
-    runtime. Backend-visible runtime truth is now consumed from the control-
-    plane projection published by the runtime over relay. Volume retains local
-    compatibility helpers for filesystem-backed tests and diagnostics only.
+    runtime. Backend-visible runtime truth is consumed from the control-plane
+    projection published by the runtime over relay.
 
-## Delivery guarantee (inbox/outbox)
+## Delivery guarantee
 
-    Backend appends to inbox.jsonl, sends a reload. Relay reads from
-    inbox.pos offset, processes messages, advances the cursor. Messages
-    survive relay crashes — unread lines persist on the volume. No
-    backfill logic needed in consumers.py.
+    Backend appends to inbox.jsonl and sends a reload. The runtime tracks its
+    durable read position in _abox/inbox.cursor.json, so unread messages
+    survive relay crashes without a backend-visible delivery cursor.
 
 ## What's NOT on the volume
 
@@ -174,7 +171,6 @@ class AgentMachine:
         machine.write("home/agent/.claude/settings.json", json_content)
         machine.write_secret("run/secrets/proxy_key", key, mode=0o600)
         machine.append_inbox({"type": "task", "task_id": "...", "input": {...}})
-        status = machine.runtime_status()           # filesystem compatibility helper
     """
 
     def __init__(
@@ -250,16 +246,6 @@ class AgentMachine:
     def archive_entry(self, path: str = "") -> str:
         return self._machine.archive_entry(path)
 
-    def runtime_status(self) -> dict:
-        """Read the agent's runtime status document from _abox/status.json.
-
-        The new agent runtime writes a structured StatusDocument here
-        (mode, platform, startup_stage, runtime_state, transport, services).
-        Returns the parsed dict or empty dict if not yet written.
-        """
-        path = "_abox/status.json"
-        return json.loads(self.read(path)) if self.exists(path) else {}
-
     def runtime_log_tail(self, limit: int = 20) -> list[dict]:
         """Read the last structured runtime log events from _abox/logs/runtime.jsonl."""
         path = "_abox/logs/runtime.jsonl"
@@ -281,25 +267,10 @@ class AgentMachine:
         """Persist the latest runtime crash diagnostics bundle for this agent."""
         self.write("_abox/runtime-diagnostics.json", json.dumps(payload, indent=2, sort_keys=True))
 
-    def inbox_delivered(self) -> bool:
-        """Check if all inbox messages have been consumed.
-
-        Compares inbox.pos (byte offset of last consumed message) against
-        inbox.jsonl file size. When they match, the relay has read every
-        line the backend appended.
-        """
-        pos_path = "_abox/inbox.pos"
-        inbox_path = "_abox/inbox.jsonl"
-        if not self.exists(inbox_path):
-            return True
-        pos = int(self.read(pos_path)) if self.exists(pos_path) else 0
-        return pos >= self._store.stat_size(self._machine, inbox_path)
-
     def append_inbox(self, message: dict) -> None:
         """Append one JSON-line message to the agent's inbox.
 
-        Backend appends, relay consumes from inbox.pos offset.
-        Messages survive relay crashes — unread lines persist.
+        Backend appends, runtime consumes using its durable inbox cursor.
 
         Note: concurrent appends from multiple backend processes could
         interleave. In practice, messages to a single agent are serialized
@@ -390,8 +361,8 @@ class AgentMachine:
         """Create empty control plane files and directory structure for a new agent.
 
         Called during provisioning before any other volume writes.
-        Creates the _abox/ directory with empty inbox/outbox files
-        and zero-offset cursors, PLUS all directories that init-volume
+        Creates the _abox/ directory with the canonical control-plane files,
+        PLUS all directories that init-volume
         will symlink into the container.
 
         This must run before the container starts so that init-volume's
@@ -402,12 +373,8 @@ class AgentMachine:
         Idempotent — safe to call multiple times.
         """
         self._store.mkdir(self._machine, "_abox")
-        for f in ["inbox.jsonl", "outbox.jsonl"]:
-            if not self.exists(f"_abox/{f}"):
-                self._store.write_bytes(self._machine, f"_abox/{f}", b"")
-        for f in ["inbox.pos", "outbox.pos"]:
-            if not self.exists(f"_abox/{f}"):
-                self._store.write_bytes(self._machine, f"_abox/{f}", b"0")
+        if not self.exists("_abox/inbox.jsonl"):
+            self._store.write_bytes(self._machine, "_abox/inbox.jsonl", b"")
         if not self.exists("_abox/status.json"):
             self._store.write_bytes(self._machine, "_abox/status.json", b"{}")
 

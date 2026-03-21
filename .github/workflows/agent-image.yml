@@ -235,5 +235,11 @@ jobs:
               echo "|-------|-----|"
               echo "| managed | \`${managed_ref:-—}\` |"
               echo "| desktop | \`${desktop_ref:-—}\` |"
+              echo
+              echo "| Gate | Artifact Consumed | Provenance |"
+              echo "|------|-------------------|------------|"
+              echo "| build-managed | managed image tags | built and pushed from \`agent/Dockerfile.managed\` |"
+              echo "| build-desktop-managed | pulled managed sha image | reuses upstream managed artifact as desktop base |"
+              echo "| managed Docker contract | local desktop image \`agentobox-agent-runtime-desktop-managed:ci\` | built from pulled managed sha image before push |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi

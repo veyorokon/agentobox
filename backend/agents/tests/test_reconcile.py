@@ -22,7 +22,6 @@ from agents.services.reconcile import (
     REASON_RECONCILER_RUNTIME_MISSING,
     _detect_dead_containers,
     _detect_stuck_deploys,
-    _mark_error,
     _reap_errored_agents,
     _reap_orphans_sync,
 )
@@ -138,64 +137,25 @@ class TestDetectStuckDeploys:
         mock_terminate.assert_awaited_once()
 
 
-def test_mark_error_clears_stale_runtime_projection():
-    agent = MagicMock()
-    agent.id = "agent-1"
-    agent.deployed_at = timezone.now() - timedelta(seconds=12)
-    agent.error_message = ""
-    agent.relay_connected = True
-    agent.relay_disconnected_at = None
-    agent.sandbox_id = "sandbox-123"
-    agent.vnc_url = "http://runtime:6080"
+@pytest.mark.asyncio
+async def test_reconciler_mark_error_routes_through_shared_runtime_unavailable_helper():
+    marked = SimpleNamespace(id="agent-1")
 
-    mock_filter = MagicMock()
-    mock_filter.update = MagicMock()
+    with patch(
+        "agents.services.reconcile.mark_agent_runtime_unavailable",
+        new_callable=AsyncMock,
+        return_value=marked,
+    ) as mock_mark:
+        from agents.services.reconcile import _mark_error
 
-    with (
-        patch("agents.services.reconcile.Agent.objects.get", return_value=agent),
-        patch("agents.services.reconcile.Agent.objects.filter", return_value=mock_filter),
-        patch("agents.services.reconcile.transition_agent_status") as mock_transition,
-    ):
-        _mark_error.__wrapped__("agent-1", error_message="container died")
+        result = await _mark_error("agent-1", error_message="container died")
 
-    mock_transition.assert_called_once_with(
-        agent,
-        AgentStatus.ERROR,
+    assert result is marked
+    mock_mark.assert_awaited_once_with(
+        "agent-1",
         reason=REASON_RECONCILER_DEAD_RUNTIME,
-        force=True,
+        error_message="container died",
     )
-    assert agent.deployed_at is None
-    assert agent.relay_connected is False
-    assert agent.relay_disconnected_at is not None
-    assert agent.sandbox_id == ""
-    assert agent.vnc_url == ""
-    assert agent.error_message == "container died"
-    agent.save.assert_called_once()
-
-
-def test_mark_error_replaces_generic_error_with_richer_crash_details():
-    agent = MagicMock()
-    agent.id = "agent-1"
-    agent.deployed_at = None
-    agent.error_message = "Container exited unexpectedly"
-    agent.relay_connected = True
-    agent.relay_disconnected_at = None
-    agent.sandbox_id = "sandbox-123"
-    agent.vnc_url = "http://runtime:6080"
-
-    mock_filter = MagicMock()
-    mock_filter.update = MagicMock()
-    incoming = "Container exited with code 137\nKilled by OOM killer"
-
-    with (
-        patch("agents.services.reconcile.Agent.objects.get", return_value=agent),
-        patch("agents.services.reconcile.Agent.objects.filter", return_value=mock_filter),
-        patch("agents.services.reconcile.transition_agent_status"),
-    ):
-        _mark_error.__wrapped__("agent-1", error_message=incoming)
-
-    assert agent.error_message == incoming
-    agent.save.assert_called_once()
 
 
 @pytest.mark.asyncio

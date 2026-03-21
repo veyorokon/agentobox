@@ -33,8 +33,9 @@ import { TeamFeed } from "@/components/feed/team-feed"
 import { ComposerBar } from "@/components/composer/composer-bar"
 import { UserMenu } from "@/components/layout/user-menu"
 import { ThemePicker } from "@/components/layout/theme-picker"
-import { findBuiltInThemeByTokens } from "@/lib/config"
 import { useThemeStore } from "@/lib/stores/theme"
+import { BackendStatusBanner } from "@/components/ui/backend-status-banner"
+import { describeGraphqlError } from "@/lib/graphql/errors"
 
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
@@ -53,7 +54,7 @@ export default function ProjectPage() {
 
   // ── Project name (for breadcrumb) ─────────────────────────────────
   const syncTheme = useThemeStore((s) => s.syncTheme)
-  const { data: projectData, loading: projectLoading } = useQuery<{
+  const { data: projectData, loading: projectLoading, error: projectError, refetch: refetchProject } = useQuery<{
     project: {
       id: string
       name: string
@@ -67,13 +68,8 @@ export default function ProjectPage() {
   const projectName = projectData?.project?.name ?? ""
 
   useEffect(() => {
-    const matchedTheme = findBuiltInThemeByTokens(projectData?.project?.themeTokens)
     const tokens = projectData?.project?.themeTokens
     const themeDocument = projectData?.project?.themeDocument
-    if (matchedTheme) {
-      syncTheme({ theme: matchedTheme.id, mode: matchedTheme.mode, tokens: matchedTheme.tokens })
-      return
-    }
     if (tokens && Object.keys(tokens).length > 0) {
       syncTheme({
         theme: themeDocument?.theme ?? "custom",
@@ -88,13 +84,14 @@ export default function ProjectPage() {
   const setMainTab = useSidebarStore(s => s.setMainTab)
 
   // ── Apollo (agents + feed + providers) ─────────────────────────
-  const { providers } = useProviderStatus(projectId ?? "")
+  const { providers, error: providerError } = useProviderStatus(projectId ?? "")
   const missingKeys = providers.filter((p) => !p.configured)
-  const { data: agentsData, loading: agentsLoading } = useAgents()
+  const { data: agentsData, loading: agentsLoading, error: agentsError, refetch: refetchAgents } = useAgents()
   const agents = agentsData?.agents ?? []
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
   const headerReady = !projectLoading && !agentsLoading && !!projectName
+  const backendError = projectError ?? agentsError ?? providerError ?? null
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
@@ -138,6 +135,16 @@ export default function ProjectPage() {
       )}
 
       <div className="@container/main flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {backendError && (
+          <BackendStatusBanner
+            title="Project data is temporarily unavailable"
+            detail={describeGraphqlError(backendError)}
+            onRetry={() => {
+              void refetchProject()
+              void refetchAgents()
+            }}
+          />
+        )}
         {/* Mobile header: project + secrets + user */}
         {bp === "mobile" && (
           <div className="h-10 px-3 flex items-center border-b border-border-default bg-surface shrink-0">

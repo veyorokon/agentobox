@@ -1,6 +1,6 @@
 import type { LifecycleStatus, AttentionLevel } from "@/lib/types"
 export type { ThemeConfig, ThemeTokens, BuiltInTheme } from "@/lib/theme-registry"
-export { BUILT_IN_THEMES, DEFAULT_THEME, findBuiltInThemeByTokens } from "@/lib/theme-registry"
+export { BUILT_IN_THEMES, DEFAULT_THEME } from "@/lib/theme-registry"
 
 /* ================================================================== */
 /*  STATUS + ATTENTION CONFIG                                          */

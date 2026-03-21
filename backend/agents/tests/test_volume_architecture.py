@@ -3,10 +3,8 @@
 Verifies that the volume-based state system maintains its design contracts:
 - Atomic writes (no partial reads)
 - Mirror, Don't Map (volume paths = container paths)
-- Filesystem compatibility for local machine artifacts
-- Delivery guarantee (inbox.pos tracks consumed messages)
+- Canonical control-plane boot files only
 - No orphan state (relay.py only sends reload commands + signals, never raw state)
-- Inbox/outbox symmetry
 
 These are structural tests — they exercise the Volume class directly against
 a tmp_path filesystem. No Django ORM, no containers, no network.
@@ -61,9 +59,6 @@ class TestVolumeCompleteness:
         vol = _make_vol(tmp_path)
         vol.initialize()
         assert (tmp_path / "_abox/inbox.jsonl").exists()
-        assert (tmp_path / "_abox/outbox.jsonl").exists()
-        assert (tmp_path / "_abox/inbox.pos").read_text() == "0"
-        assert (tmp_path / "_abox/outbox.pos").read_text() == "0"
         assert (tmp_path / "_abox/status.json").read_text() == "{}"
 
     def test_initialize_is_idempotent(self, tmp_path):
@@ -155,40 +150,6 @@ class TestMirrorDontMap:
         assert vol.exists("home/agent/.claude/mcp.json")
 
 
-# ---------------------------------------------------------------------------
-# Filesystem compatibility: local status artifact helper
-# ---------------------------------------------------------------------------
-
-class TestRuntimeStatus:
-    """Volume retains a local helper for runtime-written status artifacts."""
-
-    def test_runtime_status_empty_when_no_file(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        assert vol.runtime_status() == {}
-
-    def test_runtime_status_reads_agent_status_document(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        status_doc = {
-            "status_version": "1",
-            "mode": "standalone",
-            "platform": "docker",
-            "startup_stage": "runtime_ready",
-            "runtime_state": "ready",
-            "runtime": {"session_id": "", "client_active": False, "task_id": "", "task_state": "idle"},
-            "transport": {"enabled": False, "state": "disabled", "connected": False, "last_error": None},
-            "services": {},
-            "degraded": [],
-            "fatal": None,
-        }
-        vol.write("_abox/status.json", json.dumps(status_doc))
-        result = vol.runtime_status()
-        assert result["status_version"] == "1"
-        assert result["mode"] == "standalone"
-        assert result["startup_stage"] == "runtime_ready"
-        assert result["runtime"]["client_active"] is False
-
 class TestSecretsAndMcpHelpers:
     """Secrets/MCP machine paths should be explicit helpers, not raw strings everywhere."""
 
@@ -211,42 +172,8 @@ class TestSecretsAndMcpHelpers:
         assert oct(mcp_secret.stat().st_mode & 0o777) == oct(0o600)
 
 
-# ---------------------------------------------------------------------------
-# Delivery guarantee: inbox.pos tracks consumed messages
-# ---------------------------------------------------------------------------
-
-class TestDelivery:
-    """inbox.pos == inbox.jsonl size means all consumed."""
-
-    def test_empty_inbox_is_delivered(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        assert vol.inbox_delivered()
-
-    def test_undelivered_after_append(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]}})
-        assert not vol.inbox_delivered()
-
-    def test_delivered_after_pos_advance(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]}})
-        # Simulate relay consuming all messages
-        size = (tmp_path / "_abox/inbox.jsonl").stat().st_size
-        (tmp_path / "_abox/inbox.pos").write_text(str(size))
-        assert vol.inbox_delivered()
-
-    def test_partial_delivery(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        vol.append_inbox({"type": "task", "task_id": "t1", "input": {"role": "user", "content": [{"type": "text", "text": "msg1"}]}})
-        size_after_first = (tmp_path / "_abox/inbox.jsonl").stat().st_size
-        vol.append_inbox({"type": "task", "task_id": "t2", "input": {"role": "user", "content": [{"type": "text", "text": "msg2"}]}})
-        # Relay consumed only the first message
-        (tmp_path / "_abox/inbox.pos").write_text(str(size_after_first))
-        assert not vol.inbox_delivered()
+class TestInbox:
+    """Inbox persists canonical task messages only."""
 
     def test_append_creates_valid_jsonl(self, tmp_path):
         vol = _make_vol(tmp_path)
@@ -271,22 +198,6 @@ class TestDelivery:
             "task_id": "task-1",
             "input": {"role": "user", "content": [{"type": "text", "text": "hello"}]},
         }
-
-
-# ---------------------------------------------------------------------------
-# Inbox/outbox symmetry
-# ---------------------------------------------------------------------------
-
-class TestSymmetry:
-    """Inbox and outbox use identical file structures."""
-
-    def test_inbox_outbox_parity(self, tmp_path):
-        vol = _make_vol(tmp_path)
-        vol.initialize()
-        for name in ["inbox", "outbox"]:
-            assert (tmp_path / f"_abox/{name}.jsonl").exists()
-            assert (tmp_path / f"_abox/{name}.pos").exists()
-            assert (tmp_path / f"_abox/{name}.pos").read_text() == "0"
 
 
 # ---------------------------------------------------------------------------
@@ -424,11 +335,11 @@ class TestConsumerSimplicity:
     """consumers.py has no backfill logic or theme push on connect."""
 
     def test_no_backfill_cursor_in_consumers(self):
-        """consumers.py must not reference last_delivered_event_id — replaced by inbox.pos."""
+        """consumers.py must not reference legacy last-delivered event cursors."""
         consumers_path = Path(__file__).parent.parent / "consumers.py"
         source = consumers_path.read_text()
         assert "last_delivered_event_id" not in source, (
-            "last_delivered_event_id reference in consumers.py — replaced by inbox.pos"
+            "last_delivered_event_id reference in consumers.py — runtime owns inbox cursor state"
         )
 
     def test_no_theme_push_function_in_consumers(self):

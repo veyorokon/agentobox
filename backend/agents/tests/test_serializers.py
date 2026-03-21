@@ -100,6 +100,29 @@ async def test_serialize_agent_derives_preview_contract():
         },
         agent_type="claude-code",
     )
+    running = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="running-agent",
+        project=project,
+        runtime="modal",
+        status=AgentStatus.RUNNING,
+        relay_connected=True,
+        sandbox_id="sb-789",
+        vnc_url="ws://vnc-running",
+        runtime_status_projection={
+            "profile": "desktop",
+            "startup_stage": "managed_ready",
+            "runtime_state": "running",
+            "transport": {"connected": True},
+            "services": {
+                "xvfb": "up",
+                "x11vnc": "up",
+                "websockify": "up",
+                "awesome": "up",
+                "browser": "up",
+            },
+        },
+        agent_type="claude-code",
+    )
     desktop_not_ready = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
         name="desktop-not-ready-agent",
         project=project,
@@ -142,6 +165,7 @@ async def test_serialize_agent_derives_preview_contract():
 
     deploying_payload = await serialize_agent(deploying)
     ready_payload = await serialize_agent(ready)
+    running_payload = await serialize_agent(running)
     desktop_not_ready_payload = await serialize_agent(desktop_not_ready)
     unavailable_payload = await serialize_agent(unavailable)
     errored_payload = await serialize_agent(errored)
@@ -150,6 +174,8 @@ async def test_serialize_agent_derives_preview_contract():
     assert deploying_payload["previewRuntimeId"] == ""
     assert ready_payload["previewState"] == "ready"
     assert ready_payload["previewRuntimeId"] == "sb-123"
+    assert running_payload["previewState"] == "ready"
+    assert running_payload["previewRuntimeId"] == "sb-789"
     assert desktop_not_ready_payload["previewState"] == "ready"
     assert desktop_not_ready_payload["previewRuntimeId"] == "sb-234"
     assert unavailable_payload["previewState"] == "unavailable"

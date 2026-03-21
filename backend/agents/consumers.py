@@ -158,8 +158,8 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
-        # Track relay connection state. No delivery cursor needed —
-        # inbox.pos on the volume handles delivery guarantees.
+        # Track relay connection state. Message durability is handled by the
+        # runtime-owned inbox cursor under _abox/.
         try:
             from django.utils import timezone
             from agents.models import Agent

@@ -17,7 +17,6 @@ from agent.contracts.platform import PlatformAdapter
 from agent.contracts.profile import RuntimeProfile
 from agent.contracts.transport import ManagedTransport
 from agent.platform.factory import build_platform
-from agent.provisioning.providers.managed import ManagedProvisioningProvider
 from agent.provisioning.providers.standalone import StandaloneProvisioningProvider
 from agent.runtime.config import RuntimeConfig
 from agent.runtime.desktop.config import ensure_desktop_runtime_files
@@ -84,15 +83,11 @@ class AgentApplication:
         self.lifecycle.begin_boot()
 
         self.lifecycle.on_config_validated()
-        provider = (
-            ManagedProvisioningProvider(self.config)
-            if self.config.mode is AgentMode.MANAGED
-            else StandaloneProvisioningProvider(self.config)
-        )
-
-        self.lifecycle.on_provisioning_wait()
-        provider.prepare(self.config.root_dir)
-        self.lifecycle.on_provisioning_validated()
+        if self.config.mode is AgentMode.STANDALONE:
+            provider = StandaloneProvisioningProvider(self.config)
+            self.lifecycle.on_provisioning_wait()
+            provider.prepare(self.config.root_dir)
+            self.lifecycle.on_provisioning_validated()
         self.theme_manager.project_if_present()
         if self.config.profile is RuntimeProfile.DESKTOP:
             ensure_desktop_runtime_files(self.config.root_dir)

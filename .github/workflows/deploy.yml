@@ -301,6 +301,9 @@ jobs:
           done
 
       - name: Smoke test (HTTP surface)
+        env:
+          SMOKE_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
+          SMOKE_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
         run: |
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           bash bin/smoke-test.sh "https://${DOMAIN}"
@@ -450,4 +453,13 @@ jobs:
             echo "| backend | \`${{ needs.build.outputs.backend-image || '—' }}\` |"
             echo "| dashboard | \`${{ needs.build.outputs.dashboard-image || '—' }}\` |"
             echo "| agent | \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` |"
+            echo
+            echo "| Gate | Artifact Consumed | Provenance |"
+            echo "|------|-------------------|------------|"
+            echo "| ci | source checkout | reusable PR-quality CI graph |"
+            echo "| agent-image | managed + desktop agent images | managed built once, desktop contract-tested before push |"
+            echo "| agent-modal-contract | \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` | pushed desktop sha image on Modal |"
+            echo "| deploy | backend \`${{ needs.build.outputs.backend-image || '—' }}\`, dashboard \`${{ needs.build.outputs.dashboard-image || '—' }}\`, agent \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` | pushed sha images written into server env |"
+            echo "| agent-bootstrap | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy control plane + runtime handoff |"
+            echo "| agent-smoke | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy round-trip message |"
           } >> "$GITHUB_STEP_SUMMARY"

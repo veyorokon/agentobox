@@ -44,13 +44,6 @@ export function resolveThemeConfig(config: Partial<ThemeConfig> | null | undefin
   return { theme, mode, tokens }
 }
 
-export function findBuiltInThemeByTokens(tokens: Record<string, string> | null | undefined): BuiltInTheme | null {
-  if (!tokens) return null
-  return BUILT_IN_THEMES.find((theme) =>
-    Object.entries(theme.tokens).every(([key, value]) => normalizeTokenValue(tokens[key] ?? "") === normalizeTokenValue(value)),
-  ) ?? null
-}
-
 export function applyThemeConfigToDocument(config: Partial<ThemeConfig> | null | undefined, doc: Document = document) {
   const resolved = resolveThemeConfig(config)
   const root = doc.documentElement
@@ -117,10 +110,6 @@ function applyThemeTokensToElement(element: HTMLElement, tokens: ThemeTokens) {
   for (const [token, value] of Object.entries(tokens)) {
     element.style.setProperty(cssVariableName(token), value)
   }
-}
-
-function normalizeTokenValue(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ")
 }
 
 function cssVariableName(token: string): string {

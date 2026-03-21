@@ -34,6 +34,7 @@ def browser_launch_command(*, agent_home: Path, browser_url: str) -> list[str]:
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
+        "--test-type",
         "--no-first-run",
         "--no-default-browser-check",
         "--ozone-platform=x11",

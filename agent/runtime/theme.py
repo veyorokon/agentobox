@@ -153,13 +153,14 @@ def render_browser_home_html(document: ThemeDocument) -> str:
     """Render a deterministic local Chromium home surface from canonical tokens."""
 
     theme_name = document.name or "Agentobox"
+    initial_payload = json.dumps(document.to_dict(), separators=(",", ":"))
     return f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agentobox</title>
-    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="/theme.css" />
     <style>
       :root {{
         color-scheme: dark;
@@ -375,6 +376,46 @@ def render_browser_home_html(document: ThemeDocument) -> str:
         }}
       }}
     </style>
+    <script>
+      const initialTheme = {initial_payload};
+
+      function applyTheme(themeDocument) {{
+        const root = window.document.documentElement;
+        const tokens = themeDocument.tokens || {{}};
+        for (const [name, value] of Object.entries(tokens)) {{
+          root.style.setProperty(`--abox-${{name}}`, value);
+        }}
+        const pill = window.document.querySelector("[data-theme-pill]");
+        if (pill) {{
+          pill.textContent = themeDocument.name || "Agentobox";
+        }}
+      }}
+
+      function signatureFor(themeDocument) {{
+        return JSON.stringify([themeDocument.name || "", themeDocument.tokens || {{}}]);
+      }}
+
+      let lastSignature = signatureFor(initialTheme);
+      applyTheme(initialTheme);
+
+      async function refreshTheme() {{
+        try {{
+          const response = await fetch(`/theme.json?ts=${{Date.now()}}`, {{ cache: "no-store" }});
+          if (!response.ok) return;
+          const nextDocument = await response.json();
+          const nextSignature = signatureFor(nextDocument);
+          if (nextSignature === lastSignature) return;
+          lastSignature = nextSignature;
+          applyTheme(nextDocument);
+        }} catch (_error) {{
+          return;
+        }}
+      }}
+
+      window.addEventListener("load", () => {{
+        window.setInterval(refreshTheme, 1500);
+      }});
+    </script>
   </head>
   <body>
     <main class="shell">
@@ -383,7 +424,7 @@ def render_browser_home_html(document: ThemeDocument) -> str:
           <div class="brand-kicker">Agent Desktop</div>
           <div class="brand-title">Agento<strong>box</strong></div>
         </div>
-        <div class="theme-pill">{theme_name}</div>
+        <div class="theme-pill" data-theme-pill>{theme_name}</div>
       </header>
       <section class="content">
         <section class="hero">

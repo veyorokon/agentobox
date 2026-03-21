@@ -119,8 +119,6 @@ def _desktop_preview_ready(status: dict) -> bool:
         return False
     if status.get("startup_stage") != "managed_ready":
         return False
-    if status.get("runtime_state") != "ready":
-        return False
     transport = status.get("transport") or {}
     if not transport.get("connected"):
         return False

@@ -59,12 +59,4 @@ def _desktop_runtime_specs(mode: AgentMode) -> list[ServiceSpec]:
             depends_on=("xvfb",),
             required_for_readiness=True,
         ),
-        ServiceSpec(
-            name="browser",
-            command=("python", "-m", "agent.runtime.desktop.browser"),
-            depends_on=("awesome",),
-            # The browser is an app-level desktop service, not a prerequisite for
-            # the VNC desktop surface itself being previewable.
-            required_for_readiness=False,
-        ),
     ]
