@@ -374,15 +374,38 @@ def trigger_deploy() -> str:
 def wait_for_deploy_completion(run_id: str) -> None:
     if run_id == "manual":
         return
-    sh([
-        "gh",
-        "run",
-        "watch",
-        run_id,
-        "--repo",
-        DEPLOY_REPO,
-        "--exit-status",
-    ])
+    deadline = time.time() + TIMEOUT_S
+    last = None
+    while time.time() < deadline:
+        payload = sh([
+            "gh",
+            "run",
+            "view",
+            run_id,
+            "--repo",
+            DEPLOY_REPO,
+            "--json",
+            "status,conclusion,url,workflowName,createdAt,updatedAt",
+        ])
+        last = json.loads(payload)
+        status = last.get("status", "")
+        conclusion = last.get("conclusion", "")
+        log(
+            "deploy "
+            f"status={status} "
+            f"conclusion={conclusion or '-'} "
+            f"url={last.get('url', '')}"
+        )
+        if status == "completed":
+            if conclusion == "success":
+                return
+            raise HarnessError(
+                f"deploy run {run_id} did not succeed: "
+                f"conclusion={conclusion or 'unknown'} "
+                f"url={last.get('url', '')}"
+            )
+        time.sleep(5)
+    raise HarnessError(f"timed out waiting for deploy run {run_id}; last={last}")
 
 
 def cleanup(state: HarnessState | None) -> None:
