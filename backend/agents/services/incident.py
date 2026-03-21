@@ -206,8 +206,18 @@ async def capture_incident_bundle(
         log.warning("incident.source_failed", source="runtime_status", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         errors.append(f"runtime_status: {type(exc).__name__}: {exc}")
 
+    # -- Desired theme fingerprint (computed in async path, not via sync agent.project) --
+    desired_theme_fingerprint = None
+    try:
+        from asgiref.sync import sync_to_async
+        from projects.models import Project
+        project = await Project.objects.aget(id=agent.project_id)
+        desired_theme_fingerprint = _canonical_theme_fingerprint_from_project(project)
+    except Exception as exc:  # intentional: best-effort — supplementary diagnosis field
+        log.debug("incident.source_failed", source="desired_theme", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+
     # -- Structural diagnosis layers --
-    desired = _extract_desired(agent, agent_snapshot)
+    desired = _extract_desired(agent, desired_theme_fingerprint)
     observed = _extract_observed(agent, runtime_status)
     applied = _extract_applied(agent, runtime_logs)
 
@@ -238,28 +248,24 @@ async def capture_incident_bundle(
     return _redact(_json_safe(bundle)), errors
 
 
-def _canonical_theme_fingerprint(agent: Agent) -> str | None:
-    """Compute fingerprint of the canonical theme for desired vs applied comparison."""
-    try:
-        import hashlib
-        from agents.services.themes import format_theme_document
-        project = agent.project
-        tokens = project.resolved_theme_tokens()
-        if tokens:
-            payload = format_theme_document(tokens, name=project.name)
-            return hashlib.sha256(payload.encode()).hexdigest()[:12]
-    except Exception as exc:  # intentional: best-effort — supplementary diagnosis field
-        log.debug("incident.source_failed", source="canonical_theme_fingerprint", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+def _canonical_theme_fingerprint_from_project(project) -> str | None:
+    """Compute fingerprint from an already-fetched project instance."""
+    import hashlib
+    from agents.services.themes import format_theme_document
+    tokens = project.resolved_theme_tokens()
+    if tokens:
+        payload = format_theme_document(tokens, name=project.name)
+        return hashlib.sha256(payload.encode()).hexdigest()[:12]
     return None
 
 
-def _extract_desired(agent: Agent, agent_snapshot: dict) -> dict:
+def _extract_desired(agent: Agent, theme_fingerprint: str | None) -> dict:
     """What the control plane wanted."""
     return {
         "desired_status": getattr(agent, "desired_status", None),
         "model": agent.model or None,
         "mode": agent.mode or None,
-        "theme_fingerprint": _canonical_theme_fingerprint(agent),
+        "theme_fingerprint": theme_fingerprint,
         "source": "agent_model",
     }
 

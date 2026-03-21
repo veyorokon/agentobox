@@ -11,7 +11,7 @@ Proves:
 
 import uuid
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from django.utils import timezone
@@ -353,3 +353,51 @@ async def test_applied_section_captures_consumer_failure(setup_project_with_agen
     applied = bundle["applied"]
     assert applied["theme_notify_result"] == "failed"
     assert applied["theme_notify_error"] == "awesome not ready"
+
+
+async def test_applied_theme_fingerprint_is_file_backed(setup_project_with_agents):
+    """Key architectural contract: applied.theme_fingerprint reads from the
+    canonical runtime file, not from log events.
+
+    This test writes tokens.json to the agent volume and asserts the bundle
+    reads the file content for the fingerprint, ignoring any log-based value.
+    """
+    import hashlib
+    import json
+
+    _, target, _, _ = setup_project_with_agents
+
+    # Write a real tokens.json to the agent's machine volume
+    theme_content = json.dumps({
+        "schema_version": "1",
+        "name": "File Test",
+        "tokens": {"surface": "#111111", "accent": "#ff0000"},
+    })
+    expected_fingerprint = hashlib.sha256(theme_content.encode()).hexdigest()[:12]
+
+    # Mock the machine.read to return our file content
+    mock_machine = MagicMock()
+    mock_machine.read.return_value = theme_content
+    mock_machine.runtime_log_tail.return_value = []
+
+    # Log events have a DIFFERENT fingerprint — bundle must prefer file
+    mock_logs = [
+        {"event": "theme.projected", "ts": 1.0, "fingerprint": "wrong_from_log"},
+    ]
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=mock_logs),
+        patch.object(type(target), "machine", new_callable=PropertyMock, return_value=mock_machine),
+    ):
+        bundle, _ = await capture_incident_bundle(target)
+
+    applied = bundle["applied"]
+    assert applied["theme_fingerprint"] == expected_fingerprint, (
+        f"Expected file-backed fingerprint {expected_fingerprint}, "
+        f"got {applied['theme_fingerprint']}. "
+        "applied.theme_fingerprint must come from the runtime file, not from logs."
+    )
+    assert applied["theme_fingerprint"] != "wrong_from_log", (
+        "applied.theme_fingerprint must not come from log events"
+    )
+    assert applied["theme_fingerprint_source"] == "runtime_file"
