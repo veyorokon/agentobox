@@ -22,6 +22,16 @@ from agent.runtime.logging import configure_logging_context, emit_event
 ApplicationFactory = Callable[[RuntimeConfig], AgentApplication]
 
 
+def _runtime_fatal_reason(app: AgentApplication) -> str | None:
+    """Return the runtime fatal reason if the app exposes status."""
+
+    status_fn = getattr(app, "status", None)
+    if not callable(status_fn):
+        return None
+    status = status_fn()
+    return getattr(status, "fatal", None)
+
+
 def run_forever(
     app: AgentApplication,
     *,
@@ -39,6 +49,9 @@ def run_forever(
         emit_event("runtime.booting")
         app.boot()
         while not stop_event.is_set():
+            fatal_reason = _runtime_fatal_reason(app)
+            if fatal_reason:
+                raise RuntimeError(fatal_reason)
             sleep(poll_interval_s)
     except BaseException as exc:
         emit_event(
