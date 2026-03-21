@@ -142,7 +142,7 @@ class TestNamingConventions:
     def test_graphql_mutations_are_verb_entity(self):
         """All mutation method names should follow verb_entity pattern."""
         allowed_prefixes = (
-            "create", "kill", "remove", "send", "set", "update", "resolve",
+            "capture", "create", "kill", "remove", "send", "set", "update", "resolve",
             "answer", "hard_restart", "restart", "interrupt", "clear", "rate",
             "delete", "scope",
         )
@@ -613,7 +613,7 @@ _LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"] + _AGENT_ABOX_DIRS
 # Adding a new domain is a deliberate architectural decision, not an accident.
 _VALID_DOMAINS = {
     "adapter", "auth", "broadcast", "callback", "comms", "dashboard", "feed", "gateway",
-    "graphql", "hook", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime",
+    "graphql", "hook", "incident", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime",
     "stream", "triggers", "vnc",
 }
 
