@@ -1186,6 +1186,9 @@ def _build_agent_env(agent, project) -> dict[str, str]:
             agent.agent_type,
             app_config.agent.executor_override.strip(),
         ),
+        # Override the Dockerfile default so the agent runtime knows
+        # which platform adapter it is actually running on.
+        "AGENTOBOX_PLATFORM": agent.runtime,
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
         "ABOX_CALLBACK_URL": app_config.callback_url,

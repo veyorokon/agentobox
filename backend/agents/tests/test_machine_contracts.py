@@ -352,3 +352,43 @@ class TestDerivePreviewState:
     def test_no_sandbox_returns_unavailable(self):
         from agents.serializers import derive_preview_state
         assert derive_preview_state(self._agent(sandbox_id="")) == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Agent env platform metadata
+# ---------------------------------------------------------------------------
+
+
+class TestAgentEnvPlatformMetadata:
+    """Contract: agent runtime env carries the correct platform for the runtime.
+
+    Regression for #115: Modal agents received platform=docker because
+    the Dockerfile default was not overridden at provisioning time.
+    """
+
+    def _make_agent(self, runtime: str):
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            agent_type="claude-code",
+            runtime=runtime,
+            name="test-agent",
+        )
+
+    def _make_project(self):
+        return SimpleNamespace(id=uuid.uuid4())
+
+    def test_docker_agent_gets_docker_platform(self):
+        from agents.services.lifecycle import _build_agent_env
+        agent = self._make_agent("docker")
+        env = _build_agent_env(agent, self._make_project())
+        assert env["AGENTOBOX_PLATFORM"] == "docker"
+
+    def test_modal_agent_gets_modal_platform(self):
+        from agents.services.lifecycle import _build_agent_env
+        agent = self._make_agent("modal")
+        env = _build_agent_env(agent, self._make_project())
+        assert env["AGENTOBOX_PLATFORM"] == "modal", (
+            "Modal agents must receive AGENTOBOX_PLATFORM=modal, not the "
+            "Dockerfile default of 'docker'. This causes incorrect platform "
+            "metadata in runtime logs and incident bundles."
+        )
