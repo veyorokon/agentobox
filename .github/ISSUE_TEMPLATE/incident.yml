@@ -1,6 +1,6 @@
 name: Incident
 description: Report active breakage or a red thread that needs diagnosis and repair
-labels: ["bug"]
+labels: ["kind/incident", "status/discovery"]
 body:
   - type: textarea
     id: summary
@@ -116,3 +116,4 @@ body:
         ---
         Use comments for evolving evidence, logs, screenshots, and narrowed hypotheses.
         Keep the body diagnosis-first and update it when the failing seam becomes clearer.
+        Apply `area/*`, `seam/*`, and `proof/*` labels once the issue is triaged.

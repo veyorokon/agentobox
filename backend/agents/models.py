@@ -707,3 +707,37 @@ class AgentFeedback(models.Model):
 
     def __str__(self):
         return f"rating={self.rating} → {self.agent.name} ({self.created_at:%H:%M})"
+
+
+class IncidentCapture(models.Model):
+    """Stored incident diagnosis bundle for an agent.
+
+    Captures a bounded, redacted snapshot of agent state, recent events,
+    runtime logs, and lifecycle attempts at the moment of report. Used for
+    dogfooding and debugging seam failures without manually gathering evidence.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="incidents"
+    )
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="incidents")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="incidents"
+    )
+    note = models.TextField(blank=True, default="")
+    screenshot_url = models.URLField(blank=True, default="")
+    window_minutes = models.IntegerField(default=30)
+    bundle = models.JSONField(default=dict)
+    collection_errors = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["project", "created_at"]),
+            models.Index(fields=["agent", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"incident {str(self.id)[:8]} → {self.agent.name} ({self.created_at:%H:%M})"

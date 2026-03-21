@@ -442,3 +442,27 @@ def model_to_feed_item_type(item: models.TeamFeedItem) -> TeamFeedItemType:
 class VncTokenResult:
     token: str
     expires_at: str
+
+
+# ── Incident capture ──
+
+
+@strawberry.type
+class IncidentCaptureResult:
+    incident_id: strawberry.ID
+    agent_id: strawberry.ID
+    project_id: strawberry.ID
+    created_at: str
+
+
+@strawberry.type
+class IncidentCaptureType:
+    id: strawberry.ID
+    agent_id: strawberry.ID
+    project_id: strawberry.ID
+    note: str
+    screenshot_url: str
+    window_minutes: int
+    bundle: JSON
+    collection_errors: JSON
+    created_at: str

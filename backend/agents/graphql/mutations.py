@@ -24,7 +24,7 @@ from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_project
-from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
+from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTaskType, AgentType, IncidentCaptureResult, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("abox.graphql")
 
@@ -140,6 +140,14 @@ class UpdateSkillInput:
     content: str | None = None
     assigned_tags: list[str] | None = None
     assigned_to_all: bool | None = None
+
+
+@strawberry.input
+class CaptureIncidentInput:
+    agent_id: ID
+    note: str = ""
+    screenshot_url: str = ""
+    window_minutes: int = 30
 
 
 # --- Skill push helpers (hot-reload without restart) ---
@@ -872,3 +880,45 @@ class AgentMutation:
         await push_secrets_for_project(project)
 
         return secret
+
+    @strawberry.mutation
+    async def capture_incident(
+        self, input: CaptureIncidentInput, info: strawberry.types.Info,
+    ) -> IncidentCaptureResult:
+        """Capture a diagnosis bundle for an agent and store it."""
+        from agents.models import IncidentCapture
+        from agents.services.incident import capture_incident_bundle
+
+        agent = await authorize_agent(info, input.agent_id)
+        user = info.context["request"].user
+
+        bundle, collection_errors = await capture_incident_bundle(
+            agent,
+            note=input.note,
+            screenshot_url=input.screenshot_url,
+            window_minutes=input.window_minutes,
+        )
+
+        incident = await IncidentCapture.objects.acreate(
+            project_id=agent.project_id,
+            agent=agent,
+            created_by=user,
+            note=input.note,
+            screenshot_url=input.screenshot_url,
+            window_minutes=input.window_minutes,
+            bundle=bundle,
+            collection_errors=collection_errors,
+        )
+
+        log.info(
+            "graphql.incident_captured",
+            agent_id=str(agent.id),
+            incident_id=str(incident.id),
+        )
+
+        return IncidentCaptureResult(
+            incident_id=strawberry.ID(str(incident.id)),
+            agent_id=strawberry.ID(str(agent.id)),
+            project_id=strawberry.ID(str(agent.project_id)),
+            created_at=incident.created_at.isoformat(),
+        )

@@ -324,10 +324,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env:

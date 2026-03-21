@@ -218,6 +218,7 @@ Images are built and pushed to GHCR on every push to `dev` or `main` (`:branch`,
 | [TESTING](docs/testing.md) | Canonical test taxonomy and CI lane mapping |
 | [CONTRACTS](docs/contracts/README.md) | Ownership and invariants for provisioning, runtime, preview, and release |
 | [MACHINE CONTRACT](docs/contracts/machine.md) | Canonical state model for project volumes, agent machine surfaces, and Docker/Modal parity |
+| [CONTRIBUTING](CONTRIBUTING.md) | Issue taxonomy, labels, proof levels, and contributor workflow |
 | [RUNTIME-FAILURE-AUDIT](docs/RUNTIME-FAILURE-AUDIT.md) | Standard runtime debugging and failure classification procedure |
 | [REFERENCE](docs/REFERENCE.md) | Auto-generated: backend modules, annotations (`make docs`) |
 | [DASHBOARD-REFERENCE](docs/DASHBOARD-REFERENCE.md) | Auto-generated: dashboard modules, annotations (`make docs`) |

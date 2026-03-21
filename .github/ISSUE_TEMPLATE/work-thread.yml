@@ -1,6 +1,6 @@
 name: Work Thread
 description: Propose a bounded thread of work across one or more seams
-labels: ["enhancement"]
+labels: ["kind/work-thread", "status/discovery"]
 body:
   - type: textarea
     id: summary
@@ -105,3 +105,4 @@ body:
         ---
         Use this template for refactors, hardening work, cleanup, capability work, and product-facing threads.
         If the system is actively red, file an Incident instead.
+        Apply `area/*`, `seam/*`, and `proof/*` labels once the thread is triaged.
