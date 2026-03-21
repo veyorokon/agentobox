@@ -17,21 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     dbus \
     dbus-x11 \
+    fonts-jetbrains-mono \
     python3-websockify \
     xterm \
     git \
     ca-certificates \
     curl \
-    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /usr/share/fonts/truetype/jetbrains-mono \
-    && curl -fsSL https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip \
-       -o /tmp/jbmono.zip \
-    && unzip -q /tmp/jbmono.zip -d /tmp/jbmono \
-    && cp /tmp/jbmono/fonts/ttf/*.ttf /usr/share/fonts/truetype/jetbrains-mono/ \
-    && fc-cache -f \
-    && rm -rf /tmp/jbmono /tmp/jbmono.zip
+RUN fc-cache -f
 
 RUN git clone --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git /opt/noVNC \
     && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html \

@@ -17,12 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     dbus \
     dbus-x11 \
+    fonts-jetbrains-mono \
     python3-websockify \
     xterm \
     gosu \
     ca-certificates \
     curl \
-    unzip \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,13 +35,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 ARG CLAUDE_CODE_VERSION=2.1.71
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
-RUN mkdir -p /usr/share/fonts/truetype/jetbrains-mono \
-    && curl -fsSL https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip \
-       -o /tmp/jbmono.zip \
-    && unzip -q /tmp/jbmono.zip -d /tmp/jbmono \
-    && cp /tmp/jbmono/fonts/ttf/*.ttf /usr/share/fonts/truetype/jetbrains-mono/ \
-    && fc-cache -f \
-    && rm -rf /tmp/jbmono /tmp/jbmono.zip
+RUN fc-cache -f
 
 ARG NOVNC_VERSION=1.6.0
 RUN mkdir -p /opt/noVNC \
