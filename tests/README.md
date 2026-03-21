@@ -184,6 +184,63 @@ pytestmark = [pytest.mark.e2e, pytest.mark.agent, pytest.mark.slow]
 Real services, no stubs. Tests hit the actual backend, spawn actual Docker
 containers, and verify actual state transitions. Test what you ship.
 
+## Dev Canary Plan
+
+Canaries are smoke scenarios run as post-deploy verification against the
+real `dev.agentobox.com` environment. They execute automatically in the
+deploy pipeline after `agent-bootstrap` and `agent-smoke` gates.
+
+### Scenario Set
+
+| Scenario | Smoke test | Canary gate | What it proves | Proof level |
+|----------|-----------|-------------|----------------|-------------|
+| Fresh agent boot | `test_agent_boot.py` | `agent-bootstrap` in deploy.yml | provisioning → relay → idle | live |
+| Message round-trip | `test_agent_smoke.py` | `agent-smoke` in deploy.yml | send → LLM → feed response | live |
+| Theme convergence | — | not yet wired | canonical theme → runtime derived files match | — |
+| Browser dock launch | — | not yet wired | Chromium launches from desktop dock | — |
+| Incident capture | `test_agent_smoke.py` | `agent-smoke` in deploy.yml | captureIncident → stored bundle with expected structure | live |
+
+### What runs today
+
+```
+deploy → agent-bootstrap → agent-smoke
+```
+
+`agent-bootstrap` runs `test_agent_boot.py::TestAgentBoot` against the
+deployed environment. `agent-smoke` runs `tests/smoke/` for a full
+message round-trip. Both use diagnosis artifacts on failure.
+
+### Proof/close criteria
+
+A canary run proves:
+
+- the deployed environment is healthy at the tested seam
+- the exact shipped image + config can complete the scenario end-to-end
+- if it fails, the diagnosis artifact names the first broken step
+
+A canary does NOT prove:
+
+- local-only bugs (use unit/contract tests)
+- exhaustive coverage (use e2e tests)
+- long-running stability (use monitoring)
+
+### Adding a new canary scenario
+
+1. Write the scenario as a smoke test in `tests/smoke/` or `tests/e2e/`.
+2. Gate it behind appropriate markers.
+3. Wire it into `deploy.yml` as a post-deploy job if it should run on
+   every deploy.
+4. Add it to the scenario table above.
+5. Ensure it emits a diagnosis artifact on failure.
+
+### Future scenarios
+
+Theme convergence and browser dock launch are candidates for future
+canary wiring. Theme convergence could verify that
+`applied.theme_fingerprint` matches `desired.theme_fingerprint` via
+the incident bundle. Browser dock launch needs either Playwright or
+a runtime-side observation mechanism.
+
 ## Related Docs
 
 - [Testing taxonomy](../docs/testing.md)

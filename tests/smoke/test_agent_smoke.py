@@ -308,3 +308,45 @@ class TestAgentSmoke:
                 f"Smoke token '{self.SMOKE_TOKEN}' not found in agent responses. "
                 f"Got: {response_texts}"
             )
+
+    # -- Incident capture canary --
+
+    def test_incident_capture(self, gql, smoke_agent):
+        """Canary: captureIncident mutation produces a stored bundle.
+
+        Proves the incident capture system works end-to-end against the
+        deployed environment. Verifies both mutation acceptance and that
+        the stored bundle has the expected desired/observed/applied structure.
+        """
+        agent_id = smoke_agent["agent_id"]
+        project_id = smoke_agent["project_id"]
+
+        # Step 1: capture the incident
+        result = gql.capture_incident(agent_id, note="canary smoke test")
+
+        assert result.get("incidentId"), (
+            f"captureIncident did not return an incidentId: {result}"
+        )
+        assert result.get("agentId") == agent_id
+        assert result.get("projectId") == project_id
+        assert result.get("createdAt")
+
+        # Step 2: retrieve the stored bundle and verify structure
+        incident = gql.query_incident(result["incidentId"])
+
+        assert incident is not None, (
+            f"incident query returned None for {result['incidentId']}"
+        )
+        bundle = incident.get("bundle", {})
+        assert isinstance(bundle, dict), f"bundle is not a dict: {type(bundle)}"
+
+        # Verify the three diagnosis layers exist
+        for key in ("desired", "observed", "applied"):
+            assert key in bundle, (
+                f"bundle missing '{key}' layer — incident capture contract broken"
+            )
+
+        # Verify key identifiers
+        ids = bundle.get("ids", {})
+        assert ids.get("agent_id") == agent_id
+        assert ids.get("project_id") == project_id

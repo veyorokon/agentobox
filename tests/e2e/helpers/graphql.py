@@ -196,5 +196,43 @@ class AboxGraphQL:
         )
         return data["deleteProject"]
 
+    # -- Incidents --
+
+    def capture_incident(self, agent_id: str, note: str = "") -> dict:
+        data = self.execute(
+            """
+            mutation ($input: CaptureIncidentInput!) {
+                captureIncident(input: $input) {
+                    incidentId
+                    agentId
+                    projectId
+                    createdAt
+                }
+            }
+            """,
+            {"input": {"agentId": agent_id, "note": note}},
+        )
+        return data["captureIncident"]
+
+    def query_incident(self, incident_id: str) -> dict | None:
+        data = self.execute(
+            """
+            query ($incidentId: ID!) {
+                incident(incidentId: $incidentId) {
+                    id
+                    agentId
+                    projectId
+                    note
+                    windowMinutes
+                    bundle
+                    collectionErrors
+                    createdAt
+                }
+            }
+            """,
+            {"incidentId": incident_id},
+        )
+        return data["incident"]
+
     def close(self):
         self._client.close()
