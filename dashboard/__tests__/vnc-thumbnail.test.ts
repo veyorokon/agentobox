@@ -241,4 +241,107 @@ describe("VncThumbnail", () => {
     await waitFor(() => expect(createVncToken).toHaveBeenCalledTimes(2))
     expect(disconnectSpy).toHaveBeenCalledTimes(1)
   })
+
+  it("enters error state after repeated 4001 disconnects exhaust the retry budget", async () => {
+    render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+
+    // Simulate repeated 4001 disconnects — each time a new token is issued
+    // but the WS connection immediately fails again with 4001.
+    // Use screenProps.at(-1) fresh each iteration to get the latest onDisconnect.
+    for (let i = 0; i < 6; i++) {
+      createVncToken.mockResolvedValue({
+        data: { createVncToken: { token: `token-${i}` } },
+      })
+      screenProps.at(-1).onDisconnect?.({ detail: { code: 4001, clean: false } })
+      // Advance enough for: immediate retry (0ms for first 4001) + token fetch + backoff
+      await vi.advanceTimersByTimeAsync(500)
+      // Let React process state updates
+      await waitFor(() => {})
+      await vi.advanceTimersByTimeAsync(35_000)
+      await waitFor(() => {})
+    }
+
+    // After exhausting retry budget, should show error with retry button
+    await waitFor(() => expect(screen.getByText(/preview connection lost/i)).toBeTruthy())
+    expect(screen.queryByTestId("vnc-screen")).toBeNull()
+    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy()
+  })
+
+  it("clears error and fetches a fresh token when manual retry is clicked", async () => {
+    render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+
+    // Exhaust retry budget
+    for (let i = 0; i < 6; i++) {
+      createVncToken.mockResolvedValue({
+        data: { createVncToken: { token: `token-${i}` } },
+      })
+      screenProps.at(-1).onDisconnect?.({ detail: { code: 4001, clean: false } })
+      await vi.advanceTimersByTimeAsync(500)
+      await waitFor(() => {})
+      await vi.advanceTimersByTimeAsync(35_000)
+      await waitFor(() => {})
+    }
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy())
+
+    const tokenCallsBefore = createVncToken.mock.calls.length
+    createVncToken.mockResolvedValue({
+      data: { createVncToken: { token: "fresh-token" } },
+    })
+
+    // Click retry — should reset budget and fetch fresh token
+    screen.getByRole("button", { name: /retry/i }).click()
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(createVncToken.mock.calls.length).toBeGreaterThan(tokenCallsBefore)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+  })
+
+  it("enters error state after repeated token fetch failures exhaust the retry budget", async () => {
+    createVncToken.mockRejectedValue(new Error("backend unavailable"))
+    render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(35_000)
+      await waitFor(() => {})
+    }
+
+    await waitFor(() => expect(screen.getByText(/preview connection lost/i)).toBeTruthy())
+    expect(screen.queryByTestId("vnc-screen")).toBeNull()
+    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy()
+  })
+
+  it("resets the retry budget when the runtime ID changes", async () => {
+    const { rerender } = render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+
+    const props = screenProps.at(-1)
+    // Accumulate some retries (but don't exhaust)
+    for (let i = 0; i < 3; i++) {
+      createVncToken.mockResolvedValue({
+        data: { createVncToken: { token: `token-${i}` } },
+      })
+      props.onDisconnect?.({ detail: { code: 4001, clean: false } })
+      await vi.advanceTimersByTimeAsync(5_000)
+    }
+
+    // Change runtime ID — should reset retry budget
+    rerender(React.createElement(VncThumbnail, {
+      agent: { ...baseAgent, previewRuntimeId: "sandbox-new" },
+    }))
+
+    await vi.advanceTimersByTimeAsync(50)
+
+    // Should reconnect with fresh token (budget reset, not in error state)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+    expect(screen.queryByText(/preview connection lost/i)).toBeNull()
+  })
 })

@@ -11,6 +11,7 @@ import type { Agent } from "@/lib/types"
 const log = createLogger("vnc")
 const VIEWPORT_STYLE = { width: "100%", height: "100%", position: "absolute", inset: 0 } as const
 const TOKEN_REUSE_WINDOW_MS = 45_000
+const MAX_VNC_RETRIES = 5
 
 class VncErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false }
@@ -67,6 +68,19 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   const createVncTokenRef = useRef(createVncToken)
   createVncTokenRef.current = createVncToken
 
+  const exhaustRetryBudget = useCallback((message: string) => {
+    log("reconnect.exhausted", {
+      agent: agentRef.current.id,
+      attempts: retryCountRef.current,
+      runtimeId: agentRef.current.previewRuntimeId,
+    })
+    setWsUrl(null)
+    setConnState("error")
+    setErrorMsg(message)
+    connectingRef.current = false
+    connectedAtRef.current = 0
+  }, [])
+
   useEffect(() => {
     import("react-vnc").then((mod) => {
       setVncScreen(() => mod.VncScreen)
@@ -92,6 +106,7 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
 
   const fetchTokenAndConnect = useCallback(async () => {
     if (!mountedRef.current || connectingRef.current || agentRef.current.previewState !== "ready") return
+    if (retryCountRef.current > MAX_VNC_RETRIES) return
     connectingRef.current = true
     setConnState("fetching-token")
     setErrorMsg(null)
@@ -110,6 +125,10 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
         log("token.failed", { agent: id, reason: "no token in response" }, "warn")
         connectingRef.current = false
         retryCountRef.current += 1
+        if (retryCountRef.current > MAX_VNC_RETRIES) {
+          exhaustRetryBudget("Preview connection lost — click to retry")
+          return
+        }
         const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
         setConnState("idle")
         setTimeout(() => { if (mountedRef.current) fetchTokenAndConnect() }, delay)
@@ -129,11 +148,15 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       log("token.error", { agent: id, error: err.message }, "warn")
       connectingRef.current = false
       retryCountRef.current += 1
+      if (retryCountRef.current > MAX_VNC_RETRIES) {
+        exhaustRetryBudget("Preview connection lost — click to retry")
+        return
+      }
       const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
       setConnState("idle")
       setTimeout(() => { if (mountedRef.current) fetchTokenAndConnect() }, delay)
     }
-  }, [])
+  }, [exhaustRetryBudget])
 
   useEffect(() => {
     const previousRuntimeId = previewRuntimeIdRef.current
@@ -185,11 +208,13 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       return
     }
 
-    if (connStateRef.current === "error") {
+    // Auto-recover from error only if retries haven't been exhausted.
+    // Circuit-breaker errors (retryCount > MAX) require manual retry.
+    if (connStateRef.current === "error" && retryCountRef.current <= MAX_VNC_RETRIES) {
       setConnState("idle")
       setErrorMsg(null)
     }
-    if (!wsUrl && (connStateRef.current === "idle" || connStateRef.current === "error")) {
+    if (!wsUrl && connStateRef.current === "idle") {
       retryCountRef.current = 0
       fetchTokenAndConnect()
     }
@@ -256,9 +281,19 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
     if (wasStable) retryCountRef.current = 0
     connectedAtRef.current = 0
     retryCountRef.current += 1
-    const delay = Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
-    const tokenFresh = Boolean(wsUrl) && (Date.now() - tokenIssuedAtRef.current) < TOKEN_REUSE_WINDOW_MS
     const shouldRefreshToken = code !== undefined && REFRESH_TOKEN_CODES.has(code)
+
+    // Circuit breaker: stop retrying after budget exhausted for same runtime
+    if (retryCountRef.current > MAX_VNC_RETRIES) {
+      exhaustRetryBudget("Preview connection lost — click to retry")
+      return
+    }
+
+    // 4001 is a definitive stale-token signal — retry immediately with fresh token
+    // instead of spending backoff time on a token that is known bad.
+    const immediateRefresh = shouldRefreshToken && retryCountRef.current === 1
+    const delay = immediateRefresh ? 0 : Math.min(1000 * Math.pow(1.5, retryCountRef.current - 1), 30000)
+    const tokenFresh = Boolean(wsUrl) && (Date.now() - tokenIssuedAtRef.current) < TOKEN_REUSE_WINDOW_MS
 
     log("reconnecting", {
       agent: a.id,
@@ -280,7 +315,15 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
       setWsUrl(null)
       fetchTokenAndConnect()
     }, delay)
-  }, [fetchTokenAndConnect, reconnectCurrentUrl, wsUrl])
+  }, [exhaustRetryBudget, fetchTokenAndConnect, reconnectCurrentUrl, wsUrl])
+
+  const manualRetry = useCallback(() => {
+    retryCountRef.current = 0
+    setConnState("idle")
+    setErrorMsg(null)
+    setWsUrl(null)
+    fetchTokenAndConnect()
+  }, [fetchTokenAndConnect])
 
   const showVnc = Boolean(VncScreen && wsUrl && previewReady && (connState === "connecting" || connState === "connected"))
   const VncScreenComponent = VncScreen
@@ -324,6 +367,17 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                 <div className="flex flex-col items-center gap-1">
                   <span className="h-3 w-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
                   <span className="text-[7px] font-mono text-muted/40">connecting...</span>
+                </div>
+              ) : connState === "error" && previewReady ? (
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[8px] font-mono text-muted/50">{errorMsg || "Preview disconnected"}</span>
+                  <button
+                    type="button"
+                    onClick={manualRetry}
+                    className="rounded border border-accent/25 bg-accent/8 px-3 py-1 text-[8px] font-mono text-accent/70 transition hover:bg-accent/15 hover:text-accent"
+                  >
+                    retry
+                  </button>
                 </div>
               ) : showRuntimeFallback || isPreviewError ? (
                 <div className="flex w-full h-full flex-col font-mono text-[9px]">
