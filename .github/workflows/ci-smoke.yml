@@ -18,6 +18,7 @@ jobs:
       CI_SMOKE_PROJECT_NAME: agentobox-ci-smoke
     steps:
       - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -38,14 +39,28 @@ jobs:
             printf 'ANTHROPIC_API_KEY=%s\n' "$PROVIDER_TOKEN" >> "$GITHUB_ENV"
           fi
       - name: Build agent runtime images
-        run: |
-          docker build -t agentobox-agent-runtime-managed:latest \
-            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
-            -f agent/Dockerfile.managed agent/
-          docker build -t agentobox-agent-runtime-desktop-managed:latest \
-            --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest \
-            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
-            -f agent/Dockerfile.desktop.managed agent/
+        uses: docker/build-push-action@v7
+        with:
+          context: agent
+          file: agent/Dockerfile.managed
+          load: true
+          tags: agentobox-agent-runtime-managed:latest
+          build-args: |
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=ci-smoke-managed
+          cache-to: type=gha,scope=ci-smoke-managed,mode=max
+      - name: Build desktop runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: agent
+          file: agent/Dockerfile.desktop.managed
+          load: true
+          tags: agentobox-agent-runtime-desktop-managed:latest
+          build-args: |
+            BASE_IMAGE=agentobox-agent-runtime-managed:latest
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=ci-smoke-desktop
+          cache-to: type=gha,scope=ci-smoke-desktop,mode=max
       - name: Start backend stack
         env:
           AGENT_EXECUTOR_OVERRIDE: echo

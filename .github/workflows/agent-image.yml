@@ -97,16 +97,18 @@ jobs:
       - name: Pull managed image for desktop contract test
         run: |
           docker pull "${{ needs.build-managed.outputs.managed-image }}"
-          docker tag "${{ needs.build-managed.outputs.managed-image }}" agentobox-agent-runtime-managed:ci
-
       - name: Build desktop image for contract test
-        run: |
-          docker build \
-            -f agent/Dockerfile.desktop.managed \
-            -t agentobox-agent-runtime-desktop-managed:ci \
-            --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:ci \
-            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
-            agent
+        uses: docker/build-push-action@v7
+        with:
+          context: agent
+          file: agent/Dockerfile.desktop.managed
+          load: true
+          tags: agentobox-agent-runtime-desktop-managed:ci
+          build-args: |
+            BASE_IMAGE=${{ needs.build-managed.outputs.managed-image }}
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=desktop-managed
+          cache-to: type=gha,scope=desktop-managed,mode=max
 
       # Run the pytest contract test against the real image
       - uses: astral-sh/setup-uv@v6
