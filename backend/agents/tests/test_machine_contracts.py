@@ -286,3 +286,69 @@ class TestProvisionFileSchemas:
         path = tmp_path / "_abox" / "provisioned.ready"
         assert path.exists()
         assert token in path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Preview state projection contract
+# ---------------------------------------------------------------------------
+
+
+class TestDerivePreviewState:
+    """Contract: derive_preview_state never projects 'unavailable' for a live
+    agent whose desktop is still booting.
+
+    Regression for #105: red fallback appeared during normal boot because
+    the serializer projected unavailable for a live agent with sandbox_id
+    but without relay connected yet.
+    """
+
+    def _agent(self, **overrides):
+        defaults = {
+            "status": "idle",
+            "sandbox_id": "sb-123",
+            "vnc_url": "http://sb-123:6080/vnc.html",
+            "relay_connected": False,
+            "runtime_status_projection": {},
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_deploying_status_returns_deploying(self):
+        from agents.serializers import derive_preview_state
+        assert derive_preview_state(self._agent(status="deploying")) == "deploying"
+
+    def test_error_status_returns_error(self):
+        from agents.serializers import derive_preview_state
+        assert derive_preview_state(self._agent(status="error")) == "error"
+
+    def test_live_agent_without_relay_returns_deploying_not_unavailable(self):
+        """Key regression: sandbox exists, relay not connected → deploying, not unavailable."""
+        from agents.serializers import derive_preview_state
+        agent = self._agent(status="idle", relay_connected=False)
+        state = derive_preview_state(agent)
+        assert state == "deploying", (
+            f"Expected 'deploying' for live agent without relay, got '{state}'. "
+            f"This would cause the red fallback to appear during normal boot."
+        )
+
+    def test_live_agent_with_relay_and_ready_desktop_returns_ready(self):
+        from agents.serializers import derive_preview_state
+        agent = self._agent(
+            status="idle",
+            relay_connected=True,
+            runtime_status_projection={
+                "startup_stage": "managed_ready",
+                "profile": "desktop",
+                "transport": {"connected": True},
+                "services": {"xvfb": "up", "x11vnc": "up", "websockify": "up", "awesome": "up"},
+            },
+        )
+        assert derive_preview_state(agent) == "ready"
+
+    def test_stopped_agent_returns_unavailable(self):
+        from agents.serializers import derive_preview_state
+        assert derive_preview_state(self._agent(status="stopped")) == "unavailable"
+
+    def test_no_sandbox_returns_unavailable(self):
+        from agents.serializers import derive_preview_state
+        assert derive_preview_state(self._agent(sandbox_id="")) == "unavailable"

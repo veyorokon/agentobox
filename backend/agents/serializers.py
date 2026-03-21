@@ -150,7 +150,12 @@ def _desktop_preview_booting(agent, status: dict) -> bool:
 
 
 def derive_preview_state(agent) -> PreviewState:
-    """Collapse runtime/VNC-specific state into a frontend preview contract."""
+    """Collapse runtime/VNC-specific state into a frontend preview contract.
+
+    Key rule: never project "unavailable" for a live agent whose desktop is
+    still booting. That combination is "deploying", not a terminal failure.
+    The frontend treats "unavailable" as failure — red fallback + redeploy.
+    """
     if agent.status == "deploying":
         return "deploying"
     if agent.status == "error":
@@ -164,6 +169,11 @@ def derive_preview_state(agent) -> PreviewState:
         if _desktop_preview_ready(runtime_status):
             return "ready"
         if _desktop_preview_booting(agent, runtime_status):
+            return "deploying"
+        # Container exists but desktop isn't ready yet — still deploying,
+        # not unavailable. Returning "unavailable" here caused the red
+        # fallback to flash during normal boot (#105).
+        if not getattr(agent, "relay_connected", False):
             return "deploying"
         return "unavailable"
     return "unavailable"

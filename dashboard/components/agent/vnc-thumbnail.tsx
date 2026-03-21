@@ -334,10 +334,9 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
   const showRuntimeFallback =
     agent.previewState === "error" || agent.previewState === "unavailable" || isStopped
 
-  // Boot surface covers both previewState=deploying AND the transient
-  // unavailable state during a redeploy. Without this, previewState=unavailable
-  // while lifecycleStatus=deploying falls through to the red error fallback.
-  const isBooting = (isPreviewDeploying || (agent.previewState === "unavailable" && agent.lifecycleStatus === "deploying")) && !isPreviewError
+  // Boot surface for previewState=deploying (desktop not ready yet).
+  // Backend owns the deploying→ready projection — the frontend trusts it.
+  const isBooting = isPreviewDeploying && !isPreviewError
 
   useEffect(() => {
     if (!mountVnc) return
