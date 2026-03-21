@@ -206,6 +206,21 @@ Questions:
 - What proof level is required to close this thread honestly?
 - Are we claiming remote confidence based only on local proof?
 
+### Smoke vs Canary
+
+Keep these terms distinct:
+
+- `smoke`
+  - a test type
+  - minimal end-to-end proof of a critical path
+- `canary`
+  - a deployment-verification context
+  - selected smoke scenarios run against a real deployed environment after deploy
+
+Canaries are composed of smoke scenarios, but not all smoke tests are canary runs.
+
+Do not call something a `canary` unless it is part of a real post-deploy remote verification run.
+
 ### Diagnosis-First Failures
 
 Failures should identify the broken seam, not just emit raw symptoms.

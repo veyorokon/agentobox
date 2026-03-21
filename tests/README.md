@@ -16,6 +16,21 @@ Harnesses are documented separately in [bin/README.md](../bin/README.md).
 Use `bin/` for deployed-equivalent proof rigs and operator/debug scripts, not
 for normal automated test layers.
 
+## Smoke vs Canary
+
+Use these terms precisely:
+
+- `smoke`
+  - a test layer
+  - minimal end-to-end proof of a critical path
+- `canary`
+  - a deployment context
+  - selected smoke scenarios run automatically against a real remote environment after deploy
+
+Canaries are composed of smoke scenarios, but not all smoke tests are canary runs.
+
+Do not call a test a `canary` unless it is part of a real post-deploy remote verification run.
+
 ## Test Layers
 
 | Type | Location | Runs on | What it proves |
@@ -25,8 +40,35 @@ for normal automated test layers.
 | `contract` | `agent/tests/test_*contract*.py`, `agent/tests/test_bootstrap.py` | host or Docker | runtime-visible boot and file contracts |
 | `integration` | `backend/**/tests/`, `tests/integration/` | host → live services | real component wiring |
 | `smoke` | `tests/smoke/` | host → full stack | critical end-to-end path |
+| `canary` | post-deploy harness/workflow using selected smoke scenarios | real remote environment | deploy health in a live non-prod environment |
 | `e2e` | `tests/e2e/` | host → browser + services | user-facing flows |
 | `chaos` | backend chaos tests | host | degraded and recovery behavior |
+
+### Boundary Rules
+
+Use the earliest honest level that can prove the seam.
+
+- `unit`
+  - pure local logic or small component behavior
+  - no real cross-process or runtime-visible contract
+- `contract`
+  - one subsystem boundary with a stable external shape
+  - file paths, status documents, bootstrap contracts, image/runtime-visible behavior
+- `integration`
+  - multiple real components wired together in a controlled local/test environment
+  - honest service collaboration without requiring a deployed remote environment
+- `smoke`
+  - the minimum end-to-end scenario proving a critical product path
+  - narrow and diagnosis-first
+- `e2e`
+  - broader user-facing flows, often browser-driven
+  - allowed to prove UI behavior across multiple steps, not just basic liveness
+- `canary`
+  - remote post-deploy execution context for selected smoke scenarios
+  - used to confirm environment health, not to replace local discovery
+
+If a test mainly proves a runtime-visible file/env/status contract, it is a `contract` test even if it lives in `agent/tests/`.
+If a check requires operator coordination, real remote state, or deployed-equivalent proof, prefer a harness in `bin/` over forcing it into `tests/`.
 
 ## Quick Start
 
@@ -89,6 +131,11 @@ Agent contract tests prove runtime-visible contracts:
 - Docker-managed image contract
 - readiness and status projection contracts
 
+Rule of thumb:
+
+- use `contract` when the failure mode is drift between independently maintained components
+- use `unit` when the failure is internal logic only
+
 `docker_contract` is the narrow opt-in subset that builds and runs the real
 managed image.
 
@@ -111,6 +158,11 @@ pytest (host) -> /graphql       -> query feed / agent status
 ## E2E Tests
 
 Full stack tests including browser automation via Playwright.
+
+Keep `e2e` broader than `smoke`.
+
+- `smoke` should answer: "is the critical path alive?"
+- `e2e` should answer: "does the user-visible flow behave correctly?"
 
 ### Marker Gating
 

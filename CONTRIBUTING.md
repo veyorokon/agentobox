@@ -150,6 +150,25 @@ When saying something is fixed or working, be explicit about the proof level.
 Use the strongest proof that actually exists.
 Do not claim remote confidence based only on local proof.
 
+## Smoke vs Canary
+
+Keep these terms distinct.
+
+- `smoke`
+  - a test type
+  - minimal end-to-end proof of a critical path
+- `canary`
+  - a deployment-verification context
+  - selected smoke scenarios run against a real deployed environment after deploy
+
+Canaries are composed of smoke scenarios, but not all smoke tests are canary runs.
+
+Policy:
+
+- do not call a test a `canary` unless it runs automatically against a real remote environment as post-deploy verification
+- use `smoke` for the scenario itself
+- use `canary` for the remote post-deploy execution context
+
 ## Harnesses
 
 `bin/` is the canonical home for harnesses.
@@ -174,6 +193,26 @@ Harness requirements:
 - avoid becoming a parallel hidden code path
 
 See [bin/README.md](bin/README.md) for the repo-local harness convention.
+
+## Test Placement Rules
+
+Use the earliest honest level that can prove the seam:
+
+- `unit`
+  - internal logic only
+- `contract`
+  - a stable boundary with runtime-visible artifacts or status
+- `integration`
+  - multiple real components wired together locally
+- `smoke`
+  - minimum critical-path end-to-end proof
+- `e2e`
+  - broader user-facing flow validation
+- `canary`
+  - post-deploy remote execution of selected smoke scenarios
+
+Do not force deployed-equivalent or operator-facing proof into the normal automated test layers.
+If the seam requires real remote state, coordination, or environment-specific observation, use a harness in `bin/`.
 
 ## Hygiene
 
