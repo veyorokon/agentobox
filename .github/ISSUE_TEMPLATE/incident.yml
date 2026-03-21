@@ -1,0 +1,118 @@
+name: Incident
+description: Report active breakage or a red thread that needs diagnosis and repair
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences on what is broken and why it matters now.
+    validations:
+      required: true
+
+  - type: input
+    id: seam
+    attributes:
+      label: Failing seam
+      description: Name the boundary where reality diverges from the contract.
+      placeholder: 'backend -> machine state, deploy -> bootstrap, runtime -> relay'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Work mode
+      description: Incidents are discovery-first; choose the current dominant mode.
+      options:
+        - discovery
+        - codification
+        - regression
+        - cleanup
+    validations:
+      required: true
+
+  - type: dropdown
+    id: proof_level
+    attributes:
+      label: Highest proof level currently available
+      options:
+        - symptom only
+        - unit proof
+        - invariant proof
+        - contract proof
+        - local integration proof
+        - local deployed-equivalent proof
+        - real remote proof
+    validations:
+      required: true
+
+  - type: textarea
+    id: contract
+    attributes:
+      label: Expected contract
+      description: What should happen at this seam, concretely.
+      placeholder: |
+        When X happens, Y must be visible/connected/updated before Z proceeds.
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed reality
+      description: What actually happened. Include exact ids, states, commands, or artifacts when possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Deployed-equivalent reproduction
+      description: Exact local or remote command/path that reproduces the failure honestly.
+      value: |
+        Command:
+
+        Environment:
+
+        Result:
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnosis
+    attributes:
+      label: First broken step
+      description: The earliest step currently known to be broken. If unknown, state the current blind spot.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What must be true before this incident can be closed.
+      value: |
+        - [ ] Root cause identified at the correct seam
+        - [ ] Fix is in code
+        - [ ] Earliest honest regression exists
+        - [ ] End-to-end confirmation exists at the required proof level
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What this issue explicitly should not expand into.
+      value: |
+        - Do not broaden into unrelated refactors while the incident is red
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        Use comments for evolving evidence, logs, screenshots, and narrowed hypotheses.
+        Keep the body diagnosis-first and update it when the failing seam becomes clearer.
