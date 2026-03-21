@@ -15,6 +15,7 @@ from agents.models import Agent
 from agents.graphql.types import (
     AccountSecretType,
     AgentType,
+    IncidentCaptureType,
     McpPackageType,
     McpRegistryEntryType,
     McpRegistrySearchResult,
@@ -327,3 +328,30 @@ class AgentQuery:
                 configured=key_name in effective_keys,
             ))
         return result
+
+    @strawberry.field
+    async def incident(
+        self, incident_id: ID, info: strawberry.types.Info,
+    ) -> IncidentCaptureType | None:
+        """Retrieve a stored incident capture by ID."""
+        from agents.models import IncidentCapture
+
+        try:
+            inc = await IncidentCapture.objects.select_related("project").aget(id=incident_id)
+        except IncidentCapture.DoesNotExist:
+            return None
+
+        # Use canonical auth path — same as other project-scoped queries
+        await authorize_project(info, str(inc.project_id))
+
+        return IncidentCaptureType(
+            id=strawberry.ID(str(inc.id)),
+            agent_id=strawberry.ID(str(inc.agent_id)),
+            project_id=strawberry.ID(str(inc.project_id)),
+            note=inc.note,
+            screenshot_url=inc.screenshot_url,
+            window_minutes=inc.window_minutes,
+            bundle=inc.bundle,
+            collection_errors=inc.collection_errors,
+            created_at=inc.created_at.isoformat(),
+        )
