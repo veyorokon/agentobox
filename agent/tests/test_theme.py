@@ -106,13 +106,14 @@ def test_render_browser_home_html_uses_theme_name_and_branding():
         ThemeDocument(
             schema_version=THEME_SCHEMA_VERSION,
             name="Night Shift",
-            tokens={"surface": "#101010", "accent": "#ffaa00"},
+            tokens={"surface": "#101010", "surface-raised": "#1b1b1b", "accent": "#ffaa00"},
         )
     )
 
     assert "<title>Agentobox</title>" in html
     assert "Night Shift" in html
     assert "Browser-ready workspace for autonomous operators." in html
+    assert '<meta name="theme-color" content="#1b1b1b"' in html
     assert '/theme.css' in html
     assert '/theme.json?ts=' in html
 

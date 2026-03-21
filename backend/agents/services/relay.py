@@ -421,10 +421,14 @@ async def set_agent_mode(agent_id: str, mode: str) -> Agent:
 
 
 async def push_theme_to_agents(project) -> None:
-    """Push theme tokens to all running agents via volume write + reload.
+    """Push theme tokens to all live agents via volume write + reload.
 
     Writes tokens.json to each agent's volume. The relay's reload handler
-    runs converters.py to generate CSS/lua and reloads the desktop theme.
+    derives CSS/lua/html and reloads the desktop theme.
+
+    Includes DEPLOYING agents (with sandbox_id) so theme changes during the
+    deploy window are visible at boot. The reload fails silently for agents
+    without a connected relay — the canonical file write is what matters.
     """
     from agents.models import Agent, AgentStatus
     from agents.services.themes import default_theme_tokens
@@ -436,14 +440,19 @@ async def push_theme_to_agents(project) -> None:
     if not tokens:
         return
 
-    running_agents = [
+    live_agents = [
         a async for a in Agent.objects.filter(
             project=project,
-            status__in=[AgentStatus.RUNNING, AgentStatus.IDLE],
+            status__in=[
+                AgentStatus.DEPLOYING,
+                AgentStatus.RUNNING,
+                AgentStatus.WAITING,
+                AgentStatus.IDLE,
+            ],
         ).exclude(sandbox_id="")
     ]
 
-    for agent in running_agents:
+    for agent in live_agents:
         try:
             await update_volume_and_reload(
                 agent,

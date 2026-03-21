@@ -154,11 +154,13 @@ def render_browser_home_html(document: ThemeDocument) -> str:
 
     theme_name = document.name or "Agentobox"
     initial_payload = json.dumps(document.to_dict(), separators=(",", ":"))
+    theme_color = _browser_theme_color(document)
     return f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="{theme_color}" />
     <title>Agentobox</title>
     <link rel="stylesheet" href="/theme.css" />
     <style>
@@ -385,6 +387,13 @@ def render_browser_home_html(document: ThemeDocument) -> str:
         for (const [name, value] of Object.entries(tokens)) {{
           root.style.setProperty(`--abox-${{name}}`, value);
         }}
+        const themeMeta = window.document.querySelector('meta[name="theme-color"]');
+        if (themeMeta) {{
+          themeMeta.setAttribute(
+            "content",
+            tokens["surface-raised"] || tokens["surface"] || tokens["accent"] || "{theme_color}",
+          );
+        }}
         const pill = window.document.querySelector("[data-theme-pill]");
         if (pill) {{
           pill.textContent = themeDocument.name || "Agentobox";
@@ -492,6 +501,16 @@ def render_browser_home_html(document: ThemeDocument) -> str:
   </body>
 </html>
 """
+
+
+def _browser_theme_color(document: ThemeDocument) -> str:
+    tokens = document.tokens
+    return (
+        tokens.get("surface-raised")
+        or tokens.get("surface")
+        or tokens.get("accent")
+        or "#202020"
+    )
 
 
 class NullThemeConsumer:

@@ -131,7 +131,7 @@ async def test_push_theme_no_running_agents_no_crash(setup_project_with_agent, t
     """Theme push with no running agents should not crash or write anything."""
     project, agent, vol, tmp_path = setup_project_with_agent
 
-    # Make agent stopped — push_theme_to_agents filters to RUNNING/IDLE
+    # Make agent stopped — push_theme_to_agents filters to DEPLOYING/RUNNING/WAITING/IDLE
     agent.status = AgentStatus.STOPPED
     await agent.asave(update_fields=["status"])
 
@@ -244,3 +244,111 @@ async def test_mutation_calls_relay_not_inline():
                     f"Stale inline function '{node.name}' in mutations.py — "
                     f"theme push must go through agents.services.relay.push_theme_to_agents"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Timing gap regressions: deploying and waiting agents must receive theme
+# ---------------------------------------------------------------------------
+
+
+async def test_push_theme_writes_tokens_to_deploying_agent_with_sandbox(setup_project_with_agent, theme_tokens):
+    """DEPLOYING agents with a sandbox_id must get tokens.json written.
+
+    The relay isn't connected yet, so the reload command fails silently.
+    The important part is the canonical file write — the agent reads it at boot.
+    """
+    project, agent, vol, tmp_path = setup_project_with_agent
+
+    agent.status = AgentStatus.DEPLOYING
+    await agent.asave(update_fields=["status"])
+
+    project.set_theme_document(tokens=theme_tokens)
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
+
+    runtime = MagicMock()
+    runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.sync_machine_volume = AsyncMock(return_value=None)
+
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push,
+        patch("agents.runtimes.get_runtime", return_value=runtime),
+        patch("agents.services.machine_write.get_runtime", return_value=runtime),
+    ):
+        from agents.services.relay import push_theme_to_agents
+        await push_theme_to_agents(project)
+
+    # Canonical file must exist with correct content
+    tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
+    assert tokens_path.exists(), (
+        "tokens.json NOT WRITTEN to deploying agent — theme change lost during deploy window"
+    )
+    written = json.loads(tokens_path.read_text())
+    assert written["tokens"] == project.resolved_theme_tokens()
+
+    # Reload attempted (best-effort for deploying — relay may not be connected)
+    mock_push.assert_called_once()
+
+
+async def test_push_theme_skips_deploying_agent_without_sandbox(setup_project_with_agent, theme_tokens):
+    """DEPLOYING agents with empty sandbox_id must be skipped.
+
+    No container exists yet, so there is no volume to write to.
+    """
+    project, agent, vol, tmp_path = setup_project_with_agent
+
+    agent.status = AgentStatus.DEPLOYING
+    agent.sandbox_id = ""
+    await agent.asave(update_fields=["status", "sandbox_id"])
+
+    project.set_theme_document(tokens=theme_tokens)
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
+
+    with patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push:
+        from agents.services.relay import push_theme_to_agents
+        await push_theme_to_agents(project)
+
+    tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
+    assert not tokens_path.exists(), (
+        "tokens.json written to deploying agent with no sandbox — should be skipped"
+    )
+    mock_push.assert_not_called()
+
+
+async def test_push_theme_writes_tokens_to_waiting_agent(setup_project_with_agent, theme_tokens):
+    """WAITING agents must receive theme updates including the reload command.
+
+    WAITING is functionally live — relay is connected, volume is writable.
+    """
+    project, agent, vol, tmp_path = setup_project_with_agent
+
+    agent.status = AgentStatus.WAITING
+    await agent.asave(update_fields=["status"])
+
+    project.set_theme_document(tokens=theme_tokens)
+    await project.asave(update_fields=["theme_document", "theme_tokens"])
+
+    runtime = MagicMock()
+    runtime.machine_store.return_value = _DirectStore(tmp_path)
+    runtime.sync_machine_volume = AsyncMock(return_value=None)
+
+    with (
+        patch("agents.services.relay.push_to_relay", new_callable=AsyncMock) as mock_push,
+        patch("agents.runtimes.get_runtime", return_value=runtime),
+        patch("agents.services.machine_write.get_runtime", return_value=runtime),
+    ):
+        from agents.services.relay import push_theme_to_agents
+        await push_theme_to_agents(project)
+
+    # Canonical file must exist
+    tokens_path = tmp_path / "tmp" / "abox-theme" / "tokens.json"
+    assert tokens_path.exists(), (
+        "tokens.json NOT WRITTEN to waiting agent — theme change lost"
+    )
+    written = json.loads(tokens_path.read_text())
+    assert written["tokens"] == project.resolved_theme_tokens()
+
+    # Reload command must be attempted (relay is live for WAITING agents)
+    mock_push.assert_called_once()
+    cmd = mock_push.call_args[0][1]
+    assert isinstance(cmd, ReloadCommand)
+    assert cmd.path == "tmp/abox-theme/tokens.json"
