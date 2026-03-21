@@ -395,10 +395,18 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                 <div className="flex flex-col items-center justify-center gap-3 relative overflow-hidden w-full h-full">
                   <style>{`
                     @keyframes abox-scanline {
-                      0% { left: -8%; opacity: 0; }
-                      5% { opacity: 1; }
-                      80% { opacity: 0.4; }
+                      0% { left: -2%; opacity: 0; }
+                      3% { opacity: 0.6; }
+                      15% { left: 40%; opacity: 0.35; }
+                      50% { left: 70%; opacity: 0.2; }
+                      90% { left: 95%; opacity: 0.08; }
                       100% { left: 100%; opacity: 0; }
+                    }
+                    @keyframes abox-scan-wash {
+                      0% { opacity: 0; }
+                      8% { opacity: 0.04; }
+                      40% { opacity: 0.015; }
+                      100% { opacity: 0; }
                     }
                     @keyframes abox-blink-soft {
                       0%, 100% { opacity: 0.2; }
@@ -409,15 +417,22 @@ export function VncThumbnail({ agent }: VncThumbnailProps) {
                       100% { opacity: 1; transform: translateY(0); }
                     }
                   `}</style>
-                  {/* Scanline — thin line sweeps top to bottom with fading trail */}
+                  {/* Wash — subtle left-side lightening that trails behind the scanline */}
+                  <div
+                    className="absolute inset-0 pointer-events-none"
+                    style={{
+                      background: "linear-gradient(90deg, var(--color-accent, #ff7a59) 0%, transparent 60%)",
+                      animation: "abox-scan-wash 3.5s ease-out infinite",
+                    }}
+                  />
+                  {/* Scanline — thin vertical line sweeps left to right, fast start, slow finish */}
                   <div
                     className="absolute inset-y-0 pointer-events-none"
                     style={{
                       width: "1px",
                       background: "linear-gradient(180deg, transparent 10%, var(--color-accent, #ff7a59) 50%, transparent 90%)",
-                      opacity: 0.25,
-                      boxShadow: "0 0 8px 1px var(--color-accent, #ff7a59)",
-                      animation: "abox-scanline 3.5s cubic-bezier(0.4, 0, 0.2, 1) infinite",
+                      boxShadow: "0 0 6px 1px var(--color-accent, #ff7a59)",
+                      animation: "abox-scanline 3.5s ease-out infinite",
                     }}
                   />
                   <div className="flex items-center gap-1.5 relative" style={{ animation: "abox-fade-in-up 0.6s ease-out both" }}>
