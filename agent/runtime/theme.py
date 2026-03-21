@@ -11,6 +11,7 @@ import colorsys
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -560,9 +561,20 @@ class AwesomeThemeConsumer:
 class RuntimeThemeManager:
     """Coordinate theme projection and consumer notification in one runtime seam."""
 
-    def __init__(self, applier: ThemeApplier, consumer: ThemeConsumer | None = None):
+    def __init__(
+        self,
+        applier: ThemeApplier,
+        consumer: ThemeConsumer | None = None,
+        *,
+        boot_retry_attempts: int = 5,
+        boot_retry_delay_s: float = 0.2,
+        sleep_fn: Callable[[float], None] | None = None,
+    ):
         self._applier = applier
         self._consumer = consumer or NullThemeConsumer()
+        self._boot_retry_attempts = max(1, boot_retry_attempts)
+        self._boot_retry_delay_s = max(0.0, boot_retry_delay_s)
+        self._sleep_fn = sleep_fn or time.sleep
 
     def project_if_present(self) -> bool:
         return self._applier.apply_if_present()
@@ -571,8 +583,20 @@ class RuntimeThemeManager:
         document = self._applier.current_document()
         if document is None:
             return False
-        _notify_theme_consumer(self._consumer, document)
-        return True
+        for attempt in range(1, self._boot_retry_attempts + 1):
+            if _notify_theme_consumer(self._consumer, document):
+                return True
+            if attempt < self._boot_retry_attempts:
+                emit_event(
+                    "theme.consumer_retrying",
+                    attempt=attempt,
+                    next_attempt=attempt + 1,
+                    delay_s=self._boot_retry_delay_s,
+                    theme_name=document.name,
+                    token_count=len(document.tokens),
+                )
+                self._sleep_fn(self._boot_retry_delay_s)
+        return False
 
     def reload_from_tokens_path(self, rel_path: str) -> ThemeDocument:
         document = self._applier.apply_from_tokens_path(rel_path)
@@ -623,7 +647,7 @@ def _clamp_percent(raw: str) -> float:
     return max(0.0, min(float(raw) / 100.0, 1.0))
 
 
-def _notify_theme_consumer(consumer: ThemeConsumer, document: ThemeDocument) -> None:
+def _notify_theme_consumer(consumer: ThemeConsumer, document: ThemeDocument) -> bool:
     try:
         consumer.notify_theme_changed(document)
     except ThemeConsumerError as exc:
@@ -633,3 +657,5 @@ def _notify_theme_consumer(consumer: ThemeConsumer, document: ThemeDocument) -> 
             theme_name=document.name,
             token_count=len(document.tokens),
         )
+        return False
+    return True

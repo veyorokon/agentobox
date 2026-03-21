@@ -8,6 +8,7 @@ from agent.runtime.theme import (
     AwesomeThemeConsumer,
     RuntimeThemeManager,
     ThemeConsumerGroup,
+    ThemeConsumerError,
     ThemeFilesApplier,
     ThemeLoadError,
     build_theme_manager,
@@ -175,6 +176,72 @@ def test_runtime_theme_manager_projects_then_notifies_consumers(tmp_path):
     assert seen == []
     assert manager.notify_current_theme() is True
     assert seen == ["Notify Me"]
+
+
+def test_runtime_theme_manager_retries_boot_time_consumer_until_it_succeeds(tmp_path):
+    source = tmp_path / CANONICAL_PATHS["theme_tokens"]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": THEME_SCHEMA_VERSION,
+                "name": "Retry Me",
+                "tokens": {"surface": "#111111"},
+            }
+        )
+    )
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    class FlakyConsumer:
+        def notify_theme_changed(self, document: ThemeDocument) -> None:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise ThemeConsumerError("awesome not ready yet")
+
+    manager = RuntimeThemeManager(
+        ThemeFilesApplier(tmp_path),
+        consumer=FlakyConsumer(),
+        boot_retry_attempts=5,
+        boot_retry_delay_s=0.01,
+        sleep_fn=sleeps.append,
+    )
+
+    assert manager.project_if_present() is True
+    assert manager.notify_current_theme() is True
+    assert attempts["count"] == 3
+    assert sleeps == [0.01, 0.01]
+
+
+def test_runtime_theme_manager_returns_false_after_exhausting_boot_retries(tmp_path):
+    source = tmp_path / CANONICAL_PATHS["theme_tokens"]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": THEME_SCHEMA_VERSION,
+                "name": "Still Failing",
+                "tokens": {"surface": "#111111"},
+            }
+        )
+    )
+    sleeps: list[float] = []
+
+    class AlwaysFailingConsumer:
+        def notify_theme_changed(self, document: ThemeDocument) -> None:
+            raise ThemeConsumerError("awesome not ready yet")
+
+    manager = RuntimeThemeManager(
+        ThemeFilesApplier(tmp_path),
+        consumer=AlwaysFailingConsumer(),
+        boot_retry_attempts=3,
+        boot_retry_delay_s=0.01,
+        sleep_fn=sleeps.append,
+    )
+
+    assert manager.project_if_present() is True
+    assert manager.notify_current_theme() is False
+    assert sleeps == [0.01, 0.01]
 
 
 def test_runtime_theme_manager_reload_projects_and_notifies(tmp_path):

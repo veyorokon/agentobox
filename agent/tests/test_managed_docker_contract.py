@@ -450,15 +450,14 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         )
         assert chromium_version.stdout.strip().startswith("Chromium")
 
+        # Browser-home is an optional derived artifact — assert it exists
+        # but do not contract-test branded product content.
         browser_home = _container_exec(
             container_id,
-            "cat",
+            "test", "-f",
             f"/var/lib/agentobox-agent/{CANONICAL_PATHS['browser_home_html']}",
         )
-        assert "Agentobox" in browser_home.stdout
-        assert '/theme.css' in browser_home.stdout
-        assert '/theme.json?ts=' in browser_home.stdout
-        assert "Chromium Baseline" in browser_home.stdout
+        assert browser_home.returncode == 0, "browser-home derived file should exist"
 
         status_raw = _container_exec(
             container_id, "cat", f"/var/lib/agentobox-agent/{CANONICAL_PATHS['runtime_status']}"

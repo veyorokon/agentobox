@@ -48,7 +48,5 @@ def test_browser_launch_command_uses_chromium_profile_dir():
     )
 
 
-def test_default_browser_url_points_at_local_browser_home(tmp_path):
-    expected = "http://127.0.0.1:8080/browser-home"
-
-    assert default_browser_url(tmp_path) == expected
+def test_default_browser_url_is_about_blank(tmp_path):
+    assert default_browser_url(tmp_path) == "about:blank"

@@ -1,9 +1,8 @@
 """Runtime-owned desktop configuration bridge.
 
 The desktop profile projects only the files the window manager needs from the
-canonical runtime tree. Chromium is available from the dock on demand; the
-browser home surface itself is runtime-owned and fed by the canonical theme
-projection.
+canonical runtime tree. Chromium is available from the dock on demand as a
+boring default browser.
 """
 
 from __future__ import annotations
@@ -16,8 +15,7 @@ from agent.provisioning.manifest import CANONICAL_PATHS
 
 def default_browser_url(root_dir: Path) -> str:
     _ = root_dir
-    port = os.environ.get("AGENTOBOX_PORT", "8080")
-    return f"http://127.0.0.1:{port}/browser-home"
+    return "about:blank"
 
 
 def ensure_desktop_runtime_files(root_dir: Path, *, agent_home: Path = Path("/home/agent")) -> None:
