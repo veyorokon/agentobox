@@ -67,6 +67,8 @@ Harnesses should:
 
 - `control-plane-continuity-local`
   - local Docker deployed-equivalent proof for control-plane restart continuity
+- `control-plane-continuity-modal`
+  - deployed-equivalent Modal proof for control-plane deploy continuity
 - `modal-local-bootstrap`
   - local backend + Modal bootstrap proof helper
 - `smoke-test.sh`
