@@ -42,6 +42,49 @@ Questions:
 - Which side owns truth?
 - What behavior is contractually required vs incidental?
 
+### Threads
+
+A thread is a coherent line of work across one or more seams.
+
+Examples:
+- fix a runtime bootstrap failure
+- unify live mutable writes behind one canonical writer
+- tighten CI diagnosis artifacts
+- improve browser/theme presentation without changing runtime truth
+
+Threads are not the same as components, files, or tickets.
+
+A good thread:
+- has one main question or failure mode
+- names the seams it crosses
+- has a clear stopping condition
+- can be tested at the earliest honest level
+
+Questions:
+- What thread are we actually working right now?
+- Which seams does this thread cross?
+- Is this still one thread, or did it split into two?
+- What evidence would close this thread honestly?
+
+### Threads And Seams
+
+Seams and threads are complementary:
+
+- seams describe system boundaries
+- threads describe work boundaries
+
+Use seams to understand the system.
+Use threads to organize the work.
+
+Preferred pattern:
+1. identify the thread
+2. locate the failing seam inside it
+3. fix the seam
+4. close the thread only when the end-to-end question is resolved
+
+When a thread starts crossing too many unrelated seams, split it.
+When two threads are really symptoms of one broken seam, merge them.
+
 ### Seamless
 
 “Seamless” does not mean “no seams.”
