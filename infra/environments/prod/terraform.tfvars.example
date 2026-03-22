@@ -1,0 +1,13 @@
+# Prod environment variables.
+# Copy to terraform.tfvars and fill in values.
+# terraform.tfvars is gitignored.
+
+domain       = "agentobox.com"
+zone_id      = ""              # Route53 hosted zone ID
+droplet_size = "s-2vcpu-2gb"
+region       = "nyc1"
+
+# DO SSH key fingerprints (get via: doctl compute ssh-key list)
+ssh_key_ids = []
+
+# Set DO token via env: export TF_VAR_do_token=$DIGITALOCEAN_TOKEN
