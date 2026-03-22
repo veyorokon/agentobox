@@ -1,89 +1,140 @@
 # Billing Model: BYOK vs Platform-Managed
 
-## Two usage modes
+## Document structure
 
-### BYOK (Bring Your Own Key)
+This document has three sections with different authority levels:
 
-User supplies their own provider API key (Anthropic, OpenRouter, etc.).
-Agentobox never sees or bills for model inference costs.
+1. **Current alpha policy** — what applies now during private alpha
+2. **Target billing model** — planned default policy (not yet enforced)
+3. **Ledger/accounting contract** — immutable accounting rules
 
-**What the user pays directly to their provider:**
-- All LLM inference (input/output tokens, cache, thinking)
-- Provider-specific rate limits and quotas
+---
 
-**What Agentobox tracks (informational, not billed):**
+## 1. Current Alpha Policy
+
+For private alpha (#122):
+
+- **BYOK only** — users supply their own provider API key
+- **Runtime cost: absorbed by Agentobox** — Modal compute is not charged
+- **No billing integration** — all cost tracking is informational only
+- **No invoices** — no BillingLedger entries are minted
+
+Goal: learn real usage patterns (agent count, session duration, model
+mix, task types) without billing friction.
+
+Agentobox observes token usage metadata for visibility even in BYOK
+mode, but does not charge users for provider costs.
+
+---
+
+## 2. Target Billing Model
+
+### Two usage modes
+
+#### BYOK (Bring Your Own Key)
+
+User supplies their own provider API key. Agentobox does not charge
+for provider inference costs, even though it observes usage metadata
+for dashboard visibility.
+
+**Not billed by Agentobox:**
+- LLM inference (tokens, cache, thinking) — user pays their provider
+
+**Tracked (informational):**
 - Token counts and estimated cost via `SessionResult`
 - Model usage breakdown per agent/session
-- Purpose: user visibility, not billing
 
-**What Agentobox bills:**
-- Runtime compute: container time (CPU-seconds, memory-seconds)
-- Platform fee (if any): flat or usage-based access fee
-- Future: MCP proxy costs if Agentobox operates managed MCP servers
+**Planned billable (not yet decided — see open questions):**
+- Runtime compute (container time)
+- Platform access fee (if any)
+- MCP proxy costs (future)
 
-### Platform-Managed
+> Note: whether BYOK users pay for runtime compute is an open product
+> decision. The default plan is yes, but alpha absorbs this cost.
 
-Agentobox provides the API key and bills the user for everything.
-User does not need their own provider account.
+#### Platform-Managed
 
-**What Agentobox bills:**
-- LLM inference cost (at provider rates + margin)
-- Runtime compute cost
-- Platform fee
-- Future: MCP costs
+Agentobox provides the API key and bills the user for all usage.
 
-**What Agentobox tracks (canonical for billing):**
-- `SessionResult.total_cost_usd` — LLM cost per turn
-- `RuntimeSegment.compute_seconds` + resource profile → compute cost
-- Both feed into the billing ledger
+**Billed by Agentobox:**
+- LLM inference (at provider rates + margin)
+- Runtime compute
+- Platform access fee
+- MCP proxy costs (future)
 
-## Cost categories
+### Cost categories
 
-| Category | Source of truth | BYOK billable? | Platform-managed billable? |
-|----------|----------------|----------------|---------------------------|
-| LLM inference | `SessionResult` (per-turn token costs) | no (informational) | yes |
-| Runtime compute | `RuntimeSegment` (per-container time) | yes | yes |
-| Platform access | plan/subscription | yes (if charged) | yes |
-| MCP proxy (future) | per-call metering | TBD | yes |
+| Category | Source of truth | BYOK | Platform-managed |
+|----------|----------------|------|------------------|
+| LLM inference | `SessionResult` | informational | billable |
+| Runtime compute | `RuntimeSegment` | planned billable (TBD) | billable |
+| Platform access | plan/subscription | TBD | billable |
+| MCP proxy (future) | per-call metering | TBD | billable |
 
-## Canonical records
+### Pricing
 
-### SessionResult (already exists)
+Runtime and model pricing come from **versioned rate tables**, not
+hardcoded values. Rates are captured into ledger events at the time
+of the billable event. If provider pricing changes, new events use
+the new rate; old events keep their original rate.
 
-One row per agent turn. Fields:
-- `total_cost_usd` — cumulative LLM cost (corrected for provider pricing)
+Rate tables should be:
+- versioned (effective date + rate)
+- referenced by ledger entries (rate_version field)
+- separate from business logic
+
+Illustrative current rates (not authoritative — subject to change):
+- Modal CPU: ~$0.000463/sec/core
+- Modal memory: ~$0.000058/sec/GB
+- Default agent (2 cores, 4GB): ~$0.07/min
+
+A `RUNTIME_PRICING` registry (analogous to `MODEL_PRICING`) should
+map runtime providers to per-resource rates.
+
+---
+
+## 3. Ledger / Accounting Contract
+
+### Canonical rule
+
+**Invoices come from BillingLedger, never directly from SessionResult
+or RuntimeSegment.**
+
+Source tables (`SessionResult`, `RuntimeSegment`) are operational
+records. They track what happened. The `BillingLedger` is the
+accounting record of what is chargeable. These are different concerns.
+
+### Source records (operational — already exist)
+
+#### SessionResult
+
+One row per agent turn. Tracks LLM usage.
+- `total_cost_usd` — cumulative LLM cost (corrected for provider)
 - `model_usage` — per-model token breakdown
-- `duration_ms`, `duration_api_ms` — wall time vs API time
+- Not directly billable. Feeds ledger minting.
 
-This is the source of truth for LLM cost attribution.
+#### RuntimeSegment
 
-### RuntimeSegment (already exists)
-
-One row per container lifecycle segment. Fields:
+One row per container lifecycle segment. Tracks compute usage.
 - `compute_seconds` — wall time
 - `cpu_cores`, `memory_mb` — resource profile
-- `provider` — runtime provider (modal, docker)
-- `close_reason` — why the segment ended
-
-This is the source of truth for compute cost attribution.
+- `provider` — runtime provider
+- Not directly billable. Feeds ledger minting.
 
 ### BillingLedger (does not exist yet)
 
-Canonical immutable record of billable events. Needed for:
-- invoice generation
-- historical rate snapshots
-- dispute resolution
-- audit trail
+Immutable accounting record of billable events.
 
-Proposed shape:
 ```
 BillingLedgerEntry
   id: UUID
   project: FK
   agent: FK (nullable for project-level charges)
-  category: "llm_inference" | "runtime_compute" | "platform_access" | "mcp_proxy"
-  quantity: Decimal (tokens, seconds, calls)
-  unit_rate: Decimal (rate at time of event — immutable)
+  category: "llm_inference" | "runtime_compute" | "platform_access"
+  quantity: Decimal
+  unit: str ("tokens" | "seconds" | "months")
+  unit_rate: Decimal (captured at event time — immutable)
+  rate_version: str (reference to the rate table version)
   amount_usd: Decimal (quantity * unit_rate)
   source_id: str (SessionResult.id or RuntimeSegment.id)
   source_type: str ("session_result" | "runtime_segment")
@@ -92,82 +143,60 @@ BillingLedgerEntry
   created_at: datetime
 ```
 
-Key rule: `unit_rate` is captured at event time and never updated.
-If pricing changes, new events get the new rate. Old events keep
-their original rate.
+### Minting rules
 
-## Pricing structure
+A ledger entry is minted when:
+- A `RuntimeSegment` closes (compute cost)
+- A `SessionResult` is created (LLM cost, platform-managed only)
+- A billing period ends (platform access fee)
 
-### Runtime compute pricing
+Ledger entries are:
+- **append-only** — never updated or deleted
+- **immutable rates** — `unit_rate` captured at minting time
+- **auditable** — `source_id` + `source_type` trace back to operational record
 
-Based on Modal's published rates (or equivalent):
-- CPU: ~$0.000463/sec per core
-- Memory: ~$0.000058/sec per GB
-- GPU: provider-specific rates
+### Invoice generation
 
-Default agent profile: 2 cores, 4GB RAM
-→ ~$0.001158/sec → ~$4.17/hour → ~$0.07/min
+Invoices aggregate ledger entries by project and billing period.
+They never query SessionResult or RuntimeSegment directly.
 
-### LLM inference pricing (platform-managed only)
+```
+Invoice = sum(BillingLedgerEntry.amount_usd)
+  WHERE project = X
+  AND period_start >= billing_period_start
+  AND period_end <= billing_period_end
+```
 
-Pass-through at provider rates + margin.
-`MODEL_PRICING` in `registries.py` already has per-model rates.
-Margin is a configuration parameter, not hardcoded.
-
-### Platform access (TBD)
-
-Options:
-- Free tier with usage caps
-- Flat monthly fee
-- Usage-based only
-- Hybrid (base fee + usage)
-
-Not decided yet — alpha will likely be free + BYOK to learn usage patterns.
-
-## Alpha launch model
-
-For private alpha (#122):
-- **BYOK only** — users bring their own Anthropic key
-- **Runtime cost: absorbed by Agentobox** — we eat Modal costs during alpha
-- **No billing integration** — cost tracking is informational only
-- **Goal: learn usage patterns** — how many agents, how long they run, what models, what tasks
-
-This gives us:
-- real usage data for pricing decisions
-- no billing friction during onboarding
-- time to build the billing ledger before charging
-
-## Post-alpha billing sequence
-
-1. **Track** — all cost categories visible in dashboard (informational)
-2. **Alert** — spend alerts and project-level budgets
-3. **Bill** — Stripe integration with ledger-backed invoices
-4. **Control** — auto-stop agents that exceed limits
-
-## Rollup hierarchy
+### Rollup hierarchy
 
 ```
 User account
   └─ Project
        └─ Agent
-            ├─ SessionResult (LLM cost per turn)
-            └─ RuntimeSegment (compute cost per segment)
+            ├─ SessionResult → LedgerEntry (LLM)
+            └─ RuntimeSegment → LedgerEntry (compute)
 ```
 
 Aggregation:
-- per-agent: sum of session costs + runtime costs
-- per-project: sum of all agent costs
-- per-account: sum of all project costs
+- per-agent: sum of agent's ledger entries
+- per-project: sum of all agents' ledger entries
+- per-account: sum of all projects' ledger entries
 
-Already partially implemented:
-- `Agent.session_cost_usd` — materialized LLM cost cache
-- `Agent.compute_seconds` — materialized runtime cache
-- `compute_agent_total_cost()` in serializers.py — async rollup
+---
 
 ## Open questions
 
-1. Should BYOK users ever pay for runtime? (Alpha: no. Post-alpha: likely yes.)
-2. What's the margin on platform-managed LLM costs? (Competitive analysis needed.)
-3. Should per-task cost attribution exist? (Nice for users, complex to implement.)
-4. How do MCP costs work? (Per-call? Per-minute? Bundled with runtime?)
-5. What spending controls are minimum viable? (Project budget + alert? Per-agent limit?)
+1. Should BYOK users pay for runtime compute? (Alpha: no. Default plan: yes. Not yet decided.)
+2. What margin on platform-managed LLM costs? (Competitive analysis needed.)
+3. Per-task cost attribution? (Nice for users, complex.)
+4. MCP cost model? (Per-call? Per-minute? Bundled?)
+5. Minimum spending controls? (Project budget + alert? Per-agent limit?)
+6. When does ledger minting begin? (Post-alpha when billing is wired.)
+
+## Post-alpha billing sequence
+
+1. **Track** — all cost categories visible in dashboard (informational)
+2. **Alert** — spend alerts and project-level budgets
+3. **Mint** — ledger entries from operational records
+4. **Bill** — Stripe integration with ledger-backed invoices
+5. **Control** — auto-stop agents that exceed limits
