@@ -151,6 +151,8 @@ Minimum required prod secrets:
 - `DEPLOY_HOST` is separate GitHub environment secret, not part of `APP_SECRETS`
 - `MODAL_TOKEN_ID`
 - `MODAL_TOKEN_SECRET`
+- standalone GitHub environment secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` must also be set for Actions workflows
+- standalone GitHub environment secret `SMOKE_TEST_PASS` should also be set for workflow masking; do not rely on extracting it from `APP_SECRETS`
 - `GOOGLE_CLIENT_SECRET`
 - `GITHUB_CLIENT_SECRET`
 
@@ -191,8 +193,11 @@ Notes:
 
 - `DATABASE_URL` is required by `AppConfig`; there is no valid prod deploy without it.
 - `REDIS_URL` has a default, but it is better to make the real prod value explicit.
-- `SMOKE_TEST_PASS` is optional in workflow code, but should be explicitly set for real prod canaries.
+- `SMOKE_TEST_PASS` is optional in workflow code, but should be explicitly set as both:
+  - an app runtime field inside `APP_SECRETS`
+  - a standalone GitHub environment secret for masked workflow usage
 - `DEPLOY_HOST` and `DEPLOY_SSH_KEY` are separate GitHub environment secrets, not part of `APP_SECRETS`.
+- Do not consume JSON subfields from `APP_SECRETS` directly in workflow `env:` blocks. GitHub masks the top-level secret value, not arbitrary parsed subfields.
 
 ### 5a. Load values into the GitHub `prod` environment
 
@@ -202,6 +207,9 @@ The deploy workflow reads:
 - `secrets.APP_SECRETS`
 - `secrets.DEPLOY_HOST`
 - `secrets.DEPLOY_SSH_KEY`
+- `secrets.MODAL_TOKEN_ID`
+- `secrets.MODAL_TOKEN_SECRET`
+- `secrets.SMOKE_TEST_PASS`
 
 The easiest clean path is to create local JSON files, then load them with `gh`.
 
@@ -252,7 +260,16 @@ gh variable set APP_CONFIG --env prod < /tmp/agentobox-prod-app-config.json
 gh secret set APP_SECRETS --env prod < /tmp/agentobox-prod-app-secrets.json
 gh secret set DEPLOY_HOST --env prod
 gh secret set DEPLOY_SSH_KEY --env prod < /path/to/prod-deploy-key
+gh secret set MODAL_TOKEN_ID --env prod
+gh secret set MODAL_TOKEN_SECRET --env prod
+gh secret set SMOKE_TEST_PASS --env prod
 ```
+
+Secret-handling contract:
+
+- `APP_SECRETS` is the app/runtime secret blob rendered into the deployed `.env`
+- `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and `SMOKE_TEST_PASS` must also exist as standalone GitHub environment secrets for workflow masking
+- do not rely on `fromJson(secrets.APP_SECRETS).FIELD` in workflow `env:` blocks
 
 Verification:
 
