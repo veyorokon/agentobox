@@ -150,6 +150,7 @@ jobs:
     needs: changes
     permissions:
       contents: read
+      packages: read
       pull-requests: read
     uses: ./.github/workflows/ci.yml
     secrets: inherit
