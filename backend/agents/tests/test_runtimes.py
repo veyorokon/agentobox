@@ -1,6 +1,6 @@
 from __future__ import annotations
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -469,7 +469,7 @@ class TestModalSandboxTagging:
             "AGENT_NAME": "test-worker",
         }
 
-        result = await runtime.create("test-worker", env)
+        await runtime.create("test-worker", env)
 
         # Management tags
         assert captured_tags["agentobox.managed"] == "true"
