@@ -21,6 +21,7 @@ import modal
 import structlog
 from config.app_config import app_config
 
+from agents.errors import ERR_RUNTIME_TAG_FAILED
 from agents.runtimes.base import RuntimeResources, SandboxInstance, VolumeMount
 from agents.services.project_volume import ModalProjectVolumeStore
 
@@ -92,10 +93,29 @@ class ModalRuntime:
             create_kwargs["volumes"] = modal_volumes
 
         sb = await modal.Sandbox.create.aio(**create_kwargs)
+
+        # Tag sandbox once with both management and billing attribution tags.
+        # set_tags() replaces the full tag set — do not call it twice.
         agent_id = env.get("AGENT_ID", "")
-        await sb.set_tags.aio(
-            {"agentobox.managed": "true", "agentobox.agent": name, "agentobox.agent.id": agent_id}
-        )
+        project_id = env.get("PROJECT_ID", "")
+        sandbox_tags = {
+            # Management tags (used by reconciler, harnesses)
+            "agentobox.managed": "true",
+            "agentobox.agent": name,
+            "agentobox.agent.id": agent_id,
+            # Billing attribution tags (used by modal.billing API)
+            "agent_id": agent_id,
+            "project_id": project_id,
+            "agent_name": env.get("AGENT_NAME", ""),
+        }
+        try:
+            await sb.set_tags.aio(sandbox_tags)
+        except Exception as exc:  # intentional: tagging failure must not block sandbox creation
+            op.warning(
+                "runtime.tag_failed",
+                error_code=ERR_RUNTIME_TAG_FAILED,
+                error_class=type(exc).__name__,
+            )
         tunnels = await sb.tunnels.aio()
         vnc_url = tunnels[6080].url if 6080 in tunnels else ""
         health_url = tunnels[8080].url if 8080 in tunnels else ""

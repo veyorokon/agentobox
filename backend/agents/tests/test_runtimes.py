@@ -1,5 +1,6 @@
 from __future__ import annotations
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -413,3 +414,118 @@ class TestModalRuntimeExec:
             ("sandbox-1", "/vol"),
             ("sandbox-1", "/vol"),
         ]
+
+
+class TestModalSandboxTagging:
+    """Sandbox tags must include both management and billing attribution
+    in a single set_tags() call. Regression for the double-set_tags bug
+    where the second call overwrote the first."""
+
+    @pytest.mark.asyncio
+    async def test_sandbox_tags_include_management_and_billing(self, monkeypatch):
+        """Final tag payload must contain all 6 expected keys in one call."""
+        captured_tags = {}
+
+        class FakeTunnel:
+            url = "https://fake.modal.run"
+
+        class FakeSandbox:
+            object_id = "sb-test-123"
+
+            class set_tags:
+                @staticmethod
+                async def aio(tags):
+                    captured_tags.update(tags)
+
+            class tunnels:
+                @staticmethod
+                async def aio():
+                    return {6080: FakeTunnel(), 8080: FakeTunnel()}
+
+        class FakeApp:
+            pass
+
+        async def fake_app_lookup(*args, **kwargs):
+            return FakeApp()
+
+        async def fake_sandbox_create(**kwargs):
+            return FakeSandbox()
+
+        monkeypatch.setattr("agents.runtimes.modal.modal.App.lookup.aio", fake_app_lookup)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Sandbox.create.aio", fake_sandbox_create)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Image.from_registry", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr("agents.runtimes.modal.modal.Secret.from_dict", lambda d: MagicMock())
+        monkeypatch.setattr("agents.runtimes.modal.modal.Secret.from_name", lambda n: MagicMock())
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.app_name", "test-app")
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.agent_image", "test-image:latest")
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.agent_image_map", {})
+
+        runtime = ModalRuntime.__new__(ModalRuntime)
+
+        env = {
+            "AGENT_ID": "a-123-456",
+            "AGENT_TYPE": "claude-code",
+            "PROJECT_ID": "p-789",
+            "AGENT_NAME": "test-worker",
+        }
+
+        await runtime.create("test-worker", env)
+
+        # Management tags
+        assert captured_tags["agentobox.managed"] == "true"
+        assert captured_tags["agentobox.agent"] == "test-worker"
+        assert captured_tags["agentobox.agent.id"] == "a-123-456"
+
+        # Billing attribution tags
+        assert captured_tags["agent_id"] == "a-123-456"
+        assert captured_tags["project_id"] == "p-789"
+        assert captured_tags["agent_name"] == "test-worker"
+
+    @pytest.mark.asyncio
+    async def test_sandbox_tags_set_once_not_twice(self, monkeypatch):
+        """set_tags must be called exactly once to avoid overwrite."""
+        set_tags_calls = []
+
+        class FakeTunnel:
+            url = "https://fake.modal.run"
+
+        class FakeSandbox:
+            object_id = "sb-test-456"
+
+            class set_tags:
+                @staticmethod
+                async def aio(tags):
+                    set_tags_calls.append(dict(tags))
+
+            class tunnels:
+                @staticmethod
+                async def aio():
+                    return {6080: FakeTunnel(), 8080: FakeTunnel()}
+
+        class FakeApp:
+            pass
+
+        async def fake_app_lookup(*args, **kwargs):
+            return FakeApp()
+
+        async def fake_sandbox_create(**kwargs):
+            return FakeSandbox()
+
+        monkeypatch.setattr("agents.runtimes.modal.modal.App.lookup.aio", fake_app_lookup)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Sandbox.create.aio", fake_sandbox_create)
+        monkeypatch.setattr("agents.runtimes.modal.modal.Image.from_registry", lambda *a, **kw: MagicMock())
+        monkeypatch.setattr("agents.runtimes.modal.modal.Secret.from_dict", lambda d: MagicMock())
+        monkeypatch.setattr("agents.runtimes.modal.modal.Secret.from_name", lambda n: MagicMock())
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.app_name", "test-app")
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.agent_image", "test-image:latest")
+        monkeypatch.setattr("agents.runtimes.modal.app_config.modal.agent_image_map", {})
+
+        runtime = ModalRuntime.__new__(ModalRuntime)
+        env = {"AGENT_ID": "a-1", "AGENT_TYPE": "claude-code", "PROJECT_ID": "p-1", "AGENT_NAME": "w"}
+
+        await runtime.create("w", env)
+
+        assert len(set_tags_calls) == 1, (
+            f"set_tags() called {len(set_tags_calls)} times — must be exactly 1 "
+            f"to avoid overwriting management tags with billing tags or vice versa"
+        )
