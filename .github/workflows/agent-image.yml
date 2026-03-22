@@ -4,11 +4,17 @@ on:
   workflow_call:
     outputs:
       managed-image:
-        description: Managed agent image ref for this commit
+        description: Managed agent image tag ref (convenience)
         value: ${{ jobs.build-managed.outputs.managed-image }}
+      managed-digest:
+        description: Managed agent image digest ref (canonical)
+        value: ${{ jobs.build-managed.outputs.managed-digest }}
       desktop-image:
-        description: Desktop agent image ref for this commit
+        description: Desktop agent image tag ref (convenience)
         value: ${{ jobs.build-desktop-managed.outputs.desktop-image }}
+      desktop-digest:
+        description: Desktop agent image digest ref (canonical)
+        value: ${{ jobs.build-desktop-managed.outputs.desktop-digest }}
   workflow_dispatch: {}
 
 concurrency:
@@ -29,6 +35,7 @@ jobs:
     outputs:
       managed-tag: ${{ steps.meta.outputs.version }}
       managed-image: ${{ steps.image-ref.outputs.ref }}
+      managed-digest: ${{ steps.image-ref.outputs.digest-ref }}
       managed-tags: ${{ steps.meta.outputs.tags }}
     steps:
       - uses: actions/checkout@v5
@@ -50,7 +57,8 @@ jobs:
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v7
+      - id: push-managed
+        uses: docker/build-push-action@v7
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
@@ -65,7 +73,9 @@ jobs:
           cache-to: type=gha,scope=managed,mode=max
       - id: image-ref
         name: Record managed image ref
-        run: echo "ref=${{ env.MANAGED_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "ref=${{ env.MANAGED_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+          echo "digest-ref=${{ env.MANAGED_IMAGE }}@${{ steps.push-managed.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
   build-desktop-managed:
     needs: build-managed
@@ -75,6 +85,7 @@ jobs:
       packages: write
     outputs:
       desktop-image: ${{ steps.image-ref.outputs.ref }}
+      desktop-digest: ${{ steps.image-ref.outputs.digest-ref }}
       desktop-tags: ${{ steps.meta.outputs.tags }}
       contract-test-outcome: ${{ steps.contract-test.outcome }}
       contract-test-hint: ${{ steps.contract-test.outputs.failure_hint }}
@@ -92,11 +103,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Reuse the exact managed image artifact from the upstream job, then
-      # build the desktop layer locally for contract testing.
+      # Reuse the exact managed image artifact from the upstream job by
+      # digest, then build the desktop layer locally for contract testing.
       - name: Pull managed image for desktop contract test
         run: |
-          docker pull "${{ needs.build-managed.outputs.managed-image }}"
+          docker pull "${{ needs.build-managed.outputs.managed-digest }}"
       - name: Build desktop image for contract test
         uses: docker/build-push-action@v7
         with:
@@ -105,7 +116,7 @@ jobs:
           load: true
           tags: agentobox-agent-runtime-desktop-managed:ci
           build-args: |
-            BASE_IMAGE=${{ needs.build-managed.outputs.managed-image }}
+            BASE_IMAGE=${{ needs.build-managed.outputs.managed-digest }}
             AGENTOBOX_GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=desktop-managed
           cache-to: type=gha,scope=desktop-managed,mode=max
@@ -159,7 +170,16 @@ jobs:
           done <<< "${{ steps.meta.outputs.tags }}"
       - id: image-ref
         name: Record desktop image ref
-        run: echo "ref=${{ env.DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+        run: |
+          TAG_REF="${{ env.DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}"
+          echo "ref=${TAG_REF}" >> "$GITHUB_OUTPUT"
+
+          # Query the registry for the canonical digest of the pushed tag.
+          # imagetools inspect is the official buildx way to get registry
+          # metadata — no fragile local docker inspect or RepoDigests.
+          DIGEST=$(docker buildx imagetools inspect "${TAG_REF}" --format '{{json .Manifest}}' | jq -r '.digest // .Digest')
+          echo "digest-ref=${{ env.DESKTOP_IMAGE }}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Desktop digest: ${{ env.DESKTOP_IMAGE }}@${DIGEST}"
 
   summary:
     name: summary
@@ -202,46 +222,40 @@ jobs:
           contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
           hint="${{ needs.build-desktop-managed.outputs.contract-test-hint }}"
 
-          # Only show detail if something failed
-          if [ "$managed" != "success" ] || [ "$desktop" != "success" ]; then
-            {
-              echo
-              echo "| Step | Status |"
-              echo "|------|--------|"
-              echo "| managed build | \`${managed}\` |"
-              echo "| desktop build | \`${desktop}\` |"
-              echo "| contract test | \`${contract}\` |"
-            } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "| Stage | Status | Consumes |"
+            echo "|-------|--------|----------|"
+            echo "| build-managed | \`${managed}\` | \`agent/Dockerfile.managed\` |"
+            echo "| build-desktop-managed | \`${desktop}\` | managed image digest as desktop base |"
+            echo "| managed Docker contract | \`${contract}\` | local desktop image before push |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-            if [ -n "$hint" ]; then
-              {
-                echo
-                echo "<details><summary><b>contract_test</b></summary>"
-                echo
-                echo '```'
-                echo "$hint"
-                echo '```'
-                echo
-                echo "</details>"
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-
-          # Always show image refs if they exist
           managed_ref="${{ needs.build-managed.outputs.managed-image }}"
+          managed_digest="${{ needs.build-managed.outputs.managed-digest }}"
           desktop_ref="${{ needs.build-desktop-managed.outputs.desktop-image }}"
+          desktop_digest="${{ needs.build-desktop-managed.outputs.desktop-digest }}"
           if [ -n "$managed_ref" ] || [ -n "$desktop_ref" ]; then
             {
               echo
-              echo "| Image | Ref |"
-              echo "|-------|-----|"
-              echo "| managed | \`${managed_ref:-—}\` |"
-              echo "| desktop | \`${desktop_ref:-—}\` |"
+              echo "| Image | Tag Ref | Digest Ref |"
+              echo "|-------|---------|------------|"
+              echo "| managed | \`${managed_ref:-—}\` | \`${managed_digest:-—}\` |"
+              echo "| desktop | \`${desktop_ref:-—}\` | \`${desktop_digest:-—}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -n "$hint" ]; then
+            {
               echo
-              echo "| Gate | Artifact Consumed | Provenance |"
-              echo "|------|-------------------|------------|"
-              echo "| build-managed | managed image tags | built and pushed from \`agent/Dockerfile.managed\` |"
-              echo "| build-desktop-managed | pulled managed sha image | reuses upstream managed artifact as desktop base |"
-              echo "| managed Docker contract | local desktop image \`agentobox-agent-runtime-desktop-managed:ci\` | built from pulled managed sha image before push |"
+              echo "### Diagnosis"
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| First broken seam | \`managed Docker contract\` |"
+              echo "| Next debug target | inspect the contract hint below and the \`contract-test-output\` artifact on failure |"
+              echo
+              echo '```'
+              echo "$hint"
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi

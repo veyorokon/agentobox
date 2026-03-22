@@ -20,12 +20,6 @@ runs:
       shell: bash
       run: |
         short_sha="${GITHUB_SHA::7}"
-        if [ "${{ inputs.overall }}" = "success" ]; then
-          icon="✅"
-        else
-          icon="❌"
-        fi
-
         detail="${{ inputs.detail }}"
         if [ -z "$detail" ]; then
           if [ "${{ inputs.overall }}" = "success" ]; then
@@ -38,5 +32,12 @@ runs:
         {
           echo "## ${{ inputs.title }}"
           echo
-          echo "${icon} **${detail}** &nbsp; \`${short_sha}\` · \`${{ github.ref_name }}\`"
+          echo "| Field | Value |"
+          echo "|-------|-------|"
+          echo "| Result | \`${{ inputs.overall }}\` |"
+          echo "| Detail | ${detail} |"
+          echo "| Branch | \`${{ github.ref_name }}\` |"
+          echo "| Commit | \`${short_sha}\` |"
+          echo "| Event | \`${{ github.event_name }}\` |"
+          echo "| Run | \`${{ github.run_id }}\` |"
         } >> "$GITHUB_STEP_SUMMARY"

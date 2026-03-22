@@ -38,9 +38,7 @@ services:
       retries: 10
 
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    image: ${BACKEND_IMAGE:-agentobox-backend:ci}
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
@@ -48,7 +46,7 @@ services:
       AGENT_RUNTIME: docker
       AGENT_IMAGE: agentobox-agent-runtime-desktop-managed:latest
       AGENT_EXECUTOR_OVERRIDE: ${AGENT_EXECUTOR_OVERRIDE:-}
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:ci
+      MODAL_AGENT_IMAGE: ${MODAL_AGENT_IMAGE:-agentobox-agent-runtime-desktop-managed:latest}
       DJANGO_SETTINGS_MODULE: config.settings
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}

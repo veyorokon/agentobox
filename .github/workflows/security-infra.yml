@@ -44,9 +44,14 @@ jobs:
           overall: ${{ job.status == 'success' && 'success' || 'attention-needed' }}
           detail: ${{ job.status == 'success' && 'no findings' || 'findings detected' }}
       - name: Write scan details
-        if: failure()
+        if: always()
         run: |
           {
             echo
-            echo "trivy config scan · \`infra/\` · severity: HIGH,CRITICAL"
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Scan target | \`infra/\` |"
+            echo "| Scanner | \`trivy misconfig\` |"
+            echo "| Severity threshold | \`HIGH,CRITICAL\` |"
+            echo "| Ignore unfixed | \`true\` |"
           } >> "$GITHUB_STEP_SUMMARY"

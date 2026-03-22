@@ -427,37 +427,39 @@ jobs:
           )
 
           lanes="backend-unit backend-chaos backend-integration backend-architecture backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck security-app"
-          total=0; failed=0; passed_list=""; failed_blocks=""
+          total=0; failed=0; first_failed=""; lane_rows=""
 
           for lane in $lanes; do
             total=$((total + 1))
             r="${results[$lane]}"
-            if [ "$r" = "success" ]; then
-              passed_list="${passed_list:+${passed_list}, }${lane}"
-            else
+            hint="${hints[$lane]:-}"
+            hint="${hint//$'\n'/ }"
+            hint="${hint//|/\\|}"
+            if [ -z "$hint" ]; then
+              hint="—"
+            fi
+            lane_rows="${lane_rows}| ${lane} | \`${r}\` | ${hint} |"$'\n'
+            if [ "$r" != "success" ]; then
               failed=$((failed + 1))
-              hint="${hints[$lane]:-}"
-              failed_blocks="${failed_blocks}<details><summary><b>${lane}</b> — <code>${r}</code></summary>"$'\n\n'
-              if [ -n "$hint" ]; then
-                failed_blocks="${failed_blocks}\`\`\`"$'\n'"${hint}"$'\n'"\`\`\`"$'\n\n'
+              if [ -z "$first_failed" ]; then
+                first_failed="$lane"
               fi
-              failed_blocks="${failed_blocks}</details>"$'\n'
             fi
           done
 
           if [ "$failed" -eq 0 ]; then
             echo "overall=success" >> "$GITHUB_OUTPUT"
             echo "detail=all ${total} lanes passed" >> "$GITHUB_OUTPUT"
+            echo "first_failed=—" >> "$GITHUB_OUTPUT"
           else
             echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
             echo "detail=${failed} of ${total} lanes failed" >> "$GITHUB_OUTPUT"
+            echo "first_failed=${first_failed}" >> "$GITHUB_OUTPUT"
           fi
 
-          # Save for next step
-          echo "passed_list=${passed_list}" >> "$GITHUB_OUTPUT"
           {
-            echo "failed_blocks<<GHEOF"
-            echo "$failed_blocks"
+            echo "lane_rows<<GHEOF"
+            echo "$lane_rows"
             echo "GHEOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -469,15 +471,13 @@ jobs:
 
       - name: Write body
         run: |
-          failed_blocks="${{ steps.status.outputs.failed_blocks }}"
-          passed_list="${{ steps.status.outputs.passed_list }}"
-
-          if [ -n "$failed_blocks" ]; then
-            {
-              echo
-              echo "### Failed"
-              echo "$failed_blocks"
-              echo
-              echo "**Passed:** ${passed_list}"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo
+            echo "| Lane | Status | Failure Hint |"
+            echo "|------|--------|--------------|"
+            echo "${{ steps.status.outputs.lane_rows }}"
+            echo
+            echo "| First Failed Lane | Artifact Guidance |"
+            echo "|-------------------|-------------------|"
+            echo "| \`${{ steps.status.outputs.first_failed }}\` | failing lanes upload \`*-output\` artifacts when applicable |"
+          } >> "$GITHUB_STEP_SUMMARY"
