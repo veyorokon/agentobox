@@ -282,6 +282,24 @@ gh secret list --env prod
 - confirm the tokens in `APP_SECRETS` have access to that environment
 - confirm `MODAL_ENVIRONMENT` matches the intended prod environment name
 - confirm the agent image ref path is valid for prod deploys
+- create the `ghcr-secret` secret in the prod Modal environment so Modal can
+  pull private GHCR agent images
+
+Create `ghcr-secret` in Modal `main`:
+
+```bash
+modal secret create --env main --force ghcr-secret \
+  REGISTRY_USERNAME=<github-username> \
+  REGISTRY_PASSWORD=<github-packages-token>
+```
+
+`ghcr-secret` must contain:
+
+- `REGISTRY_USERNAME`
+- `REGISTRY_PASSWORD`
+
+Without this, `Agent Modal Contract (main)` and managed Modal runtime creation
+will fail with `Secret 'ghcr-secret' not found`.
 
 ### 8. Verify prod host prerequisites
 
