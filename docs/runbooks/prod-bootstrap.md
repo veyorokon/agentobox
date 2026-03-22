@@ -74,6 +74,7 @@ Required secrets:
 Required variables:
 
 - `APP_CONFIG`
+- `DEPLOY_USER`
 
 Optional:
 
@@ -258,6 +259,12 @@ gh variable list --env prod
 gh secret list --env prod
 ```
 
+Set the canonical deploy user explicitly:
+
+```bash
+gh variable set DEPLOY_USER --env prod --body 'agentobox'
+```
+
 ### 6. Configure OAuth providers for prod
 
 #### Google
@@ -308,7 +315,12 @@ On the target host:
 - Docker and Docker Compose/plugin available
 - deployment directory exists or can be created:
   - `/opt/agentobox`
-- SSH user from GitHub Actions can write deploy artifacts there
+- SSH user from GitHub Actions is the canonical deploy user:
+  - `agentobox`
+- `agentobox` can:
+  - SSH in with the configured key
+  - run `docker ps`
+  - write to `/opt/agentobox`
 
 ### 9. Run first prod promotion
 

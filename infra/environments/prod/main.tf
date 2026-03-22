@@ -121,7 +121,11 @@ output "droplet_id" {
 }
 
 output "ssh_command" {
-  value = "ssh root@${module.compute.public_ip}"
+  value = "ssh ${module.compute.deploy_user}@${module.compute.public_ip}"
+}
+
+output "deploy_user" {
+  value = module.compute.deploy_user
 }
 
 output "db_host" {

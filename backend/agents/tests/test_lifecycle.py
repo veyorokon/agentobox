@@ -149,6 +149,7 @@ def test_build_agent_env_does_not_export_bash_env():
         id=uuid.uuid4(),
         agent_type="claude-code",
         name="worker",
+        runtime="modal",
     )
     project = SimpleNamespace(id=uuid.uuid4())
 

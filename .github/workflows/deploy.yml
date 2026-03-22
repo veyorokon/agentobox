@@ -217,19 +217,36 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Sync deploy artifacts
+        env:
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'agentobox' }}
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
-          username: ubuntu
+          username: ${{ env.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           source: docker-compose.prod.yml,Caddyfile
           target: /opt/agentobox
+
+      - name: Verify deploy access
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ vars.DEPLOY_USER || 'agentobox' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euxo pipefail
+            whoami
+            test "$(whoami)" = "${{ vars.DEPLOY_USER || 'agentobox' }}"
+            id
+            mkdir -p /opt/agentobox
+            test -w /opt/agentobox
+            docker ps >/dev/null
 
       - name: Write .env from APP_SECRETS + APP_CONFIG
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
-          username: ubuntu
+          username: ${{ vars.DEPLOY_USER || 'agentobox' }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: _APP_CONFIG,_APP_SECRETS,_BACKEND_IMAGE,_DASHBOARD_IMAGE,_MODAL_AGENT_IMAGE
           script: |
@@ -270,7 +287,7 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
-          username: ubuntu
+          username: ${{ vars.DEPLOY_USER || 'agentobox' }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/agentobox
@@ -340,6 +357,7 @@ jobs:
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
+          ABOX_TEST_AGENT_MODEL: ${{ fromJson(vars.APP_CONFIG).ABOX_TEST_AGENT_MODEL || 'claude-haiku-4-5-20251001' }}
           DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
         run: |
           mkdir -p diagnosis-artifacts
@@ -376,6 +394,7 @@ jobs:
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
           ABOX_TEST_PASS: ${{ fromJson(secrets.APP_SECRETS).SMOKE_TEST_PASS || 'demo' }}
           SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
+          ABOX_TEST_AGENT_MODEL: ${{ fromJson(vars.APP_CONFIG).ABOX_TEST_AGENT_MODEL || 'claude-haiku-4-5-20251001' }}
           DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
         run: |
           mkdir -p diagnosis-artifacts

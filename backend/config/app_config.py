@@ -129,6 +129,8 @@ class AppConfig(_EnvSettings):
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     version: str = Field(default="unknown", alias="VERSION")
     environment: str = Field(default="dev", alias="ENVIRONMENT")
+    smoke_test_user: str = Field(default="demo", alias="SMOKE_TEST_USER")
+    test_agent_model: str = Field(default="", alias="ABOX_TEST_AGENT_MODEL")
 
     django: DjangoConfig = Field(default_factory=DjangoConfig)
     oauth: OAuthConfig = Field(default_factory=OAuthConfig)

@@ -7,7 +7,15 @@ Fails loud on GraphQL errors — no silent fallbacks.
 
 from __future__ import annotations
 
+import os
+
 import httpx
+
+
+DEFAULT_TEST_AGENT_MODEL = os.environ.get(
+    "ABOX_TEST_AGENT_MODEL",
+    "claude-haiku-4-5-20251001",
+)
 
 
 class GraphQLError(Exception):
@@ -86,7 +94,7 @@ class AboxGraphQL:
             "input": {
                 "projectId": project_id,
                 "name": name,
-                "model": kwargs.get("model", "claude-sonnet-4-5-20250929"),
+                "model": kwargs.get("model", DEFAULT_TEST_AGENT_MODEL),
                 "workspacePath": kwargs.get("workspacePath", ""),
                 "instructions": kwargs.get("instructions", ""),
                 "role": kwargs.get("role", "worker"),
