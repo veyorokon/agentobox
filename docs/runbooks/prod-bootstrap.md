@@ -326,8 +326,11 @@ On the target host:
 
 Promotion path:
 
-1. merge `dev -> main`
-2. watch `deploy.yml` on `main`
+1. let the target `dev` deploy finish green
+2. run `bin/write-release-manifest` on `dev`
+3. commit only `.github/release-manifest.json`
+4. open / merge `dev -> main`
+5. watch `deploy.yml` on `main`
 
 Required gates:
 

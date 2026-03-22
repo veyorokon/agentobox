@@ -6,10 +6,17 @@
 #
 # Image identity contract:
 #   dev:  builds images, writes canonical release manifest to GHCR
-#   main: resolves promoted dev manifest from GHCR, does not rebuild
+#   main: resolves an explicit promoted manifest ref, does not rebuild
 #
 # The manifest is keyed by the dev commit SHA (immutable). A dev-latest
 # convenience tag is also published but is not the promotion source.
+#
+# Promotion handoff contract:
+#   1. let a dev deploy finish green
+#   2. write .github/release-manifest.json pointing at that dev manifest
+#   3. commit only that file on dev
+#   4. open/merge dev -> main
+#   5. main deploy reads that exact manifest ref and promotes it
 #
 # Release tags are bookkeeping only. They do not deploy environments.
 # Promotion happens only via branch merges:
@@ -61,12 +68,44 @@ env:
   MANIFEST_IMAGE: ghcr.io/veyorokon/agentobox-release-manifest
 
 jobs:
+  changes:
+    name: Detect release metadata-only push
+    runs-on: ubuntu-latest
+    outputs:
+      deploy-required: ${{ steps.detect.outputs.deploy-required }}
+      release-metadata-only: ${{ steps.detect.outputs.release-metadata-only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - id: detect
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          DEPLOY_REQUIRED=true
+          RELEASE_METADATA_ONLY=false
+
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "dev" ]; then
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              mapfile -t files < <(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+              if [ "${#files[@]}" -eq 1 ] && [ "${files[0]}" = ".github/release-manifest.json" ]; then
+                DEPLOY_REQUIRED=false
+                RELEASE_METADATA_ONLY=true
+              fi
+            fi
+          fi
+
+          echo "deploy-required=${DEPLOY_REQUIRED}" >> "$GITHUB_OUTPUT"
+          echo "release-metadata-only=${RELEASE_METADATA_ONLY}" >> "$GITHUB_OUTPUT"
+
   # ─── Validate Secrets ─────────────────────────────────────────────
   # Runs in parallel with tests. Fails fast if APP_SECRETS is missing
   # required keys. Uses pydantic AppConfig as the schema — no hardcoded
   # key list to maintain. If app_config imports, all required vars exist.
   validate-secrets:
     name: Validate Secrets
+    needs: changes
+    if: needs.changes.outputs.deploy-required == 'true'
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -107,6 +146,8 @@ jobs:
 
   # ─── Test ──────────────────────────────────────────────────────────
   ci:
+    if: needs.changes.outputs.deploy-required == 'true'
+    needs: changes
     permissions:
       contents: read
       pull-requests: read
@@ -118,7 +159,8 @@ jobs:
   # Only runs on dev (or when allow_rebuild is set on manual dispatch).
   agent-image:
     name: Agent Image
-    if: github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild)
+    needs: [changes]
+    if: needs.changes.outputs.deploy-required == 'true' && (github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild))
     permissions:
       contents: read
       packages: write
@@ -130,9 +172,9 @@ jobs:
   # main promotes the exact dev artifacts via the manifest instead.
   build:
     name: Build & Push Images
-    if: github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild)
+    if: needs.changes.outputs.deploy-required == 'true' && (github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild))
     runs-on: ubuntu-latest
-    needs: validate-secrets
+    needs: [changes, validate-secrets]
     permissions:
       contents: read
       packages: write
@@ -215,21 +257,16 @@ jobs:
   #
   # dev path:  assembles manifest from build + agent-image outputs,
   #            pushes to GHCR keyed by commit SHA (immutable) + dev-latest.
-  # main path: resolves the promoted dev manifest from GHCR using the
-  #            merge commit's second parent (the dev HEAD that was merged).
+  # main path: reads .github/release-manifest.json and resolves the exact
+  #            promoted dev manifest ref recorded in the release PR.
   # rebuild path: allow_rebuild=true on main builds fresh images instead
   #               of promoting. Manifest records provenance as "rebuild".
   #
   # All downstream jobs consume image refs from this job's outputs.
-  #
-  # TEMPORARY: HEAD^2 resolution assumes merge-commit PRs for dev→main.
-  # If the merge strategy changes (rebase, squash), this seam breaks.
-  # Follow-up: replace with explicit manifest tag passed as input or
-  # resolved from a promotion API. Also: pin digests instead of tags.
   manifest:
     name: Release Manifest
-    needs: [build, agent-image]
-    if: always()
+    needs: [changes, build, agent-image]
+    if: needs.changes.outputs.deploy-required == 'true' && (always() || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -240,15 +277,10 @@ jobs:
       agent-managed-image: ${{ steps.output.outputs.agent-managed-image }}
       agent-desktop-image: ${{ steps.output.outputs.agent-desktop-image }}
       source-commit: ${{ steps.output.outputs.source-commit }}
-      manifest-tag: ${{ steps.output.outputs.manifest-tag }}
+      manifest-ref: ${{ steps.output.outputs.manifest-ref }}
       provenance: ${{ steps.output.outputs.provenance }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          # fetch-depth: 0 ensures HEAD^2 is available for merge-commit
-          # resolution on main. Shallow clones (depth 2) do not reliably
-          # include the second parent of a merge commit.
-          fetch-depth: 0
 
       - uses: docker/login-action@v4
         with:
@@ -312,43 +344,54 @@ jobs:
           cat manifest.json
 
           # Immutable tag keyed by commit SHA
-          oras push "${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}" manifest.json:application/json
+          MANIFEST_REF="${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}"
+          oras push "${MANIFEST_REF}" manifest.json:application/json
 
           # Convenience pointer — only publish dev-latest for actual dev builds
           if [ "$BRANCH" = "dev" ]; then
             oras push "${{ env.MANIFEST_IMAGE }}:dev-latest" manifest.json:application/json
           fi
 
-          echo "Pushed manifest as sha-${SHORT_SHA} (provenance: ${PROVENANCE})"
+          echo "Pushed manifest as ${MANIFEST_REF} (provenance: ${PROVENANCE})"
 
-      # ── Main path: resolve promoted dev manifest ──
-      # TEMPORARY: assumes merge-commit PRs. HEAD^2 gives the dev branch
-      # tip that was merged. Squash/rebase merges will fail here by design.
-      # Follow-up: pass manifest tag explicitly or resolve via API.
       - name: Resolve promoted manifest (main)
         if: github.ref_name == 'main' && needs.build.result == 'skipped'
         run: |
-          # Verify this is actually a merge commit (two parents)
-          PARENT_COUNT=$(git cat-file -p HEAD | grep -c '^parent ')
-          if [ "$PARENT_COUNT" -lt 2 ]; then
-            echo "::error::HEAD is not a merge commit (has ${PARENT_COUNT} parent(s))."
-            echo "::error::Promotion requires a merge-commit PR from dev."
-            echo "::error::If this was a squash/rebase merge, use allow_rebuild=true."
-            echo "::error::This is a known temporary limitation — see deploy.yml comments."
+          RELEASE_FILE=".github/release-manifest.json"
+          if [ ! -f "${RELEASE_FILE}" ]; then
+            echo "::error::${RELEASE_FILE} is missing."
+            echo "::error::Prepare a release manifest on dev before merging to main."
             exit 1
           fi
 
-          # Extract the dev commit from the merge commit's second parent
-          DEV_SHA=$(git rev-parse HEAD^2)
-          SHORT_SHA="${DEV_SHA::7}"
+          MANIFEST_REF=$(jq -r '.manifest_ref // empty' "${RELEASE_FILE}")
+          RELEASE_SOURCE_COMMIT=$(jq -r '.source_commit // empty' "${RELEASE_FILE}")
+          if [ -z "${MANIFEST_REF}" ] || [ -z "${RELEASE_SOURCE_COMMIT}" ]; then
+            echo "::error::${RELEASE_FILE} must contain manifest_ref and source_commit."
+            exit 1
+          fi
 
-          echo "Resolving manifest for dev commit: ${DEV_SHA} (sha-${SHORT_SHA})"
-
-          oras pull "${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}" || {
-            echo "::error::No manifest found at ${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}."
-            echo "::error::Dev may not have deployed commit ${DEV_SHA}. Deploy dev first."
+          echo "Resolving promoted manifest: ${MANIFEST_REF}"
+          oras pull "${MANIFEST_REF}" || {
+            echo "::error::No manifest found at ${MANIFEST_REF}."
+            echo "::error::Dev may not have published the referenced manifest yet."
             exit 1
           }
+
+          MANIFEST_SOURCE_COMMIT=$(jq -r '.source_commit' manifest.json)
+          MANIFEST_SOURCE_BRANCH=$(jq -r '.source_branch' manifest.json)
+          MANIFEST_PROVENANCE=$(jq -r '.provenance' manifest.json)
+
+          if [ "${MANIFEST_SOURCE_COMMIT}" != "${RELEASE_SOURCE_COMMIT}" ]; then
+            echo "::error::Release file source_commit (${RELEASE_SOURCE_COMMIT}) does not match manifest source_commit (${MANIFEST_SOURCE_COMMIT})."
+            exit 1
+          fi
+
+          if [ "${MANIFEST_SOURCE_BRANCH}" != "dev" ] || [ "${MANIFEST_PROVENANCE}" != "build" ]; then
+            echo "::error::Promoted manifests must come from a normal dev build."
+            echo "::error::Observed source_branch=${MANIFEST_SOURCE_BRANCH} provenance=${MANIFEST_PROVENANCE}."
+            exit 1
+          fi
 
           echo "Resolved manifest (provenance: $(jq -r .provenance manifest.json)):"
           cat manifest.json
@@ -367,7 +410,13 @@ jobs:
           echo "agent-managed-image=$(jq -r .agent_managed_image manifest.json)" >> "$GITHUB_OUTPUT"
           echo "agent-desktop-image=$(jq -r .agent_desktop_image manifest.json)" >> "$GITHUB_OUTPUT"
           echo "source-commit=$(jq -r .source_commit manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "manifest-tag=sha-$(jq -r '.source_commit[:7]' manifest.json)" >> "$GITHUB_OUTPUT"
+          if [ "${{ needs.build.result }}" = "success" ]; then
+            echo "manifest-ref=${{ env.MANIFEST_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_name }}" = "main" ] && [ "${{ needs.build.result }}" = "skipped" ]; then
+            echo "manifest-ref=$(jq -r '.manifest_ref' .github/release-manifest.json)" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest-ref=${{ env.MANIFEST_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
           echo "provenance=$(jq -r .provenance manifest.json)" >> "$GITHUB_OUTPUT"
 
       - name: Upload manifest artifact
@@ -380,7 +429,8 @@ jobs:
   # ─── Deploy ────────────────────────────────────────────────────────
   agent-modal-contract:
     name: Agent Modal Contract (${{ github.ref_name }})
-    needs: [validate-secrets, ci, manifest]
+    if: needs.changes.outputs.deploy-required == 'true'
+    needs: [changes, validate-secrets, ci, manifest]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -402,7 +452,8 @@ jobs:
 
   deploy:
     name: Deploy (${{ github.ref_name }})
-    needs: [manifest, ci, agent-modal-contract]
+    if: needs.changes.outputs.deploy-required == 'true'
+    needs: [changes, manifest, ci, agent-modal-contract]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -533,7 +584,8 @@ jobs:
   # Modal credentials (dev Modal env for dev, prod Modal env for main).
   agent-bootstrap:
     name: Agent Bootstrap (${{ github.ref_name }})
-    needs: deploy
+    if: needs.changes.outputs.deploy-required == 'true'
+    needs: [changes, deploy]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -572,7 +624,8 @@ jobs:
   # deterministic round-trip message.
   agent-smoke:
     name: Agent Smoke (${{ github.ref_name }})
-    needs: agent-bootstrap
+    if: needs.changes.outputs.deploy-required == 'true'
+    needs: [changes, agent-bootstrap]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -608,6 +661,7 @@ jobs:
     name: summary
     if: always()
     needs:
+      - changes
       - validate-secrets
       - ci
       - agent-image
@@ -636,6 +690,20 @@ jobs:
             [bootstrap]="${{ needs.agent-bootstrap.result }}"
             [smoke]="${{ needs.agent-smoke.result }}"
           )
+
+          if [ "${{ needs.changes.outputs.deploy-required }}" != "true" ]; then
+            echo "detail=RELEASE MANIFEST UPDATED" >> "$GITHUB_OUTPUT"
+            echo "overall=success" >> "$GITHUB_OUTPUT"
+            echo "mode=release-metadata-update" >> "$GITHUB_OUTPUT"
+            echo "blocked_at=—" >> "$GITHUB_OUTPUT"
+            echo "next_debug_target=—" >> "$GITHUB_OUTPUT"
+            {
+              echo "gate_rows<<GHEOF"
+              echo "| release-metadata | \`success\` | .github/release-manifest.json | open dev -> main PR |"
+              echo "GHEOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Find first failure in pipeline order.
           # Skipped jobs (build/image on main) are not failures.
@@ -743,7 +811,7 @@ jobs:
             echo "| Deploy user | \`${{ vars.DEPLOY_USER || 'agentobox' }}\` |"
             echo "| Modal environment | \`${{ github.ref_name }}\` |"
             echo "| Source commit | \`${{ needs.manifest.outputs.source-commit || '—' }}\` |"
-            echo "| Manifest tag | \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` |"
+            echo "| Manifest ref | \`${{ needs.manifest.outputs.manifest-ref || '—' }}\` |"
             echo
             echo "| Image | Ref |"
             echo "|-------|-----|"

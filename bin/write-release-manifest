@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Seam: dev artifact build -> explicit prod promotion handoff.
+# Contract: write the exact immutable GHCR release manifest ref that main must
+# promote, without inferring release identity from git ancestry.
+# Proves: the release metadata file is well-formed for the chosen source commit.
+# Does not prove: that the referenced manifest exists in GHCR; CI/deploy verify that.
+#
+# Usage:
+#   bin/write-release-manifest            # use current HEAD on dev
+#   bin/write-release-manifest <sha>      # use an explicit source commit
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RELEASE_FILE="${ROOT_DIR}/.github/release-manifest.json"
+MANIFEST_IMAGE="ghcr.io/veyorokon/agentobox-release-manifest"
+
+SOURCE_COMMIT="${1:-$(git -C "${ROOT_DIR}" rev-parse HEAD)}"
+SOURCE_COMMIT="$(git -C "${ROOT_DIR}" rev-parse "${SOURCE_COMMIT}")"
+SHORT_SHA="${SOURCE_COMMIT:0:7}"
+
+python3 - <<'PY' "${RELEASE_FILE}" "${MANIFEST_IMAGE}" "${SOURCE_COMMIT}" "${SHORT_SHA}"
+import json
+import pathlib
+import sys
+
+release_file = pathlib.Path(sys.argv[1])
+manifest_image = sys.argv[2]
+source_commit = sys.argv[3]
+short_sha = sys.argv[4]
+
+payload = {
+    "schema_version": "1",
+    "source_commit": source_commit,
+    "manifest_ref": f"{manifest_image}:sha-{short_sha}",
+}
+
+release_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+print(f"wrote {release_file}")
+print(json.dumps(payload, indent=2))
+PY

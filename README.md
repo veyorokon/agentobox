@@ -184,9 +184,10 @@ make up                    # docker compose up -d
 Automated via GitHub Actions (`deploy.yml`). Pushes to `dev` deploy to `dev.agentobox.com`; pushes to `main` deploy to `agentobox.com`.
 
 ```
-PR → dev:   ci.yml (fast + smoke)
-merge dev:  deploy → dev environment → agent bootstrap + smoke
-merge main: deploy → prod environment → agent bootstrap + smoke
+PR → dev:              ci.yml (fast + smoke)
+merge dev:             deploy → dev environment → agent bootstrap + smoke
+prepare release:       bin/write-release-manifest && commit .github/release-manifest.json
+PR / merge dev -> main: ci.yml validates the release handoff, then main deploy promotes that exact manifest
 ```
 
 Images are built, pushed to GHCR with sha-pinned tags, and deployed to the target server via SSH. Caddy handles TLS via Let's Encrypt.
@@ -195,11 +196,11 @@ Images are built, pushed to GHCR with sha-pinned tags, and deployed to the targe
 
 Promotion is branch-driven:
 - merge to `dev` → deploy `dev`
-- merge to `main` → deploy prod
+- merge to `main` → deploy prod using the explicit manifest ref in `.github/release-manifest.json`
 
 Version tags/releases are bookkeeping only right now; they do not trigger deploys.
 
-Images are built and pushed to GHCR on every push to `dev` or `main` (`:branch`, `:sha-xxx`). Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify the live environment.
+Images are built and pushed to GHCR on pushes to `dev` (`:branch`, `:sha-xxx`). `main` promotes the exact dev artifact set recorded in `.github/release-manifest.json`; it does not infer release identity from merge ancestry. Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify the live environment.
 
 ## Make Commands
 
