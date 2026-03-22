@@ -4,6 +4,11 @@
 #   dev  branch → dev  environment (dev.agentobox.com)
 #   main branch → prod environment (agentobox.com)
 #
+# Release tags are bookkeeping only. They do not deploy environments.
+# Promotion happens only via branch merges:
+#   dev  -> staging/dev
+#   main -> production
+#
 # Flow:
 #   PR → dev:  ci.yml
 #   merge dev: deploy to dev → agent bootstrap against dev.agentobox.com
@@ -27,7 +32,6 @@ name: Deploy
 on:
   push:
     branches: [dev, main]
-    tags: ["v*"]
     paths-ignore:
       - "**.md"
       - "docs/**"

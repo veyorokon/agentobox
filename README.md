@@ -193,7 +193,13 @@ Images are built, pushed to GHCR with sha-pinned tags, and deployed to the targe
 
 ### CI/CD
 
-Images are built and pushed to GHCR on every push to `dev` or `main` (`:branch`, `:sha-xxx`) and on version tags (`:latest`, `:v1.2.3`). Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify the live environment.
+Promotion is branch-driven:
+- merge to `dev` → deploy `dev`
+- merge to `main` → deploy prod
+
+Version tags/releases are bookkeeping only right now; they do not trigger deploys.
+
+Images are built and pushed to GHCR on every push to `dev` or `main` (`:branch`, `:sha-xxx`). Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify the live environment.
 
 ## Make Commands
 
