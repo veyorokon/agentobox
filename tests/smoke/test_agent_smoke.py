@@ -56,11 +56,14 @@ def _collect_failure_artifacts(gql, docker_ops, agent_id, agent_name, health_url
     lines = ["\n=== SMOKE TEST FAILURE ARTIFACTS ===\n"]
 
     # 1. Agent state from backend
-    try:
-        agent = gql.query_agent(agent_id)
-        lines.append(f"Agent state: {json.dumps(agent, indent=2)}")
-    except Exception as exc:
-        lines.append(f"Agent query failed: {exc}")
+    if agent_id:
+        try:
+            agent = gql.query_agent(agent_id)
+            lines.append(f"Agent state: {json.dumps(agent, indent=2)}")
+        except Exception as exc:
+            lines.append(f"Agent query failed: {exc}")
+    else:
+        lines.append("Agent ID not available — agent may not have been created")
 
     # 2. Health endpoint
     if health_url:
@@ -163,20 +166,24 @@ class TestAgentSmoke:
                 description=f"team-lead for project {project_id} ready",
             )
         except Exception:
-            # Emit structured diagnosis before failing
+            # Capture the current agent row — it exists but didn't reach idle.
+            # Don't throw away the ID just because the agent is stuck.
+            current_agent = _team_lead_ready()
+            current_id = current_agent.get("id", "") if current_agent else ""
+
             _build_smoke_diagnosis(
-                gql, docker_ops, "", "team-lead", project_id,
+                gql, docker_ops, current_id, "team-lead", project_id,
                 seam="agent_boot",
                 contract="team-lead must reach idle with relay connected",
                 observed_steps={
-                    "team_lead_exists": _team_lead_ready() is not None,
+                    "team_lead_exists": current_agent is not None,
                     "status_idle": False,
                     "relay_connected": False,
                 },
                 next_debug_target="check agent lifecycle attempts and container logs",
             )
             artifacts = _collect_failure_artifacts(
-                gql, docker_ops, "", "team-lead", ""
+                gql, docker_ops, current_id, "team-lead", ""
             )
             pytest.fail(
                 f"Team lead failed to reach idle within {BOOT_TIMEOUT_S}s.{artifacts}"
