@@ -234,6 +234,13 @@ async def capture_incident_bundle(
     except Exception as exc:  # intentional: best-effort — supplementary diagnosis field
         log.debug("incident.source_failed", source="desired_theme", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
 
+    # -- Derive session_id: prefer agent model, fall back to runtime projection --
+    runtime_session_id = ""
+    if isinstance(runtime_status, dict):
+        rt = runtime_status.get("runtime", {})
+        if isinstance(rt, dict):
+            runtime_session_id = rt.get("session_id", "") or ""
+
     # -- Structural diagnosis layers --
     desired = _extract_desired(agent, desired_theme_fingerprint)
     observed = _extract_observed(agent, runtime_status)
@@ -257,7 +264,7 @@ async def capture_incident_bundle(
             "agent_id": agent_id,
             "project_id": project_id,
             "sandbox_id": agent.sandbox_id or "",
-            "session_id": agent.session_id or "",
+            "session_id": agent.session_id or runtime_session_id,
         },
         "desired": desired,
         "observed": observed,

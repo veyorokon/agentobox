@@ -47,7 +47,8 @@ export function IncidentModal({ open, onClose, agentId, agentName }: IncidentMod
       })
       const incidentId = data?.captureIncident?.incidentId
       if (incidentId) {
-        toast.success(`Incident captured: ${incidentId.slice(0, 8)}`)
+        navigator.clipboard.writeText(incidentId).catch(() => {})
+        toast.success(`Incident ${incidentId.slice(0, 8)} captured — ID copied`)
       }
       onClose()
     } catch (err: any) {

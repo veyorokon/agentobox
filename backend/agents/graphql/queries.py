@@ -330,6 +330,33 @@ class AgentQuery:
         return result
 
     @strawberry.field
+    async def agent_incidents(
+        self, agent_id: ID, info: strawberry.types.Info, limit: int = 20,
+    ) -> list[IncidentCaptureType]:
+        """Recent incidents for one agent, newest first."""
+        from agents.models import IncidentCapture
+
+        agent = await authorize_agent(info, agent_id)
+        limit = min(limit, 50)
+
+        return [
+            IncidentCaptureType(
+                id=strawberry.ID(str(inc.id)),
+                agent_id=strawberry.ID(str(inc.agent_id)),
+                project_id=strawberry.ID(str(inc.project_id)),
+                note=inc.note,
+                screenshot_url=inc.screenshot_url,
+                window_minutes=inc.window_minutes,
+                bundle=inc.bundle,
+                collection_errors=inc.collection_errors,
+                created_at=inc.created_at.isoformat(),
+            )
+            async for inc in IncidentCapture.objects.filter(
+                agent_id=agent.id,
+            ).order_by("-created_at")[:limit]
+        ]
+
+    @strawberry.field
     async def incident(
         self, incident_id: ID, info: strawberry.types.Info,
     ) -> IncidentCaptureType | None:

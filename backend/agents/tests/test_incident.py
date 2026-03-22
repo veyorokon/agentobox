@@ -479,3 +479,44 @@ async def test_raw_support_bundle_truncates_at_read_time(setup_project_with_agen
         if artifact["content"] is not None:
             assert len(artifact["content"].encode()) <= MAX_RAW_FILE_BYTES
             assert artifact["truncated"] is True
+
+
+@pytest.fixture
+def setup_agent_empty_session():
+    """Agent with empty session_id but populated runtime_status_projection."""
+    owner = User.objects.create_user(
+        username=f"incident-sessid-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid Session Test", owner=owner)
+    agent = Agent.objects.create(
+        name="sessid-fallback-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        session_id="",
+        runtime_status_projection={
+            "startup_stage": "managed_ready",
+            "runtime": {"session_id": "live-sess-456", "client_active": True},
+        },
+    )
+    return agent
+
+
+async def test_session_id_falls_back_to_runtime_status(setup_agent_empty_session):
+    """ids.session_id uses runtime projection when agent model field is empty."""
+    agent = setup_agent_empty_session
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(agent)
+
+    # Fallback: runtime projection session_id used when model field empty
+    assert bundle["ids"]["session_id"] == "live-sess-456"
+
+    # Now verify model field takes precedence when populated
+    agent.session_id = "model-sess-789"
+    await agent.asave(update_fields=["session_id"])
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle2, _ = await capture_incident_bundle(agent)
+
+    assert bundle2["ids"]["session_id"] == "model-sess-789"
