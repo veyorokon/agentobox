@@ -4,13 +4,12 @@ from strawberry import ID
 from strawberry.scalars import JSON
 from strawberry.types import Info
 
+from agents.utils import sanitize_name as _sanitize_name
 from agents.services.themes import VALID_THEME_KEYS, is_valid_theme_value
 from projects.graphql.types import ProjectType
 
 log = structlog.get_logger("projects.mutations")
-
-
-from agents.utils import sanitize_name as _sanitize_name
+DEFAULT_TEST_AGENT_MODEL = "claude-haiku-4-5-20251001"
 
 
 @strawberry.input
@@ -63,9 +62,14 @@ class ProjectMutation:
         # Runs in background via create_agent's spawn_logged_task so the
         # mutation returns immediately.
         from agents.services.lifecycle import spawn_team_lead
+        from config.app_config import app_config
+
+        model_override = ""
+        if user.username == app_config.smoke_test_user:
+            model_override = app_config.test_agent_model.strip() or DEFAULT_TEST_AGENT_MODEL
 
         try:
-            await spawn_team_lead(str(project.id))
+            await spawn_team_lead(str(project.id), model_override=model_override)
         except Exception:
             log.exception("create_project.team_lead_failed", project_id=str(project.id))
             # Preserve the failed project as a tombstone for audit/debugging,

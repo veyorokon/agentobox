@@ -74,6 +74,7 @@ Required secrets:
 Required variables:
 
 - `APP_CONFIG`
+- `DEPLOY_USER`
 
 Optional:
 
@@ -258,6 +259,12 @@ gh variable list --env prod
 gh secret list --env prod
 ```
 
+Set the canonical deploy user explicitly:
+
+```bash
+gh variable set DEPLOY_USER --env prod --body 'agentobox'
+```
+
 ### 6. Configure OAuth providers for prod
 
 #### Google
@@ -282,6 +289,24 @@ gh secret list --env prod
 - confirm the tokens in `APP_SECRETS` have access to that environment
 - confirm `MODAL_ENVIRONMENT` matches the intended prod environment name
 - confirm the agent image ref path is valid for prod deploys
+- create the `ghcr-secret` secret in the prod Modal environment so Modal can
+  pull private GHCR agent images
+
+Create `ghcr-secret` in Modal `main`:
+
+```bash
+modal secret create --env main --force ghcr-secret \
+  REGISTRY_USERNAME=<github-username> \
+  REGISTRY_PASSWORD=<github-packages-token>
+```
+
+`ghcr-secret` must contain:
+
+- `REGISTRY_USERNAME`
+- `REGISTRY_PASSWORD`
+
+Without this, `Agent Modal Contract (main)` and managed Modal runtime creation
+will fail with `Secret 'ghcr-secret' not found`.
 
 ### 8. Verify prod host prerequisites
 
@@ -290,7 +315,12 @@ On the target host:
 - Docker and Docker Compose/plugin available
 - deployment directory exists or can be created:
   - `/opt/agentobox`
-- SSH user from GitHub Actions can write deploy artifacts there
+- SSH user from GitHub Actions is the canonical deploy user:
+  - `agentobox`
+- `agentobox` can:
+  - SSH in with the configured key
+  - run `docker ps`
+  - write to `/opt/agentobox`
 
 ### 9. Run first prod promotion
 

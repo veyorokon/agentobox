@@ -24,6 +24,7 @@ Container provisioning sequence:
     relay self-starts (polls for .relay_env) → spawn tmux log tail
 """
 import json
+import os
 import secrets
 
 import structlog
@@ -72,6 +73,10 @@ ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 ERR_LIFECYCLE_RUNTIME_LIMBO = "ERR-LIFECYCLE-RUNTIME-LIMBO"
 
 log = structlog.get_logger("abox.lifecycle")
+
+
+def _smoke_test_model_override() -> str:
+    return app_config.test_agent_model.strip() or os.environ.get("ABOX_TEST_AGENT_MODEL", "").strip()
 
 
 
@@ -1200,7 +1205,7 @@ def _build_agent_env(agent, project) -> dict[str, str]:
     }
 
 
-async def spawn_team_lead(project_id: str) -> None:
+async def spawn_team_lead(project_id: str, *, model_override: str = "") -> None:
     """Create and deploy a team-lead agent for a newly created project.
 
     Uses the "solo" template from the claude-code adapter's team configs.
@@ -1218,11 +1223,13 @@ async def spawn_team_lead(project_id: str) -> None:
     if lead_config.get("mcp_servers"):
         mcp_config = adapter.resolve_mcp_servers(lead_config["mcp_servers"])
 
+    effective_model = model_override or _smoke_test_model_override() or lead_config["model"]
+
     agent = await create_agent(
         project_id=project_id,
         name=lead_config["name"],
         runtime_name=app_config.agent.runtime,
-        model=lead_config["model"],
+        model=effective_model,
         mcp_servers=mcp_config,
         workspace_path="",
         instructions=lead_config["instructions"],

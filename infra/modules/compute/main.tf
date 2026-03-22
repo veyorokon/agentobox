@@ -39,13 +39,18 @@ variable "region" {
 # --- User Data (bootstrap Docker + Caddy) ---
 
 locals {
+  deploy_user = "agentobox"
   user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
 
     # Docker
     curl -fsSL https://get.docker.com | sh
-    usermod -aG docker root
+    groupadd -f docker
+
+    # Canonical deploy user for CI/CD and operator access
+    id -u ${local.deploy_user} >/dev/null 2>&1 || useradd -m -s /bin/bash ${local.deploy_user}
+    usermod -aG docker ${local.deploy_user}
 
     # Docker Compose plugin
     apt-get install -y docker-compose-plugin
@@ -57,8 +62,14 @@ locals {
     apt-get update
     apt-get install -y caddy
 
+    # Reuse the droplet's injected SSH key for the deploy user.
+    if [ -f /root/.ssh/authorized_keys ]; then
+      install -d -m 0700 -o ${local.deploy_user} -g ${local.deploy_user} /home/${local.deploy_user}/.ssh
+      install -m 0600 -o ${local.deploy_user} -g ${local.deploy_user} /root/.ssh/authorized_keys /home/${local.deploy_user}/.ssh/authorized_keys
+    fi
+
     # App directory
-    mkdir -p /opt/agentobox
+    install -d -m 0775 -o ${local.deploy_user} -g docker /opt/agentobox
   EOF
 }
 
@@ -144,4 +155,8 @@ output "public_ip" {
 
 output "ipv4_address" {
   value = digitalocean_droplet.app.ipv4_address
+}
+
+output "deploy_user" {
+  value = local.deploy_user
 }

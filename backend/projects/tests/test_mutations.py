@@ -5,6 +5,7 @@ from django.test import RequestFactory
 from unittest.mock import AsyncMock, patch
 
 from agents.models import Agent, AgentStatus
+from config.app_config import app_config
 from projects.models import Project
 from schema import schema
 
@@ -97,3 +98,79 @@ async def test_deleted_project_is_hidden_from_project_queries():
         "projects": [{"id": str(live.id), "name": "Live Project"}]
     }
     assert deleted.id != live.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_create_project_uses_haiku_for_smoke_user_team_lead():
+    user = await sync_to_async(
+        get_user_model().objects.create_user, thread_sensitive=True
+    )(username="demo", password="test")
+
+    request = RequestFactory().post("/graphql")
+    request.user = user
+
+    old_smoke_user = app_config.smoke_test_user
+    old_test_model = app_config.test_agent_model
+    app_config.smoke_test_user = "demo"
+    app_config.test_agent_model = ""
+    try:
+        with patch("agents.services.lifecycle.spawn_team_lead", new_callable=AsyncMock) as mock_spawn:
+            result = await schema.execute(
+                """
+                mutation ($input: CreateProjectInput!) {
+                    createProject(input: $input) {
+                        id
+                        name
+                    }
+                }
+                """,
+                variable_values={"input": {"name": "Smoke Project", "description": ""}},
+                context_value={"request": request},
+            )
+    finally:
+        app_config.smoke_test_user = old_smoke_user
+        app_config.test_agent_model = old_test_model
+
+    assert result.errors is None
+    assert result.data["createProject"]["name"] == "Smoke Project"
+    mock_spawn.assert_awaited_once()
+    assert mock_spawn.await_args.kwargs["model_override"] == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_create_project_does_not_override_team_lead_model_for_normal_user():
+    user = await sync_to_async(
+        get_user_model().objects.create_user, thread_sensitive=True
+    )(username="alice", password="test")
+
+    request = RequestFactory().post("/graphql")
+    request.user = user
+
+    old_smoke_user = app_config.smoke_test_user
+    old_test_model = app_config.test_agent_model
+    app_config.smoke_test_user = "demo"
+    app_config.test_agent_model = ""
+    try:
+        with patch("agents.services.lifecycle.spawn_team_lead", new_callable=AsyncMock) as mock_spawn:
+            result = await schema.execute(
+                """
+                mutation ($input: CreateProjectInput!) {
+                    createProject(input: $input) {
+                        id
+                        name
+                    }
+                }
+                """,
+                variable_values={"input": {"name": "Normal Project", "description": ""}},
+                context_value={"request": request},
+            )
+    finally:
+        app_config.smoke_test_user = old_smoke_user
+        app_config.test_agent_model = old_test_model
+
+    assert result.errors is None
+    assert result.data["createProject"]["name"] == "Normal Project"
+    mock_spawn.assert_awaited_once()
+    assert mock_spawn.await_args.kwargs["model_override"] == ""
