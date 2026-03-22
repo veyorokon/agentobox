@@ -68,6 +68,16 @@ locals {
       install -m 0600 -o ${local.deploy_user} -g ${local.deploy_user} /root/.ssh/authorized_keys /home/${local.deploy_user}/.ssh/authorized_keys
     fi
 
+    # Harden the SSH admission path for CI/CD and operator access under
+    # internet background noise. The stock defaults can randomly drop new
+    # connections when the daemon is already handling unauthenticated probes.
+    cat >/etc/ssh/sshd_config.d/60-agentobox.conf <<'SSHEOF'
+    MaxStartups 50:30:200
+    MaxSessions 50
+    LoginGraceTime 30
+    SSHEOF
+    systemctl restart ssh
+
     # App directory
     install -d -m 0775 -o ${local.deploy_user} -g docker /opt/agentobox
   EOF

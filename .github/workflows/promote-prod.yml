@@ -164,88 +164,102 @@ jobs:
     environment: prod
     steps:
       - uses: actions/checkout@v5
-      - name: Sync deploy artifacts
+      - name: Prepare SSH client
         env:
-          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'agentobox' }}
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: docker-compose.prod.yml,Caddyfile
-          target: /opt/agentobox
-      - name: Verify deploy access
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ vars.DEPLOY_USER || 'agentobox' }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            set -euxo pipefail
-            whoami
-            test "$(whoami)" = "${{ vars.DEPLOY_USER || 'agentobox' }}"
-            id
-            mkdir -p /opt/agentobox
-            test -w /opt/agentobox
-            : > /opt/agentobox/.deploy-preflight
-            rm -f /opt/agentobox/.deploy-preflight
-            docker ps >/dev/null
-      - name: Write .env from APP_SECRETS + APP_CONFIG
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ vars.DEPLOY_USER || 'agentobox' }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: _APP_CONFIG,_APP_SECRETS,_BACKEND_IMAGE,_DASHBOARD_IMAGE,_MODAL_AGENT_IMAGE
-          script: |
-            mkdir -p /opt/agentobox
-            rm -f /opt/agentobox/.env
-            python3 -c "
-            import json, os
-
-            merged = {}
-            for env_key in ('_APP_CONFIG', '_APP_SECRETS'):
-                raw = os.environ.get(env_key, '')
-                if raw.strip():
-                    merged.update(json.loads(raw))
-
-            dynamic_refs = {
-                'BACKEND_IMAGE': os.environ.get('_BACKEND_IMAGE', '').strip(),
-                'DASHBOARD_IMAGE': os.environ.get('_DASHBOARD_IMAGE', '').strip(),
-                'MODAL_AGENT_IMAGE': os.environ.get('_MODAL_AGENT_IMAGE', '').strip(),
-            }
-            for key, value in dynamic_refs.items():
-                if value:
-                    merged[key] = value
-
-            lines = []
-            for k, v in sorted(merged.items()):
-                safe = v.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))
-                lines.append(k + '=' + chr(39) + safe + chr(39))
-            print(chr(10).join(lines))
-            " > /opt/agentobox/.env
-        env:
-          _APP_CONFIG: ${{ vars.APP_CONFIG }}
-          _APP_SECRETS: ${{ secrets.APP_SECRETS }}
-          _BACKEND_IMAGE: ${{ needs.resolve-manifest.outputs.backend-image }}
-          _DASHBOARD_IMAGE: ${{ needs.resolve-manifest.outputs.dashboard-image }}
-          _MODAL_AGENT_IMAGE: ${{ needs.resolve-manifest.outputs.agent-desktop-image }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
       - name: Deploy to Server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ vars.DEPLOY_USER || 'agentobox' }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd /opt/agentobox
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            export VERSION=main
-            export MODAL_ENVIRONMENT=main
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-            docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
-            docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
-            docker image prune -f
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'agentobox' }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_CONFIG_JSON: ${{ vars.APP_CONFIG }}
+          APP_SECRETS_JSON: ${{ secrets.APP_SECRETS }}
+          BACKEND_IMAGE_REF: ${{ needs.resolve-manifest.outputs.backend-image }}
+          DASHBOARD_IMAGE_REF: ${{ needs.resolve-manifest.outputs.dashboard-image }}
+          MODAL_AGENT_IMAGE_REF: ${{ needs.resolve-manifest.outputs.agent-desktop-image }}
+        run: |
+          set -euo pipefail
+
+          remote="${DEPLOY_USER}@${DEPLOY_HOST}"
+          ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key)
+
+          ssh_retry() {
+            local attempt
+            local delay
+            for attempt in 1 2 3 4 5; do
+              if ssh "${ssh_opts[@]}" "$remote" "$1"; then
+                return 0
+              fi
+              delay=$((attempt * 10))
+              echo "SSH attempt ${attempt} failed; retrying in ${delay}s..."
+              sleep "${delay}"
+            done
+            echo "::error::SSH command failed after retries."
+            return 1
+          }
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          merged = {}
+          for env_key in ("APP_CONFIG_JSON", "APP_SECRETS_JSON"):
+              raw = os.environ.get(env_key, "").strip()
+              if raw:
+                  merged.update(json.loads(raw))
+
+          dynamic_refs = {
+              "BACKEND_IMAGE": os.environ["BACKEND_IMAGE_REF"].strip(),
+              "DASHBOARD_IMAGE": os.environ["DASHBOARD_IMAGE_REF"].strip(),
+              "MODAL_AGENT_IMAGE": os.environ["MODAL_AGENT_IMAGE_REF"].strip(),
+          }
+          for key, value in dynamic_refs.items():
+              if value:
+                  merged[key] = value
+
+          lines = []
+          for key, value in sorted(merged.items()):
+              safe = value.replace("'", "'\\''")
+              lines.append(f"{key}='{safe}'")
+          Path(".deploy.env").write_text("\n".join(lines) + "\n")
+          PY
+
+          upload_text_file() {
+            local local_path="$1"
+            local remote_path="$2"
+            local payload
+            payload="$(base64 < "$local_path" | tr -d '\n')"
+            ssh_retry "mkdir -p \"$(dirname "$remote_path")\" && printf '%s' '$payload' | base64 -d > \"$remote_path\""
+          }
+
+          upload_text_file docker-compose.prod.yml /opt/agentobox/docker-compose.prod.yml
+          upload_text_file Caddyfile /opt/agentobox/Caddyfile
+          upload_text_file .deploy.env /opt/agentobox/.env
+
+          ssh_retry "set -euxo pipefail
+          whoami
+          test \"\$(whoami)\" = \"${DEPLOY_USER}\"
+          id
+          mkdir -p /opt/agentobox
+          test -w /opt/agentobox
+          : > /opt/agentobox/.deploy-preflight
+          rm -f /opt/agentobox/.deploy-preflight
+          docker ps >/dev/null
+          cd /opt/agentobox
+          echo '${GITHUB_TOKEN}' | docker login ghcr.io -u '${GITHUB_ACTOR}' --password-stdin
+          export VERSION=main
+          export MODAL_ENVIRONMENT=main
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
+          docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
+          docker image prune -f"
       - name: Wait for backend startup
         run: |
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
