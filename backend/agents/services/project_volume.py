@@ -38,7 +38,7 @@ class AgentMachinePaths:
         return f"{self.mounted_root()}/{path}"
 
     def skill_dir(self, safe_name: str) -> str:
-        return f"home/agent/workspace/.claude/skills/{safe_name}"
+        return f"home/agent/.claude/skills/{safe_name}"
 
     def skill_file(self, safe_name: str) -> str:
         return f"{self.skill_dir(safe_name)}/SKILL.md"

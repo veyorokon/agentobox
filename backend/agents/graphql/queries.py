@@ -188,8 +188,8 @@ class AgentQuery:
     ) -> McpRegistrySearchResult:
         """Search official MCP registry + bundled servers.
 
-        Uses separator-normalized matching so "computer use" matches
-        "computer-use". Bundled matches appear first.
+        Uses separator-normalized matching so "play wright" matches
+        "playwright". Bundled matches appear first.
         """
         import re
         from agents.adapters import get_adapter

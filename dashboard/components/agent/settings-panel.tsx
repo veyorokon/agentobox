@@ -14,8 +14,6 @@ import type { Agent } from "@/lib/types"
 import { TagInput } from "@/components/shared/tag-input"
 import { Collapsible } from "@/components/ui/collapsible"
 import {
-  useRestartAgent,
-  useHardRestartAgent,
   useRemoveAgent,
   useUpdateAgentInstructions,
   useUpdateAgentConfig,
@@ -24,8 +22,7 @@ import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-m
 import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
 
 export interface SettingsPanelHandle {
-  restart: () => void
-  redeploy: () => void
+  applyChanges: () => void
 }
 
 export interface AgentSettingsPanelProps {
@@ -60,8 +57,6 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
   const mcpDirty = JSON.stringify(allMcpNames) !== JSON.stringify(agent.mcpServers)
   const dirty = model !== agent.model || instructions !== agent.instructions || JSON.stringify(agentTags) !== JSON.stringify(agent.tags) || mcpDirty
 
-  const restart = useRestartAgent()
-  const hardRestart = useHardRestartAgent()
   const remove = useRemoveAgent()
   const updateInstructions = useUpdateAgentInstructions()
   const updateConfig = useUpdateAgentConfig()
@@ -72,11 +67,8 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
 
-  const handleRestart = useCallback(async () => {
-    if (!dirty) {
-      restart(agent.id)
-      return
-    }
+  const handleApplyChanges = useCallback(() => {
+    if (!dirty) return
     if (instructions !== agent.instructions) {
       updateInstructions(agent.id, instructions)
     }
@@ -91,19 +83,12 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
     }
     if (Object.keys(configDelta).length > 0) {
       updateConfig(agent.id, configDelta)
-    } else {
-      hardRestart(agent.id)
     }
-  }, [dirty, restart, agent.id, agent.instructions, agent.model, agent.tags, instructions, model, agentTags, mcpDirty, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig, hardRestart])
-
-  const handleRedeploy = useCallback(() => {
-    hardRestart(agent.id)
-  }, [hardRestart, agent.id])
+  }, [dirty, agent.id, agent.instructions, agent.model, agent.tags, instructions, model, agentTags, mcpDirty, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
 
   useImperativeHandle(ref, () => ({
-    restart: handleRestart,
-    redeploy: handleRedeploy,
-  }), [handleRestart, handleRedeploy])
+    applyChanges: handleApplyChanges,
+  }), [handleApplyChanges])
 
   const addMcp = useCallback((name: string) => {
     if (!mcpRegistryNames.includes(name)) {

@@ -16,6 +16,7 @@ Key mutation groups:
 - Skills: createSkill, updateSkill, deleteSkill
 - Secrets: setSecret, deleteSecret, scopeSecret
 """
+import json
 import structlog
 
 from config.app_config import app_config
@@ -408,14 +409,14 @@ class AgentMutation:
     @strawberry.mutation
     async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:
         from agents.adapters import get_adapter
+        from agents.services.machine_write import get_machine_writer
 
         agent = await authorize_agent(info, input.agent_id)
         agent.instructions = input.instructions
         await agent.asave(update_fields=["instructions"])
 
-        # Live CLAUDE.md update via canonical volume + reload path.
-        # Instructions are saved to DB above; volume write makes them
-        # visible to the running agent without restart.
+        # CLAUDE.md is agent-private config. Claude is spawned per task, so the
+        # next invocation picks up the new file without a container redeploy.
         if agent.sandbox_id:
             try:
                 from agents.services.utils import get_team_roster
@@ -433,10 +434,8 @@ class AgentMutation:
                     team_members=team_members,
                     team_name=team_name,
                 )
-                from agents.services.relay import update_volume_and_reload
-                await update_volume_and_reload(
-                    agent, "home/agent/workspace/CLAUDE.md", claude_md,
-                )
+                writer = get_machine_writer(agent)
+                await writer.write("home/agent/CLAUDE.md", claude_md)
             except Exception:  # intentional: CLAUDE.md write is best-effort — instructions saved to DB regardless
                 log.exception("graphql.claude_md_failed", agent_name=agent.name)
 
@@ -476,7 +475,7 @@ class AgentMutation:
     @strawberry.mutation
     async def update_agent_config(self, input: UpdateAgentConfigInput, info: strawberry.types.Info) -> AgentType:
         from agents.adapters import get_adapter
-        from agents.services.lifecycle import hard_restart_agent
+        from agents.services.machine_write import get_machine_writer
 
         agent = await authorize_agent(info, input.agent_id)
 
@@ -521,18 +520,48 @@ class AgentMutation:
             update_fields.append("triggers")
         await agent.asave(update_fields=update_fields)
 
+        writer = get_machine_writer(agent)
+
+        if agent.model != old_model:
+            from agents.services.relay import update_volume_and_reload
+
+            state_payload = json.dumps({
+                "model": agent.model,
+                "mode": agent.mode or "auto",
+                "allowed_tools": agent.allowed_tools or [],
+            })
+            await update_volume_and_reload(agent, "_abox/state.json", state_payload)
+
+        if agent.role != old_role or agent.mcp_servers != old_mcp_servers:
+            from agents.services.provision import _build_coord_server_config
+            from agents.services.utils import get_team_roster
+            from config.app_config import app_config as _cfg
+
+            coord_server = None
+            if agent.relay_token and _cfg.callback_url:
+                coord_server = _build_coord_server_config(_cfg.callback_url, agent.relay_token)
+
+            team_members = await get_team_roster(agent.project)
+            team_name = agent.project.name.lower().replace(" ", "-")
+            claude_md = adapter.build_instructions(
+                project_name=agent.project.name,
+                mcp_instructions=adapter.resolve_mcp_instructions(agent.mcp_servers or None),
+                workspace_path=agent.workspace_path,
+                instructions=agent.instructions,
+                agent_role=agent.role,
+                agent_name=agent.name,
+                team_members=team_members,
+                team_name=team_name,
+            )
+            mcp_config = adapter.build_mcp_config(
+                mcp_servers=agent.mcp_servers or None,
+                coord_server=coord_server,
+            )
+            await writer.write("home/agent/CLAUDE.md", claude_md)
+            await writer.write("home/agent/.mcp.json", mcp_config)
+
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
-
-        # Determine if a hard restart is needed based on what changed
-        restart_required = (
-            agent.model != old_model
-            or agent.role != old_role
-            or agent.mcp_servers != old_mcp_servers
-        )
-
-        if restart_required:
-            return await hard_restart_agent(str(agent.id))
 
         # Tags changed — hot-update skills on the volume without restart
         if input.tags is not None and agent.tags != old_tags:
@@ -557,7 +586,7 @@ class AgentMutation:
                     from agents.utils import sanitize_skill_name
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
-                        skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
+                        skill_path = f"home/agent/.claude/skills/{safe_name}/SKILL.md"
                         await writer.write(skill_path, skill.content)
                 elif had_before and not should_have:
                     # Lost skill match — remove from volume

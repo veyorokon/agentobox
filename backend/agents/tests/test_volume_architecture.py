@@ -157,13 +157,11 @@ class TestSecretsAndMcpHelpers:
         vol = _make_vol(tmp_path)
         vol.initialize()
 
-        vol.write_workspace_mcp_config('{"mcpServers": {}}')
-        vol.write_gateway_config('{"servers": []}')
+        vol.write_mcp_config('{"mcpServers": {}}')
         vol.write_secrets_env_document("export API_KEY='secret'\n")
         vol.write_mcp_secret("playwright", "PW_KEY", "pw-secret")
 
-        assert (tmp_path / "home/agent/workspace/.mcp.json").read_text() == '{"mcpServers": {}}'
-        assert (tmp_path / "run/mcp-gateway/config.json").read_text() == '{"servers": []}'
+        assert (tmp_path / "home/agent/.mcp.json").read_text() == '{"mcpServers": {}}'
         secrets_env = tmp_path / "mnt/abox-state/secrets/env"
         assert secrets_env.read_text() == "export API_KEY='secret'\n"
         assert oct(secrets_env.stat().st_mode & 0o777) == oct(0o600)
@@ -463,9 +461,9 @@ class TestMutationBoundary:
     This test ensures no mutation file has inline push_to_relay or
     channel_layer.group_send calls that bypass relay.py.
 
-    Exception: update_agent_instructions in agents/graphql/mutations.py uses
-    push_to_relay for live CLAUDE.md updates via the canonical volume path.
-    This is acceptable because it goes through Volume.mutate() + push_to_relay.
+    Config mutations may still use relay.py service helpers for canonical
+    runtime state like _abox/state.json, but agent-private config writes
+    should not emit ad hoc transport commands directly from mutation files.
     """
 
     # Directories that should NEVER directly import push_to_relay

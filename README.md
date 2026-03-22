@@ -102,7 +102,8 @@ VOLUME_ROOT/agents/{agent_id}/
 ├── home/agent/                      # Mirrored to /home/agent/ in container
 │   ├── .claude/settings.json        # CC settings (model, mode)
 │   ├── .relay_env                   # Relay environment
-│   └── workspace/CLAUDE.md          # Agent instructions
+│   ├── CLAUDE.md                    # Agent instructions
+│   └── .mcp.json                    # Agent MCP config
 ├── tmp/abox-theme/tokens.json       # Theme CSS tokens
 ├── run/secrets/proxy_key            # Real API key (0600, root-only)
 └── _abox/                           # Control plane
@@ -127,7 +128,6 @@ base
 │   └── svc-awesome (WM) ◀──────┘
 ├── svc-dbus
 ├── svc-apiproxy (root, key injection)
-├── svc-mcp-gateway
 └── svc-relay (Claude Code bridge) ◀── init-volume
 ```
 

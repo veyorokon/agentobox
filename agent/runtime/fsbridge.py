@@ -19,7 +19,6 @@ import sys
 _TOP_LEVEL_LINKS = (
     ("tmp/abox-theme", "tmp/abox-theme"),
     ("run/secrets", "run/secrets"),
-    ("run/mcp-gateway", "run/mcp-gateway"),
     ("mnt/abox-state", "mnt/abox-state"),
 )
 

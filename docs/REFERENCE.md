@@ -604,8 +604,6 @@ reads the file and reloads the relevant process.
             secrets/
               proxy_key                   # API proxy key (0600)
               mcp-{name}/{KEY}            # per-MCP scoped secrets
-            mcp-gateway/
-              config.json                 # gateway server config
           mnt/abox-state/                 # mirrors /mnt/abox-state/
             secrets/env                   # shell-sourceable secrets export
           _abox/                          # control plane (NOT mirrored into container)
@@ -622,10 +620,11 @@ reads the file and reloads the relevant process.
 
         /home/agent/.claude       → /vol/agents/$AGENT_ID/home/agent/.claude
         /home/agent/.relay_env    → /vol/agents/$AGENT_ID/home/agent/.relay_env
+        /home/agent/CLAUDE.md     → /vol/agents/$AGENT_ID/home/agent/CLAUDE.md
+        /home/agent/.mcp.json     → /vol/agents/$AGENT_ID/home/agent/.mcp.json
         /home/agent/workspace     → /vol/agents/$AGENT_ID/home/agent/workspace
         /tmp/abox-theme           → /vol/agents/$AGENT_ID/tmp/abox-theme
         /run/secrets              → /vol/agents/$AGENT_ID/run/secrets
-        /run/mcp-gateway          → /vol/agents/$AGENT_ID/run/mcp-gateway
         /mnt/abox-state           → /vol/agents/$AGENT_ID/mnt/abox-state
 
     The agent sees a normal filesystem. It doesn't know about the volume.

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Shield, FileText, AlertTriangle, RotateCcw, RefreshCw, BookOpen, X } from "lucide-react"
+import { Shield, FileText, AlertTriangle, BookOpen, X, CheckCircle2 } from "lucide-react"
 import type { CardActionItem } from "@/lib/types"
 import { ActionButtonPair } from "@/components/feed/action-button-pair"
 import { StepperNav } from "@/components/shared/stepper-nav"
@@ -10,8 +10,7 @@ interface CardActionStripProps {
   items: CardActionItem[]
   onResolvePermission: (id: string, verdict: string, alwaysAllow?: boolean) => void
   onResolvePlan: (id: string, verdict: string) => void
-  onRestart?: () => void
-  onRedeploy?: () => void
+  onApply?: () => void
   onDismissSkill?: (skillId: string) => void
   onViewSkill?: (skillId: string) => void
 }
@@ -20,8 +19,7 @@ export function CardActionStrip({
   items,
   onResolvePermission,
   onResolvePlan,
-  onRestart,
-  onRedeploy,
+  onApply,
   onDismissSkill,
   onViewSkill,
 }: CardActionStripProps) {
@@ -77,30 +75,18 @@ export function CardActionStrip({
           <>
             <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
             <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
-              Settings changed
+              Unsaved changes
             </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {onRestart && (
-                <button
-                  type="button"
-                  onClick={onRestart}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-accent border border-accent/30 hover:bg-accent/10 transition-colors"
-                >
-                  <RotateCcw className="h-2.5 w-2.5" />
-                  Restart
-                </button>
-              )}
-              {onRedeploy && (
-                <button
-                  type="button"
-                  onClick={onRedeploy}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-secondary border border-border-default hover:bg-surface-sunken/40 transition-colors"
-                >
-                  <RefreshCw className="h-2.5 w-2.5" />
-                  Redeploy
-                </button>
-              )}
-            </div>
+            {onApply && (
+              <button
+                type="button"
+                onClick={onApply}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-accent border border-accent/30 hover:bg-accent/10 transition-colors shrink-0"
+              >
+                <CheckCircle2 className="h-2.5 w-2.5" />
+                Apply changes
+              </button>
+            )}
           </>
         )}
 
