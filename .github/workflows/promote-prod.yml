@@ -193,7 +193,14 @@ jobs:
           set -euo pipefail
 
           remote="${DEPLOY_USER}@${DEPLOY_HOST}"
-          ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key)
+          ssh_opts=(
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -i ~/.ssh/deploy_key
+          )
 
           ssh_retry() {
             local attempt
