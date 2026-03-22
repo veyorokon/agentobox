@@ -119,6 +119,17 @@ Questions:
 - Is this thread changing the world in the intended way, or only changing code shape?
 - Would we still want this outcome if the implementation path changed completely?
 
+Agents should assume that users will often describe goals colloquially,
+implicitly, or in solution-shaped language. The agent's job is to translate
+that into an explicit desired-state statement and keep the thread grounded in
+that statement.
+
+Preferred pattern:
+1. listen for the user's intended outcome
+2. restate it as a desired state of the world
+3. distinguish that goal from any proposed implementation
+4. use the desired state as the reference point for tradeoffs and completion
+
 ### Threads
 
 A thread is a coherent line of work across one or more seams.
