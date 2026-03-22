@@ -177,7 +177,7 @@ jobs:
           # Query the registry for the canonical digest of the pushed tag.
           # imagetools inspect is the official buildx way to get registry
           # metadata — no fragile local docker inspect or RepoDigests.
-          DIGEST=$(docker buildx imagetools inspect "${TAG_REF}" --format '{{.Manifest.Digest}}')
+          DIGEST=$(docker buildx imagetools inspect "${TAG_REF}" --format '{{json .Manifest}}' | jq -r '.digest // .Digest')
           echo "digest-ref=${{ env.DESKTOP_IMAGE }}@${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Desktop digest: ${{ env.DESKTOP_IMAGE }}@${DIGEST}"
 
