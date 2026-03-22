@@ -35,9 +35,11 @@ Use the repo-facing docs for process and project context:
 - Prefer one canonical source of truth per concern.
 - Treat projections and caches as disposable read models, not authority.
 - Preserve boring operations over cleverness.
+  Boring means fewer moving parts, explicit data flow, and no hidden inference from ambient state.
 - Minimize abstraction bleed.
 - Remove duplicate overlapping code paths once the replacement is proven.
 - Fail loudly when contracts are violated.
+  Prefer structured diagnosis, explicit error surfaces, and named contract breaches over silent degradation or raw stack traces alone.
 
 ## Key Concepts
 
@@ -312,6 +314,9 @@ Preferred pattern:
 2. surface the key fields in summaries/output
 3. keep raw logs as secondary evidence
 
+“Fail loudly” should mean the broken seam is easier to identify after the
+failure than before it.
+
 ### Duplicate Overlapping Code Paths
 
 Duplicate paths are especially dangerous when they both “mostly work.”
@@ -379,6 +384,19 @@ Agents should move up and down this scale deliberately. Do not stay too low too 
 
 ## Execution Model
 
+### Entering A Codebase
+
+When entering a repo or thread cold:
+
+1. read the operating docs first
+2. identify the active thread
+3. state the current state before proposing the desired state
+4. identify the seams the thread crosses
+5. read the files, tests, and contract docs for those seams before editing
+
+Do not jump from a request directly into code changes without first orienting
+on the active thread and seam.
+
 ### The Default Loop
 
 1. Observe reality.
@@ -392,6 +410,32 @@ Agents should move up and down this scale deliberately. Do not stay too low too 
 
 This is the normal path for both debugging and refactoring.
 
+### Scope Discipline
+
+Do the thread that was asked for.
+
+When adjacent breakage or cleanup appears:
+- identify it explicitly
+- decide whether it belongs to the same thread or a new one
+- do not silently widen scope just because the code is nearby
+
+If the seam changes, the thread probably changed too.
+
+### Shared-State Actions
+
+Before taking a shared-state action, be explicit about it.
+
+Shared-state actions include:
+- commits
+- pushes
+- merges
+- deploys
+- secret or environment mutations
+- live host or cloud resource mutations
+
+If the user already asked for that exact action, proceed.
+If not, surface the action before doing it.
+
 ### Trace The Actual Chain
 
 Before theorizing, trace the real path end to end.
@@ -402,6 +446,16 @@ Examples:
 - write -> projection -> read model -> rendered state
 
 When possible, identify the first point where reality diverges from the expected chain.
+
+### Blast Radius
+
+Before changing a shared contract, output, schema, workflow interface, or
+other widely consumed surface:
+- identify downstream consumers
+- identify what else must change with it
+- prefer one coherent migration over partial drift
+
+Do not change a shared seam in isolation when multiple consumers depend on it.
 
 ### Fix, Describe, Regress
 
@@ -574,6 +628,24 @@ Use that awareness to sequence work safely:
 - learn with reversible steps
 - codify only after the seam is clear
 
+### Multi-Agent Collaboration
+
+When other agents are involved:
+- treat their output as evidence, not automatic truth
+- avoid duplicating work that has already been proven
+- reuse their findings when the proof level is sufficient
+- surface disagreements explicitly in terms of seam, contract, and evidence
+
+Parallel work should reduce uncertainty, not create multiple competing stories.
+
+### Handling Corrections
+
+When the user or another agent corrects the direction:
+1. restate the corrected desired state
+2. drop the superseded frame
+3. adjust the plan immediately
+4. do not defend the old path out of inertia
+
 ## Testing Canon
 
 Keep test types explicit.
@@ -733,6 +805,7 @@ Work is done when:
 - the old ambiguous path is removed or explicitly deprecated
 - the system is more legible than before
 - future failures at the same seam should be faster to diagnose
+- the change stayed inside the motivating thread instead of quietly absorbing adjacent work
 
 ## Repo Docs
 
