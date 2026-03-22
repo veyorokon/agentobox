@@ -21,6 +21,7 @@ import modal
 import structlog
 from config.app_config import app_config
 
+from agents.errors import ERR_RUNTIME_TAG_FAILED
 from agents.runtimes.base import RuntimeResources, SandboxInstance, VolumeMount
 from agents.services.project_volume import ModalProjectVolumeStore
 
@@ -92,6 +93,23 @@ class ModalRuntime:
             create_kwargs["volumes"] = modal_volumes
 
         sb = await modal.Sandbox.create.aio(**create_kwargs)
+
+        # Tag sandbox for billing attribution via modal.billing API.
+        # Tags enable workspace_billing_report() to break down cost
+        # per agent and project.
+        try:
+            agent_id = env.get("AGENT_ID", "")
+            project_id = env.get("PROJECT_ID", "")
+            tags = {"agent_id": agent_id, "project_id": project_id}
+            if agent_id:
+                tags["agent_name"] = env.get("AGENT_NAME", "")
+            await sb.set_tags.aio(tags)
+        except Exception as exc:  # intentional: tagging failure must not block sandbox creation
+            op.warning(
+                "runtime.tag_failed",
+                error_code=ERR_RUNTIME_TAG_FAILED,
+                error_class=type(exc).__name__,
+            )
         agent_id = env.get("AGENT_ID", "")
         await sb.set_tags.aio(
             {"agentobox.managed": "true", "agentobox.agent": name, "agentobox.agent.id": agent_id}

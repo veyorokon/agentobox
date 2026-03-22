@@ -71,25 +71,39 @@ Agentobox provides the API key and bills the user for all usage.
 | Platform access | plan/subscription | TBD | billable |
 | MCP proxy (future) | per-call metering | TBD | billable |
 
-### Pricing
+### Pricing sources
 
-Runtime and model pricing come from **versioned rate tables**, not
-hardcoded values. Rates are captured into ledger events at the time
-of the billable event. If provider pricing changes, new events use
-the new rate; old events keep their original rate.
+#### Runtime compute: provider-reported, not estimated
 
-Rate tables should be:
-- versioned (effective date + rate)
-- referenced by ledger entries (rate_version field)
-- separate from business logic
+Modal exposes actual billed cost via `modal.billing.workspace_billing_report()`.
+This is the canonical source for runtime cost — not a derived rate table.
 
-Illustrative current rates (not authoritative — subject to change):
-- Modal CPU: ~$0.000463/sec/core
-- Modal memory: ~$0.000058/sec/GB
-- Default agent (2 cores, 4GB): ~$0.07/min
+The architecture is:
+1. **Tag** runtime objects at creation with `agent_id`, `project_id`
+2. **Ingest** Modal billing reports (periodic sync, bounded lookback)
+3. **Reconcile** provider cost with runtime metadata for attribution
+4. **Write** canonical cost to RuntimeSegment and/or BillingLedger
 
-A `RUNTIME_PRICING` registry (analogous to `MODEL_PRICING`) should
-map runtime providers to per-resource rates.
+No `RUNTIME_PRICING` rate table is needed. Modal tells us the real
+cost. Runtime metadata (`RuntimeSegment.compute_seconds`, `cpu_cores`,
+`memory_mb`) provides attribution shape; provider billing provides
+canonical amount.
+
+When provider billing is delayed or aggregated at coarser resolution:
+- runtime metadata gives attribution shape immediately
+- provider cost arrives later via reconciliation
+- estimates can be shown with an "estimated" flag until reconciled
+
+#### LLM inference: platform-side rate table
+
+`MODEL_PRICING` in `registries.py` maps model names to per-token
+rates. This is necessary because:
+- BYOK mode: user pays provider directly, but we show estimated cost
+- Platform-managed mode: we bill at provider rates + margin
+- Providers don't report per-request cost back through the API
+
+LLM pricing uses versioned rate tables. Rates are captured into
+ledger entries at minting time and never updated retroactively.
 
 ---
 
