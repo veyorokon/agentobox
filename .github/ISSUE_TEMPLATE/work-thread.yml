@@ -94,6 +94,20 @@ body:
       required: true
 
   - type: textarea
+    id: proof_plan
+    attributes:
+      label: Proof plan / validation strategy
+      description: How the seam will be proven honestly. Prefer the earliest honest regression plus any higher-level confirmation that should remain.
+      value: |
+        Earliest honest proof:
+
+        Higher-level confirmation:
+
+        Known failure to induce or verify:
+    validations:
+      required: true
+
+  - type: textarea
     id: non_goals
     attributes:
       label: Non-goals

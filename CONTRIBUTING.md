@@ -118,6 +118,7 @@ They should name:
 - the seams crossed
 - the target canonical shape
 - the current proof level
+- the planned proof strategy
 - the concrete implementation order
 - explicit non-goals
 
