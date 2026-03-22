@@ -38,6 +38,11 @@ check() {
   fi
 }
 
+skip() {
+  local name="$1"
+  echo "  - $name (skipped)"
+}
+
 echo "Smoke testing $URL ..."
 
 post_graphql() {
@@ -97,38 +102,48 @@ PY
 fi
 check "Authenticated GraphQL read responds" "$auth_graphql_ok"
 
-# 4. Allauth config returns providers with client_ids (if any are configured)
+# 4. Allauth config responds, and OAuth checks only run when at least one
+# provider is actually configured with a client_id.
 config=$(curl -sS --max-time "$GRAPHQL_TIMEOUT_S" "$URL/_allauth/browser/v1/config")
-providers_ok=$(echo "$config" | python3 -c "
+oauth_provider=$(echo "$config" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
     providers = d['data']['socialaccount']['providers']
-    if not providers:
-        # No providers configured — not a failure, just skip
-        print('true')
-    else:
-        # Every configured provider must have a non-empty client_id
-        all_ok = all(p.get('client_id', '') != '' for p in providers)
-        print('true' if all_ok else 'false')
+    configured = [p['id'] for p in providers if p.get('client_id', '').strip()]
+    print(configured[0] if configured else '')
 except Exception:
-    print('false')
+    print('__ERROR__')
 " 2>/dev/null)
-check "OAuth providers configured" "$providers_ok"
+oauth_config_ok=true
+if [ "$oauth_provider" = "__ERROR__" ]; then
+  oauth_config_ok=false
+fi
+check "OAuth config endpoint responds" "$oauth_config_ok"
 
-# 5. OAuth redirect works end-to-end (fetch CSRF cookie, then POST)
-cookie_jar=$(mktemp)
-curl -sS --max-time "$GRAPHQL_TIMEOUT_S" -o /dev/null -c "$cookie_jar" "$URL/_allauth/browser/v1/config"
-csrf_token=$(grep csrftoken "$cookie_jar" 2>/dev/null | awk '{print $NF}')
-redirect_status=$(curl -sS --max-time "$GRAPHQL_TIMEOUT_S" -o /dev/null -w '%{http_code}' \
-  -X POST "$URL/_allauth/browser/v1/auth/provider/redirect" \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -H "X-CSRFToken: $csrf_token" \
-  -H "Referer: $URL/" \
-  -b "$cookie_jar" \
-  -d 'provider=google&callback_url='"$URL"'/accounts/google/login/callback/&process=login')
-rm -f "$cookie_jar"
-check "OAuth redirect endpoint returns 302" "$([ "$redirect_status" = "302" ] && echo true || echo false)"
+if [ -n "$oauth_provider" ] && [ "$oauth_provider" != "__ERROR__" ]; then
+  check "OAuth providers configured" "true"
+else
+  skip "OAuth providers configured"
+fi
+
+# 5. OAuth redirect works end-to-end when at least one provider is configured.
+if [ -n "$oauth_provider" ] && [ "$oauth_provider" != "__ERROR__" ]; then
+  cookie_jar=$(mktemp)
+  curl -sS --max-time "$GRAPHQL_TIMEOUT_S" -o /dev/null -c "$cookie_jar" "$URL/_allauth/browser/v1/config"
+  csrf_token=$(grep csrftoken "$cookie_jar" 2>/dev/null | awk '{print $NF}')
+  redirect_status=$(curl -sS --max-time "$GRAPHQL_TIMEOUT_S" -o /dev/null -w '%{http_code}' \
+    -X POST "$URL/_allauth/browser/v1/auth/provider/redirect" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H "X-CSRFToken: $csrf_token" \
+    -H "Referer: $URL/" \
+    -b "$cookie_jar" \
+    -d "provider=${oauth_provider}&callback_url=${URL}/accounts/${oauth_provider}/login/callback/&process=login")
+  rm -f "$cookie_jar"
+  check "OAuth redirect endpoint returns 302" "$([ "$redirect_status" = "302" ] && echo true || echo false)"
+else
+  skip "OAuth redirect endpoint returns 302"
+fi
 
 echo ""
 if [ "$fail" -eq 0 ]; then

@@ -1,0 +1,594 @@
+name: Deploy Dev
+
+# Dev release-candidate pipeline.
+#
+# Responsibilities:
+# - validate deploy config
+# - run shared CI
+# - build canonical app + agent artifacts once
+# - publish one immutable release manifest to GHCR
+# - deploy the exact manifest artifact set to dev
+# - prove the live dev environment with bootstrap + smoke
+#
+# This workflow is the only place release artifacts are built.
+
+on:
+  push:
+    branches: [dev]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/veyorokon/agentobox-backend
+  DASHBOARD_IMAGE: ghcr.io/veyorokon/agentobox-dashboard
+  AGENT_DESKTOP_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed
+  MANIFEST_IMAGE: ghcr.io/veyorokon/agentobox-release-manifest
+
+jobs:
+  validate-secrets:
+    name: Validate Secrets
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install backend deps
+        run: uv --directory backend sync --no-dev
+      - name: Validate APP_SECRETS + APP_CONFIG against AppConfig schema
+        env:
+          _APP_CONFIG: ${{ vars.APP_CONFIG }}
+          _APP_SECRETS: ${{ secrets.APP_SECRETS }}
+        run: |
+          eval "$(python3 -c "
+          import json, os, sys
+
+          merged = {}
+          for name, env_key in [('APP_CONFIG', '_APP_CONFIG'), ('APP_SECRETS', '_APP_SECRETS')]:
+              raw = os.environ.get(env_key, '')
+              if raw.strip():
+                  try:
+                      merged.update(json.loads(raw))
+                  except json.JSONDecodeError:
+                      print(f'echo ERROR: {name} is not valid JSON; exit 1')
+                      sys.exit(0)
+
+          if 'DOMAIN' not in merged:
+              print('echo ERROR: DOMAIN missing from APP_CONFIG; exit 1')
+
+          for k, v in merged.items():
+              safe = v.replace(\"'\", \"'\\\\''\" )
+              print(f\"export {k}='{safe}'\")
+          ")"
+          uv --directory backend run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
+      - name: Validate dedicated workflow secrets
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          [ -n "$MODAL_TOKEN_ID" ] || { echo "::error::Missing environment secret MODAL_TOKEN_ID"; exit 1; }
+          [ -n "$MODAL_TOKEN_SECRET" ] || { echo "::error::Missing environment secret MODAL_TOKEN_SECRET"; exit 1; }
+
+  ci:
+    needs: validate-secrets
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  agent-image:
+    name: Agent Image
+    needs: ci
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/agent-image.yml
+    secrets: inherit
+
+  build:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: ci
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-image: ${{ steps.backend-image-ref.outputs.ref }}
+      backend-digest: ${{ steps.backend-image-ref.outputs.digest-ref }}
+      dashboard-image: ${{ steps.dashboard-image-ref.outputs.ref }}
+      dashboard-digest: ${{ steps.dashboard-image-ref.outputs.digest-ref }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - id: backend-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+      - id: push-backend
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.backend-meta.outputs.tags }}
+          labels: ${{ steps.backend-meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+      - id: backend-image-ref
+        name: Record backend image ref
+        run: |
+          echo "ref=${{ env.BACKEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+          echo "digest-ref=${{ env.BACKEND_IMAGE }}@${{ steps.push-backend.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+      - id: dashboard-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.DASHBOARD_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+      - id: push-dashboard
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: .
+          file: dashboard/Dockerfile
+          push: true
+          tags: ${{ steps.dashboard-meta.outputs.tags }}
+          labels: ${{ steps.dashboard-meta.outputs.labels }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,scope=dashboard,mode=max
+      - id: dashboard-image-ref
+        name: Record dashboard image ref
+        run: |
+          echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+          echo "digest-ref=${{ env.DASHBOARD_IMAGE }}@${{ steps.push-dashboard.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+  manifest:
+    name: Release Manifest
+    needs: [build, agent-image]
+    if: needs.build.result == 'success' && needs.agent-image.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-image: ${{ steps.output.outputs.backend-image }}
+      dashboard-image: ${{ steps.output.outputs.dashboard-image }}
+      agent-managed-image: ${{ steps.output.outputs.agent-managed-image }}
+      agent-desktop-image: ${{ steps.output.outputs.agent-desktop-image }}
+      source-commit: ${{ steps.output.outputs.source-commit }}
+      manifest-ref: ${{ steps.output.outputs.manifest-ref }}
+      provenance: ${{ steps.output.outputs.provenance }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: oras-project/setup-oras@v1
+      - name: Write manifest
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          MANIFEST_REF="${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}"
+
+          jq -n \
+            --arg sv "1" \
+            --arg sc "$GITHUB_SHA" \
+            --arg sb "dev" \
+            --arg pv "build" \
+            --arg wr "${{ github.run_id }}" \
+            --arg ca "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg bi "${{ needs.build.outputs.backend-digest }}" \
+            --arg di "${{ needs.build.outputs.dashboard-digest }}" \
+            --arg ami "${{ needs.agent-image.outputs.managed-digest }}" \
+            --arg adi "${{ needs.agent-image.outputs.desktop-digest }}" \
+            --arg bi_tag "${{ needs.build.outputs.backend-image }}" \
+            --arg di_tag "${{ needs.build.outputs.dashboard-image }}" \
+            --arg ami_tag "${{ needs.agent-image.outputs.managed-image }}" \
+            --arg adi_tag "${{ needs.agent-image.outputs.desktop-image }}" \
+            '{
+              schema_version: $sv,
+              source_commit: $sc,
+              source_branch: $sb,
+              provenance: $pv,
+              workflow_run_id: $wr,
+              created_at: $ca,
+              backend_image: $bi,
+              dashboard_image: $di,
+              agent_managed_image: $ami,
+              agent_desktop_image: $adi,
+              tags: {
+                backend_image: $bi_tag,
+                dashboard_image: $di_tag,
+                agent_managed_image: $ami_tag,
+                agent_desktop_image: $adi_tag
+              }
+            }' > manifest.json
+
+          oras push "${MANIFEST_REF}" manifest.json:application/json
+          oras push "${{ env.MANIFEST_IMAGE }}:dev-latest" manifest.json:application/json
+      - name: Export manifest outputs
+        id: output
+        run: |
+          echo "backend-image=$(jq -r .backend_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "dashboard-image=$(jq -r .dashboard_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "agent-managed-image=$(jq -r .agent_managed_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "agent-desktop-image=$(jq -r .agent_desktop_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "source-commit=$(jq -r .source_commit manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "manifest-ref=${{ env.MANIFEST_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "provenance=$(jq -r .provenance manifest.json)" >> "$GITHUB_OUTPUT"
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: manifest.json
+          retention-days: 90
+
+  agent-modal-contract:
+    name: Agent Modal Contract (dev)
+    needs: [validate-secrets, ci, manifest]
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install agent test dependencies
+        run: uv --directory agent sync --group dev
+      - name: Run managed Modal contract test
+        env:
+          AGENTOBOX_RUN_MODAL_CONTRACT_TESTS: "1"
+          AGENTOBOX_MODAL_CONTRACT_IMAGE: ${{ needs.manifest.outputs.agent-desktop-image }}
+          AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: dev
+        run: PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/test_managed_modal_contract.py -q -o addopts=
+
+  deploy:
+    name: Deploy (dev)
+    needs: [manifest, ci, agent-modal-contract]
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare SSH client
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Deploy to Server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'agentobox' }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_CONFIG_JSON: ${{ vars.APP_CONFIG }}
+          APP_SECRETS_JSON: ${{ secrets.APP_SECRETS }}
+          BACKEND_IMAGE_REF: ${{ needs.manifest.outputs.backend-image }}
+          DASHBOARD_IMAGE_REF: ${{ needs.manifest.outputs.dashboard-image }}
+          MODAL_AGENT_IMAGE_REF: ${{ needs.manifest.outputs.agent-desktop-image }}
+        run: |
+          set -euo pipefail
+
+          remote="${DEPLOY_USER}@${DEPLOY_HOST}"
+          ssh_opts=(
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -i ~/.ssh/deploy_key
+          )
+
+          ssh_retry() {
+            local attempt
+            local delay
+            for attempt in 1 2 3 4 5; do
+              if ssh "${ssh_opts[@]}" "$remote" "$1"; then
+                return 0
+              fi
+              delay=$((attempt * 10))
+              echo "SSH attempt ${attempt} failed; retrying in ${delay}s..."
+              sleep "${delay}"
+            done
+            echo "::error::SSH command failed after retries."
+            return 1
+          }
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          merged = {}
+          for env_key in ("APP_CONFIG_JSON", "APP_SECRETS_JSON"):
+              raw = os.environ.get(env_key, "").strip()
+              if raw:
+                  merged.update(json.loads(raw))
+
+          dynamic_refs = {
+              "BACKEND_IMAGE": os.environ["BACKEND_IMAGE_REF"].strip(),
+              "DASHBOARD_IMAGE": os.environ["DASHBOARD_IMAGE_REF"].strip(),
+              "MODAL_AGENT_IMAGE": os.environ["MODAL_AGENT_IMAGE_REF"].strip(),
+          }
+          for key, value in dynamic_refs.items():
+              if value:
+                  merged[key] = value
+
+          lines = []
+          for key, value in sorted(merged.items()):
+              safe = value.replace("'", "'\\''")
+              lines.append(f"{key}='{safe}'")
+          Path(".deploy.env").write_text("\n".join(lines) + "\n")
+          PY
+
+          upload_text_file() {
+            local local_path="$1"
+            local remote_path="$2"
+            local payload
+            payload="$(base64 < "$local_path" | tr -d '\n')"
+            ssh_retry "mkdir -p \"$(dirname "$remote_path")\" && printf '%s' '$payload' | base64 -d > \"$remote_path\""
+          }
+
+          upload_text_file docker-compose.prod.yml /opt/agentobox/docker-compose.prod.yml
+          upload_text_file Caddyfile /opt/agentobox/Caddyfile
+          upload_text_file .deploy.env /opt/agentobox/.env
+
+          ssh_retry "set -euo pipefail
+          whoami
+          test \"\$(whoami)\" = \"${DEPLOY_USER}\"
+          id
+          mkdir -p /opt/agentobox
+          test -w /opt/agentobox
+          : > /opt/agentobox/.deploy-preflight
+          rm -f /opt/agentobox/.deploy-preflight
+          echo 'Docker access OK'
+          docker ps >/dev/null
+          cd /opt/agentobox
+          echo 'Logging into GHCR'
+          echo '${GITHUB_TOKEN}' | docker login ghcr.io -u '${GITHUB_ACTOR}' --password-stdin
+          export VERSION=dev
+          export MODAL_ENVIRONMENT=dev
+          echo 'Pulling and starting compose stack'
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          echo 'Running migrations'
+          docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
+          echo 'Ensuring smoke user'
+          docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
+          echo 'Pruning old images'
+          docker image prune -f"
+      - name: Wait for backend startup
+        run: |
+          DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
+          for i in $(seq 1 30); do
+            curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' -d '{"query":"{ __typename }"}' && break
+            echo "  Waiting for backend... attempt $i/30"
+            sleep 5
+          done
+      - name: Smoke test (HTTP surface)
+        env:
+          SMOKE_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
+          SMOKE_TEST_PASS: ${{ secrets.SMOKE_TEST_PASS || 'demo' }}
+        run: |
+          DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
+          bash bin/smoke-test.sh "https://${DOMAIN}"
+
+  agent-bootstrap:
+    name: Agent Bootstrap (dev)
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install test dependencies
+        run: uv sync --project . --group e2e
+      - name: Run agent bootstrap test
+        env:
+          ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
+          ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
+          ABOX_TEST_PASS: ${{ secrets.SMOKE_TEST_PASS || 'demo' }}
+          SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
+          ABOX_TEST_AGENT_MODEL: ${{ fromJson(vars.APP_CONFIG).ABOX_TEST_AGENT_MODEL || 'claude-haiku-4-5-20251001' }}
+          DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
+        run: |
+          mkdir -p diagnosis-artifacts
+          uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
+      - name: Upload failure diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-agent-bootstrap
+          path: diagnosis-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  agent-smoke:
+    name: Agent Smoke (dev)
+    needs: agent-bootstrap
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install test dependencies
+        run: uv sync --project . --group e2e
+      - name: Run agent smoke test
+        env:
+          ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
+          ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
+          ABOX_TEST_PASS: ${{ secrets.SMOKE_TEST_PASS || 'demo' }}
+          SMOKE_RUNTIME: ${{ fromJson(vars.APP_CONFIG).AGENT_RUNTIME || 'modal' }}
+          ABOX_TEST_AGENT_MODEL: ${{ fromJson(vars.APP_CONFIG).ABOX_TEST_AGENT_MODEL || 'claude-haiku-4-5-20251001' }}
+          DIAGNOSIS_ARTIFACT_DIR: diagnosis-artifacts
+        run: |
+          mkdir -p diagnosis-artifacts
+          uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
+      - name: Upload failure diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-agent-smoke
+          path: diagnosis-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  summary:
+    name: summary
+    if: always()
+    needs:
+      - validate-secrets
+      - ci
+      - agent-image
+      - build
+      - manifest
+      - agent-modal-contract
+      - deploy
+      - agent-bootstrap
+      - agent-smoke
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compute status
+        id: status
+        run: |
+          declare -A gates
+          gates=(
+            [secrets]="${{ needs.validate-secrets.result }}"
+            [ci]="${{ needs.ci.result }}"
+            [build]="${{ needs.build.result }}"
+            [image]="${{ needs.agent-image.result }}"
+            [manifest]="${{ needs.manifest.result }}"
+            [modal_contract]="${{ needs.agent-modal-contract.result }}"
+            [deploy]="${{ needs.deploy.result }}"
+            [bootstrap]="${{ needs.agent-bootstrap.result }}"
+            [smoke]="${{ needs.agent-smoke.result }}"
+          )
+
+          overall=success
+          blocked_at=""
+          next_debug_target="—"
+          gate_rows=""
+
+          for gate in secrets ci build image manifest modal_contract deploy bootstrap smoke; do
+            r="${gates[$gate]}"
+            case "$gate" in
+              secrets) consumed="APP_CONFIG + APP_SECRETS + dedicated workflow secrets"; debug="check Validate Secrets job output" ;;
+              ci) consumed="source checkout"; debug="inspect reusable CI workflow summary" ;;
+              build) consumed="backend + dashboard image builds"; debug="check Build & Push Images job" ;;
+              image) consumed="managed + desktop agent image builds"; debug="check Agent Image workflow" ;;
+              manifest) consumed="release manifest"; debug="check Release Manifest job or artifact" ;;
+              modal_contract) consumed="agent desktop image"; debug="check Agent Modal Contract job" ;;
+              deploy) consumed="manifest image refs + server env"; debug="check deploy access, compose pull, and remote host state" ;;
+              bootstrap) consumed="deployed environment"; debug="download failure-diagnosis-agent-bootstrap" ;;
+              smoke) consumed="deployed environment"; debug="download failure-diagnosis-agent-smoke" ;;
+            esac
+            gate_rows="${gate_rows}| ${gate} | \`${r}\` | ${consumed} | ${debug} |"$'\n'
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ] && [ -z "$blocked_at" ]; then
+              overall=attention-needed
+              blocked_at="$gate"
+              next_debug_target="$debug"
+            fi
+          done
+
+          if [ "$overall" = "success" ]; then
+            echo "detail=DEPLOYED" >> "$GITHUB_OUTPUT"
+          else
+            echo "detail=BLOCKED AT ${blocked_at}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+          echo "mode=build" >> "$GITHUB_OUTPUT"
+          echo "blocked_at=${blocked_at:-—}" >> "$GITHUB_OUTPUT"
+          echo "next_debug_target=${next_debug_target}" >> "$GITHUB_OUTPUT"
+          {
+            echo "gate_rows<<GHEOF"
+            echo "$gate_rows"
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/summary-header
+        with:
+          title: "Deploy (dev)"
+          overall: ${{ steps.status.outputs.overall }}
+          detail: "${{ steps.status.outputs.detail }} (build)"
+
+      - name: Write body
+        run: |
+          {
+            echo
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Domain | \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` |"
+            echo "| Environment | \`dev\` |"
+            echo "| Mode | \`build\` |"
+            echo "| Deploy user | \`${{ vars.DEPLOY_USER || 'agentobox' }}\` |"
+            echo "| Modal environment | \`dev\` |"
+            echo "| Source commit | \`${{ needs.manifest.outputs.source-commit || '—' }}\` |"
+            echo "| Manifest ref | \`${{ needs.manifest.outputs.manifest-ref || '—' }}\` |"
+            echo
+            echo "| Image | Ref |"
+            echo "|-------|-----|"
+            echo "| backend | \`${{ needs.manifest.outputs.backend-image || '—' }}\` |"
+            echo "| dashboard | \`${{ needs.manifest.outputs.dashboard-image || '—' }}\` |"
+            echo "| agent managed | \`${{ needs.manifest.outputs.agent-managed-image || '—' }}\` |"
+            echo "| agent desktop | \`${{ needs.manifest.outputs.agent-desktop-image || '—' }}\` |"
+            echo
+            echo "| Gate | Status | Consumes | Next Debug Target |"
+            echo "|------|--------|----------|-------------------|"
+            echo "${{ steps.status.outputs.gate_rows }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ steps.status.outputs.overall }}" != "success" ]; then
+            failure_artifact="—"
+            if echo "${{ steps.status.outputs.blocked_at }}" | grep -qi "bootstrap"; then
+              failure_artifact="failure-diagnosis-agent-bootstrap"
+            elif echo "${{ steps.status.outputs.blocked_at }}" | grep -qi "smoke"; then
+              failure_artifact="failure-diagnosis-agent-smoke"
+            fi
+            {
+              echo
+              echo "### Diagnosis"
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| First broken gate | \`${{ steps.status.outputs.blocked_at }}\` |"
+              echo "| Next debug target | ${{ steps.status.outputs.next_debug_target }} |"
+              echo "| Failure artifact | \`${failure_artifact}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

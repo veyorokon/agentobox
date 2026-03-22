@@ -1,7 +1,7 @@
 # Agentobox
 
 [![CI](https://github.com/veyorokon/agentobox/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/veyorokon/agentobox/actions/workflows/ci.yml)
-[![Deploy](https://github.com/veyorokon/agentobox/actions/workflows/deploy.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/deploy.yml)
+[![Deploy Dev](https://github.com/veyorokon/agentobox/actions/workflows/deploy-dev.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/deploy-dev.yml)
 
 A platform for managing AI agent teams. Provision agents with full Linux desktops, observe their work in real-time via VNC and activity feeds, and coordinate multi-agent workflows through a web dashboard.
 
@@ -181,12 +181,15 @@ make up                    # docker compose up -d
 
 ### Production
 
-Automated via GitHub Actions (`deploy.yml`). Pushes to `dev` deploy to `dev.agentobox.com`; pushes to `main` deploy to `agentobox.com`.
+Automated via GitHub Actions:
+- `deploy-dev.yml` builds and deploys `dev.agentobox.com`
+- `promote-prod.yml` promotes one tested dev manifest into `agentobox.com`
 
 ```
-PR → dev:   ci.yml (fast + smoke)
-merge dev:  deploy → dev environment → agent bootstrap + smoke
-merge main: deploy → prod environment → agent bootstrap + smoke
+PR → dev:          ci.yml (fast + smoke)
+merge dev:         deploy-dev.yml → build/test/deploy dev → publish manifest
+promote to prod:   promote-prod.yml(manifest_ref=...) → deploy prod → open main PR
+merge bookkeeping: main records what is in prod; it does not trigger prod deploy
 ```
 
 Images are built, pushed to GHCR with sha-pinned tags, and deployed to the target server via SSH. Caddy handles TLS via Let's Encrypt.
@@ -195,11 +198,13 @@ Images are built, pushed to GHCR with sha-pinned tags, and deployed to the targe
 
 Promotion is branch-driven:
 - merge to `dev` → deploy `dev`
-- merge to `main` → deploy prod
+- merge to `main` → bookkeeping only
 
-Version tags/releases are bookkeeping only right now; they do not trigger deploys.
+Prod promotion is explicit:
+- run `promote-prod.yml` with a tested dev `manifest_ref`
+- optional `release_version` creates a GitHub Release/tag for the promoted source commit
 
-Images are built and pushed to GHCR on every push to `dev` or `main` (`:branch`, `:sha-xxx`). Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify the live environment.
+Images are built and pushed to GHCR on pushes to `dev` (`:branch`, `:sha-xxx`). Prod never rebuilds those images; `promote-prod.yml` deploys the exact tested manifest artifact set. Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify both live environments.
 
 ## Make Commands
 

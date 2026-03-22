@@ -55,18 +55,21 @@ locals {
     # Docker Compose plugin
     apt-get install -y docker-compose-plugin
 
-    # Caddy
-    apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-    apt-get update
-    apt-get install -y caddy
-
     # Reuse the droplet's injected SSH key for the deploy user.
     if [ -f /root/.ssh/authorized_keys ]; then
       install -d -m 0700 -o ${local.deploy_user} -g ${local.deploy_user} /home/${local.deploy_user}/.ssh
       install -m 0600 -o ${local.deploy_user} -g ${local.deploy_user} /root/.ssh/authorized_keys /home/${local.deploy_user}/.ssh/authorized_keys
     fi
+
+    # Harden the SSH admission path for CI/CD and operator access under
+    # internet background noise. The stock defaults can randomly drop new
+    # connections when the daemon is already handling unauthenticated probes.
+    cat >/etc/ssh/sshd_config.d/60-agentobox.conf <<'SSHEOF'
+    MaxStartups 50:30:200
+    MaxSessions 50
+    LoginGraceTime 30
+    SSHEOF
+    systemctl restart ssh
 
     # App directory
     install -d -m 0775 -o ${local.deploy_user} -g docker /opt/agentobox

@@ -39,7 +39,7 @@ WORK_TICKS = int(os.environ.get("CONTINUITY_WORK_TICKS", "30"))
 WORK_SLEEP_S = int(os.environ.get("CONTINUITY_WORK_SLEEP_S", "4"))
 DEPLOY_TRIGGER = os.environ.get("CONTINUITY_DEPLOY_TRIGGER", "manual")
 DEPLOY_REPO = os.environ.get("CONTINUITY_DEPLOY_REPO", "veyorokon/agentobox")
-DEPLOY_WORKFLOW = os.environ.get("CONTINUITY_DEPLOY_WORKFLOW", "deploy.yml")
+DEPLOY_WORKFLOW = os.environ.get("CONTINUITY_DEPLOY_WORKFLOW", "deploy-dev.yml")
 DEPLOY_REF = os.environ.get("CONTINUITY_DEPLOY_REF", "dev")
 
 

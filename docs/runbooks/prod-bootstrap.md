@@ -9,7 +9,8 @@ Use it to make prod real end to end before treating `main` as a normal promotion
 
 As of March 22, 2026:
 
-- `deploy.yml` supports `main -> prod`
+- `deploy-dev.yml` supports `dev -> dev`
+- `promote-prod.yml` is the intended prod promotion path
 - the GitHub `prod` environment is not configured
 - `infra/environments/prod` was missing and is now scaffolded
 - `agentobox.com` is not yet resolving
@@ -20,7 +21,7 @@ So this runbook is not a cleanup nicety. It is the missing environment bootstrap
 
 Make this true:
 
-1. `main` is a valid production promotion branch
+1. `promote-prod.yml` is a valid production promotion workflow
 2. GitHub Actions has the required `prod` secrets and variables
 3. `agentobox.com` resolves to a real host
 4. OAuth works on the prod domain
@@ -32,7 +33,8 @@ Make this true:
 
 ## Source Of Truth
 
-- [`deploy.yml`](../../.github/workflows/deploy.yml)
+- [`deploy-dev.yml`](../../.github/workflows/deploy-dev.yml)
+- [`promote-prod.yml`](../../.github/workflows/promote-prod.yml)
 - [`README.md`](../../README.md)
 - [`app_config.py`](../../backend/config/app_config.py)
 - [`infra/environments/prod/main.tf`](../../infra/environments/prod/main.tf)
@@ -149,6 +151,8 @@ Minimum required prod secrets:
 - `DEPLOY_HOST` is separate GitHub environment secret, not part of `APP_SECRETS`
 - `MODAL_TOKEN_ID`
 - `MODAL_TOKEN_SECRET`
+- standalone GitHub environment secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` must also be set for Actions workflows
+- standalone GitHub environment secret `SMOKE_TEST_PASS` should also be set for workflow masking; do not rely on extracting it from `APP_SECRETS`
 - `GOOGLE_CLIENT_SECRET`
 - `GITHUB_CLIENT_SECRET`
 
@@ -189,8 +193,11 @@ Notes:
 
 - `DATABASE_URL` is required by `AppConfig`; there is no valid prod deploy without it.
 - `REDIS_URL` has a default, but it is better to make the real prod value explicit.
-- `SMOKE_TEST_PASS` is optional in workflow code, but should be explicitly set for real prod canaries.
+- `SMOKE_TEST_PASS` is optional in workflow code, but should be explicitly set as both:
+  - an app runtime field inside `APP_SECRETS`
+  - a standalone GitHub environment secret for masked workflow usage
 - `DEPLOY_HOST` and `DEPLOY_SSH_KEY` are separate GitHub environment secrets, not part of `APP_SECRETS`.
+- Do not consume JSON subfields from `APP_SECRETS` directly in workflow `env:` blocks. GitHub masks the top-level secret value, not arbitrary parsed subfields.
 
 ### 5a. Load values into the GitHub `prod` environment
 
@@ -200,6 +207,9 @@ The deploy workflow reads:
 - `secrets.APP_SECRETS`
 - `secrets.DEPLOY_HOST`
 - `secrets.DEPLOY_SSH_KEY`
+- `secrets.MODAL_TOKEN_ID`
+- `secrets.MODAL_TOKEN_SECRET`
+- `secrets.SMOKE_TEST_PASS`
 
 The easiest clean path is to create local JSON files, then load them with `gh`.
 
@@ -250,7 +260,16 @@ gh variable set APP_CONFIG --env prod < /tmp/agentobox-prod-app-config.json
 gh secret set APP_SECRETS --env prod < /tmp/agentobox-prod-app-secrets.json
 gh secret set DEPLOY_HOST --env prod
 gh secret set DEPLOY_SSH_KEY --env prod < /path/to/prod-deploy-key
+gh secret set MODAL_TOKEN_ID --env prod
+gh secret set MODAL_TOKEN_SECRET --env prod
+gh secret set SMOKE_TEST_PASS --env prod
 ```
+
+Secret-handling contract:
+
+- `APP_SECRETS` is the app/runtime secret blob rendered into the deployed `.env`
+- `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and `SMOKE_TEST_PASS` must also exist as standalone GitHub environment secrets for workflow masking
+- do not rely on `fromJson(secrets.APP_SECRETS).FIELD` in workflow `env:` blocks
 
 Verification:
 
@@ -326,16 +345,18 @@ On the target host:
 
 Promotion path:
 
-1. merge `dev -> main`
-2. watch `deploy.yml` on `main`
+1. let the target `dev` deploy finish green
+2. copy the emitted `manifest_ref` from `deploy-dev.yml`
+3. run `promote-prod.yml(manifest_ref=...)`
+4. watch `promote-prod.yml`
+5. merge the bookkeeping PR to `main`
 
 Required gates:
 
 - `Validate Secrets`
-- `CI`
-- `Agent Image`
-- `Agent Modal Contract (main)`
-- `Deploy (main)`
+- `Resolve Manifest`
+- `Agent Modal Contract (prod)`
+- `Deploy (prod)`
 - `Agent Bootstrap (prod)`
 - `Agent Smoke (prod)`
 
@@ -394,7 +415,7 @@ Prod should not be considered real until all of the following are true:
 
 1. `agentobox.com` resolves
 2. GitHub `prod` environment is populated
-3. `main` deploy can run end to end
+3. `promote-prod.yml` can run end to end against a tested dev `manifest_ref`
 4. bootstrap and smoke pass against prod
 
-Until then, `main -> prod` is only a configured workflow path, not an actual release path.
+Until then, explicit prod promotion is only a configured workflow path, not an actual release path.
