@@ -177,6 +177,8 @@ async def test_bundle_has_required_fields(setup_project_with_agents):
         "feed_items",
         "runtime_logs",
         "runtime_status",
+        "platform_crash_info",
+        "platform_events",
         "collection_errors",
     }
     assert required.issubset(set(bundle.keys())), (
@@ -520,3 +522,79 @@ async def test_session_id_falls_back_to_runtime_status(setup_agent_empty_session
         bundle2, _ = await capture_incident_bundle(agent)
 
     assert bundle2["ids"]["session_id"] == "model-sess-789"
+
+
+async def test_platform_crash_info_captured_in_bundle(setup_project_with_agents):
+    """Platform crash info is included when sandbox has exited."""
+    _, target, _, _ = setup_project_with_agents
+
+    mock_runtime = MagicMock()
+    mock_runtime.get_crash_info = AsyncMock(return_value={
+        "exit_code": 1,
+        "oom_killed": False,
+        "logs": "PermissionError: [Errno 13] Permission denied: '/vol/agents'",
+    })
+    mock_runtime.get_event_tail = AsyncMock(return_value=[])
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, errors = await capture_incident_bundle(target)
+
+    assert bundle["platform_crash_info"] is not None
+    assert bundle["platform_crash_info"]["exit_code"] == 1
+    assert "PermissionError" in bundle["platform_crash_info"]["logs"]
+    assert isinstance(bundle["platform_events"], list)
+
+
+async def test_platform_logs_unavailable_does_not_break_capture(setup_project_with_agents):
+    """Platform API failure goes to collection_errors, not total failure."""
+    _, target, _, _ = setup_project_with_agents
+
+    mock_runtime = MagicMock()
+    mock_runtime.get_crash_info = AsyncMock(side_effect=Exception("Modal API down"))
+    mock_runtime.get_event_tail = AsyncMock(side_effect=Exception("Modal API down"))
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, errors = await capture_incident_bundle(target)
+
+    # Bundle still assembled
+    assert bundle["platform_crash_info"] is None
+    assert isinstance(bundle["platform_events"], list)
+    # Errors captured
+    assert any("platform_crash_info" in e for e in errors)
+    assert any("platform_events" in e for e in errors)
+
+
+@pytest.fixture
+def setup_agent_no_sandbox():
+    """Agent with no sandbox_id — platform APIs should be skipped."""
+    owner = User.objects.create_user(
+        username=f"no-sandbox-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid No Sandbox Test", owner=owner)
+    agent = Agent.objects.create(
+        name="no-sandbox-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        sandbox_id="",
+    )
+    return agent
+
+
+async def test_platform_crash_info_skipped_without_sandbox(setup_agent_no_sandbox):
+    """No platform API calls when agent has no sandbox_id."""
+    agent = setup_agent_no_sandbox
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, errors = await capture_incident_bundle(agent)
+
+    assert bundle["platform_crash_info"] is None
+    assert bundle["platform_events"] == []
+    assert not any("platform_crash_info" in e for e in errors)
+    assert not any("platform_events" in e for e in errors)

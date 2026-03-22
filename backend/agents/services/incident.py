@@ -19,7 +19,7 @@ from agents.models import Agent, StreamEvent, TeamFeedItem
 
 log = structlog.get_logger("abox.incident")
 
-BUNDLE_SCHEMA_VERSION = "2"
+BUNDLE_SCHEMA_VERSION = "3"
 
 # Caps to keep bundles bounded
 MAX_STREAM_EVENTS = 200
@@ -216,6 +216,28 @@ async def capture_incident_bundle(
         log.warning("incident.source_failed", source="runtime_logs", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         errors.append(f"runtime_logs: {type(exc).__name__}: {exc}")
 
+    # -- Platform crash info (provider-level, best-effort) --
+    platform_crash_info = None
+    if agent.sandbox_id:
+        try:
+            from agents.runtimes import get_runtime
+            runtime = get_runtime(agent.runtime)
+            platform_crash_info = await runtime.get_crash_info(agent.sandbox_id)
+        except Exception as exc:  # intentional: best-effort — platform API may be unavailable
+            log.warning("incident.source_failed", source="platform_crash_info", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+            errors.append(f"platform_crash_info: {type(exc).__name__}: {exc}")
+
+    # -- Platform events (provider-level, best-effort) --
+    platform_events: list[dict] = []
+    if agent.sandbox_id:
+        try:
+            from agents.runtimes import get_runtime
+            runtime = get_runtime(agent.runtime)
+            platform_events = await runtime.get_event_tail(agent.sandbox_id)
+        except Exception as exc:  # intentional: best-effort — platform API may be unavailable
+            log.warning("incident.source_failed", source="platform_events", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+            errors.append(f"platform_events: {type(exc).__name__}: {exc}")
+
     # -- Runtime status projection --
     runtime_status = {}
     try:
@@ -276,6 +298,8 @@ async def capture_incident_bundle(
         "feed_items": feed_items,
         "runtime_logs": runtime_logs,
         "runtime_status": runtime_status,
+        "platform_crash_info": platform_crash_info,
+        "platform_events": platform_events,
         "collection_errors": errors,
     }
 
