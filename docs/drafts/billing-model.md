@@ -66,8 +66,8 @@ Agentobox provides the API key and bills the user for all usage.
 
 | Category | Source of truth | BYOK | Platform-managed |
 |----------|----------------|------|------------------|
-| LLM inference | `SessionResult` | informational | billable |
-| Runtime compute | `RuntimeSegment` | planned billable (TBD) | billable |
+| LLM inference | `SessionResult` (platform-side rate table) | informational | billable |
+| Runtime compute | Modal billing report, reconciled onto `BillingLedger` | planned billable (TBD) | billable |
 | Platform access | plan/subscription | TBD | billable |
 | MCP proxy (future) | per-call metering | TBD | billable |
 
@@ -82,7 +82,8 @@ The architecture is:
 1. **Tag** runtime objects at creation with `agent_id`, `project_id`
 2. **Ingest** Modal billing reports (periodic sync, bounded lookback)
 3. **Reconcile** provider cost with runtime metadata for attribution
-4. **Write** canonical cost to RuntimeSegment and/or BillingLedger
+4. **Write** provider cost mirrored onto RuntimeSegment for visibility;
+   billable truth minted into BillingLedger
 
 No `RUNTIME_PRICING` rate table is needed. Modal tells us the real
 cost. Runtime metadata (`RuntimeSegment.compute_seconds`, `cpu_cores`,
