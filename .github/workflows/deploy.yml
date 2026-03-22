@@ -669,28 +669,61 @@ jobs:
             echo "mode=rebuild" >> "$GITHUB_OUTPUT"
           fi
 
-          # Build pipeline graph with icons
-          graph_line1=""
-          graph_line2=""
-          for gate in secrets ci manifest modal_contract; do
+          next_debug_target="—"
+          gate_rows=""
+          for gate in secrets ci build image manifest modal_contract deploy bootstrap smoke; do
             r="${gates[$gate]}"
-            if [ "$r" = "success" ]; then icon="✅";
-            elif [ "$r" = "failure" ]; then icon="❌";
-            elif [ "$r" = "skipped" ]; then icon="⊘";
-            else icon="⊘"; fi
-            graph_line1="${graph_line1:+${graph_line1} → }${icon} ${gate}"
-          done
-          for gate in deploy bootstrap smoke; do
-            r="${gates[$gate]}"
-            if [ "$r" = "success" ]; then icon="✅";
-            elif [ "$r" = "failure" ]; then icon="❌";
-            elif [ "$r" = "skipped" ]; then icon="⊘";
-            else icon="⊘"; fi
-            graph_line2="${graph_line2:+${graph_line2} → }${icon} ${gate}"
+            case "$gate" in
+              secrets)
+                consumed="APP_CONFIG + APP_SECRETS"
+                debug="check Validate Secrets job output"
+                ;;
+              ci)
+                consumed="source checkout"
+                debug="inspect reusable CI workflow summary"
+                ;;
+              build)
+                consumed="backend + dashboard image builds"
+                debug="check Build & Push Images job"
+                ;;
+              image)
+                consumed="managed + desktop agent image builds"
+                debug="check Agent Image workflow"
+                ;;
+              manifest)
+                consumed="release manifest"
+                debug="check Release Manifest job or artifact"
+                ;;
+              modal_contract)
+                consumed="agent desktop image"
+                debug="check Agent Modal Contract job"
+                ;;
+              deploy)
+                consumed="manifest image refs + server env"
+                debug="check deploy access, compose pull, and remote host state"
+                ;;
+              bootstrap)
+                consumed="deployed environment"
+                debug="download failure-diagnosis-agent-bootstrap"
+                ;;
+              smoke)
+                consumed="deployed environment"
+                debug="download failure-diagnosis-agent-smoke"
+                ;;
+            esac
+            gate_rows="${gate_rows}| ${gate} | \`${r}\` | ${consumed} | ${debug} |"$'\n'
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ] && [ "$next_debug_target" = "—" ]; then
+              next_debug_target="$debug"
+            fi
           done
 
-          echo "graph_line1=${graph_line1}" >> "$GITHUB_OUTPUT"
-          echo "graph_line2=${graph_line2}" >> "$GITHUB_OUTPUT"
+          {
+            echo "gate_rows<<GHEOF"
+            echo "$gate_rows"
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "blocked_at=${blocked_at:-—}" >> "$GITHUB_OUTPUT"
+          echo "next_debug_target=${next_debug_target}" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/summary-header
         with:
@@ -701,13 +734,16 @@ jobs:
       - name: Write body
         run: |
           {
-            echo "\`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` — mode: **${{ steps.status.outputs.mode }}**"
             echo
-            echo '```'
-            echo "${{ steps.status.outputs.graph_line1 }}"
-            echo "           ↓"
-            echo "     ${{ steps.status.outputs.graph_line2 }}"
-            echo '```'
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Domain | \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` |"
+            echo "| Environment | \`${{ github.ref_name == 'main' && 'prod' || 'dev' }}\` |"
+            echo "| Mode | \`${{ steps.status.outputs.mode }}\` |"
+            echo "| Deploy user | \`${{ vars.DEPLOY_USER || 'agentobox' }}\` |"
+            echo "| Modal environment | \`${{ github.ref_name }}\` |"
+            echo "| Source commit | \`${{ needs.manifest.outputs.source-commit || '—' }}\` |"
+            echo "| Manifest tag | \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` |"
             echo
             echo "| Image | Ref |"
             echo "|-------|-----|"
@@ -716,53 +752,27 @@ jobs:
             echo "| agent managed | \`${{ needs.manifest.outputs.agent-managed-image || '—' }}\` |"
             echo "| agent desktop | \`${{ needs.manifest.outputs.agent-desktop-image || '—' }}\` |"
             echo
-            echo "| Source commit | Manifest tag |"
-            echo "|---------------|--------------|"
-            echo "| \`${{ needs.manifest.outputs.source-commit || '—' }}\` | \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` |"
-            echo
-            echo "| Gate | Artifact Consumed | Provenance |"
-            echo "|------|-------------------|------------|"
-            echo "| ci | source checkout | reusable PR-quality CI graph |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          MODE="${{ steps.status.outputs.mode }}"
-          if [ "$MODE" = "build" ]; then
-            {
-              echo "| build | backend + dashboard images | built and pushed from Dockerfiles |"
-              echo "| agent-image | managed + desktop agent images | managed built once, desktop contract-tested before push |"
-              echo "| manifest | build + agent-image outputs | assembled and pushed to GHCR as \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` |"
-            } >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$MODE" = "rebuild" ]; then
-            {
-              echo "| build | backend + dashboard images | **rebuilt on main** via allow_rebuild — not promoted from dev |"
-              echo "| agent-image | managed + desktop agent images | **rebuilt on main** via allow_rebuild |"
-              echo "| manifest | build + agent-image outputs | assembled as \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` (provenance: rebuild) |"
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              echo "| manifest | promoted dev manifest from GHCR | resolved \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` — no rebuild |"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          {
-            echo "| agent-modal-contract | \`${{ needs.manifest.outputs.agent-desktop-image || '—' }}\` | desktop image verified on Modal |"
-            echo "| deploy | all images from manifest | manifest-sourced refs written into server env |"
-            echo "| agent-bootstrap | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy control plane + runtime handoff |"
-            echo "| agent-smoke | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy round-trip message |"
+            echo "| Gate | Status | Consumes | Next Debug Target |"
+            echo "|------|--------|----------|-------------------|"
+            echo "${{ steps.status.outputs.gate_rows }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Surface diagnosis artifact pointers for failed seam tests
-          blocked_at="${{ steps.status.outputs.overall == 'success' && '' || steps.status.outputs.detail }}"
-          if echo "$blocked_at" | grep -qi "bootstrap"; then
+          blocked_at="${{ steps.status.outputs.blocked_at }}"
+          if [ "${{ steps.status.outputs.overall }}" != "success" ]; then
+            failure_artifact="—"
+            if echo "$blocked_at" | grep -qi "bootstrap"; then
+              failure_artifact="failure-diagnosis-agent-bootstrap"
+            elif echo "$blocked_at" | grep -qi "smoke"; then
+              failure_artifact="failure-diagnosis-agent-smoke"
+            fi
             {
               echo
               echo "### Diagnosis"
-              echo "Bootstrap failed. Download \`failure-diagnosis-agent-bootstrap\` artifact for structured seam/step analysis."
-            } >> "$GITHUB_STEP_SUMMARY"
-          elif echo "$blocked_at" | grep -qi "smoke"; then
-            {
-              echo
-              echo "### Diagnosis"
-              echo "Smoke failed. Download \`failure-diagnosis-agent-smoke\` artifact for structured seam/step analysis."
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| First broken gate | \`${blocked_at}\` |"
+              echo "| Next debug target | ${{ steps.status.outputs.next_debug_target }} |"
+              echo "| Failure artifact | \`${failure_artifact}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi

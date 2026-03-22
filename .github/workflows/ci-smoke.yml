@@ -62,17 +62,13 @@ jobs:
           cache-to: type=gha,scope=ci-smoke-managed,mode=max
       - name: Build desktop runtime image
         id: build-desktop
-        uses: docker/build-push-action@v7
-        with:
-          context: agent
-          file: agent/Dockerfile.desktop.managed
-          load: true
-          tags: agentobox-agent-runtime-desktop-managed:latest
-          build-args: |
-            BASE_IMAGE=agentobox-agent-runtime-managed:latest
-            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
-          cache-from: type=gha,scope=ci-smoke-desktop-managed
-          cache-to: type=gha,scope=ci-smoke-desktop-managed,mode=max
+        run: |
+          docker build \
+            -f agent/Dockerfile.desktop.managed \
+            -t agentobox-agent-runtime-desktop-managed:latest \
+            --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest \
+            --build-arg AGENTOBOX_GIT_COMMIT=${{ github.sha }} \
+            agent
       - name: Start backend stack
         id: stack-boot
         env:
@@ -165,13 +161,14 @@ jobs:
           fi
 
           # Collect container/service state
-          backend_health="false"
-          curl -sf http://localhost:8000/health -o /dev/null 2>/dev/null && backend_health="true"
+          backend_health_py="False"
+          curl -sf http://localhost:8000/health -o /dev/null 2>/dev/null && backend_health_py="True"
 
           agent_containers=$(docker ps -aq --filter "label=agentobox.managed=true" 2>/dev/null | wc -l | tr -d ' ')
 
           mkdir -p diagnosis-artifacts
-          python3 - <<PYEOF > diagnosis-artifacts/failure-diagnosis-docker-smoke.json
+          tmp_diag="$(mktemp)"
+          python3 - <<PYEOF > "${tmp_diag}"
           import json
           print(json.dumps({
               "job": "docker-smoke",
@@ -188,7 +185,7 @@ jobs:
               "observed": {
                   "managed_image_build": "${{ steps.build-managed.outcome }}" == "success",
                   "desktop_image_build": "${{ steps.build-desktop.outcome }}" == "success",
-                  "backend_health": ${backend_health},
+                  "backend_health": ${backend_health_py},
                   "bootstrap_test": "${{ steps.bootstrap.outcome }}" == "success",
                   "roundtrip_test": "${{ steps.roundtrip.outcome || 'skipped' }}" == "success"
               },
@@ -205,6 +202,7 @@ jobs:
               "next_debug_target": "${next_debug}"
           }, indent=2))
           PYEOF
+          mv "${tmp_diag}" diagnosis-artifacts/failure-diagnosis-docker-smoke.json
 
       - name: Upload failure diagnosis artifacts
         if: failure()
@@ -226,6 +224,10 @@ jobs:
       - name: Write smoke body
         if: always()
         run: |
+          backend_build="${{ steps.build-backend.outcome || 'not-run' }}"
+          managed_build="${{ steps.build-managed.outcome || 'not-run' }}"
+          desktop_build="${{ steps.build-desktop.outcome || 'not-run' }}"
+          stack_boot="${{ steps.stack-boot.outcome || 'not-run' }}"
           bootstrap="${{ steps.bootstrap.outcome || 'not-run' }}"
           if [ "${SKIP_SMOKE:-}" = "true" ]; then
             round_trip=skipped
@@ -233,33 +235,45 @@ jobs:
             round_trip="${{ steps.roundtrip.outcome || 'not-run' }}"
           fi
 
-          # Only show detail table on failure or partial runs
-          if [ "${{ job.status }}" != "success" ] || [ "$round_trip" = "skipped" ]; then
-            {
-              echo
-              echo "| Test | Status |"
-              echo "|------|--------|"
-              echo "| bootstrap | \`${bootstrap}\` |"
-              echo "| round-trip | \`${round_trip}\` |"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo
+            echo "| Stage | Status | Consumes |"
+            echo "|-------|--------|----------|"
+            echo "| backend image build | \`${backend_build}\` | \`backend/Dockerfile\` |"
+            echo "| managed runtime build | \`${managed_build}\` | \`agent/Dockerfile.managed\` |"
+            echo "| desktop runtime build | \`${desktop_build}\` | managed runtime local image |"
+            echo "| stack boot | \`${stack_boot}\` | local compose stack reusing prebuilt images |"
+            echo "| bootstrap | \`${bootstrap}\` | local docker runtime stack |"
+            echo "| round-trip | \`${round_trip}\` | local docker runtime stack |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # On failure, surface diagnosis in summary
           if [ "${{ job.status }}" != "success" ]; then
             diag_file="diagnosis-artifacts/failure-diagnosis-docker-smoke.json"
-            if [ -f "$diag_file" ]; then
+            if [ -s "$diag_file" ]; then
               seam=$(python3 -c "import json; d=json.load(open('$diag_file')); print(d.get('seam',''))")
               broken=$(python3 -c "import json; d=json.load(open('$diag_file')); print(d.get('first_broken_step',''))")
               next_target=$(python3 -c "import json; d=json.load(open('$diag_file')); print(d.get('next_debug_target',''))")
               {
                 echo
                 echo "### Diagnosis"
-                echo "**Seam:** \`${seam}\` · **First broken step:** \`${broken}\`"
-                echo "**Next:** ${next_target}"
-                echo
-                echo "Full diagnosis: \`failure-diagnosis-docker-smoke\` artifact"
+                echo "| Field | Value |"
+                echo "|-------|-------|"
+                echo "| Seam | \`${seam}\` |"
+                echo "| First broken step | \`${broken}\` |"
+                echo "| Next debug target | ${next_target} |"
+                echo "| Artifact | \`failure-diagnosis-docker-smoke\` |"
               } >> "$GITHUB_STEP_SUMMARY"
             fi
+          elif [ "$round_trip" = "skipped" ]; then
+            {
+              echo
+              echo "### Overrides"
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| Round-trip smoke | skipped |"
+              echo "| Reason | \`ANTHROPIC_API_KEY\` not set in CI |"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
           {

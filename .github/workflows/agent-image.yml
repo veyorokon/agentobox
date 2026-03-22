@@ -222,32 +222,15 @@ jobs:
           contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
           hint="${{ needs.build-desktop-managed.outputs.contract-test-hint }}"
 
-          # Only show detail if something failed
-          if [ "$managed" != "success" ] || [ "$desktop" != "success" ]; then
-            {
-              echo
-              echo "| Step | Status |"
-              echo "|------|--------|"
-              echo "| managed build | \`${managed}\` |"
-              echo "| desktop build | \`${desktop}\` |"
-              echo "| contract test | \`${contract}\` |"
-            } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "| Stage | Status | Consumes |"
+            echo "|-------|--------|----------|"
+            echo "| build-managed | \`${managed}\` | \`agent/Dockerfile.managed\` |"
+            echo "| build-desktop-managed | \`${desktop}\` | managed image digest as desktop base |"
+            echo "| managed Docker contract | \`${contract}\` | local desktop image before push |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-            if [ -n "$hint" ]; then
-              {
-                echo
-                echo "<details><summary><b>contract_test</b></summary>"
-                echo
-                echo '```'
-                echo "$hint"
-                echo '```'
-                echo
-                echo "</details>"
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-
-          # Always show image refs if they exist
           managed_ref="${{ needs.build-managed.outputs.managed-image }}"
           managed_digest="${{ needs.build-managed.outputs.managed-digest }}"
           desktop_ref="${{ needs.build-desktop-managed.outputs.desktop-image }}"
@@ -259,11 +242,20 @@ jobs:
               echo "|-------|---------|------------|"
               echo "| managed | \`${managed_ref:-—}\` | \`${managed_digest:-—}\` |"
               echo "| desktop | \`${desktop_ref:-—}\` | \`${desktop_digest:-—}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -n "$hint" ]; then
+            {
               echo
-              echo "| Gate | Artifact Consumed | Provenance |"
-              echo "|------|-------------------|------------|"
-              echo "| build-managed | managed image tags | built and pushed from \`agent/Dockerfile.managed\` |"
-              echo "| build-desktop-managed | pulled managed sha image | reuses upstream managed artifact as desktop base |"
-              echo "| managed Docker contract | local desktop image \`agentobox-agent-runtime-desktop-managed:ci\` | built from pulled managed sha image before push |"
+              echo "### Diagnosis"
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| First broken seam | \`managed Docker contract\` |"
+              echo "| Next debug target | inspect the contract hint below and the \`contract-test-output\` artifact on failure |"
+              echo
+              echo '```'
+              echo "$hint"
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
