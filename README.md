@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/veyorokon/agentobox/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/veyorokon/agentobox/actions/workflows/ci.yml)
 [![Deploy Dev](https://github.com/veyorokon/agentobox/actions/workflows/deploy-dev.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/deploy-dev.yml)
+[![Promote Prod](https://github.com/veyorokon/agentobox/actions/workflows/promote-prod.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/promote-prod.yml)
 
 A platform for managing AI agent teams. Provision agents with full Linux desktops, observe their work in real-time via VNC and activity feeds, and coordinate multi-agent workflows through a web dashboard.
 

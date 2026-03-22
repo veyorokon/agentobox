@@ -60,6 +60,37 @@ Questions:
 - Which side owns truth?
 - What behavior is contractually required vs incidental?
 
+### Contracts
+
+A contract is the explicit agreement at a seam about what each side provides and requires. If a seam is the boundary, a contract is the stitch that holds the two sides together. Without the contract, the seam is just a gap where things drift apart.
+
+A contract is expressed through code, tests, and docs, but is not reducible to any one of them. It is the invariant that all three must honor. Code implements the contract. Tests enforce it. Docs state it. If any of the three contradict the contract, the contract wins.
+
+A good contract:
+- names the seam it governs
+- states who owns truth (who writes, who reads)
+- lists the inputs each side must provide
+- lists the outputs each side must produce
+- defines the invariants that must hold across all valid states
+
+An invariant is a specific rule within a contract that must never be violated regardless of how the system evolves. "Prod artifact identity comes from an explicit manifest ref" is an invariant of the release contract. It does not describe what happens. It describes what must never stop being true.
+
+Contracts separate what must be true from how it is achieved. Implementations behind the contract can change freely. If the contract stays the same, downstream consumers do not need to change.
+
+When a bug happens at a seam, the contract tells you which side broke its promise.
+
+Examples:
+- release contract: dev writes the manifest, prod reads it, images are never rebuilt for promotion
+- machine contract: runtime owns observed state, backend owns desired state
+- image contract: built image must satisfy boot, healthcheck, and filesystem expectations
+
+Questions:
+- What is the contract at this seam?
+- Which side owns writing truth?
+- What invariants must hold?
+- Is the current implementation honoring the contract, or working around it?
+- If the implementation changed, would the contract still be satisfied?
+
 ### Threads
 
 A thread is a coherent line of work across one or more seams.
@@ -620,6 +651,21 @@ Good names:
 - indicate level of abstraction
 - distinguish canonical state from projections
 - distinguish runtime concepts from UI concepts
+
+Normalize names across equivalent concepts whenever possible.
+
+Examples:
+- prefer `Agentobox Dev`, `Agentobox Prod`, and `Agentobox Local` over one-off variants
+- prefer one stable noun for the same resource across docs, dashboards, provider consoles, and runbooks
+- prefer explicit environment qualifiers over implicit or historical names
+
+Naming normalization is not cosmetic. It is part of ambiguity reduction and seam hygiene.
+
+A good normalization pass:
+- keeps the same concept named the same way across environments
+- makes environment scope explicit when it matters
+- removes stale aliases once the new name is proven
+- treats naming drift as a contract bug, not just a style issue
 
 When naming drifts:
 - consolidate toward the canonical noun
