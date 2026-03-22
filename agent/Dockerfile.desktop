@@ -1,0 +1,36 @@
+ARG BASE_IMAGE=agentobox-agent-runtime:latest
+FROM ${BASE_IMAGE}
+
+ENV AGENTOBOX_RUNTIME_PROFILE=desktop \
+    AGENTOBOX_IMAGE_REF=agentobox-agent-runtime-desktop:latest \
+    DISPLAY=:99 \
+    RESOLUTION=1920x1080 \
+    NOVNC_WEB_ROOT=/opt/noVNC \
+    AGENT_HOME=/home/agent
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    x11-utils \
+    xdotool \
+    awesome \
+    chromium \
+    dbus \
+    dbus-x11 \
+    fonts-jetbrains-mono \
+    python3-websockify \
+    xterm \
+    git \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN fc-cache -f
+
+RUN git clone --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git /opt/noVNC \
+    && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html \
+    && rm -rf /opt/noVNC/.git
+
+RUN useradd -m -s /bin/bash agent || true
+
+EXPOSE 6080

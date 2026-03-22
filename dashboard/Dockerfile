@@ -4,10 +4,11 @@ WORKDIR /app
 
 RUN corepack enable pnpm
 
-COPY package.json pnpm-lock.yaml ./
+COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-COPY . .
+COPY dashboard/. .
+COPY shared /shared
 
 # --- Dev target (used by docker-compose.yml) ---
 FROM base AS dev

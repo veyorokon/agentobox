@@ -8,7 +8,6 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { PendingItem } from "@/lib/types"
-import { useTeamStore } from "@/lib/stores/team"
 import { useFeed, useResolvePermission, useResolvePlan } from "@/lib/graphql/hooks/use-feed"
 import { useSidebarStore } from "@/lib/stores/sidebar"
 import { AgentTag } from "@/components/agent/avatar"
@@ -24,10 +23,8 @@ export function AttentionBar() {
   const feedItems = feedData?.feed ?? []
   const resolvePermission = useResolvePermission()
   const resolvePlan = useResolvePlan()
-  const reviewAgent = useTeamStore(s => s.reviewAgent)
 
   const focusedAgentId = useSidebarStore(s => s.focusedAgentId)
-  const setMainTab = useSidebarStore(s => s.setMainTab)
   const stepIdx = useSidebarStore(s => s.attentionStepIdx)
   const setStepIdx = useSidebarStore(s => s.setAttentionStepIdx)
   const expandedFeedItemId = useSidebarStore(s => s.attentionExpandedFeedItemId)
@@ -51,7 +48,9 @@ export function AttentionBar() {
     ? pending.find(p => p.feedItemId === expandedFeedItemId && p.item.type === "plan")
     : null
 
-  if (pending.length === 0) return null
+  if (pending.length === 0) {
+    return null
+  }
 
   // Sort: permissions first, then plans
   const sorted = [...pending].sort((a, b) => {
@@ -64,12 +63,6 @@ export function AttentionBar() {
   const current = sorted[clamped]
   const { item, feedItemId, agentId } = current
   const isFocused = focusedAgentId != null && agentId === focusedAgentId
-
-  const handleReview = (agentName: string, id: string) => {
-    reviewAgent(agentName)
-    setMainTab("chat")
-    setExpandedFeedItemId(id)
-  }
 
   const handleResolvePlanAndCollapse = (id: string, verdict: "approved" | "rejected") => {
     resolvePlan(id, verdict)
@@ -169,7 +162,7 @@ export function AttentionBar() {
           ) : (
             <button
               type="button"
-              onClick={() => handleReview(item.agent, feedItemId)}
+              onClick={() => setExpandedFeedItemId(feedItemId)}
               className="px-2 py-1 rounded text-[10px] font-medium text-warning border border-warning/30 hover:bg-warning-subtle/40 transition-colors inline-flex items-center gap-1"
             >
               Review <ChevronRight className="h-2.5 w-2.5" />

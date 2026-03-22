@@ -17,6 +17,8 @@ export const GET_PROJECT = gql`
       id
       name
       description
+      themeDocument
+      themeTokens
     }
   }
 `

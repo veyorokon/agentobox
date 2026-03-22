@@ -26,7 +26,7 @@ def test_agent(gql, test_project):
     agent = gql.create_agent(
         test_project["id"],
         name=agent_name,
-        runtime="docker",
+
         instructions="You are an e2e test agent. Wait for instructions.",
     )
     agent_id = agent["id"]

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useQuery } from "@apollo/client/react"
 import {
@@ -33,6 +33,9 @@ import { TeamFeed } from "@/components/feed/team-feed"
 import { ComposerBar } from "@/components/composer/composer-bar"
 import { UserMenu } from "@/components/layout/user-menu"
 import { ThemePicker } from "@/components/layout/theme-picker"
+import { useThemeStore } from "@/lib/stores/theme"
+import { BackendStatusBanner } from "@/components/ui/backend-status-banner"
+import { describeGraphqlError } from "@/lib/graphql/errors"
 
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
@@ -50,24 +53,53 @@ export default function ProjectPage() {
   const bp = useBreakpoint()
 
   // ── Project name (for breadcrumb) ─────────────────────────────────
-  const { data: projectData, loading: projectLoading } = useQuery<{ project: { id: string; name: string } | null }>(GET_PROJECT, {
+  const syncTheme = useThemeStore((s) => s.syncTheme)
+  const { data: projectData, loading: projectLoading, error: projectError, refetch: refetchProject } = useQuery<{
+    project: {
+      id: string
+      name: string
+      themeTokens?: Record<string, string> | null
+      themeDocument?: { theme?: string; mode?: string } | null
+    } | null
+  }>(GET_PROJECT, {
     variables: { id: projectId },
     skip: !projectId,
   })
   const projectName = projectData?.project?.name ?? ""
+
+  useEffect(() => {
+    const tokens = projectData?.project?.themeTokens
+    const themeDocument = projectData?.project?.themeDocument
+    if (tokens && Object.keys(tokens).length > 0) {
+      syncTheme({
+        theme: themeDocument?.theme ?? "custom",
+        mode: themeDocument?.mode ?? "dark",
+        tokens,
+      })
+    }
+  }, [projectData?.project?.themeDocument, projectData?.project?.themeTokens, syncTheme])
 
   // ── Sidebar store (mobile tab) ──────────────────────────────────
   const mainTab = useSidebarStore(s => s.mainTab)
   const setMainTab = useSidebarStore(s => s.setMainTab)
 
   // ── Apollo (agents + feed + providers) ─────────────────────────
-  const { providers } = useProviderStatus(projectId ?? "")
+  const { providers, error: providerError } = useProviderStatus(projectId ?? "")
   const missingKeys = providers.filter((p) => !p.configured)
-  const { data: agentsData, loading: agentsLoading } = useAgents()
+  const { data: agentsData, loading: agentsLoading, error: agentsError, refetch: refetchAgents } = useAgents()
   const agents = agentsData?.agents ?? []
   const { data: feedData } = useFeed()
   const feedItems = feedData?.feed ?? []
   const headerReady = !projectLoading && !agentsLoading && !!projectName
+  // Only show error banner when data hasn't loaded yet. Apollo can keep
+  // a stale error object even after a successful refetch/WS snapshot.
+  const hasProjectData = Boolean(projectData?.project)
+  const hasAgentData = Boolean(agentsData?.agents)
+  const hasProviderData = providers.length > 0
+  const backendError = (!hasProjectData && projectError)
+    || (!hasAgentData && agentsError)
+    || (!hasProviderData && providerError)
+    || null
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
@@ -111,6 +143,16 @@ export default function ProjectPage() {
       )}
 
       <div className="@container/main flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {backendError && (
+          <BackendStatusBanner
+            title="Project data is temporarily unavailable"
+            detail={describeGraphqlError(backendError)}
+            onRetry={() => {
+              void refetchProject()
+              void refetchAgents()
+            }}
+          />
+        )}
         {/* Mobile header: project + secrets + user */}
         {bp === "mobile" && (
           <div className="h-10 px-3 flex items-center border-b border-border-default bg-surface shrink-0">

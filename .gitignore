@@ -9,6 +9,7 @@ __pycache__/
 # Node
 node_modules/
 dist/
+!agent/claude/mcp-servers/**/dist/
 .next/
 .pnpm-store/
 
@@ -24,6 +25,7 @@ dist/
 
 # Claude Code
 .claude/
+.codex/
 .mcp.json
 .playwright-mcp/
 
@@ -75,3 +77,5 @@ pages_html/
 
 # Conversation transcripts
 convo.txt
+backend/dev.db
+backend/test.db

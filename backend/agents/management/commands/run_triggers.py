@@ -30,7 +30,7 @@ async def evaluate_triggers():
 
     Returns the number of triggers that fired.
     """
-    from agents.services.comms import send_message
+    from agents.services.relay import send_message
 
     now = timezone.now()
     fired_count = 0

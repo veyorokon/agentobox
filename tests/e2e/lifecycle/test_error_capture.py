@@ -52,7 +52,6 @@ class TestErrorCapture:
         agent = gql.create_agent(
             test_project["id"],
             name=agent_name,
-            runtime="docker",
             instructions="You are an e2e test agent. Wait for instructions.",
         )
         ready_agent = poll_agent_status(

@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useApolloClient } from "@apollo/client/react"
 import { gql } from "@apollo/client"
+import { useQuery, useMutation, useApolloClient } from "@apollo/client/react"
 import { useCallback, useMemo } from "react"
 import { useParams } from "next/navigation"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
@@ -14,6 +14,7 @@ import {
   UPDATE_AGENT_CONFIG,
   CREATE_AGENT,
 } from "@/lib/graphql/mutations/agents"
+import { optimisticAgentField } from "@/lib/graphql/cache-ops"
 import { createLogger } from "@/lib/logger"
 import type { Agent, AttentionLevel } from "@/lib/types"
 
@@ -25,6 +26,12 @@ import type { Agent, AttentionLevel } from "@/lib/types"
 /* ================================================================== */
 
 const log = createLogger("apollo")
+const inFlightHardRestarts = new Set<string>()
+const RESTART_STATUS_FRAGMENT = gql`
+  fragment RestartStatus on AgentType {
+    lifecycleStatus
+  }
+`
 
 type AgentsData = { agents: Agent[] }
 
@@ -48,28 +55,11 @@ export function useSetAgentMode() {
     (agentId: string, mode: Agent["mode"]) => {
       log("cache.modify", { typename: "AgentType", id: agentId, field: "mode", value: mode })
 
-      // Read previous value for rollback
-      const prev = client.cache.readFragment<{ mode: string }>({
-        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
-        fragment: gql`fragment ModeSnap on AgentType { mode }`,
-      })
-
-      // Optimistic cache update
-      client.cache.modify({
-        id: client.cache.identify({ __typename: "AgentType", id: agentId }),
-        fields: {
-          mode: () => mode,
-        },
-      })
+      const rollback = optimisticAgentField(client.cache, agentId, "mode", mode)
 
       mutate({ variables: { agentId, mode } }).catch(err => {
         log("mutation.error", { mutation: "setAgentMode", agentId, error: err.message })
-        if (prev) {
-          client.cache.modify({
-            id: client.cache.identify({ __typename: "AgentType", id: agentId }),
-            fields: { mode: () => prev.mode },
-          })
-        }
+        rollback()
       })
     },
     [client, mutate],
@@ -124,14 +114,33 @@ export function useHardRestartAgent() {
   const client = useApolloClient()
   const [mutate] = useMutation(HARD_RESTART_AGENT)
   return useCallback((agentId: string) => {
+    if (inFlightHardRestarts.has(agentId)) {
+      log("mutation.skipped", { mutation: "hardRestartAgent", agentId, reason: "in_flight" })
+      return
+    }
+    const cacheId = client.cache.identify({ __typename: "AgentType", id: agentId })
+    const cached = cacheId
+      ? client.cache.readFragment<{ lifecycleStatus?: string }>({
+          id: cacheId,
+          fragment: RESTART_STATUS_FRAGMENT,
+        })
+      : null
+    if (cached?.lifecycleStatus === "deploying") {
+      log("mutation.skipped", { mutation: "hardRestartAgent", agentId, reason: "already_deploying" })
+      return
+    }
+
+    inFlightHardRestarts.add(agentId)
     log("cache.modify", { typename: "AgentType", id: agentId, field: "lifecycleStatus", value: "deploying" })
-    client.cache.modify({
-      id: client.cache.identify({ __typename: "AgentType", id: agentId }),
-      fields: { lifecycleStatus: () => "deploying" },
-    })
-    mutate({ variables: { agentId } }).catch(err => {
-      log("mutation.error", { mutation: "hardRestartAgent", agentId, error: err.message })
-    })
+    const rollback = optimisticAgentField(client.cache, agentId, "lifecycleStatus", "deploying")
+    mutate({ variables: { agentId } })
+      .catch(err => {
+        log("mutation.error", { mutation: "hardRestartAgent", agentId, error: err.message })
+        rollback()
+      })
+      .finally(() => {
+        inFlightHardRestarts.delete(agentId)
+      })
   }, [client, mutate])
 }
 
@@ -192,7 +201,6 @@ type CreateAgentInput = {
   model: string
   role: string
   mode: string
-  runtime: string
   instructions?: string
   tags?: string[]
 }

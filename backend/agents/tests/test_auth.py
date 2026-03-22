@@ -1,6 +1,7 @@
 """Tests for agents.graphql.auth authorization helpers."""
 
 import pytest
+from django.utils import timezone
 
 from agents.graphql.auth import authorize_agent, authorize_agents, authorize_project
 from agents.models import Agent, AgentStatus
@@ -63,6 +64,21 @@ async def test_authorize_agent_wrong_owner(other_user, agent):
         await authorize_agent(info, agent.id)
 
 
+async def test_authorize_agent_deleted_project_hidden(auth_info, project):
+    """Agents under tombstoned projects should no longer authorize."""
+    agent = await Agent.objects.acreate(
+        name="deleted-project-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+    )
+    project.deleted_at = timezone.now()
+    await project.asave(update_fields=["deleted_at"])
+
+    with pytest.raises(Agent.DoesNotExist):
+        await authorize_agent(auth_info, agent.id)
+
+
 # ---------------------------------------------------------------------------
 # authorize_agents
 # ---------------------------------------------------------------------------
@@ -92,3 +108,23 @@ async def test_authorize_agents_partial_ownership(auth_info, project, other_user
     )
     with pytest.raises(PermissionError, match="not found or not owned"):
         await authorize_agents(auth_info, [owned.id, not_owned.id])
+
+
+async def test_authorize_agents_excludes_deleted_project(auth_info, project):
+    """Bulk agent auth should reject agents from tombstoned projects."""
+    owned = await Agent.objects.acreate(
+        name="owned-agent", project=project, runtime="docker", status=AgentStatus.IDLE,
+    )
+    deleted_project = await Project.all_objects.acreate(
+        name="Deleted Project",
+        owner=project.owner,
+        deleted_at=timezone.now(),
+    )
+    hidden = await Agent.objects.acreate(
+        name="hidden-agent",
+        project=deleted_project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+    )
+    with pytest.raises(PermissionError, match="not found or not owned"):
+        await authorize_agents(auth_info, [owned.id, hidden.id])

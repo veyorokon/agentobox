@@ -78,7 +78,6 @@ export function CreateAgentModal({
         model,
         role,
         mode,
-        runtime: "docker",
         instructions: instructions.trim() || undefined,
         tags: tags.length > 0 ? tags : undefined,
       })

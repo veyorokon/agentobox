@@ -1,30 +1,13 @@
-from pathlib import Path
+from config.app_config import app_config
 
-import environ
+_django = app_config.django
+_oauth = app_config.oauth
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# --- Core ---
 
-env = environ.Env(
-    DEBUG=(bool, False),
-    ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
-    REDIS_URL=(str, "redis://localhost:6379/0"),
-    AGENT_IMAGE=(str, "agentobox-agent-claude:latest"),
-    ABOX_CALLBACK_URL=(str, "http://backend:8000"),
-    ABOX_DASHBOARD_URL=(str, ""),
-    ANTHROPIC_API_KEY=(str, ""),
-    ABOX_ENCRYPTION_KEY=(str, ""),
-    DOCKER_NETWORK=(str, "agentobox_default"),
-    AGENT_VOLUME_NAME=(str, "agentobox_agent-volumes"),
-    AGENT_ROOTFS_PATH=(str, ""),
-    MODAL_APP_NAME=(str, "agentobox"),
-    MODAL_AGENT_IMAGE=(str, "ghcr.io/veyorokon/agentobox-agent-claude:latest"),
-    VOLUME_ROOT=(str, ""),
-)
-environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
-
-SECRET_KEY = env("SECRET_KEY")
-DEBUG = env("DEBUG")
-ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+SECRET_KEY = _django.secret_key
+DEBUG = _django.debug
+ALLOWED_HOSTS = _django.parse_allowed_hosts()
 
 # --- Security (reverse proxy) ---
 
@@ -38,7 +21,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # we skip it.  In local dev (ALLOWED_HOSTS=["*"]) the list would be empty,
 # so we fall back to localhost origins for the dashboard (the browser origin
 # for OAuth form POSTs).  In production, set CSRF_TRUSTED_ORIGINS explicitly.
-CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+CSRF_TRUSTED_ORIGINS = _django.parse_csrf_trusted_origins()
 if not CSRF_TRUSTED_ORIGINS:
     _hosts = [f"https://{h}" for h in ALLOWED_HOSTS if h != "*"]
     CSRF_TRUSTED_ORIGINS = _hosts or [
@@ -116,7 +99,7 @@ ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {
     "default": {
-        **env.db("DATABASE_URL", default="sqlite:///db.sqlite3"),
+        **_django.parse_database(),
         "CONN_MAX_AGE": 0,  # Close after each request — ASGI/Daphne dispatches ORM
         # calls to threads; CONN_MAX_AGE > 0 keeps each thread's connection alive,
         # causing unbounded idle connection growth under polling load.
@@ -131,7 +114,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [env("REDIS_URL")],
+            "hosts": [_django.redis_url],
             "group_expiry": 86400,
         },
     },
@@ -156,7 +139,7 @@ HEADLESS_TOKEN_STRATEGY = (
 )
 HEADLESS_JWT_ALGORITHM = "HS256"  # uses SECRET_KEY; no RSA key pair needed
 
-DASHBOARD_URL = env("ABOX_DASHBOARD_URL", default="http://localhost:5051")
+DASHBOARD_URL = app_config.dashboard_url or "http://localhost:5051"
 
 HEADLESS_FRONTEND_URLS = {
     "socialaccount_login_cancelled": DASHBOARD_URL + "/auth/callback?error=cancelled",
@@ -168,15 +151,15 @@ SOCIALACCOUNT_PROVIDERS = {
         "SCOPE": ["profile", "email"],
         "AUTH_PARAMS": {"access_type": "online"},
         "APP": {
-            "client_id": env("GOOGLE_CLIENT_ID", default=""),
-            "secret": env("GOOGLE_CLIENT_SECRET", default=""),
+            "client_id": _oauth.google_client_id,
+            "secret": _oauth.google_client_secret,
         },
     },
     "github": {
         "SCOPE": ["user:email"],
         "APP": {
-            "client_id": env("GITHUB_SSO_CLIENT_ID", default=""),
-            "secret": env("GITHUB_SSO_CLIENT_SECRET", default=""),
+            "client_id": _oauth.github_client_id,
+            "secret": _oauth.github_client_secret,
         },
     },
 }
@@ -198,37 +181,14 @@ USE_TZ = True
 # --- Static ---
 
 STATIC_URL = "static/"
+
+from pathlib import Path  # noqa: E402
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- Agent Runtime ---
-
-AGENT_IMAGE = env("AGENT_IMAGE")
-ABOX_CALLBACK_URL = env("ABOX_CALLBACK_URL")
-ABOX_DASHBOARD_URL = env("ABOX_DASHBOARD_URL")
-ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY")
-ABOX_ENCRYPTION_KEY = env("ABOX_ENCRYPTION_KEY")
-DOCKER_NETWORK = env("DOCKER_NETWORK")
-AGENT_VOLUME_NAME = env("AGENT_VOLUME_NAME")
-AGENT_ROOTFS_PATH = env("AGENT_ROOTFS_PATH")
-MODAL_APP_NAME = env("MODAL_APP_NAME")
-MODAL_AGENT_IMAGE = env("MODAL_AGENT_IMAGE")
-VOLUME_ROOT = env("VOLUME_ROOT")
-
-# Per-agent-type image selection. Runtimes look up agent_type in these maps;
-# if missing, they fall back to AGENT_IMAGE / MODAL_AGENT_IMAGE.
-AGENT_IMAGE_MAP = {
-    "claude-code": "agentobox-agent-claude:latest",
-}
-MODAL_AGENT_IMAGE_MAP = {
-    "claude-code": "ghcr.io/veyorokon/agentobox-agent-claude:latest",
-}
-
-# --- Media / S3 ---
-
-MEDIA_BUCKET = env("MEDIA_BUCKET", default="agentobox-media")
-MEDIA_CDN_URL = env("MEDIA_CDN_URL", default="")
 
 # --- Logging ---
 
@@ -305,11 +265,8 @@ SESSION_COOKIE_NAME = "agentobox_sessionid"
 
 # --- CORS ---
 
-CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL", default=False)
-CORS_ALLOWED_ORIGINS = env.list(
-    "CORS_ALLOWED_ORIGINS",
-    default=["http://localhost:3000", "http://localhost:5051"],
-)
+CORS_ALLOW_ALL_ORIGINS = _django.cors_allow_all
+CORS_ALLOWED_ORIGINS = _django.parse_cors_allowed_origins()
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     "accept",

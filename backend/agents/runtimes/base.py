@@ -11,14 +11,18 @@ get_runtime(name) from __init__.py and program against this Protocol. Adding
 a new runtime (e.g. Fly.io) means implementing this interface and registering
 it in __init__.py; no service code changes.
 """
+from decimal import Decimal
 from dataclasses import dataclass
 from typing import Protocol
+
+from agents.services.project_volume import ProjectVolumeStore
 
 
 @dataclass
 class SandboxInstance:
     id: str
     vnc_url: str
+    health_url: str = ""
 
 
 @dataclass
@@ -40,6 +44,12 @@ class VolumeMount:
     read_only: bool = False
 
 
+@dataclass(frozen=True)
+class RuntimeResources:
+    cpu_cores: Decimal
+    memory_mb: int
+
+
 class Runtime(Protocol):
     async def create(
         self, name: str, env: dict[str, str],
@@ -54,6 +64,38 @@ class Runtime(Protocol):
         self, sandbox_id: str, content: bytes, dest: str
     ) -> None: ...
 
+    def machine_store(self) -> ProjectVolumeStore: ...
+
+    def resource_snapshot(self) -> RuntimeResources: ...
+
+    async def sync_machine_volume(
+        self, sandbox_id: str, mount_path: str = "/vol"
+    ) -> None: ...
+
+    async def mirror_machine_append(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str,
+    ) -> None: ...
+
+    async def mirror_machine_write(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str | bytes,
+    ) -> None: ...
+
+    async def await_machine_path_visible(
+        self,
+        sandbox_id: str,
+        path: str,
+        *,
+        expected_content: str = "",
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.25,
+    ) -> None: ...
+
     async def terminate(self, sandbox_id: str) -> None: ...
 
     async def list_sandboxes(self) -> list[SandboxInstance]: ...
@@ -66,4 +108,8 @@ class Runtime(Protocol):
         Returns None if the container is not found or info is unavailable.
         Result shape: {exit_code: int, oom_killed: bool, logs: str}
         """
+        ...
+
+    async def get_event_tail(self, sandbox_id: str, *, limit: int = 20) -> list[dict]:
+        """Return recent platform events correlated to the sandbox if available."""
         ...

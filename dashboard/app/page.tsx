@@ -22,6 +22,8 @@ import {
   useDeleteAccountSecret,
   type SecretEntry,
 } from "@/lib/graphql/hooks/use-secrets"
+import { BackendStatusBanner } from "@/components/ui/backend-status-banner"
+import { describeGraphqlError } from "@/lib/graphql/errors"
 import { createLogger } from "@/lib/logger"
 import { cn, timeAgo, formatDate, detectCredentialType, getBackendUrl } from "@/lib/utils"
 import { getToken, clearTokenAndRedirect } from "@/lib/auth"
@@ -117,7 +119,7 @@ export default function GlobalPage() {
     }
   }, [router])
 
-  const { data, loading } = useQuery<{ projects: Project[] }>(GET_PROJECTS, {
+  const { data, loading, error: projectsError, refetch: refetchProjects } = useQuery<{ projects: Project[] }>(GET_PROJECTS, {
     skip: !authed,
     fetchPolicy: "network-only",
   })
@@ -274,6 +276,13 @@ export default function GlobalPage() {
 
   return (
     <div className="min-h-screen bg-surface">
+      {projectsError && (
+        <BackendStatusBanner
+          title="Projects are temporarily unavailable"
+          detail={describeGraphqlError(projectsError)}
+          onRetry={() => { void refetchProjects() }}
+        />
+      )}
       {/* Header */}
       <header className="h-12 px-6 flex items-center border-b border-border-default">
         <h1 className="text-sm font-semibold text-default">Agentobox</h1>
@@ -587,7 +596,13 @@ export default function GlobalPage() {
           )}
 
           {/* ── Project list ── */}
-          {loading && projects.length === 0 ? (
+          {projectsError && projects.length === 0 ? (
+            <div className="py-16 text-center">
+              <AlertTriangle className="h-8 w-8 text-danger/30 mx-auto mb-3" />
+              <p className="text-sm text-danger/75 mb-1">Backend unavailable</p>
+              <p className="text-[11px] text-muted/55">{describeGraphqlError(projectsError)}</p>
+            </div>
+          ) : loading && projects.length === 0 ? (
             <div className="py-16 text-center">
               <p className="text-[11px] text-muted/50">Loading projects...</p>
             </div>

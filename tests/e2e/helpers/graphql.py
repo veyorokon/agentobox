@@ -52,8 +52,13 @@ class AboxGraphQL:
             """
             query ($agentId: ID!) {
                 agent(agentId: $agentId) {
-                    id name lifecycleStatus errorMessage phase task
-                    mode attentionLevel role cost turns
+                    id name runtime lifecycleStatus errorMessage phase task
+                    mode attentionLevel role cost turns relayConnected
+                    desiredStatus isConverged previewState
+                    lifecycleAttempts {
+                        id kind status step attemptNo correlationId
+                        errorCode errorDetail startedAt finishedAt
+                    }
                 }
             }
             """,
@@ -66,8 +71,9 @@ class AboxGraphQL:
             """
             query ($projectId: ID!) {
                 agents(projectId: $projectId) {
-                    id name lifecycleStatus errorMessage phase task
-                    mode attentionLevel role
+                    id name runtime lifecycleStatus errorMessage phase task
+                    mode attentionLevel role relayConnected cost turns
+                    desiredStatus isConverged previewState
                 }
             }
             """,
@@ -80,7 +86,6 @@ class AboxGraphQL:
             "input": {
                 "projectId": project_id,
                 "name": name,
-                "runtime": kwargs.get("runtime", "docker"),
                 "model": kwargs.get("model", "claude-sonnet-4-5-20250929"),
                 "workspacePath": kwargs.get("workspacePath", ""),
                 "instructions": kwargs.get("instructions", ""),
@@ -92,6 +97,8 @@ class AboxGraphQL:
             variables["input"]["mcpServers"] = kwargs["mcpServers"]
         if "tags" in kwargs:
             variables["input"]["tags"] = kwargs["tags"]
+        if "agentType" in kwargs:
+            variables["input"]["agentType"] = kwargs["agentType"]
 
         data = self.execute(
             """
@@ -188,6 +195,44 @@ class AboxGraphQL:
             {"id": project_id},
         )
         return data["deleteProject"]
+
+    # -- Incidents --
+
+    def capture_incident(self, agent_id: str, note: str = "") -> dict:
+        data = self.execute(
+            """
+            mutation ($input: CaptureIncidentInput!) {
+                captureIncident(input: $input) {
+                    incidentId
+                    agentId
+                    projectId
+                    createdAt
+                }
+            }
+            """,
+            {"input": {"agentId": agent_id, "note": note}},
+        )
+        return data["captureIncident"]
+
+    def query_incident(self, incident_id: str) -> dict | None:
+        data = self.execute(
+            """
+            query ($incidentId: ID!) {
+                incident(incidentId: $incidentId) {
+                    id
+                    agentId
+                    projectId
+                    note
+                    windowMinutes
+                    bundle
+                    collectionErrors
+                    createdAt
+                }
+            }
+            """,
+            {"incidentId": incident_id},
+        )
+        return data["incident"]
 
     def close(self):
         self._client.close()

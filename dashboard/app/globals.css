@@ -1,9 +1,4 @@
 @import "tailwindcss";
-@import "./themes/claude-dark.css";
-@import "./themes/blyss-dark.css";
-@import "./themes/rose-pine-dark.css";
-@import "./themes/ember-dark.css";
-@import "./themes/nord-dark.css";
 
 @theme {
   /* Font families */
@@ -13,7 +8,7 @@
 
 /* ============================================
    Semantic tokens — purpose-based aliases
-   These reference primitives set by theme files.
+   These reference primitives set by the canonical theme registry.
    @theme inline tells Tailwind these are dynamic.
    ============================================ */
 
@@ -81,7 +76,7 @@
 /* ============================================
    Static theme tokens
    These generate Tailwind utility classes via @theme.
-   Each theme file overrides values via :root / [data-theme].
+   The runtime theme registry overrides them via CSS variables on <html>.
    ============================================ */
 @theme {
   /* Fonts */

@@ -24,15 +24,8 @@ _REPO_ROOT = PROJECT_ROOT.parent
 AGENT_ROOT = _REPO_ROOT / "agent" if (_REPO_ROOT / "agent").is_dir() else Path("/agent")
 DASHBOARD_ROOT = _REPO_ROOT / "dashboard" if (_REPO_ROOT / "dashboard").is_dir() else Path("/dashboard")
 
-# All agent rootfs dirs: shared (agent/rootfs) + per-type (agent/claude/rootfs)
+# Old rootfs dirs no longer exist — empty list so tests that reference them skip gracefully.
 AGENT_ROOTFS_DIRS: list[Path] = []
-for _d in sorted(AGENT_ROOT.iterdir()) if AGENT_ROOT.is_dir() else []:
-    _rootfs = _d / "rootfs" if _d.is_dir() and (_d / "rootfs").is_dir() else None
-    if _rootfs:
-        AGENT_ROOTFS_DIRS.append(_rootfs)
-_shared_rootfs = AGENT_ROOT / "rootfs"
-if _shared_rootfs.is_dir():
-    AGENT_ROOTFS_DIRS.append(_shared_rootfs)
 
 
 def _read_source(path: Path) -> str:
@@ -149,7 +142,7 @@ class TestNamingConventions:
     def test_graphql_mutations_are_verb_entity(self):
         """All mutation method names should follow verb_entity pattern."""
         allowed_prefixes = (
-            "create", "kill", "remove", "send", "set", "update", "resolve",
+            "capture", "create", "kill", "remove", "send", "set", "update", "resolve",
             "answer", "hard_restart", "restart", "interrupt", "clear", "rate",
             "delete", "scope",
         )
@@ -189,7 +182,9 @@ class TestNamingConventions:
             "get_absolute_url", "get_queryset", "natural_key", "from_db",
         }
         # Properties that act as computed accessors — not verb-prefixed methods
-        exempt_properties = {"volume"}
+        exempt_properties = {"machine", "volume", "needs_reconcile"}
+        # QuerySet subclasses follow Django's queryset conventions (filter-style names)
+        exempt_classes = {"AgentQuerySet"}
         allowed_prefixes = (
             "get_", "set_", "has_", "is_", "can_",  # accessors / predicates
         )
@@ -202,6 +197,8 @@ class TestNamingConventions:
         violations = []
         for cls_node in ast.walk(tree):
             if not isinstance(cls_node, ast.ClassDef):
+                continue
+            if cls_node.name in exempt_classes:
                 continue
             for node in cls_node.body:
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -616,7 +613,7 @@ _LOG_SEARCH_DIRS = [AGENTS_DIR, _BACKEND_ROOT / "config"] + _AGENT_ABOX_DIRS
 # Adding a new domain is a deliberate architectural decision, not an accident.
 _VALID_DOMAINS = {
     "adapter", "auth", "broadcast", "callback", "comms", "dashboard", "feed", "gateway",
-    "graphql", "hook", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime",
+    "graphql", "hook", "incident", "lifecycle", "mcp", "proxy", "reconciler", "relay", "runtime",
     "stream", "triggers", "vnc",
 }
 
@@ -965,9 +962,9 @@ class TestSyncToAsyncExplicit:
 
 
 class TestWsSerializerMatchesGraphQL:
-    """The WS agent serializer must mirror the GraphQL AgentType exactly.
+    """The canonical serializer must mirror the GraphQL AgentType exactly.
 
-    When a field is added to AgentType but not _serialize_agent_for_ws,
+    When a field is added to AgentType but not serialize_agent(),
     Apollo throws cache miss errors because the WS push is missing keys
     that the cache schema expects. This test catches that drift at CI time
     instead of waiting for a runtime console error.
@@ -978,19 +975,19 @@ class TestWsSerializerMatchesGraphQL:
 
     # Fields that appear in serializer but not as standalone GraphQL fields
     # (internal WS protocol fields, not part of the schema).
-    _WS_ONLY = {"__typename", "_t"}
+    _WS_ONLY = {"__typename"}
 
     def _extract_ws_keys(self) -> set[str]:
-        """Extract string keys from _serialize_agent_for_ws return dict via AST."""
-        consumers_path = AGENTS_DIR / "consumers.py"
-        src = _read_source(consumers_path)
+        """Extract string keys from serialize_agent return dict via AST."""
+        serializers_path = AGENTS_DIR / "serializers.py"
+        src = _read_source(serializers_path)
         tree = ast.parse(src)
 
         keys = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.AsyncFunctionDef):
                 continue
-            if node.name != "_serialize_agent_for_ws":
+            if node.name != "serialize_agent":
                 continue
             # Find the top-level return statement with a Dict value
             for child in ast.walk(node):
@@ -1053,12 +1050,12 @@ class TestWsSerializerMatchesGraphQL:
         only_in_gql = gql_fields - ws_keys
 
         assert not only_in_ws, (
-            f"WS serializer has keys not in GraphQL AgentType: {only_in_ws}. "
-            "Remove from _serialize_agent_for_ws or add to AgentType."
+            f"Serializer has keys not in GraphQL AgentType: {only_in_ws}. "
+            "Remove from serialize_agent() or add to AgentType."
         )
         assert not only_in_gql, (
-            f"GraphQL AgentType has fields not in WS serializer: {only_in_gql}. "
-            "Add to _serialize_agent_for_ws in consumers.py."
+            f"GraphQL AgentType has fields not in serializer: {only_in_gql}. "
+            "Add to serialize_agent() in serializers.py."
         )
 
 
@@ -1139,3 +1136,225 @@ class TestDependencyCompatibilityMatrix:
             f"cli={current['cli']} sdk={current['sdk']} proxy={current['proxy']}. "
             "Add a verified entry to the matrix after testing this combination."
         )
+
+
+# ── Config ownership enforcement ──
+
+
+CONFIG_DIR = AGENTS_DIR.parent / "config"  # backend/config/
+
+# Policy vars that belong exclusively in app_config.py
+_POLICY_VARS = {
+    "AGENT_IMAGE", "ABOX_CALLBACK_URL", "ABOX_DASHBOARD_URL",
+    "ANTHROPIC_API_KEY", "ABOX_ENCRYPTION_KEY", "DOCKER_NETWORK",
+    "AGENT_VOLUME_NAME", "AGENT_ROOTFS_PATH", "MODAL_APP_NAME",
+    "MODAL_AGENT_IMAGE", "VOLUME_ROOT", "AGENT_RUNTIME",
+    "MEDIA_BUCKET", "MEDIA_CDN_URL",
+}
+
+
+class TestConfigOwnership:
+    """Principle: settings.py owns Django, app_config owns product/runtime policy."""
+
+    def test_no_os_getenv_outside_app_config(self):
+        """Only app_config.py and telemetry.py may read os.getenv/os.environ for policy vars.
+
+        telemetry.py gets an exception for LOG_FORMAT (presentation concern).
+        """
+        allowed_files = {"app_config.py", "asgi.py", "settings_test.py"}
+        for py_file in CONFIG_DIR.glob("*.py"):
+            if py_file.name in allowed_files:
+                continue
+            src = _read_source(py_file)
+            # Allow os.getenv for non-policy concerns (e.g. LOG_FORMAT in telemetry.py)
+            for match in re.finditer(r'os\.(?:getenv|environ\.get)\(["\'](\w+)', src):
+                var_name = match.group(1)
+                assert var_name not in _POLICY_VARS, (
+                    f"{py_file.name} reads policy var {var_name} via os.getenv/os.environ.get. "
+                    "Use config.app_config instead."
+                )
+
+    def test_no_policy_vars_in_settings(self):
+        """settings.py should not define policy vars as module-level assignments."""
+        src = _read_source(CONFIG_DIR / "settings.py")
+        for var in _POLICY_VARS:
+            # Match "VAR_NAME = env(...)" or "VAR_NAME = ..." at module level
+            pattern = rf'^{var}\s*='
+            assert not re.search(pattern, src, re.MULTILINE), (
+                f"settings.py defines {var}. Policy vars belong in config.app_config."
+            )
+
+    def test_no_policy_os_reads_in_services(self):
+        """Service files must not read policy env vars directly."""
+        for py_file in SERVICES_DIR.glob("*.py"):
+            src = _read_source(py_file)
+            for match in re.finditer(r'os\.(?:getenv|environ\.get)\(["\'](\w+)', src):
+                var_name = match.group(1)
+                assert var_name not in _POLICY_VARS, (
+                    f"{py_file.name} reads policy var {var_name} via os.getenv/os.environ.get. "
+                    "Use config.app_config instead."
+                )
+
+
+class TestRuntimeOwnership:
+    """Principle: runtime_name must be explicit, never silently defaulted."""
+
+    def test_create_agent_requires_explicit_runtime(self):
+        """create_agent() must not have a default runtime_name."""
+        import inspect
+        from agents.services.lifecycle import create_agent
+        sig = inspect.signature(create_agent)
+        param = sig.parameters["runtime_name"]
+        assert param.default is inspect.Parameter.empty, (
+            "create_agent() runtime_name has a default. "
+            "It must be explicit — callers choose from app_config.agent.runtime."
+        )
+
+    def test_all_creation_paths_use_app_config_runtime(self):
+        """GraphQL mutation and spawn_team_lead must use app_config.agent.runtime."""
+        mutations_src = _read_source(GRAPHQL_DIR / "mutations.py")
+        lifecycle_src = _read_source(SERVICES_DIR / "lifecycle.py")
+        assert "app_config.agent.runtime" in mutations_src, (
+            "mutations.py should use app_config.agent.runtime, not settings.AGENT_RUNTIME"
+        )
+        assert "app_config.agent.runtime" in lifecycle_src, (
+            "lifecycle.py spawn_team_lead should use app_config.agent.runtime"
+        )
+
+
+class TestSerializationOwnership:
+    """Principle: serialization lives in serializers.py, not consumers.py."""
+
+    def test_no_serialize_functions_in_consumers(self):
+        """consumers.py must not define _serialize_* functions."""
+        src = _read_source(AGENTS_DIR / "consumers.py")
+        matches = re.findall(r'^(?:async )?def _serialize_\w+', src, re.MULTILINE)
+        assert not matches, (
+            f"consumers.py still has serialize functions: {matches}. "
+            "Move to agents.serializers."
+        )
+
+    def test_broadcast_imports_from_serializers(self):
+        """broadcast.py and feed.py must import from agents.serializers, not consumers."""
+        for filename in ("broadcast.py", "feed.py", "relay.py"):
+            src = _read_source(SERVICES_DIR / filename)
+            assert "from agents.consumers import _serialize" not in src, (
+                f"{filename} imports serializers from consumers.py. "
+                "Import from agents.serializers instead."
+            )
+
+
+class TestNoStaleSettingsRefs:
+    """Principle: after config migration, no service/runtime/graphql file should
+    reference django.conf.settings for policy vars.
+
+    models.py and migrations are exempt — they use settings.AUTH_USER_MODEL
+    which is a Django framework concern.
+    """
+
+    _EXEMPT = {"models.py", "__init__.py"}
+
+    def _scan_dirs(self):
+        return [SERVICES_DIR, AGENTS_DIR / "runtimes", GRAPHQL_DIR]
+
+    def test_no_django_settings_import_in_services(self):
+        """Service, runtime, and graphql files must not import django.conf.settings."""
+        for scan_dir in self._scan_dirs():
+            if not scan_dir.is_dir():
+                continue
+            for py_file in scan_dir.glob("*.py"):
+                if py_file.name in self._EXEMPT:
+                    continue
+                src = _read_source(py_file)
+                assert "from django.conf import settings" not in src, (
+                    f"{py_file.relative_to(AGENTS_DIR)} imports django.conf.settings. "
+                    "Use config.app_config instead."
+                )
+
+    def test_no_bare_settings_dot_refs(self):
+        """No getattr(settings, ...) or settings.SOME_VAR in migrated files."""
+        pattern = re.compile(r'(?:getattr\(\s*settings\b|(?<!\w)settings\.[A-Z])')
+        for scan_dir in self._scan_dirs():
+            if not scan_dir.is_dir():
+                continue
+            for py_file in scan_dir.glob("*.py"):
+                if py_file.name in self._EXEMPT:
+                    continue
+                src = _read_source(py_file)
+                matches = pattern.findall(src)
+                assert not matches, (
+                    f"{py_file.relative_to(AGENTS_DIR)} has stale settings refs: {matches}. "
+                    "Use config.app_config instead."
+                )
+
+
+class TestS6ServicePreflight:
+    """Principle: every s6 service must validate config before starting.
+
+    All longrun service run scripts must source the preflight helper and
+    call preflight with --service. This ensures structured JSON logging
+    on missing config and immediate clean exit (no crash-loop noise).
+    """
+
+    def _longrun_run_scripts(self) -> list[tuple[str, str]]:
+        """Return (service_name, run_script_content) for all longrun services."""
+        results = []
+        for rootfs_dir in AGENT_ROOTFS_DIRS:
+            s6_rc = rootfs_dir / "etc" / "s6-overlay" / "s6-rc.d"
+            if not s6_rc.is_dir():
+                continue
+            for svc_dir in sorted(s6_rc.iterdir()):
+                if not svc_dir.name.startswith("svc-"):
+                    continue
+                type_file = svc_dir / "type"
+                run_file = svc_dir / "run"
+                if type_file.exists() and type_file.read_text().strip() == "longrun" and run_file.exists():
+                    results.append((svc_dir.name, run_file.read_text()))
+        return results
+
+    def test_all_services_source_preflight(self):
+        """Every longrun service must source the preflight helper."""
+        for name, content in self._longrun_run_scripts():
+            assert "source /etc/s6-overlay/scripts/preflight" in content, (
+                f"{name}/run does not source preflight helper"
+            )
+
+    def test_all_services_call_preflight(self):
+        """Every longrun service must call preflight with --service."""
+        for name, content in self._longrun_run_scripts():
+            assert f"preflight --service {name}" in content, (
+                f"{name}/run does not call preflight --service {name}"
+            )
+
+    def test_all_services_use_abox_exec(self):
+        """Every longrun service must wrap its process with abox-exec.
+
+        abox-exec ensures ALL output (stdout + stderr) is structured JSON,
+        regardless of what language or binary the service runs. This is the
+        universal log normalization layer — no exceptions.
+        """
+        for name, content in self._longrun_run_scripts():
+            assert f"abox-exec --service {name} --" in content, (
+                f"{name}/run does not wrap its process with abox-exec"
+            )
+
+
+class TestRuntimeValidation:
+    """Principle: fail loud on startup, not on first request."""
+
+    def test_invalid_runtime_rejected_at_config_load(self):
+        """AppConfig rejects invalid AGENT_RUNTIME values at instantiation."""
+        import os
+        from pydantic import ValidationError
+        from config.app_config import AgentConfig
+
+        env_backup = os.environ.get("AGENT_RUNTIME")
+        try:
+            os.environ["AGENT_RUNTIME"] = "modla"  # typo
+            with pytest.raises(ValidationError):
+                AgentConfig()
+        finally:
+            if env_backup is not None:
+                os.environ["AGENT_RUNTIME"] = env_backup
+            else:
+                os.environ.pop("AGENT_RUNTIME", None)

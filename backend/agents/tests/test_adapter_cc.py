@@ -659,6 +659,12 @@ class TestBuildRelayEnv:
         env = adapter.build_relay_env(**self._base_kwargs(api_key=""))
         assert "ANTHROPIC_API_KEY" not in env
 
+    def test_relay_env_does_not_duplicate_executor_configuration(self, adapter):
+        env = adapter.build_relay_env(**self._base_kwargs())
+        assert "CLAUDE_MODEL" not in env
+        assert "AGENT_MODE" not in env
+        assert "ALLOWED_TOOLS" not in env
+
     def test_oauth_token_skips_proxy(self, adapter):
         """OAuth path: no ANTHROPIC_API_KEY, no ANTHROPIC_BASE_URL, no proxy."""
         env = adapter.build_relay_env(**self._base_kwargs(api_key="sk-ant-oat01-real-oauth-token"))

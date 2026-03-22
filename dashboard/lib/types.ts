@@ -1,8 +1,28 @@
 /* ================================================================== */
 /*  SHARED TYPES                                                       */
+/*                                                                      */
+/*  Domain types with richer semantics than raw GraphQL codegen output. */
+/*  Generated types (inputs, scalars) live in graphql/__generated__.   */
+/*  These domain types add discriminated unions, literal types, and    */
+/*  defaults that the flat GraphQL schema cannot express.              */
 /* ================================================================== */
 
+// Re-export generated GraphQL input/scalar types for use at the boundary
+export type {
+  CreateAgentInput,
+  CreateProjectInput,
+  CreateSkillInput,
+  UpdateAgentConfigInput,
+  UpdateAgentInstructionsInput,
+  UpdateProjectInput,
+  UpdateSkillInput,
+  VolumeMountInput,
+} from "@/lib/graphql/__generated__/graphql"
+
 export type LifecycleStatus = "deploying" | "running" | "waiting" | "error" | "idle" | "stopped"
+export type PreviewState = "deploying" | "ready" | "unavailable" | "error"
+// attention is reserved for intervention states; review is retained only for
+// legacy wire compatibility and should not drive primary UI actions.
 export type AttentionLevel = "none" | "review" | "plan" | "permission"
 export type Breakpoint = "mobile" | "S" | "M" | "L" | "XL" | "2XL"
 
@@ -10,6 +30,8 @@ export type Agent = {
   id: string
   name: string
   lifecycleStatus: LifecycleStatus
+  previewState: PreviewState
+  previewRuntimeId: string
   attentionLevel: AttentionLevel
   relayConnected: boolean
   task: string

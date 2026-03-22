@@ -1,5 +1,0 @@
-#!/command/with-contenv bash
-exec 2>&1
-
-# config.json is available via volume symlink (init-volume runs first).
-exec python3 /opt/abox/mcp-gateway.py

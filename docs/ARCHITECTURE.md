@@ -1,5 +1,12 @@
 # Architecture
 
+## Operational Contracts
+
+- [Testing](./testing.md)
+- [Runtime Failure Audit](./RUNTIME-FAILURE-AUDIT.md)
+- [Contracts](./contracts/README.md)
+- [Machine Contract](./contracts/machine.md)
+
 ## System Overview
 
 Agentobox is a managed agent workflow platform with real desktop environments. The system has two execution loops and a web dashboard for observability and control.
@@ -45,7 +52,7 @@ Agentobox is a managed agent workflow platform with real desktop environments. T
                         │    │                                        │
                         │    └─── Claude Code SDK ─── Claude CLI      │
                         │                                             │
-                        │  Xvfb + AwesomeWM + noVNC + Firefox         │
+                        │  Xvfb + AwesomeWM + noVNC + Chromium        │
                         │  s6-overlay (process supervision)           │
                         └─────────────────────────────────────────────┘
 ```
@@ -85,7 +92,7 @@ trigger fires "wake_agent" effect
   → agent container boots
     → relay.py connects WS to backend
       → Claude reads instructions + context (previous state, trigger data)
-        → does work: browse in real Firefox, research, draft, analyze
+        → does work: browse in real Chromium, research, draft, analyze
           → writes structured output as StreamEvents
             → shuts down
 ```
@@ -123,8 +130,8 @@ The AI coding team use case is one workflow template among many. Dogfooding (usi
 | 2. Container provisioning | Runtime creates container, writes CLAUDE.md, `.mcp.json`, settings, secrets, API key to tmpfs | `services/lifecycle.py` `_provision_agent()`, `services/provision.py` |
 | 3. Relay env written | `.relay_env` written with agent ID, token, model, team config | `services/lifecycle.py` `_provision_agent()` |
 | 4. Agent marked IDLE | `relay_token` + `sandbox_id` saved to DB, s6 relay service signaled to start | `services/lifecycle.py` `_save_provisioned()` |
-| 5. Relay connects | relay.py reads env, opens WS to `/ws/relay/<agent_id>/` with Bearer token | `agent/rootfs/opt/abox/relay.py` `WSTransport.connect()` |
-| 6. SDK client starts | relay creates `ClaudeSDKClient`, spawns Claude CLI subprocess | `agent/rootfs/opt/abox/relay.py` `SDKRelay.run()` |
+| 5. Relay connects | transport reads env, opens WS to `/ws/relay/<agent_id>/` with Bearer token | `agent/transports/agentobox/client.py` `AgentoboxTransportClient` |
+| 6. SDK client starts | managed session creates executor, spawns Claude CLI subprocess | `agent/runtime/managed_session.py` `ManagedRelaySession` |
 | 7. Events stream back | SDK messages forwarded as raw JSON dicts over WS to `RelayConsumer` | `consumers.py` `RelayConsumer.receive_json()` → `services/stream.py` |
 
 On restart (`hard_restart_agent`), the old container is terminated, agent is reset to `deploying`, and a new container is provisioned with `--resume` using the previous `session_id`. On kill, the container is terminated and status set to `stopped`.
@@ -203,7 +210,7 @@ All backend logging uses `structlog` with a `domain.action` naming convention en
 | `graphql` | Query/mutation/subscription events | `mutations.py`, `subscriptions.py`, `views.py` |
 | `auth` | Relay token authentication | `auth_relay.py` |
 
-Adding a new domain requires adding it to `_VALID_DOMAINS` in `tests/test_architecture.py`. The full taxonomy spec is in `docs/drafts/event-taxonomy.md`.
+Adding a new domain requires adding it to `_VALID_DOMAINS` in `tests/test_architecture.py`. The full taxonomy spec is in `docs/drafts/event-taxonomy.md`. The standard runtime debugging procedure and failure-class audit process is in `docs/RUNTIME-FAILURE-AUDIT.md`.
 
 ## Adapters (Ports & Adapters)
 

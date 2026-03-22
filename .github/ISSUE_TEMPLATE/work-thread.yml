@@ -1,0 +1,108 @@
+name: Work Thread
+description: Propose a bounded thread of work across one or more seams
+labels: ["kind/work-thread", "status/discovery"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Thread summary
+      description: One or two sentences on the question this thread is trying to resolve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: Why this thread matters now.
+    validations:
+      required: true
+
+  - type: textarea
+    id: seams
+    attributes:
+      label: Seams crossed
+      description: List the boundaries this thread touches.
+      value: |
+        - 
+    validations:
+      required: true
+
+  - type: textarea
+    id: target_shape
+    attributes:
+      label: Target shape / canonical contract
+      description: Describe the intended end state at the right level of abstraction.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: current_proof
+    attributes:
+      label: Current proof level
+      options:
+        - idea only
+        - code inspection only
+        - unit proof
+        - invariant proof
+        - contract proof
+        - local integration proof
+        - local deployed-equivalent proof
+        - real remote proof
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: Proposed implementation
+      description: Concrete sequence of work, ordered from smallest honest step to completion.
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What must be true for this thread to be considered done.
+      value: |
+        - [ ] Canonical path is explicit
+        - [ ] Old ambiguous path is removed or explicitly deprecated
+        - [ ] Correct regression/invariant exists
+        - [ ] Validation completed at the required proof level
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Explicit boundaries to prevent scope creep.
+    validations:
+      required: false
+
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff notes for an implementing agent
+      description: Include exact files, commands, constraints, and things not to touch.
+      value: |
+        Files in scope:
+
+        Validation commands:
+
+        Constraints:
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        Use this template for refactors, hardening work, cleanup, capability work, and product-facing threads.
+        If the system is actively red, file an Incident instead.
+        Apply `area/*`, `seam/*`, and `proof/*` labels once the thread is triaged.

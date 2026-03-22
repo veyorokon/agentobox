@@ -24,6 +24,7 @@ from strawberry import auto
 from strawberry.scalars import JSON
 
 from agents import models
+from agents.serializers import derive_preview_runtime_id, derive_preview_state
 
 
 # ── Helper types ──
@@ -258,9 +259,29 @@ class AgentType:
         return self.error_message or ""
 
     @strawberry.field
+    def preview_state(self) -> str:
+        """Derived desktop preview contract for the frontend."""
+        return derive_preview_state(self)
+
+    @strawberry.field
+    def preview_runtime_id(self) -> str:
+        """Identity of the currently previewable runtime, if any."""
+        return derive_preview_runtime_id(self)
+
+    @strawberry.field
     def lifecycle_status(self) -> str:
         """Map internal status to frontend LifecycleStatus."""
         return self.status
+
+    @strawberry.field
+    def desired_status(self) -> str:
+        """Backend-owned intent — deployed or stopped."""
+        return self.desired_status
+
+    @strawberry.field
+    def is_converged(self) -> bool:
+        """True when desired state matches reported runtime state."""
+        return self.is_converged
 
     @strawberry.field
     def last_output(self) -> str:
@@ -276,8 +297,10 @@ class AgentType:
         return result or None
 
     @strawberry.field
-    def cost(self) -> float:
-        return float(self.session_cost_usd)
+    async def cost(self) -> float:
+        from agents.serializers import compute_agent_total_cost
+
+        return await compute_agent_total_cost(self.id, self.session_cost_usd)
 
     @strawberry.field
     def duration(self) -> str:
@@ -419,3 +442,27 @@ def model_to_feed_item_type(item: models.TeamFeedItem) -> TeamFeedItemType:
 class VncTokenResult:
     token: str
     expires_at: str
+
+
+# ── Incident capture ──
+
+
+@strawberry.type
+class IncidentCaptureResult:
+    incident_id: strawberry.ID
+    agent_id: strawberry.ID
+    project_id: strawberry.ID
+    created_at: str
+
+
+@strawberry.type
+class IncidentCaptureType:
+    id: strawberry.ID
+    agent_id: strawberry.ID
+    project_id: strawberry.ID
+    note: str
+    screenshot_url: str
+    window_minutes: int
+    bundle: JSON
+    collection_errors: JSON
+    created_at: str

@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+"""Local continuity harness for issue #104.
+
+Creates a fresh local Docker-runtime agent, starts a sentinel process plus a
+real long-running agent task, restarts only the local control-plane services,
+then verifies:
+
+1. The exact same agent runtime container still exists.
+2. The sentinel process inside that container is still alive.
+3. The agent task keeps making progress through the restart.
+4. The task completes inside the same runtime after control-plane recovery.
+
+This is intentionally a local deployed-equivalent proof harness, not a unit
+test. It answers the contract:
+
+    "Does control-plane restart interrupt the active local Docker runtime
+    or in-flight agent work?"
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import socket
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+
+
+BASE_URL = os.environ.get("ABOX_BASE_URL", "http://localhost:5051")
+GRAPHQL_URL = os.environ.get("GRAPHQL_URL", "http://localhost:8000/graphql")
+SMOKE_TEST_USER = os.environ.get("SMOKE_TEST_USER", "demo")
+SMOKE_TEST_PASS = os.environ.get("SMOKE_TEST_PASS", "demo")
+TIMEOUT_S = int(os.environ.get("CONTINUITY_TIMEOUT_S", "180"))
+WORK_TICKS = int(os.environ.get("CONTINUITY_WORK_TICKS", "30"))
+WORK_SLEEP_S = int(os.environ.get("CONTINUITY_WORK_SLEEP_S", "2"))
+GRAPHQL_RETRY_WINDOW_S = int(os.environ.get("CONTINUITY_GRAPHQL_RETRY_WINDOW_S", "30"))
+
+
+class HarnessError(RuntimeError):
+    pass
+
+
+@dataclass
+class HarnessState:
+    token: str
+    project_id: str
+    agent_id: str
+    container_name: str
+    container_id: str
+    sentinel_pid: str
+    work_token: str
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+def graphql(query: str, variables: dict | None = None, *, token: str | None = None) -> dict:
+    payload = json.dumps({"query": query, "variables": variables or {}}).encode()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(GRAPHQL_URL, data=payload, headers=headers)
+    deadline = time.time() + GRAPHQL_RETRY_WINDOW_S
+    last_exc: Exception | None = None
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode())
+            if body.get("errors"):
+                raise HarnessError(f"GraphQL errors: {body['errors']}")
+            return body["data"]
+        except HarnessError:
+            raise
+        except (urllib.error.URLError, ConnectionResetError, socket.timeout) as exc:
+            last_exc = exc
+            if time.time() >= deadline:
+                raise HarnessError(f"GraphQL request failed: {exc}") from exc
+            time.sleep(1)
+
+
+def sh(cmd: list[str] | str, *, check: bool = True) -> str:
+    result = subprocess.run(
+        cmd,
+        shell=isinstance(cmd, str),
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def login() -> str:
+    data = graphql(
+        """
+        mutation ($input: LoginInput!) {
+          login(input: $input) { token }
+        }
+        """,
+        {"input": {"username": SMOKE_TEST_USER, "password": SMOKE_TEST_PASS}},
+    )
+    token = data["login"]["token"]
+    if not token:
+        raise HarnessError("login returned empty token")
+    return token
+
+
+def create_project(token: str) -> str:
+    name = f"continuity-{int(time.time())}"
+    data = graphql(
+        """
+        mutation ($input: CreateProjectInput!) {
+          createProject(input: $input) { id name }
+        }
+        """,
+        {"input": {"name": name, "description": "Local control-plane continuity harness"}},
+        token=token,
+    )
+    return data["createProject"]["id"]
+
+
+def create_agent(token: str, project_id: str) -> str:
+    data = graphql(
+        """
+        mutation ($input: CreateAgentInput!) {
+          createAgent(input: $input) {
+            id
+            name
+            lifecycleStatus
+            previewState
+            runtime
+          }
+        }
+        """,
+        {
+            "input": {
+                "projectId": project_id,
+                "name": "continuity-check",
+                "model": "claude-sonnet-4-5-20250929",
+                "workspacePath": "",
+                "instructions": "",
+                "role": "worker",
+                "mode": "auto",
+            }
+        },
+        token=token,
+    )
+    return data["createAgent"]["id"]
+
+
+def send_message(token: str, project_id: str, agent_id: str, text: str) -> bool:
+    data = graphql(
+        """
+        mutation ($projectId: ID!, $text: String!, $recipients: [RecipientInput!]!) {
+          sendMessage(projectId: $projectId, text: $text, recipients: $recipients)
+        }
+        """,
+        {
+            "projectId": project_id,
+            "text": text,
+            "recipients": [{"type": "agent", "value": agent_id}],
+        },
+        token=token,
+    )
+    return bool(data["sendMessage"])
+
+
+def query_agent(token: str, agent_id: str) -> dict:
+    data = graphql(
+        """
+        query ($agentId: ID!) {
+          agent(agentId: $agentId) {
+            id
+            name
+            lifecycleStatus
+            previewState
+            previewRuntimeId
+            relayConnected
+            runtime
+            desiredStatus
+            isConverged
+            errorMessage
+          }
+        }
+        """,
+        {"agentId": agent_id},
+        token=token,
+    )
+    return data["agent"]
+
+
+def wait_for_agent_ready(token: str, agent_id: str) -> dict:
+    deadline = time.time() + TIMEOUT_S
+    last = None
+    while time.time() < deadline:
+        last = query_agent(token, agent_id)
+        log(
+            "agent "
+            f"status={last['lifecycleStatus']} "
+            f"preview={last['previewState']} "
+            f"relayConnected={last['relayConnected']}"
+        )
+        if last["lifecycleStatus"] == "idle" and last["previewState"] == "ready":
+            return last
+        if last["lifecycleStatus"] == "error":
+            raise HarnessError(f"agent reached error: {last['errorMessage']}")
+        time.sleep(2)
+    raise HarnessError(f"timed out waiting for ready; last={last}")
+
+
+def wait_for_agent_projection_recovered(token: str, agent_id: str) -> dict:
+    deadline = time.time() + TIMEOUT_S
+    last = None
+    while time.time() < deadline:
+        last = query_agent(token, agent_id)
+        log(
+            "agent "
+            f"status={last['lifecycleStatus']} "
+            f"preview={last['previewState']} "
+            f"relayConnected={last['relayConnected']}"
+        )
+        if last["previewState"] == "ready" and last["relayConnected"]:
+            return last
+        if last["lifecycleStatus"] == "error":
+            raise HarnessError(f"agent reached error after restart: {last['errorMessage']}")
+        time.sleep(2)
+    raise HarnessError(f"timed out waiting for projection recovery; last={last}")
+
+
+def runtime_container_name(agent_id: str) -> str:
+    return f"agentobox-agent-{agent_id}"
+
+
+def runtime_container_id(container_name: str) -> str:
+    return sh(["docker", "inspect", "-f", "{{.Id}}", container_name])
+
+
+def workspace_line_count(container_name: str, path: str) -> int:
+    result = subprocess.run(
+        [
+            "docker",
+            "exec",
+            container_name,
+            "sh",
+            "-lc",
+            f"test -f {path} && wc -l < {path} || echo 0",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return 0
+    try:
+        return int(result.stdout.strip() or "0")
+    except ValueError:
+        return 0
+
+
+def start_sentinel(container_name: str) -> str:
+    pid = sh(
+        [
+            "docker",
+            "exec",
+            container_name,
+            "sh",
+            "-lc",
+            "sleep 180 >/tmp/continuity-sentinel.log 2>&1 & echo $!",
+        ]
+    )
+    if not pid:
+        raise HarnessError("failed to start sentinel process")
+    return pid
+
+
+def sentinel_alive(container_name: str, pid: str) -> bool:
+    result = subprocess.run(
+        ["docker", "exec", container_name, "sh", "-lc", f"kill -0 {pid}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def wait_for_backend() -> None:
+    deadline = time.time() + TIMEOUT_S
+    while time.time() < deadline:
+        try:
+            data = graphql("{ __typename }")
+            if data["__typename"] == "Query":
+                return
+        except Exception:
+            pass
+        time.sleep(2)
+    raise HarnessError("backend did not come back after control-plane restart")
+
+
+def wait_for_work_progress(container_name: str, path: str, minimum_lines: int) -> int:
+    deadline = time.time() + TIMEOUT_S
+    last = 0
+    while time.time() < deadline:
+        last = workspace_line_count(container_name, path)
+        log(f"work progress lines={last}")
+        if last >= minimum_lines:
+            return last
+        time.sleep(2)
+    raise HarnessError(
+        f"timed out waiting for work progress in {path}; "
+        f"expected >= {minimum_lines} lines, saw {last}"
+    )
+
+
+def build_long_running_message(work_token: str) -> str:
+    log_path = "/home/agent/workspace/continuity.log"
+    command = (
+        f"rm -f {log_path}; "
+        f"for i in $(seq 1 {WORK_TICKS}); do "
+        f"echo tick-$i >> {log_path}; "
+        f"sleep {WORK_SLEEP_S}; "
+        f"done"
+    )
+    return (
+        "Use the shell tool to execute this exact command and wait for it to finish:\n\n"
+        f"`{command}`\n\n"
+        f"When it completes, reply with exactly `{work_token}` and nothing else."
+    )
+
+
+def cleanup(state: HarnessState | None) -> None:
+    if not state:
+        return
+    try:
+        graphql(
+            """
+            mutation ($agentId: ID!) {
+              removeAgent(agentId: $agentId)
+            }
+            """,
+            {"agentId": state.agent_id},
+            token=state.token,
+        )
+    except Exception as exc:  # best-effort cleanup
+        log(f"cleanup warning: removeAgent failed: {exc}")
+    try:
+        graphql(
+            """
+            mutation ($id: ID!) {
+              deleteProject(id: $id)
+            }
+            """,
+            {"id": state.project_id},
+            token=state.token,
+        )
+    except Exception as exc:  # best-effort cleanup
+        log(f"cleanup warning: deleteProject failed: {exc}")
+
+
+def main() -> int:
+    state: HarnessState | None = None
+    try:
+        log(f"logging in to {GRAPHQL_URL} as {SMOKE_TEST_USER}")
+        token = login()
+
+        log("creating fresh project")
+        project_id = create_project(token)
+        log(f"project_id={project_id}")
+
+        log("creating fresh agent")
+        agent_id = create_agent(token, project_id)
+        log(f"agent_id={agent_id}")
+
+        log("waiting for agent to become ready")
+        ready = wait_for_agent_ready(token, agent_id)
+        log(json.dumps(ready, indent=2))
+
+        container_name = runtime_container_name(agent_id)
+        container_id = runtime_container_id(container_name)
+        log(f"runtime container: {container_name}")
+        log(f"runtime container id (before): {container_id}")
+
+        sentinel_pid = start_sentinel(container_name)
+        log(f"sentinel pid: {sentinel_pid}")
+        if not sentinel_alive(container_name, sentinel_pid):
+            raise HarnessError("sentinel is not alive before control-plane restart")
+
+        work_token = f"CONTINUITY_DONE_{int(time.time())}"
+        work_path = "/home/agent/workspace/continuity.log"
+        work_message = build_long_running_message(work_token)
+
+        log("sending long-running agent task")
+        if not send_message(token, project_id, agent_id, work_message):
+            raise HarnessError("sendMessage returned false for continuity task")
+
+        log("waiting for in-container work progress before control-plane restart")
+        lines_before = wait_for_work_progress(container_name, work_path, minimum_lines=2)
+        log(f"observed work progress before restart: {lines_before} lines")
+
+        state = HarnessState(
+            token=token,
+            project_id=project_id,
+            agent_id=agent_id,
+            container_name=container_name,
+            container_id=container_id,
+            sentinel_pid=sentinel_pid,
+            work_token=work_token,
+        )
+
+        log("restarting control-plane services: backend + dashboard")
+        sh(["docker", "compose", "restart", "backend", "dashboard"])
+
+        log("waiting for backend to return")
+        wait_for_backend()
+
+        log("waiting for agent projection to recover after restart")
+        after = wait_for_agent_projection_recovered(token, agent_id)
+        log(json.dumps(after, indent=2))
+
+        after_container_id = runtime_container_id(container_name)
+        same_container = after_container_id == container_id
+        sentinel_ok = sentinel_alive(container_name, sentinel_pid)
+        lines_after = wait_for_work_progress(
+            container_name,
+            work_path,
+            minimum_lines=WORK_TICKS,
+        )
+
+        print()
+        print("Control-plane continuity results")
+        print(f"base_url: {BASE_URL}")
+        print(f"graphql_url: {GRAPHQL_URL}")
+        print(f"project_id: {project_id}")
+        print(f"agent_id: {agent_id}")
+        print(f"container_name: {container_name}")
+        print(f"container_id_before: {container_id}")
+        print(f"container_id_after:  {after_container_id}")
+        print(f"same_container: {same_container}")
+        print(f"sentinel_pid: {sentinel_pid}")
+        print(f"sentinel_alive_after: {sentinel_ok}")
+        print(f"work_lines_before_restart: {lines_before}")
+        print(f"work_lines_after_restart: {lines_after}")
+        print(f"work_token: {work_token}")
+        print(f"agent_lifecycle_after: {after['lifecycleStatus']}")
+        print(f"preview_state_after: {after['previewState']}")
+        print(f"relay_connected_after: {after['relayConnected']}")
+
+        if not same_container:
+            raise HarnessError("runtime container changed across control-plane restart")
+        if not sentinel_ok:
+            raise HarnessError("sentinel process died across control-plane restart")
+        if lines_after < WORK_TICKS:
+            raise HarnessError("agent work did not finish after control-plane restart")
+
+        print()
+        print("PASS: control-plane restart did not interrupt the local Docker runtime or in-flight agent work.")
+        return 0
+    except HarnessError as exc:
+        print()
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        cleanup(state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

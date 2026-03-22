@@ -29,7 +29,7 @@ import structlog
 
 from agents.adapters import get_adapter
 from agents.runtimes.base import Runtime
-from agents.services.volume import Volume
+from agents.services.volume import AgentMachine
 from projects.models import Project
 
 log = structlog.get_logger("abox.lifecycle")
@@ -52,7 +52,7 @@ def _container_to_vol(container_path: str) -> str:
 
 
 async def provision_workspace(
-    vol: Volume,
+    vol: AgentMachine,
     project: Project,
     agent_type: str = "claude-code",
     api_key: str = "",
@@ -79,7 +79,7 @@ async def provision_workspace(
     mirror path.
 
     Args:
-        vol: Volume instance for this agent (from agent.volume)
+        vol: AgentMachine instance for this agent (from agent.machine)
         project: Project the agent belongs to
         agent_type: Adapter key (e.g. "claude-code")
         api_key: Resolved API key for the model's provider
@@ -92,7 +92,7 @@ async def provision_workspace(
     """
     adapter = get_adapter(agent_type)
     op_log = log.bind(project_id=str(project.id))
-    workspace = "/home/agent"
+    workspace = "/home/agent/workspace"
     paths = adapter.provision_paths(workspace)
     op_log.info(
         "lifecycle.provisioning_workspace",
@@ -144,12 +144,12 @@ async def provision_workspace(
             merged.update(json.loads(mcp_config))
             vol.write(_container_to_vol(mcp_config_path), json.dumps(merged, indent=2))
         else:
-            vol.write(_container_to_vol(mcp_config_path), mcp_config)
+            vol.write_workspace_mcp_config(mcp_config)
 
     # MCP Gateway config (commands + ports, no secrets)
     if mcp_servers and hasattr(adapter, "build_gateway_config"):
         gateway_config = adapter.build_gateway_config(mcp_servers=mcp_servers)
-        vol.write("run/mcp-gateway/config.json", gateway_config)
+        vol.write_gateway_config(gateway_config)
 
         # Write per-MCP scoped secrets to volume
         if secret_envs:
@@ -159,16 +159,13 @@ async def provision_workspace(
                     continue
                 for key in needed:
                     if key in secret_envs:
-                        vol.write_secret(
-                            f"run/secrets/mcp-{name}/{key}",
-                            secret_envs[key],
-                        )
+                        vol.write_mcp_secret(name, key, secret_envs[key])
 
     # Prevent host .mcp.json from bleeding through workspace bind mount.
     # Each agent gets its own .mcp.json on the volume; the workspace
     # bind-mount's .mcp.json is masked by the volume symlink.
     if workspace_path:
-        vol.write("home/agent/workspace/.mcp.json", '{"mcpServers": {}}')
+        vol.write_workspace_mcp_config('{"mcpServers": {}}')
 
     # Write project skills that match this agent's tags
     skills_dir = paths["skills_dir"]
@@ -191,7 +188,7 @@ async def provision_workspace(
 # ---------------------------------------------------------------------------
 
 def _provision_api_key_files_to_volume(
-    vol: Volume, file_specs: list[dict], op_log,
+    vol: AgentMachine, file_specs: list[dict], op_log,
 ) -> None:
     """Write API key files to the volume from adapter-provided specs.
 
@@ -260,7 +257,7 @@ async def provision_scoped_sudo(
 # ---------------------------------------------------------------------------
 
 async def _provision_skills_to_volume(
-    vol: Volume,
+    vol: AgentMachine,
     project: Project,
     agent_tags: list[str],
     skills_dir: str,
@@ -345,23 +342,24 @@ def build_secrets_env_content(secret_envs: dict[str, str] | None) -> str:
 
 
 async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
-    """Hot-reload secrets on a running agent via volume write + poke.
+    """Hot-reload secrets on a running agent via volume write + reload.
 
     Replaces the old runtime.write_file + runtime.exec approach.
-    Writes secrets to volume, rebuilds MCP config, then pokes the relay.
+    Writes secrets to volume, rebuilds MCP config, then reloads the relay.
     """
-    from django.conf import settings as django_settings
-    from agents.services.comms import push_to_relay
+    from agents.services.relay import push_to_relay
+    from agents.services.relay_commands import ReloadCommand
 
-    vol = agent.volume
+    vol = agent.machine
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
-    workspace = "/home/agent"
+    workspace = "/home/agent/workspace"
     paths = adapter.provision_paths(workspace)
 
     # Rebuild coord server config if agent has a relay_token
     coord_server = None
     if agent.relay_token:
-        callback_url = getattr(django_settings, "ABOX_CALLBACK_URL", "")
+        from config.app_config import app_config as _cfg
+        callback_url = _cfg.callback_url
         if callback_url:
             coord_server = _build_coord_server_config(callback_url, agent.relay_token)
 
@@ -375,7 +373,7 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
         vol.write(_container_to_vol(mcp_config_path), mcp_config)
 
     # Write secrets env file
-    vol.write_secret("mnt/abox-state/secrets/env", build_secrets_env_content(secret_envs))
+    vol.write_secrets_env_document(build_secrets_env_content(secret_envs))
 
     # Rewrite per-MCP scoped secrets
     mcp_servers = agent.mcp_servers
@@ -386,9 +384,9 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
                 continue
             for key in needed:
                 if key in secret_envs:
-                    vol.write_secret(f"run/secrets/mcp-{name}/{key}", secret_envs[key])
-        # Poke gateway to reload
-        await push_to_relay(str(agent.id), {"type": "poke", "changed": "run/mcp-gateway/config.json"})
+                    vol.write_mcp_secret(name, key, secret_envs[key])
+        # Reload gateway config
+        await push_to_relay(str(agent.id), ReloadCommand(path="run/mcp-gateway/config.json"))
 
     log.info(
         "lifecycle.secrets_pushed",

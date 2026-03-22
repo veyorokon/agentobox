@@ -1,0 +1,51 @@
+name: Epic
+description: Track a larger problem or roadmap item through linked child threads
+labels: ["kind/epic", "status/discovery"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Epic summary
+      description: One or two sentences on the umbrella problem this epic tracks.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why this exists
+      description: Why this problem deserves an umbrella issue instead of a single work thread.
+    validations:
+      required: true
+
+  - type: textarea
+    id: target_shape
+    attributes:
+      label: Target shape
+      description: Describe the intended end state at the right level of abstraction.
+    validations:
+      required: true
+
+  - type: textarea
+    id: child_threads
+    attributes:
+      label: Child threads
+      description: Link the concrete incidents or work threads that actually move this epic.
+      value: |
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What this epic should not absorb.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        Use this for umbrella tracking only. Day-to-day implementation should land in child threads or incidents.

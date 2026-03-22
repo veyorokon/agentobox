@@ -4,11 +4,14 @@ import asyncio
 
 import structlog
 from asgiref.sync import sync_to_async
+from django.db.models import F
+from django.utils import timezone
 
 from agents.models import Agent, AgentStatus, StreamEvent
 
 log = structlog.get_logger("abox.comms")
 _background_tasks: set[asyncio.Task] = set()
+_db = sync_to_async(thread_sensitive=False)
 
 
 def spawn_logged_task(coro, *, op_log, task_name: str, event: str, **context) -> asyncio.Task:
@@ -94,3 +97,75 @@ async def terminate_sandbox(agent: Agent, op_log) -> bool:
             agent_id=str(agent.id),
         )
         return False
+
+
+async def mark_agent_runtime_unavailable(agent_id: str, *, reason: str, error_message: str) -> Agent:
+    """Clear stale live-runtime fields when the backing sandbox is gone."""
+    from agents.services.lifecycle import transition_agent_status
+    from agents.services.runtime_segments import record_runtime_segment_sync
+
+    def _should_replace_error_message(current: str, incoming: str) -> bool:
+        if not incoming:
+            return False
+        if not current:
+            return True
+
+        current_clean = current.strip()
+        incoming_clean = incoming.strip()
+        if not incoming_clean:
+            return False
+
+        generic_prefixes = (
+            "Container exited unexpectedly",
+            "Process exited with code ",
+        )
+        current_is_generic = current_clean.startswith(generic_prefixes)
+        incoming_is_generic = incoming_clean.startswith(generic_prefixes)
+
+        if current_is_generic and not incoming_is_generic:
+            return True
+        if current_is_generic and len(incoming_clean) > len(current_clean):
+            return True
+        if "\n" not in current_clean and "\n" in incoming_clean:
+            return True
+        return False
+
+    @_db
+    def _mark() -> Agent:
+        agent = Agent.objects.get(id=agent_id)
+
+        if agent.deployed_at:
+            elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
+            Agent.objects.filter(id=agent_id).update(
+                compute_seconds=F("compute_seconds") + elapsed,
+            )
+            record_runtime_segment_sync(
+                agent,
+                close_reason=reason,
+                metadata={"error_message": error_message[:500]},
+            )
+
+        transition_agent_status(agent, AgentStatus.ERROR, reason=reason, force=True)
+        agent.deployed_at = None
+        agent.relay_connected = False
+        agent.relay_disconnected_at = timezone.now()
+        agent.sandbox_id = ""
+        agent.vnc_url = ""
+        agent.runtime_status_projection = {}
+        update_fields = [
+            "status",
+            "deployed_at",
+            "relay_connected",
+            "relay_disconnected_at",
+            "sandbox_id",
+            "vnc_url",
+            "runtime_status_projection",
+            "updated_at",
+        ]
+        if _should_replace_error_message(agent.error_message, error_message):
+            agent.error_message = error_message[:2000]
+            update_fields.append("error_message")
+        agent.save(update_fields=update_fields)
+        return agent
+
+    return await _mark()

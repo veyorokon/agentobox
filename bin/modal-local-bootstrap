@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Local Modal bootstrap harness.
+#
+# Seam:
+#   local backend/control plane -> Modal runtime bootstrap
+#
+# Contract:
+#   can a local backend instance bootstrap a Modal agent honestly enough to
+#   reach the managed boot contract?
+#
+# What it proves:
+#   local deployed-equivalent bootstrap wiring for Modal
+#
+# What it does not prove:
+#   full post-deploy continuity, preview UX, or long-running work preservation
+#
+# Usage:
+#   ABOX_CALLBACK_URL=https://... ./bin/modal-local-bootstrap
+#
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BACKEND_DIR="${ROOT}/backend"
+NGROK_LOG="$(mktemp)"
+BACKEND_LOG="$(mktemp)"
+NGROK_PID=""
+BACKEND_PID=""
+
+cleanup() {
+  if [ -n "${BACKEND_PID}" ]; then
+    kill "${BACKEND_PID}" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${NGROK_PID}" ]; then
+    kill "${NGROK_PID}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+(
+  cd "${ROOT}"
+  docker compose up -d postgres redis localstack
+)
+
+CALLBACK_URL="${ABOX_CALLBACK_URL:-}"
+if [ -z "${CALLBACK_URL}" ]; then
+  if ! command -v ngrok >/dev/null 2>&1; then
+    echo "Set ABOX_CALLBACK_URL or install ngrok for local Modal bootstrap." >&2
+    exit 1
+  fi
+  ngrok http 8000 --log stdout >"${NGROK_LOG}" 2>&1 &
+  NGROK_PID=$!
+  for _ in $(seq 1 30); do
+    CALLBACK_URL="$(python3 - <<'PY'
+import json, urllib.request
+try:
+    with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1) as resp:
+        payload = json.load(resp)
+    tunnels = payload.get("tunnels", [])
+    https = next((t["public_url"] for t in tunnels if t["public_url"].startswith("https://")), "")
+    print(https)
+except Exception:
+    print("")
+PY
+)"
+    [ -n "${CALLBACK_URL}" ] && break
+    sleep 1
+  done
+  if [ -z "${CALLBACK_URL}" ]; then
+    echo "Failed to discover ngrok public URL." >&2
+    cat "${NGROK_LOG}" >&2 || true
+    exit 1
+  fi
+fi
+
+export DATABASE_URL='postgres://agentobox:agentobox@localhost:5432/agentobox'
+export REDIS_URL='redis://localhost:6379/0'
+export DEBUG='true'
+export ALLOWED_HOSTS='*'
+export SECRET_KEY='dev-only-change-in-production'
+export CORS_ALLOW_ALL='true'
+export ABOX_CALLBACK_URL="${CALLBACK_URL}"
+export ABOX_DASHBOARD_URL='http://localhost:5051'
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+export MODAL_AGENT_IMAGE="${MODAL_AGENT_IMAGE:-ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:dev}"
+export MODAL_ENVIRONMENT="${MODAL_ENVIRONMENT:-dev}"
+export ABOX_ENCRYPTION_KEY="${ABOX_ENCRYPTION_KEY:-local-debug-key-32-chars-minimum____}"
+export DOCKER_NETWORK='agentobox_default'
+export AWS_ENDPOINT_URL='http://localhost:4599'
+export AWS_ACCESS_KEY_ID='test'
+export AWS_SECRET_ACCESS_KEY='test'
+export AWS_DEFAULT_REGION='us-east-1'
+export MEDIA_BUCKET='agentobox-media'
+export MEDIA_CDN_URL='http://localhost:4599/agentobox-media'
+export AGENT_ROOTFS_PATH=''
+export VOLUME_ROOT='/tmp/agentobox-volumes'
+export AGENT_REAP_DELAY_S='300'
+export AGENT_RUNTIME='modal'
+export LOG_FORMAT='json'
+
+cd "${BACKEND_DIR}"
+./.venv/bin/python manage.py migrate --noinput
+./.venv/bin/python manage.py ensure_smoke_user --username demo --password demo
+./.venv/bin/python manage.py runserver 0.0.0.0:8000 --noreload >"${BACKEND_LOG}" 2>&1 &
+BACKEND_PID=$!
+
+for _ in $(seq 1 30); do
+  if python3 - <<'PY'
+import httpx
+try:
+    r = httpx.post("http://localhost:8000/graphql", json={"query": "{ __typename }"}, timeout=2.0)
+    r.raise_for_status()
+    raise SystemExit(0)
+except Exception:
+    raise SystemExit(1)
+PY
+  then
+    break
+  fi
+  sleep 1
+done
+
+cd "${ROOT}"
+SMOKE_RUNTIME=modal \
+ABOX_API_URL='http://localhost:8000/graphql' \
+ABOX_TEST_USER='demo' \
+ABOX_TEST_PASS='demo' \
+./.venv/bin/python -m pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x -o "addopts="

@@ -1,5 +1,6 @@
 """Shared fixtures and marker registration for the agentobox test suite."""
 
+import secrets
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -89,7 +90,7 @@ def other_user(db):
     return User.objects.create_user(
         username="otheruser",
         email="other@example.com",
-        password="otherpass1234",
+        password=secrets.token_urlsafe(12),
     )
 
 

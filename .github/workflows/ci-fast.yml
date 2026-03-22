@@ -1,0 +1,483 @@
+# Fast PR checks: unit/integration/invariant/lint across backend, agent, dashboard.
+
+name: CI Fast
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-unit:
+    name: backend-unit
+    runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv --directory backend sync --group dev
+      - name: Run unit and invariant tests
+        id: tests
+        run: |
+          uv --directory backend run pytest -m "unit or invariant" --tb=short -q 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unit-output
+          path: test-output.txt
+          retention-days: 7
+
+  backend-chaos:
+    name: backend-chaos
+    runs-on: ubuntu-latest
+    needs: backend-unit
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DJANGO_SETTINGS_MODULE: config.settings_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv --directory backend sync --group dev
+      - name: Run chaos tests
+        id: tests
+        run: |
+          uv --directory backend run pytest -m "chaos" --tb=short -q 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-chaos-output
+          path: test-output.txt
+          retention-days: 7
+
+  backend-integration:
+    name: backend-integration
+    runs-on: ubuntu-latest
+    needs: backend-unit
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: agentobox
+          POSTGRES_PASSWORD: agentobox
+          POSTGRES_DB: agentobox_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U agentobox"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgres://agentobox:agentobox@localhost:5432/agentobox_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DJANGO_SETTINGS_MODULE: config.settings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv --directory backend sync --group dev
+      - name: Run migrations
+        run: uv --directory backend run python manage.py migrate --noinput
+      - name: Run integration tests
+        id: tests
+        run: |
+          uv --directory backend run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings" 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-output
+          path: test-output.txt
+          retention-days: 7
+
+  backend-architecture:
+    name: backend-architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv --directory backend sync --group dev
+      - name: Run architecture checks
+        run: uv --directory backend run python agents/tests/check_architecture.py
+
+  agent-unit:
+    name: agent-unit
+    runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install agent dependencies
+        run: uv --directory agent sync --group dev
+      - name: Run agent unit tests
+        id: tests
+        run: |
+          PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/ -m "not contract and not docker_contract" -q -o addopts= 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-unit-output
+          path: test-output.txt
+          retention-days: 7
+
+  agent-lint:
+    name: agent-lint
+    runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.lint.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install agent dependencies
+        run: uv --directory agent sync --group dev
+      - name: Run ruff
+        id: lint
+        run: |
+          uv --directory agent run ruff check . 2>&1 | tee lint-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(head -5 lint-output.txt)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload lint output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-lint-output
+          path: lint-output.txt
+          retention-days: 7
+
+  dashboard-unit:
+    name: dashboard-unit
+    runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.tests.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - name: Install dashboard dependencies
+        run: cd dashboard && pnpm install --frozen-lockfile
+      - name: Run dashboard vitest suite
+        id: tests
+        env:
+          SKIP_E2E: "1"
+        run: |
+          cd dashboard && pnpm test:unit 2>&1 | tee test-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "(FAIL|AssertionError|Error:)" test-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-unit-output
+          path: dashboard/test-output.txt
+          retention-days: 7
+
+  dashboard-typecheck:
+    name: dashboard-typecheck
+    runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.typecheck.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - name: Install dashboard dependencies
+        run: cd dashboard && pnpm install --frozen-lockfile
+      - name: Run dashboard typecheck
+        id: typecheck
+        run: |
+          cd dashboard && pnpm typecheck 2>&1 | tee typecheck-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "error TS" typecheck-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload typecheck output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-typecheck-output
+          path: dashboard/typecheck-output.txt
+          retention-days: 7
+
+  backend-lint:
+    name: backend-lint
+    runs-on: ubuntu-latest
+    outputs:
+      failure-hint: ${{ steps.lint.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install backend dependencies
+        run: uv --directory backend sync --group dev
+      - name: Run ruff
+        id: lint
+        run: |
+          uv --directory backend run ruff check agents/ 2>&1 | tee lint-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(head -5 lint-output.txt)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload lint output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lint-output
+          path: lint-output.txt
+          retention-days: 7
+
+  security-app:
+    name: security-app
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v5
+        if: github.event_name != 'pull_request'
+      - name: Secret scan (PR diff/history-aware)
+        if: github.event_name == 'pull_request'
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+      - name: Install gitleaks CLI
+        if: github.event_name != 'pull_request'
+        run: |
+          version=8.24.3
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+      - name: Secret scan (current tree only)
+        if: github.event_name != 'pull_request'
+        run: |
+          gitleaks dir . \
+            --redact \
+            --no-banner \
+            --report-format sarif \
+            --report-path results.sarif \
+            --log-level=debug
+      - name: Upload gitleaks report
+        if: failure() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results.sarif
+          path: results.sarif
+          retention-days: 7
+      - name: Backend dependency scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: backend
+          scanners: vuln
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Dashboard dependency scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: dashboard
+          scanners: vuln
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  summary:
+    name: summary
+    if: always()
+    needs:
+      - backend-unit
+      - backend-chaos
+      - backend-integration
+      - backend-architecture
+      - backend-lint
+      - agent-unit
+      - agent-lint
+      - dashboard-unit
+      - dashboard-typecheck
+      - security-app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compute status
+        id: status
+        run: |
+          declare -A results hints
+          results=(
+            [backend-unit]="${{ needs.backend-unit.result }}"
+            [backend-chaos]="${{ needs.backend-chaos.result }}"
+            [backend-integration]="${{ needs.backend-integration.result }}"
+            [backend-architecture]="${{ needs.backend-architecture.result }}"
+            [backend-lint]="${{ needs.backend-lint.result }}"
+            [agent-unit]="${{ needs.agent-unit.result }}"
+            [agent-lint]="${{ needs.agent-lint.result }}"
+            [dashboard-unit]="${{ needs.dashboard-unit.result }}"
+            [dashboard-typecheck]="${{ needs.dashboard-typecheck.result }}"
+            [security-app]="${{ needs.security-app.result }}"
+          )
+          hints=(
+            [backend-unit]="${{ needs.backend-unit.outputs.failure-hint }}"
+            [backend-chaos]="${{ needs.backend-chaos.outputs.failure-hint }}"
+            [backend-integration]="${{ needs.backend-integration.outputs.failure-hint }}"
+            [backend-lint]="${{ needs.backend-lint.outputs.failure-hint }}"
+            [agent-unit]="${{ needs.agent-unit.outputs.failure-hint }}"
+            [agent-lint]="${{ needs.agent-lint.outputs.failure-hint }}"
+            [dashboard-unit]="${{ needs.dashboard-unit.outputs.failure-hint }}"
+            [dashboard-typecheck]="${{ needs.dashboard-typecheck.outputs.failure-hint }}"
+          )
+
+          lanes="backend-unit backend-chaos backend-integration backend-architecture backend-lint agent-unit agent-lint dashboard-unit dashboard-typecheck security-app"
+          total=0; failed=0; passed_list=""; failed_blocks=""
+
+          for lane in $lanes; do
+            total=$((total + 1))
+            r="${results[$lane]}"
+            if [ "$r" = "success" ]; then
+              passed_list="${passed_list:+${passed_list}, }${lane}"
+            else
+              failed=$((failed + 1))
+              hint="${hints[$lane]:-}"
+              failed_blocks="${failed_blocks}<details><summary><b>${lane}</b> — <code>${r}</code></summary>"$'\n\n'
+              if [ -n "$hint" ]; then
+                failed_blocks="${failed_blocks}\`\`\`"$'\n'"${hint}"$'\n'"\`\`\`"$'\n\n'
+              fi
+              failed_blocks="${failed_blocks}</details>"$'\n'
+            fi
+          done
+
+          if [ "$failed" -eq 0 ]; then
+            echo "overall=success" >> "$GITHUB_OUTPUT"
+            echo "detail=all ${total} lanes passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=${failed} of ${total} lanes failed" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Save for next step
+          echo "passed_list=${passed_list}" >> "$GITHUB_OUTPUT"
+          {
+            echo "failed_blocks<<GHEOF"
+            echo "$failed_blocks"
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/summary-header
+        with:
+          title: CI Fast
+          overall: ${{ steps.status.outputs.overall }}
+          detail: ${{ steps.status.outputs.detail }}
+
+      - name: Write body
+        run: |
+          failed_blocks="${{ steps.status.outputs.failed_blocks }}"
+          passed_list="${{ steps.status.outputs.passed_list }}"
+
+          if [ -n "$failed_blocks" ]; then
+            {
+              echo
+              echo "### Failed"
+              echo "$failed_blocks"
+              echo
+              echo "**Passed:** ${passed_list}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,37 +1,26 @@
-"""Generate docs/AGENT-REFERENCE.md from agent codebase docstrings and annotations.
+"""Generate docs/AGENT-REFERENCE.md from agent codebase.
 
-Walks agent/rootfs/**/*.py, agent/claude/rootfs/**/*.py, agent/tests/test_*.py,
-and agent/rootfs/etc/s6-overlay/ shell scripts. Extracts module docstrings,
-test class docstrings, # intentional: / # tech-debt: annotations, shell script
-headers, and s6 service inventory.
+Walks agent/{runtime,transports,contracts,platform}/**/*.py, extracts module
+docstrings, test class docstrings, and # intentional: / # tech-debt: annotations.
+Mirrors the backend pattern in generate_reference.py.
 
 Usage:
-    python agent/scripts/generate-reference.py            # writes docs/AGENT-REFERENCE.md
-    python agent/scripts/generate-reference.py --to-stdout # writes to stdout
+    python agent/scripts/generate-reference.py
 """
 
 import ast
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-AGENT_DIR = REPO_ROOT / "agent"
+SCRIPT_DIR = Path(__file__).resolve().parent
+AGENT_DIR = SCRIPT_DIR.parent
+REPO_ROOT = AGENT_DIR.parent
 OUTPUT_PATH = REPO_ROOT / "docs" / "AGENT-REFERENCE.md"
 
-PYTHON_DIRS = [
-    AGENT_DIR / "rootfs",
-    AGENT_DIR / "claude" / "rootfs",
-]
-TESTS_DIR = AGENT_DIR / "tests"
-S6_DIR = AGENT_DIR / "rootfs" / "etc" / "s6-overlay"
-S6_RC_DIR = S6_DIR / "s6-rc.d"
-S6_SCRIPTS_DIR = S6_DIR / "scripts"
-
+SCAN_DIRS = ["runtime", "transports", "contracts", "platform"]
 SKIP_DIRS = {"__pycache__", ".venv", "node_modules"}
-
-ANNOTATION_RE = re.compile(r"#\s*(intentional|tech-debt):\s*(.+)")
 
 
 @dataclass
@@ -39,19 +28,10 @@ class DocChunk:
     title: str
     content: str
     source: str
-    chunk_type: str  # "module" | "test_principle" | "annotation" | "tech_debt" | "shell"
-
-
-@dataclass
-class S6Service:
-    name: str
-    svc_type: str  # "oneshot" | "longrun"
-    dependencies: list[str] = field(default_factory=list)
-    header: str = ""  # first comment block from run/up script
+    chunk_type: str  # "module" | "test_principle" | "annotation" | "tech_debt"
 
 
 def _rel(path: Path) -> str:
-    """Path relative to repo root for display."""
     try:
         return str(path.relative_to(REPO_ROOT))
     except ValueError:
@@ -62,67 +42,50 @@ def _should_walk(path: Path) -> bool:
     return not any(part in SKIP_DIRS for part in path.parts)
 
 
-# ---------------------------------------------------------------------------
-# Python module docstrings
-# ---------------------------------------------------------------------------
-
-def extract_module_docstrings() -> list[DocChunk]:
-    """Walk agent Python dirs, yield DocChunk per module docstring."""
+def _extract_module_docstrings() -> list[DocChunk]:
     chunks = []
-    for search_dir in PYTHON_DIRS:
-        if not search_dir.is_dir():
+    for subdir in SCAN_DIRS:
+        scan_path = AGENT_DIR / subdir
+        if not scan_path.is_dir():
             continue
-        for py_file in sorted(search_dir.rglob("*.py")):
+        for py_file in sorted(scan_path.rglob("*.py")):
             if not _should_walk(py_file):
                 continue
             if py_file.name == "__init__.py":
                 src = py_file.read_text(encoding="utf-8").strip()
                 if not src:
                     continue
-
             try:
                 tree = ast.parse(py_file.read_text(encoding="utf-8"))
             except SyntaxError:
                 continue
-
             docstring = ast.get_docstring(tree)
             if not docstring:
                 continue
-
             rel = _rel(py_file)
             chunks.append(DocChunk(
-                title=rel,
-                content=docstring.strip(),
-                source=f"{rel}:1",
-                chunk_type="module",
+                title=rel, content=docstring.strip(),
+                source=f"{rel}:1", chunk_type="module",
             ))
     return chunks
 
 
-# ---------------------------------------------------------------------------
-# Test principles
-# ---------------------------------------------------------------------------
-
-def extract_test_principles() -> list[DocChunk]:
-    """Walk test files, find classes with docstrings, yield DocChunk."""
+def _extract_test_principles() -> list[DocChunk]:
     chunks = []
-    if not TESTS_DIR.exists():
+    tests_dir = AGENT_DIR / "tests"
+    if not tests_dir.is_dir():
         return chunks
-
-    for py_file in sorted(TESTS_DIR.glob("test_*.py")):
+    for py_file in sorted(tests_dir.glob("test_*.py")):
         try:
-            src = py_file.read_text(encoding="utf-8")
-            tree = ast.parse(src)
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
-
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
             docstring = ast.get_docstring(node)
             if not docstring:
                 continue
-
             rel_file = py_file.name
             chunks.append(DocChunk(
                 title=f"{rel_file} — {node.name}",
@@ -133,27 +96,20 @@ def extract_test_principles() -> list[DocChunk]:
     return chunks
 
 
-# ---------------------------------------------------------------------------
-# Annotations (# intentional: / # tech-debt:)
-# ---------------------------------------------------------------------------
-
-def extract_annotations() -> list[DocChunk]:
-    """Walk all agent .py files, find # intentional: and # tech-debt: comments."""
+def _extract_annotations() -> list[DocChunk]:
+    pattern = re.compile(r"#\s*(intentional|tech-debt):\s*(.+)")
     chunks = []
-    for search_dir in PYTHON_DIRS:
-        if not search_dir.is_dir():
+    for subdir in SCAN_DIRS:
+        scan_path = AGENT_DIR / subdir
+        if not scan_path.is_dir():
             continue
-        for py_file in sorted(search_dir.rglob("*.py")):
-            if not _should_walk(py_file):
+        for py_file in sorted(scan_path.rglob("*.py")):
+            if not _should_walk(py_file) or "tests" in py_file.parts:
                 continue
-            if "tests" in py_file.parts:
-                continue
-
             src = py_file.read_text(encoding="utf-8")
             lines = src.splitlines()
             rel = _rel(py_file)
 
-            # Find lines inside string literals so we skip them
             string_lines: set[int] = set()
             try:
                 tree = ast.parse(src)
@@ -168,7 +124,7 @@ def extract_annotations() -> list[DocChunk]:
             for i, line in enumerate(lines, 1):
                 if i in string_lines:
                     continue
-                match = ANNOTATION_RE.search(line)
+                match = pattern.search(line)
                 if match:
                     tag = match.group(1)
                     chunk_type = "annotation" if tag == "intentional" else "tech_debt"
@@ -181,179 +137,14 @@ def extract_annotations() -> list[DocChunk]:
     return chunks
 
 
-# ---------------------------------------------------------------------------
-# Shell script headers
-# ---------------------------------------------------------------------------
-
-def _extract_shell_header(path: Path) -> str:
-    """Extract the first comment block after the shebang from a shell script.
-
-    Returns the comment text (without leading #) or empty string.
-    """
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return ""
-
-    header_lines = []
-    past_shebang = False
-    past_redirects = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Skip shebang
-        if not past_shebang:
-            if stripped.startswith("#!"):
-                past_shebang = True
-                continue
-            # No shebang — treat first line as content
-            past_shebang = True
-
-        # Skip `exec 2>&1` and blank lines before the comment block
-        if not past_redirects:
-            if stripped == "" or stripped.startswith("exec 2>&1"):
-                continue
-            past_redirects = True
-
-        # Collect comment lines
-        if stripped.startswith("#"):
-            # Strip leading # and one optional space
-            text = stripped[1:]
-            if text.startswith(" "):
-                text = text[1:]
-            header_lines.append(text)
-        else:
-            # First non-comment line ends the header block
-            break
-
-    return "\n".join(header_lines).strip()
-
-
-def extract_shell_headers() -> list[DocChunk]:
-    """Extract header comments from s6 run/finish scripts and init scripts."""
-    chunks = []
-
-    # s6-rc.d service run/finish scripts
-    if S6_RC_DIR.is_dir():
-        for svc_dir in sorted(S6_RC_DIR.iterdir()):
-            if not svc_dir.is_dir():
-                continue
-            for script_name in ("run", "finish"):
-                script = svc_dir / script_name
-                if not script.is_file():
-                    continue
-                header = _extract_shell_header(script)
-                if header:
-                    rel = _rel(script)
-                    chunks.append(DocChunk(
-                        title=rel,
-                        content=header,
-                        source=f"{rel}:1",
-                        chunk_type="shell",
-                    ))
-
-    # s6-overlay/scripts/ init scripts
-    if S6_SCRIPTS_DIR.is_dir():
-        for script in sorted(S6_SCRIPTS_DIR.iterdir()):
-            if not script.is_file():
-                continue
-            header = _extract_shell_header(script)
-            if header:
-                rel = _rel(script)
-                chunks.append(DocChunk(
-                    title=rel,
-                    content=header,
-                    source=f"{rel}:1",
-                    chunk_type="shell",
-                ))
-
-    # .sh files under agent/claude/rootfs/
-    claude_rootfs = AGENT_DIR / "claude" / "rootfs"
-    if claude_rootfs.is_dir():
-        for sh_file in sorted(claude_rootfs.rglob("*.sh")):
-            if not _should_walk(sh_file):
-                continue
-            header = _extract_shell_header(sh_file)
-            if header:
-                rel = _rel(sh_file)
-                chunks.append(DocChunk(
-                    title=rel,
-                    content=header,
-                    source=f"{rel}:1",
-                    chunk_type="shell",
-                ))
-
-    return chunks
-
-
-# ---------------------------------------------------------------------------
-# s6 service inventory
-# ---------------------------------------------------------------------------
-
-def extract_s6_services() -> list[S6Service]:
-    """List all s6 services with type, dependencies, and run script header."""
-    services = []
-    if not S6_RC_DIR.is_dir():
-        return services
-
-    for svc_dir in sorted(S6_RC_DIR.iterdir()):
-        if not svc_dir.is_dir():
-            continue
-        type_file = svc_dir / "type"
-        if not type_file.is_file():
-            continue
-
-        svc_type = type_file.read_text(encoding="utf-8").strip()
-        name = svc_dir.name
-
-        # Dependencies
-        deps_dir = svc_dir / "dependencies.d"
-        deps = sorted(d.name for d in deps_dir.iterdir()) if deps_dir.is_dir() else []
-
-        # Header from run script (longrun) or up script reference (oneshot)
-        header = ""
-        run_script = svc_dir / "run"
-        up_script = svc_dir / "up"
-        if run_script.is_file():
-            header = _extract_shell_header(run_script)
-        elif up_script.is_file():
-            # Oneshot: up file contains path to the actual script
-            target_path = up_script.read_text(encoding="utf-8").strip()
-            # Map container path to repo path
-            if target_path.startswith("/etc/s6-overlay/"):
-                repo_script = AGENT_DIR / "rootfs" / target_path.lstrip("/")
-                if repo_script.is_file():
-                    header = _extract_shell_header(repo_script)
-
-        services.append(S6Service(
-            name=name,
-            svc_type=svc_type,
-            dependencies=deps,
-            header=header,
-        ))
-
-    return services
-
-
-# ---------------------------------------------------------------------------
-# Render
-# ---------------------------------------------------------------------------
-
-def render_markdown(
-    chunks: list[DocChunk],
-    services: list[S6Service],
-) -> str:
-    """Render all extracted data to markdown."""
+def _render_markdown(chunks: list[DocChunk]) -> str:
     lines = [
         "# Agentobox Agent Reference",
         "",
-        "> Auto-generated from agent codebase. Do not edit — regenerate with "
-        "`python agent/scripts/generate-reference.py`.",
+        "> Auto-generated from agent codebase. Do not edit — regenerate with `make docs`.",
         "",
     ]
 
-    # --- Modules (Python docstrings) ---
     modules = [c for c in chunks if c.chunk_type == "module"]
     if modules:
         lines.append("## Modules")
@@ -364,38 +155,6 @@ def render_markdown(
             lines.append(chunk.content)
             lines.append("")
 
-    # --- Shell scripts ---
-    shells = [c for c in chunks if c.chunk_type == "shell"]
-    if shells:
-        lines.append("## Shell Scripts")
-        lines.append("")
-        for chunk in shells:
-            lines.append(f"### {chunk.title}")
-            lines.append("")
-            lines.append(chunk.content)
-            lines.append("")
-
-    # --- S6 Services ---
-    if services:
-        lines.append("## S6 Services")
-        lines.append("")
-        lines.append("| Service | Type | Dependencies |")
-        lines.append("|---------|------|-------------|")
-        for svc in services:
-            deps = ", ".join(svc.dependencies) if svc.dependencies else "—"
-            lines.append(f"| {svc.name} | {svc.svc_type} | {deps} |")
-        lines.append("")
-
-        # Service details (those with headers)
-        services_with_headers = [s for s in services if s.header]
-        if services_with_headers:
-            for svc in services_with_headers:
-                lines.append(f"### {svc.name}")
-                lines.append("")
-                lines.append(svc.header)
-                lines.append("")
-
-    # --- Test Principles ---
     principles = [c for c in chunks if c.chunk_type == "test_principle"]
     if principles:
         lines.append("## Test Principles")
@@ -406,7 +165,6 @@ def render_markdown(
             lines.append(chunk.content)
             lines.append("")
 
-    # --- Exception Annotations ---
     annotations = [c for c in chunks if c.chunk_type == "annotation"]
     if annotations:
         lines.append("## Exception Annotations")
@@ -420,7 +178,6 @@ def render_markdown(
             lines.append(f"| {fname} | {lineno} | {chunk.content} |")
         lines.append("")
 
-    # --- Tech Debt ---
     tech_debt = [c for c in chunks if c.chunk_type == "tech_debt"]
     if tech_debt:
         lines.append("## Tech Debt")
@@ -437,29 +194,21 @@ def render_markdown(
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
-    to_stdout = "--to-stdout" in sys.argv
+    chunks = []
+    chunks.extend(_extract_module_docstrings())
+    chunks.extend(_extract_test_principles())
+    chunks.extend(_extract_annotations())
+    content = _render_markdown(chunks)
 
-    chunks: list[DocChunk] = []
-    chunks.extend(extract_module_docstrings())
-    chunks.extend(extract_shell_headers())
-    chunks.extend(extract_test_principles())
-    chunks.extend(extract_annotations())
-    services = extract_s6_services()
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PATH.write_text(content, encoding="utf-8")
 
-    content = render_markdown(chunks, services)
-
-    if to_stdout:
-        sys.stdout.write(content)
-    else:
-        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        OUTPUT_PATH.write_text(content, encoding="utf-8")
-        chunk_count = len(chunks) + len(services)
-        print(f"Wrote {OUTPUT_PATH} ({chunk_count} entries)", file=sys.stderr)
+    counts = {}
+    for c in chunks:
+        counts[c.chunk_type] = counts.get(c.chunk_type, 0) + 1
+    parts = [f"{v} {k}s" for k, v in sorted(counts.items())]
+    print(f"Wrote {OUTPUT_PATH} ({len(chunks)} chunks: {', '.join(parts)})")
 
 
 if __name__ == "__main__":

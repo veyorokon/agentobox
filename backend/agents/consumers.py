@@ -21,8 +21,9 @@ all stored without code changes. The cost is ~1KB/row in Postgres, which
 is negligible compared to the value of having complete agent telemetry.
 """
 
+import socket
+
 import structlog
-from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from django.utils import timezone
 
@@ -37,6 +38,45 @@ from agents.errors import (
 )
 
 log = structlog.get_logger("abox.relay")
+VNC_STARTUP_GRACE_S = 15
+
+
+def _is_recently_deployed(agent) -> bool:
+    deployed_at = getattr(agent, "deployed_at", None)
+    if not deployed_at:
+        return False
+    return (timezone.now() - deployed_at).total_seconds() <= VNC_STARTUP_GRACE_S
+
+
+def _is_transient_vnc_upstream_failure(agent, exc: Exception) -> bool:
+    """Treat startup-time VNC misses as transient while the desktop is still coming up."""
+    from agents.models import AgentStatus
+
+    if isinstance(exc, socket.gaierror):
+        return getattr(agent, "status", "") == AgentStatus.DEPLOYING or not getattr(agent, "relay_connected", False)
+
+    if isinstance(exc, (ConnectionRefusedError, TimeoutError, OSError)):
+        return (
+            getattr(agent, "status", "") == AgentStatus.DEPLOYING
+            or not getattr(agent, "relay_connected", False)
+            or _is_recently_deployed(agent)
+        )
+
+    return False
+
+
+def _should_mark_vnc_runtime_unavailable(agent, exc: Exception) -> bool:
+    from agents.models import AgentStatus
+
+    if _is_transient_vnc_upstream_failure(agent, exc):
+        return False
+
+    return (
+        isinstance(exc, (socket.gaierror, ConnectionRefusedError, ConnectionResetError, TimeoutError, OSError))
+        and getattr(agent, "status", "") in {AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING}
+        and bool(getattr(agent, "relay_connected", False))
+        and bool(getattr(agent, "sandbox_id", ""))
+    )
 
 
 class RelayConsumer(AsyncJsonWebsocketConsumer):
@@ -87,50 +127,40 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         await self.accept()
 
         # Track relay connection state
+        from agents.models import AgentStatus
+
         self.agent.relay_connected = True
-        await self.agent.asave(update_fields=["relay_connected"])
+        update_fields = ["relay_connected"]
+        if self.agent.status == AgentStatus.DEPLOYING and not getattr(self.agent, "deployed_at", None):
+            self.agent.deployed_at = timezone.now()
+            update_fields.append("deployed_at")
+        await self.agent.asave(update_fields=update_fields)
 
         # Start the background reconciliation loop on first relay connect
         from agents.services.reconcile import ensure_running
         ensure_running()
 
-        # Transition DEPLOYING → IDLE. No backfill needed — messages are
-        # on the volume (inbox.jsonl) and the relay reads them on startup.
-        # Theme is also on the volume (tokens.json), applied by init-volume.
-        from agents.models import Agent, AgentStatus
-        from agents.services.lifecycle import transition_agent_status
-        if self.agent.status == AgentStatus.DEPLOYING:
-            now = timezone.now()
-            transition_agent_status(self.agent, AgentStatus.IDLE, reason="relay_connected")
-            await Agent.objects.filter(id=self.agent_id).aupdate(
-                status=AgentStatus.IDLE,
-                deployed_at=now,
-            )
-            self.agent.deployed_at = now
-            from agents.services.lifecycle import succeed_active_lifecycle_attempts
-            await succeed_active_lifecycle_attempts(
-                self.agent_id,
-                step="relay_connected",
-                metadata={"relay_connected_at": now.isoformat()},
-            )
-            from agents.services.broadcast import broadcast_agent_update
-            await broadcast_agent_update(self.agent)
+        from agents.services.broadcast import broadcast_agent_update
+        await broadcast_agent_update(self.agent)
 
         log.info("relay.connected", agent_id=self.agent_id)
 
     async def disconnect(self, code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
-        # Track relay connection state. No delivery cursor needed —
-        # inbox.pos on the volume handles delivery guarantees.
+        # Track relay connection state. Message durability is handled by the
+        # runtime-owned inbox cursor under _abox/.
         try:
             from django.utils import timezone
             from agents.models import Agent
+            from agents.services.broadcast import broadcast_agent_update
 
             await Agent.objects.filter(id=self.agent_id).aupdate(
                 relay_connected=False,
                 relay_disconnected_at=timezone.now(),
             )
+            agent = await Agent.objects.aget(id=self.agent_id)
+            await broadcast_agent_update(agent)
         except Exception as exc:  # intentional: agent row may be deleted — don't crash disconnect handler
             log.warning(
                 "relay.update_failed",
@@ -145,15 +175,23 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         log.info("relay.disconnected", agent_id=self.agent_id, code=code, source=disconnect_source)
 
     async def receive_json(self, content):
-        """Each message from relay = one raw stream-json event.
+        """Handle canonical upstream runtime messages from the agent.
 
-        Callback requests are routed to the callbacks service before
-        reaching stream processing — they create feed items, not stream events.
-        Everything else: store verbatim, broadcast, side-effect.
+        The new runtime sends typed envelopes:
+        - runtime_hello
+        - runtime_status
+        - task_update
+        - execution_event
+        - callback_request
+
+        execution_event/raw_message carries the actual Claude stream-json event
+        payload used by the existing backend read path. That path remains the
+        source of truth for feed/session semantics, so we unwrap and forward
+        those payloads into process_stream_event().
         """
         event_type = content.get("type", "")
 
-        if event_type == "callback":
+        if event_type in {"callback", "callback_request"}:
             from agents.services.callbacks import process_callback
             try:
                 await process_callback(self.agent, content)
@@ -169,12 +207,96 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 # instead of hanging for the 300s timeout.
                 request_id = content.get("request_id", "")
                 if request_id:
-                    await self.send_json({
-                        "type": "callback_response",
-                        "request_id": request_id,
-                        "behavior": "deny",
-                        "message": "Internal error processing callback",
-                    })
+                    from agents.services.relay_commands import CallbackBehavior, CallbackResponseCommand
+                    cmd = CallbackResponseCommand(
+                        request_id=request_id,
+                        behavior=CallbackBehavior.DENY,
+                        message="Internal error processing callback",
+                    )
+                    await self.send_json(cmd.to_wire())
+            return
+
+        if event_type == "runtime_hello":
+            log.info(
+                "relay.runtime_hello",
+                agent_id=self.agent_id,
+                mode=content.get("mode", ""),
+                platform=content.get("platform", ""),
+                profile=content.get("profile", ""),
+                protocol_version=content.get("protocol_version", ""),
+            )
+            return
+
+        if event_type == "runtime_status":
+            payload = content.get("payload", {})
+            if isinstance(payload, dict):
+                from agents.models import Agent, AgentStatus
+                from agents.services.broadcast import broadcast_agent_update
+                from agents.services.lifecycle import succeed_active_lifecycle_attempts, transition_agent_status
+                from agents.services.runtime_projection import runtime_status_meets_ready_boundary
+
+                update_fields = {"runtime_status_projection": payload}
+                ready_boundary = runtime_status_meets_ready_boundary(
+                    payload,
+                    relay_connected=bool(getattr(self.agent, "relay_connected", False)),
+                )
+                if ready_boundary and self.agent.status == "deploying":
+                    transition_agent_status(self.agent, AgentStatus.IDLE, reason="runtime_ready")
+                    update_fields["status"] = AgentStatus.IDLE
+                    if not getattr(self.agent, "deployed_at", None):
+                        now = timezone.now()
+                        update_fields["deployed_at"] = now
+                await Agent.objects.filter(id=self.agent_id).aupdate(**update_fields)
+                if ready_boundary:
+                    self.agent = await Agent.objects.aget(id=self.agent_id)
+                else:
+                    self.agent.runtime_status_projection = payload
+                    if "deployed_at" in update_fields:
+                        self.agent.deployed_at = update_fields["deployed_at"]
+                if ready_boundary:
+                    await succeed_active_lifecycle_attempts(
+                        self.agent_id,
+                        step="runtime_ready",
+                        metadata={"startup_stage": payload.get("startup_stage", "")},
+                    )
+                await broadcast_agent_update(self.agent)
+                log.info(
+                    "relay.runtime_status",
+                    agent_id=self.agent_id,
+                    startup_stage=payload.get("startup_stage", ""),
+                    runtime_state=payload.get("runtime_state", ""),
+                )
+            return
+
+        if event_type == "task_update":
+            log.info(
+                "relay.task_update",
+                agent_id=self.agent_id,
+                task_id=content.get("task_id", ""),
+                state=content.get("state", ""),
+            )
+            return
+
+        if event_type == "execution_event":
+            execution_type = content.get("event_type", "")
+            payload = content.get("payload", {})
+            if execution_type == "raw_message" and isinstance(payload, dict):
+                if content.get("session_id") and "session_id" not in payload:
+                    payload = {**payload, "session_id": content["session_id"]}
+                from agents.services.stream import process_stream_event
+
+                try:
+                    await process_stream_event(self.agent, payload)
+                except Exception as exc:  # intentional: one bad event must not kill the relay WS connection
+                    log.exception(
+                        "relay.event_failed",
+                        agent_id=self.agent_id,
+                        event_type=payload.get("type", execution_type),
+                        error_code=ERR_CONSUMER_EVENT_FAILED,
+                        error_class=type(exc).__name__,
+                        operation="process_stream_event",
+                    )
+                return
             return
 
         from agents.services.stream import process_stream_event
@@ -281,14 +403,30 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
             )
             log.info("vnc.upstream_ok", agent_id=self.agent_id, subprotocol=str(self.upstream_ws.subprotocol))
         except Exception as exc:  # intentional: upstream connect failure — reject client with 4003 instead of crashing
-            log.exception(
-                "vnc.upstream_failed",
-                agent_id=self.agent_id,
-                url=vnc_ws_url,
-                error_code=ERR_CONSUMER_VNC_UPSTREAM_FAILED,
-                error_class=type(exc).__name__,
-                operation="connect_vnc_upstream",
-            )
+            log_payload = {
+                "agent_id": self.agent_id,
+                "url": vnc_ws_url,
+                "error_code": ERR_CONSUMER_VNC_UPSTREAM_FAILED,
+                "error_class": type(exc).__name__,
+                "operation": "connect_vnc_upstream",
+                "lifecycle_status": getattr(agent, "status", ""),
+                "relay_connected": bool(getattr(agent, "relay_connected", False)),
+            }
+            if _is_transient_vnc_upstream_failure(agent, exc):
+                log.warning("vnc.upstream_unready", **log_payload)
+            else:
+                log.exception("vnc.upstream_failed", **log_payload)
+
+            if _should_mark_vnc_runtime_unavailable(agent, exc):
+                from agents.services.broadcast import broadcast_agent_update
+                from agents.services.utils import mark_agent_runtime_unavailable
+
+                updated_agent = await mark_agent_runtime_unavailable(
+                    self.agent_id,
+                    reason="vnc_upstream_missing",
+                    error_message="Desktop runtime is unavailable. Redeploy to restore preview.",
+                )
+                await broadcast_agent_update(updated_agent)
             await self.accept()
             await self.close(code=4003)
             return
@@ -360,167 +498,6 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
 dashboard_log = structlog.get_logger("abox.dashboard")
 
 
-async def _serialize_agent_for_ws(agent) -> dict:
-    """Serialize an Agent model instance to match AgentType GraphQL shape.
-
-    Includes __typename for Apollo cache normalization and _t for WS
-    message type discrimination. Field names are camelCase to match
-    Strawberry's auto-conversion.
-    """
-    from agents.adapters import get_adapter
-    from agents.models import AgentLifecycleAttempt, AgentTask
-
-    adapter = get_adapter(agent.agent_type)
-
-    # Task progress (sync ORM → thread)
-    def _count_tasks():
-        qs = AgentTask.objects.filter(agent_id=agent.id)
-        total = qs.count()
-        if not total:
-            return None
-        done = qs.filter(status="completed").count()
-        return {"__typename": "TaskProgressType", "done": done, "total": total}
-
-    task_progress = await sync_to_async(_count_tasks, thread_sensitive=False)()
-
-    # Task list (sync ORM → thread)
-    def _fetch_tasks():
-        return list(
-            AgentTask.objects.filter(agent_id=agent.id)
-            .exclude(status="deleted")
-            .order_by("created_at")
-            .values(
-                "task_id", "title", "description", "status",
-                "assignee", "active_form", "blocked_by", "created_at", "updated_at",
-            )
-        )
-
-    tasks_raw = await sync_to_async(_fetch_tasks, thread_sensitive=False)()
-    tasks = [
-        {
-            "__typename": "AgentTaskType",
-            "taskId": t["task_id"],
-            "title": t["title"],
-            "description": t["description"],
-            "status": t["status"],
-            "assignee": t["assignee"],
-            "activeForm": t["active_form"],
-            "blockedBy": t["blocked_by"],
-            "createdAt": t["created_at"].isoformat(),
-            "updatedAt": t["updated_at"].isoformat(),
-        }
-        for t in tasks_raw
-    ]
-
-    # Lifecycle attempts (last 10, descending)
-    def _fetch_lifecycle_attempts():
-        return list(
-            AgentLifecycleAttempt.objects.filter(agent_id=agent.id)
-            .order_by("-started_at")[:10]
-            .values(
-                "id", "kind", "status", "step", "attempt_no",
-                "correlation_id", "error_code", "error_detail",
-                "started_at", "finished_at",
-            )
-        )
-
-    attempts_raw = await sync_to_async(_fetch_lifecycle_attempts, thread_sensitive=False)()
-    lifecycle_attempts = [
-        {
-            "__typename": "LifecycleAttemptType",
-            "id": str(a["id"]),
-            "kind": a["kind"],
-            "status": a["status"],
-            "step": a["step"],
-            "attemptNo": a["attempt_no"],
-            "correlationId": a["correlation_id"],
-            "errorCode": a["error_code"],
-            "errorDetail": a["error_detail"],
-            "startedAt": a["started_at"].isoformat() if a["started_at"] else None,
-            "finishedAt": a["finished_at"].isoformat() if a["finished_at"] else None,
-        }
-        for a in attempts_raw
-    ]
-
-    # MCP servers: dict → list of keys
-    mcp = agent.mcp_servers
-    if isinstance(mcp, dict):
-        mcp_list = list(mcp.keys())
-    elif isinstance(mcp, list):
-        mcp_list = mcp
-    else:
-        mcp_list = []
-
-    return {
-        "__typename": "AgentType",
-        "_t": "agent",
-        "id": str(agent.id),
-        "name": agent.name,
-        "model": agent.model,
-        "role": agent.role,
-        "instructions": agent.instructions,
-        "runtime": agent.runtime,
-        "phase": agent.phase,
-        "tags": agent.tags,
-        "mode": agent.mode,
-        "attentionLevel": agent.attention_level,
-        "relayConnected": agent.relay_connected,
-        "task": agent.task,
-        "errorMessage": agent.error_message or "",
-        "lifecycleStatus": agent.status,
-        "lastOutput": adapter.last_output(agent.latest_snapshot),
-        "liveAction": adapter.live_action(agent.latest_snapshot) or None,
-        "cost": float(agent.session_cost_usd),
-        "duration": adapter.duration(agent.latest_snapshot),
-        "turns": adapter.turns(agent.latest_snapshot),
-        "allowedTools": agent.allowed_tools if isinstance(agent.allowed_tools, list) else [],
-        "workspacePath": agent.workspace_path,
-        "mcpServers": mcp_list,
-        "triggers": agent.triggers if isinstance(agent.triggers, list) else [],
-        "computeSeconds": agent.compute_seconds or 0,
-        "taskProgress": task_progress,
-        "tasks": tasks,
-        "lifecycleAttempts": lifecycle_attempts,
-    }
-
-
-def _serialize_feed_item_for_ws(item) -> dict:
-    """Serialize a TeamFeedItem model instance to match TeamFeedItemType GraphQL shape."""
-    questions = None
-    if item.questions:
-        questions = [
-            {"__typename": "FeedQuestionType", "text": q.get("text", ""), "options": q.get("options", [])}
-            for q in item.questions
-        ]
-
-    return {
-        "__typename": "TeamFeedItemType",
-        "_t": "feed",
-        "id": str(item.id),
-        "type": item.type,
-        "agent": item.agent_name or None,
-        "agentId": str(item.agent_record_id) if item.agent_record_id else None,
-        "text": item.text or None,
-        "command": item.command or None,
-        "risk": item.risk or None,
-        "permStatus": item.perm_status or None,
-        "title": item.title or None,
-        "plan": item.plan or None,
-        "planStatus": item.plan_status or None,
-        "summary": item.summary or None,
-        "cost": float(item.cost) if item.cost is not None else None,
-        "turns": item.turns,
-        "duration": item.duration or None,
-        "isError": item.is_error,
-        "target": item.target or None,
-        "question": item.question or None,
-        "options": item.options if item.options else None,
-        "questions": questions,
-        "from": item.from_value or None,
-        "to": item.to_value or None,
-    }
-
-
 class DashboardConsumer(AsyncJsonWebsocketConsumer):
     """Project-scoped WebSocket for real-time dashboard updates.
 
@@ -582,16 +559,25 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
     async def _send_snapshot(self):
         """Send full project state: all agents + recent feed items."""
         from agents.models import Agent, TeamFeedItem
+        from agents.serializers import serialize_agent, serialize_feed_item
 
         agents = [a async for a in Agent.objects.filter(project_id=self.project_id)]
-        agent_dicts = [await _serialize_agent_for_ws(a) for a in agents]
+        agent_dicts = []
+        for a in agents:
+            d = await serialize_agent(a)
+            d["_t"] = "agent"
+            agent_dicts.append(d)
 
         items = [
             item async for item in TeamFeedItem.objects.filter(
                 project_id=self.project_id,
             ).order_by("created_at")[:500]
         ]
-        feed_dicts = [_serialize_feed_item_for_ws(item) for item in items]
+        feed_dicts = []
+        for item in items:
+            d = serialize_feed_item(item)
+            d["_t"] = "feed"
+            feed_dicts.append(d)
 
         await self.send_json({
             "_t": "snapshot",

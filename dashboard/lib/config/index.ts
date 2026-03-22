@@ -1,4 +1,6 @@
 import type { LifecycleStatus, AttentionLevel } from "@/lib/types"
+export type { ThemeConfig, ThemeTokens, BuiltInTheme } from "@/lib/theme-registry"
+export { BUILT_IN_THEMES, DEFAULT_THEME } from "@/lib/theme-registry"
 
 /* ================================================================== */
 /*  STATUS + ATTENTION CONFIG                                          */
@@ -27,19 +29,3 @@ export const MODE_CONFIG = {
   plan: { label: "plan", color: "text-warning" },
   supervised: { label: "supervised", color: "text-info" },
 } as const
-
-/* ================================================================== */
-/*  THEME CONFIG                                                        */
-/* ================================================================== */
-
-export type ThemeConfig = { theme: string; mode: string }
-
-/** Available themes for the picker UI. */
-export const BUILT_IN_THEMES: { id: string; label: string; mode: string }[] = [
-  { id: "claude", label: "Dark", mode: "dark" },
-  { id: "blyss", label: "Blyss", mode: "dark" },
-  { id: "rose-pine", label: "Rosé Pine", mode: "dark" },
-  { id: "ember", label: "Ember", mode: "dark" },
-  { id: "nord", label: "Nord", mode: "dark" },
-]
-

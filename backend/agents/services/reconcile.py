@@ -14,7 +14,6 @@ CurrentThreadExecutor is unavailable. All ORM calls MUST use
 """
 
 import asyncio
-import os
 from datetime import timedelta
 
 import docker
@@ -28,34 +27,36 @@ from agents.errors import (
     ERR_RECONCILER_STATUS_CHECK_FAILED,
 )
 from agents.models import Agent, AgentLifecycleAttempt, AgentLifecycleAttemptStatus, AgentStatus
+from agents.models import DesiredStatus
 from agents.services.lifecycle import transition_agent_status
 from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item
 from agents.services.lifecycle import (
+    ERR_LIFECYCLE_RUNTIME_LIMBO,
     ERR_LIFECYCLE_RUNTIME_DEAD,
     ERR_LIFECYCLE_STUCK_DEPLOY,
     fail_active_lifecycle_attempts,
     succeed_active_lifecycle_attempts,
 )
-from agents.services.utils import terminate_sandbox
+from agents.services.runtime_projection import agent_meets_ready_boundary, read_runtime_status
+from agents.services.utils import mark_agent_runtime_unavailable, terminate_sandbox
 
 log = structlog.get_logger("abox.reconciler")
 
 INTERVAL_S = 30
 DEPLOY_GRACE_S = 120
 DEPLOY_HARD_LIMIT_S = 300  # 5 min absolute max — kill regardless of container state
-ERROR_REAP_GRACE_S = int(os.environ.get("AGENT_REAP_DELAY_S", "60"))
+REASON_RECONCILER_DEAD_RUNTIME = "reconciler.dead_runtime"
+REASON_RECONCILER_RUNTIME_MISSING = "reconciler.runtime_missing"
+REASON_RECONCILER_STUCK_DEPLOY = "reconciler.stuck_deploy"
+REASON_RECONCILER_RUNTIME_LIMBO = "reconciler.runtime_limbo"
+REASON_RECONCILER_ERROR_REAP = "reconciler.error_reap"
 
 _task: asyncio.Task | None = None
+_logged_error_reap_skip = False
 
 # Decorator for sync DB operations in background tasks
 _db = sync_to_async(thread_sensitive=False)
-
-
-def _keep_failed_agent_containers() -> bool:
-    """Return whether failed agent sandboxes should be preserved for debugging."""
-    raw = os.environ.get("KEEP_FAILED_AGENT_CONTAINERS", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
 
 
 def ensure_running():
@@ -88,6 +89,7 @@ async def reconcile_agents():
     await _reap_orphans()
     await _detect_dead_containers()
     await _detect_stuck_deploys(now)
+    await _detect_runtime_limbo(now)
     await _reap_errored_agents(now)
     await _reconcile_lifecycle_attempts(now)
 
@@ -106,8 +108,33 @@ def _get_agents(**filters):
     return list(Agent.objects.filter(**filters))
 
 
+async def _mark_error(agent_id, error_message="", *, reason=REASON_RECONCILER_DEAD_RUNTIME):
+    return await mark_agent_runtime_unavailable(
+        str(agent_id),
+        reason=reason,
+        error_message=error_message,
+    )
+
+
+def _summarize_runtime_log(events: list[dict]) -> tuple[str, list[str]]:
+    names = [str(event.get("event", "")).strip() for event in events if event.get("event")]
+    names = [name for name in names if name]
+    if not names:
+        return "", []
+    recent = names[-5:]
+    return f"Last runtime event: {recent[-1]}", recent
+
+
+async def _read_runtime_log_tail(agent, *, limit: int = 10) -> list[dict]:
+    return await sync_to_async(agent.machine.runtime_log_tail, thread_sensitive=False)(limit=limit)
+
+
+async def _write_runtime_diagnostics(agent, payload: dict) -> None:
+    await sync_to_async(agent.machine.write_runtime_diagnostics, thread_sensitive=False)(payload)
+
+
 @_db
-def _mark_error(agent_id, error_message=""):
+def _mark_stopped(agent_id, *, reason=REASON_RECONCILER_ERROR_REAP):
     agent = Agent.objects.get(id=agent_id)
 
     # Accumulate compute time atomically before status change
@@ -119,31 +146,7 @@ def _mark_error(agent_id, error_message=""):
 
     # Force=True: reconciler is a recovery path — it must be able to fix
     # any stuck state, even if the transition isn't normally legal.
-    transition_agent_status(agent, AgentStatus.ERROR, reason="reconciler", force=True)
-    agent.deployed_at = None
-    update_fields = ["status", "deployed_at", "updated_at"]
-    # Only write error_message if not already set (stream.py may have set it first)
-    if error_message and not agent.error_message:
-        agent.error_message = error_message[:2000]
-        update_fields.append("error_message")
-    agent.save(update_fields=update_fields)
-    return agent
-
-
-@_db
-def _mark_stopped(agent_id):
-    agent = Agent.objects.get(id=agent_id)
-
-    # Accumulate compute time atomically before status change
-    if agent.deployed_at:
-        elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
-        Agent.objects.filter(id=agent_id).update(
-            compute_seconds=F("compute_seconds") + elapsed,
-        )
-
-    # Force=True: reconciler is a recovery path — it must be able to fix
-    # any stuck state, even if the transition isn't normally legal.
-    transition_agent_status(agent, AgentStatus.STOPPED, reason="reconciler_reap", force=True)
+    transition_agent_status(agent, AgentStatus.STOPPED, reason=reason, force=True)
     agent.deployed_at = None
     agent.save(update_fields=["status", "deployed_at", "updated_at"])
     return agent
@@ -188,11 +191,26 @@ def _reap_orphans_sync():
     )
     active_sandbox_ids = set(active_agents.values_list("sandbox_id", flat=True))
     active_agent_ids = set(str(aid) for aid in active_agents.values_list("id", flat=True))
+    retained_failed_agent_ids: set[str] = set()
+
+    from config.app_config import app_config
+    if app_config.reconciler.keep_failed_containers:
+        retained_failed_agent_ids = set(
+            str(aid)
+            for aid in Agent.objects.filter(
+                runtime="docker",
+                status=AgentStatus.ERROR,
+            ).values_list("id", flat=True)
+        )
 
     for container in containers:
         # Match by sandbox_id (normal case) or agent.id label (provisioning window)
         agent_id_label = container.labels.get("agentobox.agent.id", "")
-        if container.id in active_sandbox_ids or agent_id_label in active_agent_ids:
+        if (
+            container.id in active_sandbox_ids
+            or agent_id_label in active_agent_ids
+            or agent_id_label in retained_failed_agent_ids
+        ):
             continue
         try:
             container.stop(timeout=5)
@@ -222,14 +240,23 @@ async def _detect_dead_containers():
 
     for agent in agents:
         container_status = await runtime.get_status(agent.sandbox_id)
-        if container_status in ("exited", "dead"):
+        if container_status in ("exited", "dead", "missing"):
             # Capture crash diagnostics before marking ERROR
             crash_info = await runtime.get_crash_info(agent.sandbox_id)
+            runtime_events = await _read_runtime_log_tail(agent, limit=10)
+            runtime_log_summary, recent_runtime_events = _summarize_runtime_log(runtime_events)
+            runtime_status = await sync_to_async(read_runtime_status, thread_sensitive=False)(agent)
+            docker_events = await runtime.get_event_tail(agent.sandbox_id, limit=10)
+            last_docker_action = docker_events[-1]["action"] if docker_events else ""
 
             # Build error message from crash info (backup path — stream.py
             # may have already set it from relay's process_exit event)
             error_msg = ""
-            if crash_info:
+            reason = REASON_RECONCILER_DEAD_RUNTIME
+            if container_status == "missing":
+                error_msg = "Runtime container is missing"
+                reason = REASON_RECONCILER_RUNTIME_MISSING
+            elif crash_info:
                 parts = []
                 exit_code = crash_info.get("exit_code", -1)
                 if crash_info.get("oom_killed"):
@@ -242,8 +269,35 @@ async def _detect_dead_containers():
                     tail = "\n".join(logs.splitlines()[-10:])
                     parts.append(tail)
                 error_msg = "\n".join(parts)
+            if runtime_log_summary:
+                error_msg = (
+                    f"{error_msg}\n{runtime_log_summary}"
+                    if error_msg
+                    else runtime_log_summary
+                )
+            if container_status == "missing" and last_docker_action:
+                docker_summary = f"Last docker action: {last_docker_action}"
+                error_msg = f"{error_msg}\n{docker_summary}" if error_msg else docker_summary
 
-            agent = await _mark_error(agent.id, error_message=error_msg)
+            await _write_runtime_diagnostics(
+                agent,
+                {
+                    "captured_at": timezone.now().isoformat(),
+                    "agent_id": str(agent.id),
+                    "sandbox_id": agent.sandbox_id,
+                    "container_status": container_status,
+                    "runtime_status": runtime_status,
+                    "crash_info": crash_info or {},
+                    "runtime_log_tail": runtime_events,
+                    "docker_event_tail": docker_events,
+                },
+            )
+
+            agent = await _mark_error(
+                agent.id,
+                error_message=error_msg,
+                reason=reason,
+            )
             await fail_active_lifecycle_attempts(
                 str(agent.id),
                 step="runtime_dead",
@@ -256,7 +310,11 @@ async def _detect_dead_containers():
             # Create error feed item so dashboard shows WHY the agent crashed
             # (backup path — stream.py creates one from relay's process_exit
             # event, but if relay never sent it, this is the only record)
-            summary = error_msg.splitlines()[-1][:200] if error_msg else "Container exited unexpectedly"
+            summary = (
+                "Runtime container is missing"
+                if container_status == "missing"
+                else (error_msg.splitlines()[-1][:200] if error_msg else "Container exited unexpectedly")
+            )
             await create_feed_item(
                 project_id=str(agent.project_id),
                 type="error",
@@ -265,13 +323,17 @@ async def _detect_dead_containers():
                 text=summary,
             )
 
+            event_name = "reconciler.runtime_missing" if container_status == "missing" else "reconciler.dead_container"
             log.info(
-                "reconciler.dead_container",
+                event_name,
                 agent_id=str(agent.id),
                 agent_name=agent.name,
                 container_status=container_status,
                 exit_code=crash_info.get("exit_code") if crash_info else None,
                 oom_killed=crash_info.get("oom_killed") if crash_info else None,
+                last_runtime_event=recent_runtime_events[-1] if recent_runtime_events else "",
+                recent_runtime_events=recent_runtime_events,
+                last_docker_action=last_docker_action,
             )
 
 
@@ -321,7 +383,7 @@ async def _detect_stuck_deploys(now):
                 )
 
         await terminate_sandbox(agent, agent_log)
-        agent = await _mark_error(agent.id)
+        agent = await _mark_error(agent.id, reason=REASON_RECONCILER_STUCK_DEPLOY)
         await fail_active_lifecycle_attempts(
             str(agent.id),
             step="stuck_deploy",
@@ -336,6 +398,43 @@ async def _detect_stuck_deploys(now):
         )
 
 
+async def _detect_runtime_limbo(now):
+    """Recover agents that connected transport but never crossed ready boundary."""
+
+    limbo_cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
+    limbo_agents = await _get_agents(
+        status__in=[AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING],
+        desired_status=DesiredStatus.DEPLOYED,
+        relay_connected=True,
+        updated_at__lt=limbo_cutoff,
+    )
+
+    for agent in limbo_agents:
+        if agent_meets_ready_boundary(agent):
+            continue
+
+        error_detail = "Relay connected but runtime never reached ready state"
+        await terminate_sandbox(agent, log.bind(agent_id=str(agent.id), reason=REASON_RECONCILER_RUNTIME_LIMBO))
+        agent = await _mark_error(
+            agent.id,
+            error_message=error_detail,
+            reason=REASON_RECONCILER_RUNTIME_LIMBO,
+        )
+        await fail_active_lifecycle_attempts(
+            str(agent.id),
+            step="runtime_limbo",
+            error_code=ERR_LIFECYCLE_RUNTIME_LIMBO,
+            error_detail=error_detail,
+            metadata={"relay_connected": True},
+        )
+        await broadcast_agent_update(agent)
+        log.info(
+            "reconciler.runtime_limbo",
+            agent_id=str(agent.id),
+            agent_name=agent.name,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Step 4: Auto-reap errored agents
 # ---------------------------------------------------------------------------
@@ -347,11 +446,18 @@ async def _reap_errored_agents(now):
     keeping dead containers alive wastes resources. The grace period ensures
     final relay events have time to flush before cleanup.
     """
-    if _keep_failed_agent_containers():
-        log.info("reconciler.error_reap_skipped", keep_failed_containers=True)
+    from config.app_config import app_config
+
+    global _logged_error_reap_skip
+    if app_config.reconciler.keep_failed_containers:
+        if not _logged_error_reap_skip:
+            log.info("reconciler.error_reap_skipped", keep_failed_containers=True)
+            _logged_error_reap_skip = True
         return
 
-    reap_cutoff = now - timedelta(seconds=ERROR_REAP_GRACE_S)
+    _logged_error_reap_skip = False
+
+    reap_cutoff = now - timedelta(seconds=app_config.reconciler.reap_delay_s)
     errored_agents = await _get_agents(
         status=AgentStatus.ERROR,
         updated_at__lt=reap_cutoff,
@@ -359,7 +465,7 @@ async def _reap_errored_agents(now):
 
     for agent in errored_agents:
         await terminate_sandbox(agent, log.bind(agent_id=str(agent.id)))
-        agent = await _mark_stopped(agent.id)
+        agent = await _mark_stopped(agent.id, reason=REASON_RECONCILER_ERROR_REAP)
         await broadcast_agent_update(agent)
         log.info(
             "reconciler.error_reaped",
@@ -374,11 +480,12 @@ async def _reconcile_lifecycle_attempts(now):
     for attempt in attempts:
         agent = attempt.agent
         if agent.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING):
-            await succeed_active_lifecycle_attempts(
-                str(agent.id),
-                step="agent_available",
-                metadata={"attempt_id": str(attempt.id)},
-            )
+            if agent_meets_ready_boundary(agent):
+                await succeed_active_lifecycle_attempts(
+                    str(agent.id),
+                    step="runtime_ready",
+                    metadata={"attempt_id": str(attempt.id)},
+                )
             continue
 
         if agent.status in (AgentStatus.ERROR, AgentStatus.STOPPED):

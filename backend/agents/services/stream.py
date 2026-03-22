@@ -27,6 +27,7 @@ from agents.services.broadcast import broadcast_agent_update
 from agents.services.feed import create_feed_item, recompute_attention
 from agents.services.lifecycle import transition_agent_status
 from agents.services.media import externalize_image_block
+from agents.services.runtime_segments import record_runtime_segment
 
 log = structlog.get_logger("abox.stream")
 
@@ -267,7 +268,7 @@ async def _maybe_create_plan_item(agent: Agent, event: dict, source_event: Strea
             plan_status="approved",
             tool_use_id=tool_use_id,
         )
-        from agents.services.comms import send_message
+        from agents.services.relay import send_message
         await send_message(str(agent.id), "Plan approved. Proceed with the implementation.")
         log.info("stream.plan_auto_approved", agent_id=str(agent.id), tool_use_id=tool_use_id)
         return
@@ -412,8 +413,8 @@ async def _handle_result(agent: Agent, event: dict, stream_event: StreamEvent | 
             is_error=False,
             summary=last_text,
         )
-    # Set review attention after turn completion (if no pending perm/plan)
-    await recompute_attention(str(agent.project_id), str(agent.id), after_result=True)
+    # Recompute intervention attention after turn completion.
+    await recompute_attention(str(agent.project_id), str(agent.id))
 
 
 async def _handle_system(agent: Agent, event: dict) -> None:
@@ -475,6 +476,12 @@ async def _handle_system(agent: Agent, event: dict) -> None:
         stderr = event.get("stderr", "").strip()
         if is_error and stderr:
             f_update["error_message"] = stderr[:2000]  # cap at 2000 chars for DB
+
+        await record_runtime_segment(
+            agent,
+            close_reason=f"process_exit(code={exit_code})",
+            metadata={"stderr": stderr[:500] if stderr else ""},
+        )
 
         await Agent.objects.filter(id=agent.id).aupdate(**f_update)
         # Refresh local instance so broadcast/downstream sees current state

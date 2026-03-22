@@ -8,7 +8,7 @@ import type { AttentionLevel, TeamFeedItem, PendingItem } from "@/lib/types"
 /*  No side effects, no store dependencies — just data → data.         */
 /* ================================================================== */
 
-/** Highest attention level across a set of agents */
+/** Highest intervention level across a set of agents for global attention UI. */
 export function getHighestAttention(agents: { attentionLevel: AttentionLevel }[]): AttentionLevel {
   let highest: AttentionLevel = "none"
   for (const a of agents) {
@@ -36,7 +36,7 @@ export function getAllPendingItems(feedItems: TeamFeedItem[]): PendingItem[] {
   )
 }
 
-/** Derive attention level from feed items for a specific agent */
+/** Derive intervention attention from feed items for a specific agent. */
 export function deriveAttentionFromFeed(feedItems: TeamFeedItem[], agentName: string): AttentionLevel {
   const pending = getPendingItemsForAgent(feedItems, agentName)
   let highest: AttentionLevel = "none"

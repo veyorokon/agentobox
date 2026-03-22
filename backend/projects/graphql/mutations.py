@@ -1,34 +1,13 @@
-import re
-
 import structlog
 import strawberry
 from strawberry import ID
 from strawberry.scalars import JSON
 from strawberry.types import Info
 
+from agents.services.themes import VALID_THEME_KEYS, is_valid_theme_value
 from projects.graphql.types import ProjectType
 
 log = structlog.get_logger("projects.mutations")
-
-VALID_THEME_KEYS = frozenset({
-    "surface", "surface-raised", "surface-sunken", "surface-overlay",
-    "surface-backdrop", "surface-invert",
-    "text-default", "text-secondary", "text-muted", "text-disabled", "text-on-emphasis",
-    "border-default", "border-subtle", "border-strong",
-    "accent", "accent-hover", "accent-subtle", "text-accent",
-    "info", "text-info", "text-info-hover",
-    "pro", "text-pro",
-    "text-link", "text-link-hover",
-    "success", "text-success", "success-subtle",
-    "danger", "text-danger", "danger-subtle",
-    "warning", "text-warning", "warning-subtle",
-    "avatar-saturation", "avatar-lightness",
-    "interactive", "interactive-active", "ring-focus",
-})
-# Accept #RRGGBB hex, rgba(...), hsl(...), and bare values (e.g. "35%" for avatar tokens)
-_TOKEN_VALUE_RE = re.compile(
-    r"^(#[0-9a-fA-F]{6}|rgba?\(.+\)|hsla?\(.+\)|\d+%?)$"
-)
 
 
 from agents.utils import sanitize_name as _sanitize_name
@@ -51,7 +30,10 @@ class UpdateProjectInput:
 @strawberry.input
 class SetProjectThemeInput:
     project_id: ID
-    tokens: JSON
+    theme: str | None = None
+    mode: str | None = None
+    overrides: JSON | None = None
+    tokens: JSON | None = None
 
 
 @strawberry.type
@@ -61,6 +43,7 @@ class ProjectMutation:
         self, input: CreateProjectInput, info: Info
     ) -> ProjectType:
         from projects.models import Project
+        from django.utils import timezone
 
         user = info.context["request"].user
         if not user.is_authenticated:
@@ -85,6 +68,12 @@ class ProjectMutation:
             await spawn_team_lead(str(project.id))
         except Exception:
             log.exception("create_project.team_lead_failed", project_id=str(project.id))
+            # Preserve the failed project as a tombstone for audit/debugging,
+            # but hide it from normal project queries.
+            project.deleted_at = timezone.now()
+            project.archived_at = project.deleted_at
+            await project.asave(update_fields=["deleted_at", "archived_at"])
+            raise Exception("Failed to initialize project — team lead could not be created")
 
         return project
 
@@ -152,14 +141,33 @@ class ProjectMutation:
 
     @strawberry.mutation
     async def delete_project(self, id: ID, info: Info) -> bool:
+        from django.utils import timezone
+
+        from agents.models import Agent, AgentStatus
+        from agents.services.lifecycle import kill_agent
         from projects.models import Project
 
         user = info.context["request"].user
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
 
-        deleted, _ = await Project.objects.filter(id=id, owner=user).adelete()
-        return deleted > 0
+        project = await Project.objects.aget(id=id, owner=user)
+
+        live_statuses = {
+            AgentStatus.DEPLOYING,
+            AgentStatus.RUNNING,
+            AgentStatus.WAITING,
+            AgentStatus.IDLE,
+        }
+        for agent in [a async for a in Agent.objects.filter(project=project)]:
+            if agent.status in live_statuses:
+                await kill_agent(str(agent.id))
+
+        project.deleted_at = timezone.now()
+        if project.archived_at is None:
+            project.archived_at = project.deleted_at
+        await project.asave(update_fields=["deleted_at", "archived_at"])
+        return True
 
     @strawberry.mutation
     async def stop_all_agents(self, project_id: ID, info: Info) -> int:
@@ -195,22 +203,28 @@ class ProjectMutation:
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
 
-        tokens = input.tokens
-        if not isinstance(tokens, dict):
-            raise ValueError("tokens must be a JSON object")
-
-        invalid_keys = set(tokens.keys()) - VALID_THEME_KEYS
-        if invalid_keys:
-            raise ValueError(f"Invalid token keys: {invalid_keys}")
-
-        for key, value in tokens.items():
-            if not isinstance(value, str) or not _TOKEN_VALUE_RE.match(value):
-                raise ValueError(f"Token '{key}' must be a valid CSS value (#RRGGBB, rgba(), hsl(), or percentage)")
-
         project = await Project.objects.aget(id=input.project_id, owner=user)
-        project.theme_tokens = tokens
-        await project.asave(update_fields=["theme_tokens"])
+        overrides = input.overrides if isinstance(input.overrides, dict) else None
+        tokens = input.tokens if isinstance(input.tokens, dict) else None
 
-        from agents.services.comms import push_theme_to_agents
+        for bucket in (overrides or {}, tokens or {}):
+            invalid_keys = set(bucket.keys()) - VALID_THEME_KEYS
+            if invalid_keys:
+                raise ValueError(f"Invalid token keys: {invalid_keys}")
+            for key, value in bucket.items():
+                if not is_valid_theme_value(value):
+                    raise ValueError(
+                        f"Token '{key}' must be a non-empty CSS value without ';', '{{', or '}}'"
+                    )
+
+        project.set_theme_document(
+            theme=input.theme,
+            mode=input.mode,
+            overrides=overrides,
+            tokens=tokens,
+        )
+        await project.asave(update_fields=["theme_document", "theme_tokens"])
+
+        from agents.services.relay import push_theme_to_agents
         await push_theme_to_agents(project)
         return True

@@ -36,7 +36,9 @@ services:
       start_period: 15s
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     mem_limit: 1g
     entrypoint: ["bash", "/app/entrypoint.sh"]
     command: ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
@@ -46,14 +48,14 @@ services:
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production}
-      AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent-claude:latest}
+      AGENT_IMAGE: ${AGENT_IMAGE:-agentobox-agent-runtime-desktop-managed:latest}
       CORS_ALLOW_ALL: "true"
       ABOX_CALLBACK_URL: http://backend:8000
       ABOX_DASHBOARD_URL: http://dashboard:5051
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
-      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude:${AGENT_VERSION:-latest}
+      MODAL_AGENT_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed:${AGENT_VERSION:-dev}
       MODAL_ENVIRONMENT: ${MODAL_ENVIRONMENT:-dev}
       ABOX_ENCRYPTION_KEY: ${ABOX_ENCRYPTION_KEY:-}
       DOCKER_NETWORK: agentobox_default
@@ -66,9 +68,11 @@ services:
       AGENT_ROOTFS_PATH: ${AGENT_ROOTFS_PATH:-}
       VOLUME_ROOT: /volumes
       AGENT_REAP_DELAY_S: ${AGENT_REAP_DELAY_S:-300}
+      KEEP_FAILED_AGENT_CONTAINERS: ${KEEP_FAILED_AGENT_CONTAINERS:-true}
+      AGENT_RUNTIME: docker
       LOG_FORMAT: json
-      GITHUB_SSO_CLIENT_ID: ${GITHUB_SSO_CLIENT_ID:-Ov23liepIxqWhVqlNg3i}
-      GITHUB_SSO_CLIENT_SECRET: ${GITHUB_SSO_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-Ov23liepIxqWhVqlNg3i}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
@@ -82,6 +86,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./shared:/shared:ro
       - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
       - ./agent:/agent:ro
@@ -90,7 +95,8 @@ services:
 
   dashboard:
     build:
-      context: ./dashboard
+      context: .
+      dockerfile: dashboard/Dockerfile
       target: dev
     restart: unless-stopped
     environment:
@@ -103,6 +109,7 @@ services:
       - backend
     volumes:
       - ./dashboard:/app
+      - ./shared:/shared:ro
       - /app/node_modules
       - /app/.next
 

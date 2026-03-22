@@ -9,19 +9,37 @@ VNC is exposed via Modal's encrypted tunnel on port 6080.
 Modal Sandbox.create is natively async (.aio suffix), so no executor
 wrapping needed unlike DockerRuntime.
 """
+import asyncio
+import os
+import shlex
 import time
+import textwrap
+from decimal import Decimal
+from pathlib import PurePosixPath
 
 import modal
 import structlog
-from django.conf import settings
+from config.app_config import app_config
 
-from agents.runtimes.base import SandboxInstance, VolumeMount
+from agents.runtimes.base import RuntimeResources, SandboxInstance, VolumeMount
+from agents.services.project_volume import ModalProjectVolumeStore
 
 log = structlog.get_logger("abox.runtime.modal")
+MODAL_DEFAULT_CPU_CORES = 2.0
+MODAL_DEFAULT_MEMORY_MB = 4096
 
 
 class ModalRuntime:
     """Modal Python SDK runtime. Implements Runtime protocol."""
+
+    @staticmethod
+    def _environment_name() -> str:
+        return os.environ.get("MODAL_ENVIRONMENT") or app_config.environment
+
+    @staticmethod
+    def _mount_root(path: str) -> str:
+        parts = PurePosixPath(path).parts
+        return f"/{parts[1]}" if len(parts) >= 2 else "/vol"
 
     async def create(
         self, name: str, env: dict[str, str],
@@ -32,13 +50,15 @@ class ModalRuntime:
         t0 = time.monotonic()
 
         app = await modal.App.lookup.aio(
-            settings.MODAL_APP_NAME, create_if_missing=True
+            app_config.modal.app_name, create_if_missing=True
         )
         # Select image based on agent_type. The env dict carries AGENT_TYPE
         # (set by lifecycle.py from the Agent model field).
         agent_type = env.get("AGENT_TYPE", "claude-code")
-        modal_image_map = getattr(settings, "MODAL_AGENT_IMAGE_MAP", {})
-        image_ref = modal_image_map.get(agent_type, settings.MODAL_AGENT_IMAGE)
+        image_ref = app_config.modal.agent_image_map.get(agent_type, app_config.modal.agent_image)
+        # Managed images define their own entrypoint. Do not override it here,
+        # or Modal will boot the sandbox through a stale bootstrap path that
+        # may not exist in the current image.
         image = modal.Image.from_registry(
             image_ref,
             secret=modal.Secret.from_name("ghcr-secret"),
@@ -49,8 +69,13 @@ class ModalRuntime:
         # mount.name is used directly as the Modal volume label.
         modal_volumes = {}
         if volumes:
+            environment_name = self._environment_name()
             for mount in volumes:
-                vol = modal.Volume.from_name(mount.name, create_if_missing=True)
+                vol = modal.Volume.from_name(
+                    mount.name,
+                    create_if_missing=True,
+                    environment_name=environment_name,
+                )
                 modal_volumes[mount.mount_path] = vol
             op.info("runtime.volumes_attached", names=[m.name for m in volumes])
 
@@ -58,29 +83,31 @@ class ModalRuntime:
             app=app,
             image=image,
             secrets=[env_secret],
-            encrypted_ports=[6080],
+            encrypted_ports=[6080, 8080],
             timeout=3600,
-            cpu=2.0,
-            memory=4096,
+            cpu=MODAL_DEFAULT_CPU_CORES,
+            memory=MODAL_DEFAULT_MEMORY_MB,
         )
         if modal_volumes:
             create_kwargs["volumes"] = modal_volumes
 
-        sb = await modal.Sandbox.create.aio("/init", **create_kwargs)
+        sb = await modal.Sandbox.create.aio(**create_kwargs)
         agent_id = env.get("AGENT_ID", "")
         await sb.set_tags.aio(
             {"agentobox.managed": "true", "agentobox.agent": name, "agentobox.agent.id": agent_id}
         )
         tunnels = await sb.tunnels.aio()
         vnc_url = tunnels[6080].url if 6080 in tunnels else ""
+        health_url = tunnels[8080].url if 8080 in tunnels else ""
 
         op.info(
             "runtime.sandbox_created",
             sandbox_id=sb.object_id,
             vnc_url=vnc_url,
+            health_url=health_url,
             elapsed_s=round(time.monotonic() - t0, 2),
         )
-        return SandboxInstance(id=sb.object_id, vnc_url=vnc_url)
+        return SandboxInstance(id=sb.object_id, vnc_url=vnc_url, health_url=health_url)
 
     async def exec(
         self, sandbox_id: str, cmd: list[str], user: str = "agent"
@@ -98,6 +125,9 @@ class ModalRuntime:
         if process.returncode and process.returncode != 0:
             op.warning("runtime.exec_failed", exit_code=process.returncode, elapsed_s=elapsed,
                        output=output[:200] if output else "")
+            raise RuntimeError(
+                f"Modal exec failed (exit_code={process.returncode}): {output[:200] if output else ''}"
+            )
         else:
             op.info("runtime.exec_done", elapsed_s=elapsed)
         return output
@@ -116,6 +146,120 @@ class ModalRuntime:
 
         op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
 
+    def machine_store(self):
+        return ModalProjectVolumeStore(
+            app_config.agent.volume_name,
+            environment_name=self._environment_name(),
+        )
+
+    def resource_snapshot(self) -> RuntimeResources:
+        return RuntimeResources(
+            cpu_cores=Decimal(str(MODAL_DEFAULT_CPU_CORES)),
+            memory_mb=MODAL_DEFAULT_MEMORY_MB,
+        )
+
+    async def sync_machine_volume(self, sandbox_id: str, mount_path: str = "/vol") -> None:
+        op = log.bind(op="sync_machine_volume", sandbox_id=sandbox_id, mount_path=mount_path)
+        op.info("runtime.sync_machine_volume_start")
+        t0 = time.monotonic()
+        # Modal sync operates on the mounted volume root, not an arbitrary
+        # agent subdirectory. Callers may pass a deeper machine path
+        # (/vol/agents/<id>/...), but the runtime must normalize that back to
+        # the actual mount root to avoid exit_code=1 during provisioning.
+        sync_target = self._mount_root(mount_path)
+        sb = await modal.Sandbox.from_id.aio(sandbox_id)
+        await sb.reload_volumes.aio()
+        await self.exec(sandbox_id, ["bash", "-lc", f"sync {sync_target}"])
+        op.info("runtime.sync_machine_volume_done", elapsed_s=round(time.monotonic() - t0, 2))
+
+    async def mirror_machine_append(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str,
+    ) -> None:
+        """Mirror a live append into the mounted sandbox path.
+
+        Canonical state still lives in the Modal-backed store, but long-lived
+        mounted files do not reliably reflect backend-side append updates in a
+        running sandbox. Mirror the append into the mounted path so the relay
+        consumes the same bytes the backend just persisted.
+        """
+        script = textwrap.dedent(
+            f"""
+            from pathlib import Path
+            path = Path({path!r})
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write({content!r})
+            """
+        ).strip()
+        await self.exec(sandbox_id, ["python3", "-c", script])
+
+    async def mirror_machine_write(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str | bytes,
+    ) -> None:
+        """Mirror a live overwrite into the mounted sandbox path.
+
+        Some mounted files in a running Modal sandbox do not reflect backend-side
+        overwrites reliably, even after reload_volumes(). Write the same bytes
+        directly into the mounted path so the relay consumes the updated state.
+        """
+        payload = content.encode() if isinstance(content, str) else content
+        await self.write_file(sandbox_id, payload, path)
+
+    async def await_machine_path_visible(
+        self,
+        sandbox_id: str,
+        path: str,
+        *,
+        expected_content: str = "",
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.25,
+    ) -> None:
+        op = log.bind(
+            op="await_machine_path_visible",
+            sandbox_id=sandbox_id,
+            path=path,
+        )
+        op.info("runtime.machine_path_wait_start")
+        t0 = time.monotonic()
+        deadline = t0 + timeout_s
+        expected = expected_content.strip()
+        mount_root = self._mount_root(path)
+        quoted_path = shlex.quote(path)
+        last_output = ""
+        attempts = 0
+        sb = await modal.Sandbox.from_id.aio(sandbox_id)
+
+        while time.monotonic() < deadline:
+            attempts += 1
+            await self.sync_machine_volume(sandbox_id, mount_root)
+            process = await sb.exec.aio(
+                "bash",
+                "-lc",
+                f"[ -f {quoted_path} ] && cat {quoted_path} || true",
+            )
+            await process.wait.aio()
+            output = await process.stdout.read.aio()
+            last_output = (output or "").strip()
+            if not expected or last_output == expected:
+                op.info(
+                    "runtime.machine_path_wait_done",
+                    elapsed_s=round(time.monotonic() - t0, 2),
+                    attempts=attempts,
+                )
+                return
+            await asyncio.sleep(poll_interval_s)
+
+        raise RuntimeError(
+            "Modal machine path never became visible "
+            f"(path={path!r}, expected={expected!r}, last_output={last_output!r})"
+        )
+
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", sandbox_id=sandbox_id)
         op.info("runtime.terminate_start")
@@ -133,7 +277,7 @@ class ModalRuntime:
         op.info("runtime.list_start")
         t0 = time.monotonic()
 
-        app = await modal.App.lookup.aio(settings.MODAL_APP_NAME)
+        app = await modal.App.lookup.aio(app_config.modal.app_name)
         results = []
         async for sb in modal.Sandbox.list.aio(app_id=app.app_id):
             tunnels = await sb.tunnels.aio()

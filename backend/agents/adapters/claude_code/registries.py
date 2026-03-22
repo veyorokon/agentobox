@@ -171,7 +171,7 @@ MCP_REGISTRY = {
             ### Desktop
 
             There is a dock bar at the bottom of the screen with app launchers
-            (Firefox, Terminal). To open an app, click its icon in the dock.
+            (Chromium, Terminal). To open an app, click its icon in the dock.
             If the app you need is not in the dock, you may launch it from
             bash — this is the only acceptable reason to use bash for GUI apps.
 
@@ -187,7 +187,7 @@ MCP_REGISTRY = {
 
             ### Browser
 
-            - Firefox is in the dock. Click its icon to open it.
+            - Chromium is in the dock. Click its icon to open it.
             - To navigate: click the address bar, type the URL, press Enter.
             - To follow a link: click it. To go back: click the back button.
             - To search: click the search/address bar, type your query, press
@@ -209,7 +209,9 @@ MCP_REGISTRY = {
 }
 
 # MCPs included on every agent by default (unless explicitly overridden).
-DEFAULT_MCPS = ["computer-use"]
+# Empty — bundled MCPs (computer-use) only exist in the legacy agent-claude
+# image. New runtime images don't ship MCP servers; they're added explicitly.
+DEFAULT_MCPS: list[str] = []
 
 # Team configuration templates
 # Each template defines a complete agent team with role, model, and responsibilities
@@ -221,7 +223,7 @@ TEAM_CONFIGS = {
                 "role": "lead",
                 "model": "claude-opus-4-6",
                 "instructions": "You are the team lead and sole agent. Handle all aspects of the project.",
-                "mcp_servers": ["computer-use"],
+                "mcp_servers": [],
             }
         ]
     },
@@ -232,7 +234,7 @@ TEAM_CONFIGS = {
                 "role": "lead",
                 "model": "claude-opus-4-6",
                 "instructions": "Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
-                "mcp_servers": ["computer-use"],
+                "mcp_servers": [],
             },
             {
                 "name": "backend",

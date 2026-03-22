@@ -1,8 +1,9 @@
 """Generate docs/REFERENCE.md from codebase docstrings and annotations.
 
-Walks backend/agents/**/*.py and agent/rootfs/**/*.py, extracts module
-docstrings, test class docstrings (as principles), # intentional: annotations,
-and # tech-debt: annotations. Renders a single markdown file for LLM consumption.
+Walks backend/agents/**/*.py and agent/{runtime,transports}/**/*.py, extracts
+module docstrings, test class docstrings (as principles), # intentional:
+annotations, and # tech-debt: annotations. Renders a single markdown file
+for LLM consumption.
 
 Usage:
     docker compose exec backend uv run python manage.py generate_reference
@@ -33,7 +34,8 @@ else:
     # Local: backend/ is under repo root
     REPO_ROOT = BACKEND_DIR.parent
 
-AGENT_ROOTFS_DIR = REPO_ROOT / "agent" / "rootfs"
+AGENT_RUNTIME_DIR = REPO_ROOT / "agent" / "runtime"
+AGENT_TRANSPORTS_DIR = REPO_ROOT / "agent" / "transports"
 OUTPUT_PATH = REPO_ROOT / "docs" / "REFERENCE.md"
 
 SKIP_DIRS = {"migrations", "__pycache__", ".venv"}
@@ -149,8 +151,9 @@ class Command(BaseCommand):
         pattern = re.compile(r"#\s*(intentional|tech-debt):\s*(.+)")
         chunks = []
         search_dirs = [AGENTS_DIR]
-        if AGENT_ROOTFS_DIR.is_dir():
-            search_dirs.append(AGENT_ROOTFS_DIR)
+        for agent_dir in (AGENT_RUNTIME_DIR, AGENT_TRANSPORTS_DIR):
+            if agent_dir.is_dir():
+                search_dirs.append(agent_dir)
 
         for search_dir in search_dirs:
             for py_file in sorted(search_dir.rglob("*.py")):

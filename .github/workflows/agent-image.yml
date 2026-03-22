@@ -1,97 +1,247 @@
 name: Agent Image
 
 on:
-  push:
-    branches: [main]
-    paths: ["agent/**"]
-    tags: ["v*"]
+  workflow_call:
+    outputs:
+      managed-image:
+        description: Managed agent image ref for this commit
+        value: ${{ jobs.build-managed.outputs.managed-image }}
+      desktop-image:
+        description: Desktop agent image ref for this commit
+        value: ${{ jobs.build-desktop-managed.outputs.desktop-image }}
   workflow_dispatch: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: agent-image-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
-  BASE_IMAGE: ghcr.io/veyorokon/agentobox-agent-base
-  CLAUDE_IMAGE: ghcr.io/veyorokon/agentobox-agent-claude
+  MANAGED_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-managed
+  DESKTOP_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed
 
 jobs:
-  build-base:
+  build-managed:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     outputs:
-      base-tag: ${{ steps.meta.outputs.version }}
+      managed-tag: ${{ steps.meta.outputs.version }}
+      managed-image: ${{ steps.image-ref.outputs.ref }}
+      managed-tags: ${{ steps.meta.outputs.tags }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
-          images: ${{ env.BASE_IMAGE }}
+          images: ${{ env.MANAGED_IMAGE }}
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
         with:
           context: agent
-          file: agent/Dockerfile.base
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=base
-          cache-to: type=gha,scope=base,mode=max
-
-  build-claude:
-    needs: build-base
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build smoke-test images locally
-        run: |
-          docker build -f agent/Dockerfile.base -t agentobox-agent-base:ci agent
-          docker build \
-            -f agent/claude/Dockerfile \
-            -t agentobox-agent-claude:ci \
-            --build-arg BASE_IMAGE=agentobox-agent-base:ci \
-            agent
-      - name: Run relay runtime smoke test
-        run: docker run --rm agentobox-agent-claude:ci python3 /opt/abox/relay.py --smoke-runtime
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.CLAUDE_IMAGE }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: agent
-          file: agent/claude/Dockerfile
+          file: agent/Dockerfile.managed
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BASE_IMAGE=${{ env.BASE_IMAGE }}:${{ needs.build-base.outputs.base-tag }}
-          cache-from: type=gha,scope=claude
-          cache-to: type=gha,scope=claude,mode=max
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=managed
+          cache-to: type=gha,scope=managed,mode=max
+      - id: image-ref
+        name: Record managed image ref
+        run: echo "ref=${{ env.MANAGED_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+
+  build-desktop-managed:
+    needs: build-managed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      desktop-image: ${{ steps.image-ref.outputs.ref }}
+      desktop-tags: ${{ steps.meta.outputs.tags }}
+      contract-test-outcome: ${{ steps.contract-test.outcome }}
+      contract-test-hint: ${{ steps.contract-test.outputs.failure_hint }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - id: sha
+        name: Compute short sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Reuse the exact managed image artifact from the upstream job, then
+      # build the desktop layer locally for contract testing.
+      - name: Pull managed image for desktop contract test
+        run: |
+          docker pull "${{ needs.build-managed.outputs.managed-image }}"
+      - name: Build desktop image for contract test
+        uses: docker/build-push-action@v7
+        with:
+          context: agent
+          file: agent/Dockerfile.desktop.managed
+          load: true
+          tags: agentobox-agent-runtime-desktop-managed:ci
+          build-args: |
+            BASE_IMAGE=${{ needs.build-managed.outputs.managed-image }}
+            AGENTOBOX_GIT_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=desktop-managed
+          cache-to: type=gha,scope=desktop-managed,mode=max
+
+      # Run the pytest contract test against the real image
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install test dependencies
+        run: uv --directory agent sync --group dev
+      - name: Run managed Docker contract test
+        id: contract-test
+        run: |
+          PYTHONPATH=${{ github.workspace }} AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 uv --directory agent run pytest tests/test_managed_docker_contract.py -q -o addopts= 2>&1 | tee contract-output.txt || exit_code=$?
+          if [ "${exit_code:-0}" -ne 0 ]; then
+            hint=$(grep -E "^(FAILED|ERROR|.*assert)" contract-output.txt | head -3)
+            echo "failure_hint<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${hint}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            exit "$exit_code"
+          fi
+      - name: Upload contract test output
+        if: failure() && steps.contract-test.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-test-output
+          path: contract-output.txt
+          retention-days: 7
+
+      # Push the exact tested desktop image to GHCR
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.DESKTOP_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - name: Tag tested desktop image
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker tag agentobox-agent-runtime-desktop-managed:ci "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
+      - name: Push tested desktop image
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker push "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
+      - id: image-ref
+        name: Record desktop image ref
+        run: echo "ref=${{ env.DESKTOP_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+
+  summary:
+    name: summary
+    if: always()
+    needs: [build-managed, build-desktop-managed]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compute status
+        id: status
+        run: |
+          managed="${{ needs.build-managed.result }}"
+          desktop="${{ needs.build-desktop-managed.result }}"
+          contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
+
+          if [ "$managed" = "success" ] && [ "$desktop" = "success" ]; then
+            echo "overall=success" >> "$GITHUB_OUTPUT"
+            echo "detail=images built and tested" >> "$GITHUB_OUTPUT"
+          elif [ "$managed" != "success" ]; then
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=managed build failed" >> "$GITHUB_OUTPUT"
+          elif [ "$contract" != "success" ] && [ "$contract" != "not-run" ]; then
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=contract test failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "overall=attention-needed" >> "$GITHUB_OUTPUT"
+            echo "detail=desktop build failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/summary-header
+        with:
+          title: Agent Image
+          overall: ${{ steps.status.outputs.overall }}
+          detail: ${{ steps.status.outputs.detail }}
+
+      - name: Write body
+        run: |
+          managed="${{ needs.build-managed.result }}"
+          desktop="${{ needs.build-desktop-managed.result }}"
+          contract="${{ needs.build-desktop-managed.outputs.contract-test-outcome || 'not-run' }}"
+          hint="${{ needs.build-desktop-managed.outputs.contract-test-hint }}"
+
+          # Only show detail if something failed
+          if [ "$managed" != "success" ] || [ "$desktop" != "success" ]; then
+            {
+              echo
+              echo "| Step | Status |"
+              echo "|------|--------|"
+              echo "| managed build | \`${managed}\` |"
+              echo "| desktop build | \`${desktop}\` |"
+              echo "| contract test | \`${contract}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ -n "$hint" ]; then
+              {
+                echo
+                echo "<details><summary><b>contract_test</b></summary>"
+                echo
+                echo '```'
+                echo "$hint"
+                echo '```'
+                echo
+                echo "</details>"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+          # Always show image refs if they exist
+          managed_ref="${{ needs.build-managed.outputs.managed-image }}"
+          desktop_ref="${{ needs.build-desktop-managed.outputs.desktop-image }}"
+          if [ -n "$managed_ref" ] || [ -n "$desktop_ref" ]; then
+            {
+              echo
+              echo "| Image | Ref |"
+              echo "|-------|-----|"
+              echo "| managed | \`${managed_ref:-—}\` |"
+              echo "| desktop | \`${desktop_ref:-—}\` |"
+              echo
+              echo "| Gate | Artifact Consumed | Provenance |"
+              echo "|------|-------------------|------------|"
+              echo "| build-managed | managed image tags | built and pushed from \`agent/Dockerfile.managed\` |"
+              echo "| build-desktop-managed | pulled managed sha image | reuses upstream managed artifact as desktop base |"
+              echo "| managed Docker contract | local desktop image \`agentobox-agent-runtime-desktop-managed:ci\` | built from pulled managed sha image before push |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

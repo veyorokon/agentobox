@@ -1,0 +1,68 @@
+ARG BASE_IMAGE=agentobox-agent-runtime-managed:latest
+FROM ${BASE_IMAGE}
+
+ENV AGENTOBOX_RUNTIME_PROFILE=desktop \
+    AGENTOBOX_IMAGE_REF=agentobox-agent-runtime-desktop-managed:latest \
+    DISPLAY=:99 \
+    RESOLUTION=1920x1080 \
+    NOVNC_WEB_ROOT=/opt/noVNC \
+    AGENT_HOME=/home/agent
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    x11-utils \
+    xdotool \
+    awesome \
+    chromium \
+    dbus \
+    dbus-x11 \
+    fonts-jetbrains-mono \
+    python3-websockify \
+    xterm \
+    gosu \
+    ca-certificates \
+    curl \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js (required for Claude Code CLI)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the Claude Code CLI version known to work with our pinned SDK.
+ARG CLAUDE_CODE_VERSION=2.1.71
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+RUN fc-cache -f
+
+ARG NOVNC_VERSION=1.6.0
+RUN mkdir -p /opt/noVNC \
+    && curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+       | tar -xz --strip-components=1 -C /opt/noVNC \
+    && ln -sf /opt/noVNC/vnc.html /opt/noVNC/index.html
+
+RUN useradd -m -s /bin/bash agent || true \
+    && mkdir -p /home/agent/.claude \
+    && chown -R agent:agent /home/agent /app /tmp \
+    && chmod 1777 /tmp \
+    && chown -R agent:agent /home/agent/.config 2>/dev/null || true
+
+# Entrypoint wrapper: fix volume permissions then drop to agent user.
+# Volume files are written by root (Docker API from backend). gosu preserves
+# the full environment (unlike su which clears it), so env overrides from
+# managed_main.py's envfile loading propagate to the CC subprocess.
+COPY <<'ENTRYPOINT' /usr/local/bin/entrypoint.sh
+#!/bin/sh
+# Wait for provisioning to complete FIRST — backend writes files as root
+# after container creation. chown must run AFTER all files exist.
+python -m agent.runtime.fsbridge --wait
+chown -R agent:agent "${AGENTOBOX_ROOT_DIR:-/var/lib/agentobox-agent}" /home/agent 2>/dev/null || true
+exec gosu agent agentobox-agent-managed
+ENTRYPOINT
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 6080
+
+ENTRYPOINT ["entrypoint.sh"]

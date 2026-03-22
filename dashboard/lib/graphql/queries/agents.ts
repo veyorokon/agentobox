@@ -41,6 +41,8 @@ export const GET_AGENTS = gql`
       id
       name
       lifecycleStatus
+      previewState
+      previewRuntimeId
       attentionLevel
       relayConnected
       mode

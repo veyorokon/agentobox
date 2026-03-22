@@ -30,26 +30,18 @@ export function ThemePicker({ className }: { className?: string }) {
   }, [open])
 
   const handleThemeSelect = (themeId: string, mode: string) => {
+    const selectedTheme = BUILT_IN_THEMES.find((theme) => theme.id === themeId && theme.mode === mode)
+    if (!selectedTheme) return
+
     setTheme(themeId, mode)
     setOpen(false)
 
-    // Fire-and-forget mutation to sync with backend (pushes to agents)
+    // Persist the selected built-in theme by its canonical identity.
+    // The backend owns resolving that selection into the actual token set.
     if (projectId) {
-      const style = getComputedStyle(document.documentElement)
-      const tokenKeys = [
-        "surface", "surface-raised", "surface-sunken", "surface-overlay",
-        "accent", "text-default", "text-muted", "danger", "success", "warning",
-      ]
-      const tokens: Record<string, string> = {}
-      for (const key of tokenKeys) {
-        const val = style.getPropertyValue(`--p-${key}`).trim()
-        if (val) tokens[key] = val
-      }
-      if (Object.keys(tokens).length > 0) {
-        setProjectTheme({ variables: { input: { projectId, tokens } } }).catch(() => {
-          // intentional: theme sync to backend is best-effort — local switch already applied
-        })
-      }
+      setProjectTheme({ variables: { input: { projectId, theme: selectedTheme.id, mode: selectedTheme.mode } } }).catch(() => {
+        // intentional: theme sync to backend is best-effort — local switch already applied
+      })
     }
   }
 

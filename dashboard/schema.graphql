@@ -42,7 +42,11 @@ type AgentType {
   triggers: JSON!
   computeSeconds: Int!
   errorMessage: String!
+  previewState: String!
+  previewRuntimeId: String!
   lifecycleStatus: String!
+  desiredStatus: String!
+  isConverged: Boolean!
   lastOutput: String!
   liveAction: String
   cost: Float!
@@ -67,10 +71,16 @@ type AuthPayload {
   token: String!
 }
 
+input CaptureIncidentInput {
+  agentId: ID!
+  note: String! = ""
+  screenshotUrl: String! = ""
+  windowMinutes: Int! = 30
+}
+
 input CreateAgentInput {
   projectId: ID!
   name: String!
-  runtime: String! = "modal"
   model: String! = "claude-sonnet-4-5-20250929"
   mcpServers: JSON = null
   workspacePath: String! = ""
@@ -103,6 +113,25 @@ scalar DateTime
 type FeedQuestionType {
   text: String!
   options: [String!]!
+}
+
+type IncidentCaptureResult {
+  incidentId: ID!
+  agentId: ID!
+  projectId: ID!
+  createdAt: String!
+}
+
+type IncidentCaptureType {
+  id: ID!
+  agentId: ID!
+  projectId: ID!
+  note: String!
+  screenshotUrl: String!
+  windowMinutes: Int!
+  bundle: JSON!
+  collectionErrors: JSON!
+  createdAt: String!
 }
 
 """
@@ -196,6 +225,7 @@ type Mutation {
   setSecret(input: SetSecretInput!): ProjectSecretType!
   deleteSecret(projectId: ID!, key: String!): Boolean!
   scopeSecret(input: ScopeSecretInput!): ProjectSecretType!
+  captureIncident(input: CaptureIncidentInput!): IncidentCaptureResult!
 }
 
 type ProjectSecretType {
@@ -212,9 +242,10 @@ type ProjectType {
   name: String!
   description: String!
   settings: JSON!
-  themeTokens: JSON!
   createdAt: DateTime!
   archivedAt: DateTime
+  themeDocument: JSON!
+  themeTokens: JSON!
 }
 
 type ProviderStatusType {
@@ -240,6 +271,7 @@ type Query {
   accountSecrets: [AccountSecretType!]!
   projectSecrets(projectId: ID!): [ProjectSecretType!]!
   providerStatus(projectId: ID!): [ProviderStatusType!]!
+  incident(incidentId: ID!): IncidentCaptureType
 }
 
 input RateFeedbackInput {
@@ -273,7 +305,10 @@ input SetAccountSecretInput {
 
 input SetProjectThemeInput {
   projectId: ID!
-  tokens: JSON!
+  theme: String = null
+  mode: String = null
+  overrides: JSON = null
+  tokens: JSON = null
 }
 
 input SetSecretInput {

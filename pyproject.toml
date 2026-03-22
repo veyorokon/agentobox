@@ -2,6 +2,10 @@
 name = "agentobox-e2e"
 version = "0.0.1"
 requires-python = ">=3.12"
+# Root project is e2e/tooling only.
+# Deployable Python projects own their own pyproject.toml + uv.lock:
+# - backend/
+# - agent/
 
 [dependency-groups]
 e2e = [
@@ -17,12 +21,15 @@ e2e = [
 [tool.pytest.ini_options]
 testpaths = ["tests/e2e"]
 asyncio_mode = "auto"
+# Root pytest config is the authority for system-level test markers only.
 markers = [
     "e2e: end-to-end tests requiring docker compose stack",
     "integration: integration tests against live services (no mocks)",
     "agent: tests that spawn real Claude Code agents (costs money)",
+    "bootstrap: agent bootstrap contract tests (create -> relay connect -> idle)",
     "dashboard: tests requiring Playwright browser",
     "slow: tests with >30s execution time",
+    "smoke: deploy gate smoke tests (real agent round-trip)",
 ]
 addopts = "-m 'e2e and not agent and not dashboard' --timeout=120"
 timeout = 120

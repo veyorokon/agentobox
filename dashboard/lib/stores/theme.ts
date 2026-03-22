@@ -1,25 +1,32 @@
 import { create } from "zustand"
 import { zustandLog } from "@/lib/stores/log-middleware"
-import type { ThemeConfig } from "@/lib/config"
+import {
+  applyThemeConfigToDocument,
+  DEFAULT_THEME,
+  getBuiltInTheme,
+  resolveThemeConfig,
+  type ThemeConfig,
+} from "@/lib/theme-registry"
 
 /* ================================================================== */
 /*  THEME STORE                                                         */
 /*                                                                      */
-/*  Owns the active theme config (theme name + color mode).             */
+/*  Owns the active theme config (theme name + color mode + tokens).    */
 /*  Persists to localStorage and syncs data attributes on <html>.       */
-/*                                                                      */
-/*  Built-in themes: claude-dark, blyss-dark.                           */
-/*  Theme files live in app/themes/<name>.css and use                    */
-/*  [data-theme="<name>"][data-mode="<mode>"] selectors.                */
 /* ================================================================== */
 
 const STORAGE_KEY = "abox-theme"
 
-const DEFAULT_CONFIG: ThemeConfig = { theme: "claude", mode: "dark" }
+const DEFAULT_CONFIG: ThemeConfig = {
+  theme: DEFAULT_THEME.id,
+  mode: DEFAULT_THEME.mode,
+  tokens: DEFAULT_THEME.tokens,
+}
 
 export interface ThemeState {
   config: ThemeConfig
   setTheme: (theme: string, mode?: string) => void
+  syncTheme: (config: ThemeConfig) => void
 }
 
 function readPersistedConfig(): ThemeConfig {
@@ -29,7 +36,7 @@ function readPersistedConfig(): ThemeConfig {
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed.theme === "string" && typeof parsed.mode === "string") {
-        return parsed as ThemeConfig
+        return resolveThemeConfig(parsed as ThemeConfig)
       }
     }
   } catch {
@@ -49,15 +56,26 @@ function persistConfig(config: ThemeConfig) {
 
 function applyToDocument(config: ThemeConfig) {
   if (typeof document === "undefined") return
-  document.documentElement.setAttribute("data-theme", config.theme)
-  document.documentElement.setAttribute("data-mode", config.mode)
+  applyThemeConfigToDocument(config)
 }
 
 export const useThemeStore = create<ThemeState>()(zustandLog("theme", (set) => ({
   config: readPersistedConfig(),
 
   setTheme: (theme, mode) => {
-    const resolved: ThemeConfig = { theme, mode: mode ?? "dark" }
+    const builtIn = getBuiltInTheme(theme, mode ?? "dark")
+    const resolved: ThemeConfig = resolveThemeConfig({
+      theme,
+      mode: mode ?? "dark",
+      tokens: builtIn?.tokens,
+    })
+    persistConfig(resolved)
+    applyToDocument(resolved)
+    set({ config: resolved })
+  },
+
+  syncTheme: (config) => {
+    const resolved = resolveThemeConfig(config)
     persistConfig(resolved)
     applyToDocument(resolved)
     set({ config: resolved })

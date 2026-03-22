@@ -4,6 +4,21 @@
 
 ## Modules
 
+### dashboard/app/accounts/[...path]/route.ts
+
+Proxy /accounts/* to Django backend (Node.js runtime).
+
+OAuth callbacks return 302 with Set-Cookie (session). Next.js strips
+Set-Cookie from route handler responses on redirects. Instead of fighting
+the framework, we complete the token exchange server-side:
+
+  1. Forward the OAuth callback to Django → get session cookie
+  2. Use the session key to call /_internal/session-token
+  3. Backend generates JWT from authenticated session
+  4. Redirect to /auth/callback?token=<jwt>
+
+The callback page reads the token from the URL and stores it.
+
 ### dashboard/app/p/[projectId]/loading.tsx
 
 Instant loading UI shown during navigation to a project page.
@@ -11,6 +26,17 @@ Instant loading UI shown during navigation to a project page.
 Next.js app router renders this immediately while the page component
 and its data load. Skeleton matches the project dashboard layout so
 the transition feels seamless rather than jarring.
+
+### dashboard/lib/graphql/cache-ops.ts
+
+Central cache reconciliation for Apollo.
+
+Invariant: WS is authoritative. Optimistic updates are temporary overlays —
+WS will correct any divergence on the next push.
+
+All cache writes route through these functions. WS handlers call the snapshot/
+upsert functions. Mutation hooks call the optimistic functions which return
+rollback closures for error handling.
 
 ### dashboard/lib/skill-notifications.ts
 
@@ -87,6 +113,19 @@ Skip with: SKIP_E2E=1 npx vitest run
 **feed query**
 - returns an array with expected field shapes when authenticated
 
+### dashboard/__tests__/graphql-errors.test.ts
+
+GraphQL error presentation contract.
+
+Keeps backend timeout/network failures mapped to explicit user-facing copy
+instead of indefinite loading states.
+
+@vitest-environment jsdom
+
+**describeGraphqlError**
+- maps timeout-shaped failures to a backend timeout message
+- falls back to the original error message when it is already specific
+
 ### dashboard/__tests__/hooks.test.ts
 
 Apollo hook unit tests.
@@ -154,11 +193,64 @@ Pattern:
 - renders in TeamFeed
 - does NOT render in AgentCardRow — errors live in the feed tab only
 
+**review attention**
+- does NOT render in AttentionBar — reviews are feed/card affordances, not global intervention
+
+### dashboard/__tests__/theme-manifest-sync.test.ts
+
+Canonical theme manifest sync contract.
+
+Ensures the dashboard-generated manifest is a byte-for-byte projection of
+the shared canonical manifest after the sync step runs.
+
+**theme manifest sync**
+- keeps the generated dashboard manifest aligned with the canonical source
+
+### dashboard/__tests__/theme-picker.test.ts
+
+Theme picker persistence tests.
+
+Ensures the project theme written to the backend uses the selected
+built-in theme identity, not a racy DOM computed-style snapshot.
+
+@vitest-environment jsdom
+
+**theme picker**
+- sends the selected preset identity to the backend
+
+### dashboard/__tests__/theme-registry.test.ts
+
+Theme registry contract tests.
+
+Ensures the frontend resolves one full token set from the canonical theme
+registry and applies it directly to CSS variables on the document.
+
+@vitest-environment jsdom
+
+**theme registry**
+- resolves a built-in theme to a full token set
+- overlays custom tokens onto the default baseline
+- applies resolved tokens directly to document CSS variables
+
+### dashboard/__tests__/vnc-thumbnail.test.ts
+
+@vitest-environment jsdom
+
+**VncThumbnail**
+- keeps the VNC viewer mounted across relay flickers while preview remains ready
+- reuses the current VNC URL on transient disconnects instead of minting a new token
+- tears down and stops retrying when preview becomes unavailable
+- does not request server-side resize for the thumbnail viewer
+- shows a preview-unavailable fallback with redeploy action when the runtime is gone
+- shows redeploying state and disables redeploy while lifecycle is deploying
+- recovers from an error fallback when the agent returns to idle
+- does not dim the whole preview when a session has ended
+- fully resets and mints a new token when the preview runtime changes
+
 ## Exception Annotations
 
 | File | Line | Annotation |
 |------|------|------------|
-| vnc-thumbnail.tsx | 16 | react-vnc throws on unmount when RFB is already disconnected — harmless |
-| theme-picker.tsx | 50 | theme sync to backend is best-effort — local switch already applied |
-| theme.ts | 36 | corrupt localStorage — fall through to default |
-| theme.ts | 46 | localStorage full or unavailable — non-critical |
+| theme-picker.tsx | 43 | theme sync to backend is best-effort — local switch already applied |
+| theme.ts | 43 | corrupt localStorage — fall through to default |
+| theme.ts | 53 | localStorage full or unavailable — non-critical |

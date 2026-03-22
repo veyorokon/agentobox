@@ -53,7 +53,7 @@ async def authorize_agent(info, agent_id) -> "Agent":
     if not user or not user.is_authenticated:
         raise PermissionError("Authentication required")
     return await Agent.objects.select_related("project").aget(
-        id=agent_id, project__owner=user
+        id=agent_id, project__owner=user, project__deleted_at__isnull=True
     )
 
 
@@ -65,7 +65,9 @@ async def authorize_agents(info, agent_ids) -> list["Agent"]:
     unique_ids = list({str(aid) for aid in agent_ids})
     agents = [
         a async for a in Agent.objects.select_related("project").filter(
-            id__in=unique_ids, project__owner=user
+            id__in=unique_ids,
+            project__owner=user,
+            project__deleted_at__isnull=True,
         )
     ]
     if len(agents) != len(unique_ids):

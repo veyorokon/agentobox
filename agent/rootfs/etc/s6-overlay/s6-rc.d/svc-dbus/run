@@ -1,9 +1,0 @@
-#!/command/with-contenv bash
-exec 2>&1
-# Start a dbus session bus so Firefox IPC works between invocations.
-# Write the address to a file that the firefox wrapper and awesome source.
-DBUS_ADDR="unix:path=/tmp/dbus-session-bus"
-echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_ADDR" > /run/dbus-session
-chmod 644 /run/dbus-session
-
-exec s6-setuidgid agent dbus-daemon --session --nofork --address="$DBUS_ADDR"

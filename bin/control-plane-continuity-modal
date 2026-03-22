@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""Deployed-equivalent Modal continuity harness for issue #104.
+
+Creates a fresh agent against a deployed Modal-backed environment, starts a
+real long-running agent task, triggers or waits for a control-plane deploy,
+then verifies:
+
+1. The same preview runtime identity survives the control-plane deploy.
+2. No fresh create/restart lifecycle attempt was introduced for the agent.
+3. The long-running task still completes after control-plane recovery.
+
+This is intentionally weaker than the local Docker continuity harness: we do
+not have direct container introspection, so continuity is proven through stable
+runtime identity, lifecycle evidence, and eventual task completion.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+from dataclasses import dataclass
+
+
+BASE_URL = os.environ.get("ABOX_BASE_URL", "https://dev.agentobox.com")
+GRAPHQL_URL = os.environ.get("GRAPHQL_URL", f"{BASE_URL}/graphql")
+SMOKE_TEST_USER = os.environ.get("SMOKE_TEST_USER", "demo")
+SMOKE_TEST_PASS = os.environ.get("SMOKE_TEST_PASS", "demo")
+TIMEOUT_S = int(os.environ.get("CONTINUITY_TIMEOUT_S", "600"))
+GRAPHQL_RETRY_WINDOW_S = int(os.environ.get("CONTINUITY_GRAPHQL_RETRY_WINDOW_S", "60"))
+WORK_TICKS = int(os.environ.get("CONTINUITY_WORK_TICKS", "30"))
+WORK_SLEEP_S = int(os.environ.get("CONTINUITY_WORK_SLEEP_S", "4"))
+DEPLOY_TRIGGER = os.environ.get("CONTINUITY_DEPLOY_TRIGGER", "manual")
+DEPLOY_REPO = os.environ.get("CONTINUITY_DEPLOY_REPO", "veyorokon/agentobox")
+DEPLOY_WORKFLOW = os.environ.get("CONTINUITY_DEPLOY_WORKFLOW", "deploy.yml")
+DEPLOY_REF = os.environ.get("CONTINUITY_DEPLOY_REF", "dev")
+
+
+class HarnessError(RuntimeError):
+    pass
+
+
+@dataclass
+class HarnessState:
+    token: str
+    project_id: str
+    agent_id: str
+    work_token: str
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+def graphql(query: str, variables: dict | None = None, *, token: str | None = None) -> dict:
+    payload = json.dumps({"query": query, "variables": variables or {}}).encode()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(GRAPHQL_URL, data=payload, headers=headers)
+    deadline = time.time() + GRAPHQL_RETRY_WINDOW_S
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode())
+            if body.get("errors"):
+                raise HarnessError(f"GraphQL errors: {body['errors']}")
+            return body["data"]
+        except HarnessError:
+            raise
+        except (urllib.error.URLError, ConnectionResetError, socket.timeout) as exc:
+            if time.time() >= deadline:
+                raise HarnessError(f"GraphQL request failed: {exc}") from exc
+            time.sleep(2)
+
+
+def sh(cmd: list[str]) -> str:
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def login() -> str:
+    data = graphql(
+        """
+        mutation ($input: LoginInput!) {
+          login(input: $input) { token }
+        }
+        """,
+        {"input": {"username": SMOKE_TEST_USER, "password": SMOKE_TEST_PASS}},
+    )
+    token = data["login"]["token"]
+    if not token:
+        raise HarnessError("login returned empty token")
+    return token
+
+
+def create_project(token: str) -> str:
+    name = f"continuity-modal-{uuid.uuid4().hex[:8]}"
+    data = graphql(
+        """
+        mutation ($input: CreateProjectInput!) {
+          createProject(input: $input) { id name }
+        }
+        """,
+        {"input": {"name": name, "description": "Modal continuity harness"}},
+        token=token,
+    )
+    return data["createProject"]["id"]
+
+
+def create_agent(token: str, project_id: str) -> str:
+    data = graphql(
+        """
+        mutation ($input: CreateAgentInput!) {
+          createAgent(input: $input) {
+            id
+            lifecycleStatus
+            previewState
+            previewRuntimeId
+          }
+        }
+        """,
+        {
+            "input": {
+                "projectId": project_id,
+                "name": "continuity-modal",
+                "model": "claude-sonnet-4-5-20250929",
+                "workspacePath": "",
+                "instructions": "",
+                "role": "worker",
+                "mode": "auto",
+            }
+        },
+        token=token,
+    )
+    return data["createAgent"]["id"]
+
+
+def query_agent(token: str, agent_id: str) -> dict:
+    data = graphql(
+        """
+        query ($agentId: ID!) {
+          agent(agentId: $agentId) {
+            id
+            name
+            lifecycleStatus
+            task
+            phase
+            previewState
+            previewRuntimeId
+            relayConnected
+            desiredStatus
+            isConverged
+            errorMessage
+            lifecycleAttempts {
+              id
+              kind
+              status
+              step
+              attemptNo
+              correlationId
+              errorCode
+              errorDetail
+              startedAt
+              finishedAt
+            }
+          }
+        }
+        """,
+        {"agentId": agent_id},
+        token=token,
+    )
+    return data["agent"]
+
+
+def query_feed(token: str, project_id: str) -> list[dict]:
+    data = graphql(
+        """
+        query ($projectId: ID!) {
+          teamFeed(projectId: $projectId) {
+            id
+            type
+            agentId
+            agentName
+            text
+            createdAt
+          }
+        }
+        """,
+        {"projectId": project_id},
+        token=token,
+    )
+    return data["teamFeed"]
+
+
+def wait_for_agent_ready(token: str, agent_id: str) -> dict:
+    deadline = time.time() + TIMEOUT_S
+    last = None
+    while time.time() < deadline:
+        last = query_agent(token, agent_id)
+        log(
+            "agent "
+            f"status={last['lifecycleStatus']} "
+            f"preview={last['previewState']} "
+            f"runtime={last['previewRuntimeId'] or '-'} "
+            f"relayConnected={last['relayConnected']}"
+        )
+        if last["lifecycleStatus"] == "idle" and last["previewState"] == "ready":
+            return last
+        if last["lifecycleStatus"] == "error":
+            raise HarnessError(f"agent reached error: {last['errorMessage']}")
+        time.sleep(3)
+    raise HarnessError(f"timed out waiting for ready; last={last}")
+
+
+def send_message(token: str, project_id: str, agent_id: str, text: str) -> bool:
+    data = graphql(
+        """
+        mutation ($projectId: ID!, $text: String!, $recipients: [RecipientInput!]!) {
+          sendMessage(projectId: $projectId, text: $text, recipients: $recipients)
+        }
+        """,
+        {
+            "projectId": project_id,
+            "text": text,
+            "recipients": [{"type": "agent", "value": agent_id}],
+        },
+        token=token,
+    )
+    return bool(data["sendMessage"])
+
+
+def build_long_running_message(work_token: str) -> str:
+    log_path = "/home/agent/workspace/continuity.log"
+    command = (
+        f"rm -f {log_path}; "
+        f"for i in $(seq 1 {WORK_TICKS}); do "
+        f"echo tick-$i >> {log_path}; "
+        f"sleep {WORK_SLEEP_S}; "
+        f"done"
+    )
+    return (
+        "Use the shell tool to execute this exact command and wait for it to finish:\n\n"
+        f"`{command}`\n\n"
+        f"When it completes, reply with exactly `{work_token}` and nothing else."
+    )
+
+
+def wait_for_agent_active(token: str, agent_id: str) -> dict:
+    deadline = time.time() + TIMEOUT_S
+    while time.time() < deadline:
+        agent = query_agent(token, agent_id)
+        log(
+            "agent "
+            f"status={agent['lifecycleStatus']} "
+            f"task={agent.get('task') or '-'} "
+            f"phase={agent.get('phase') or '-'} "
+            f"preview={agent['previewState']}"
+        )
+        if agent["lifecycleStatus"] == "running" or bool(agent.get("task")):
+            return agent
+        time.sleep(3)
+    raise HarnessError("timed out waiting for agent activity before deploy")
+
+
+def wait_for_final_token(token: str, project_id: str, agent_id: str, work_token: str) -> dict:
+    deadline = time.time() + TIMEOUT_S
+    last = None
+    while time.time() < deadline:
+        feed = query_feed(token, project_id)
+        for item in feed:
+            if item.get("agentId") == agent_id and work_token in (item.get("text") or ""):
+                return item
+        last = query_agent(token, agent_id)
+        if last["lifecycleStatus"] == "error":
+            raise HarnessError(f"agent reached error while waiting for final token: {last['errorMessage']}")
+        time.sleep(5)
+    raise HarnessError(f"timed out waiting for final token; last_agent={last}")
+
+
+def latest_attempt_signature(agent: dict) -> tuple | None:
+    attempts = agent.get("lifecycleAttempts") or []
+    if not attempts:
+        return None
+    latest = attempts[0]
+    return (
+        latest.get("kind"),
+        latest.get("status"),
+        latest.get("step"),
+        latest.get("attemptNo"),
+        latest.get("correlationId"),
+    )
+
+
+def trigger_deploy() -> str:
+    if DEPLOY_TRIGGER == "manual":
+        log("")
+        log("MANUAL STEP REQUIRED")
+        log(f"Trigger a control-plane deploy for {DEPLOY_REF} now, then press Enter to continue.")
+        input()
+        return "manual"
+
+    if DEPLOY_TRIGGER != "workflow":
+        raise HarnessError(f"unsupported CONTINUITY_DEPLOY_TRIGGER={DEPLOY_TRIGGER!r}")
+
+    if shutil.which("gh") is None:
+        raise HarnessError("gh CLI is required for CONTINUITY_DEPLOY_TRIGGER=workflow")
+
+    before = sh([
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        DEPLOY_REPO,
+        "--workflow",
+        DEPLOY_WORKFLOW,
+        "--branch",
+        DEPLOY_REF,
+        "--limit",
+        "1",
+        "--json",
+        "databaseId",
+    ])
+    before_id = ""
+    if before:
+        rows = json.loads(before)
+        before_id = str(rows[0]["databaseId"]) if rows else ""
+
+    sh([
+        "gh",
+        "workflow",
+        "run",
+        DEPLOY_WORKFLOW,
+        "--repo",
+        DEPLOY_REPO,
+        "--ref",
+        DEPLOY_REF,
+    ])
+    log("triggered deploy workflow, waiting for new run id")
+
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        current = sh([
+            "gh",
+            "run",
+            "list",
+            "--repo",
+            DEPLOY_REPO,
+            "--workflow",
+            DEPLOY_WORKFLOW,
+            "--branch",
+            DEPLOY_REF,
+            "--limit",
+            "1",
+            "--json",
+            "databaseId,status,conclusion",
+        ])
+        rows = json.loads(current or "[]")
+        if rows:
+            run_id = str(rows[0]["databaseId"])
+            if run_id != before_id:
+                return run_id
+        time.sleep(3)
+    raise HarnessError("timed out waiting for newly triggered deploy run")
+
+
+def wait_for_deploy_completion(run_id: str) -> None:
+    if run_id == "manual":
+        return
+    deadline = time.time() + TIMEOUT_S
+    last = None
+    current_run_id = run_id
+    while time.time() < deadline:
+        payload = sh([
+            "gh",
+            "run",
+            "view",
+            current_run_id,
+            "--repo",
+            DEPLOY_REPO,
+            "--json",
+            "status,conclusion,url,workflowName,createdAt,updatedAt",
+        ])
+        last = json.loads(payload)
+        status = last.get("status", "")
+        conclusion = last.get("conclusion", "")
+        log(
+            "deploy "
+            f"status={status} "
+            f"conclusion={conclusion or '-'} "
+            f"url={last.get('url', '')}"
+        )
+        if status == "completed":
+            if conclusion == "success":
+                return
+            if conclusion == "cancelled":
+                latest_payload = sh([
+                    "gh",
+                    "run",
+                    "list",
+                    "--repo",
+                    DEPLOY_REPO,
+                    "--workflow",
+                    DEPLOY_WORKFLOW,
+                    "--branch",
+                    DEPLOY_REF,
+                    "--limit",
+                    "5",
+                    "--json",
+                    "databaseId,status,conclusion,url,createdAt",
+                ])
+                latest_rows = json.loads(latest_payload or "[]")
+                newer = [
+                    row for row in latest_rows
+                    if str(row.get("databaseId", "")) != current_run_id
+                    and int(str(row.get("databaseId", "0"))) > int(current_run_id)
+                ]
+                if newer:
+                    newest = newer[0]
+                    newest_id = str(newest["databaseId"])
+                    log(
+                        "deploy "
+                        f"run {current_run_id} was cancelled; following newer deploy run {newest_id}"
+                    )
+                    current_run_id = newest_id
+                    time.sleep(5)
+                    continue
+            raise HarnessError(
+                f"deploy run {current_run_id} did not succeed: "
+                f"conclusion={conclusion or 'unknown'} "
+                f"url={last.get('url', '')}"
+            )
+        time.sleep(5)
+    raise HarnessError(f"timed out waiting for deploy run {current_run_id}; last={last}")
+
+
+def cleanup(state: HarnessState | None) -> None:
+    if not state:
+        return
+    try:
+        graphql(
+            """
+            mutation ($agentId: ID!) { removeAgent(agentId: $agentId) }
+            """,
+            {"agentId": state.agent_id},
+            token=state.token,
+        )
+    except Exception as exc:
+        log(f"cleanup warning: removeAgent failed: {exc}")
+    try:
+        graphql(
+            """
+            mutation ($id: ID!) { deleteProject(id: $id) }
+            """,
+            {"id": state.project_id},
+            token=state.token,
+        )
+    except Exception as exc:
+        log(f"cleanup warning: deleteProject failed: {exc}")
+
+
+def main() -> int:
+    state: HarnessState | None = None
+    try:
+        log(f"logging in to {GRAPHQL_URL} as {SMOKE_TEST_USER}")
+        token = login()
+
+        log("creating fresh project")
+        project_id = create_project(token)
+        log(f"project_id={project_id}")
+
+        log("creating fresh Modal agent")
+        agent_id = create_agent(token, project_id)
+        log(f"agent_id={agent_id}")
+
+        ready = wait_for_agent_ready(token, agent_id)
+        runtime_id_before = ready["previewRuntimeId"]
+        attempt_sig_before = latest_attempt_signature(ready)
+
+        work_token = f"CONTINUITY_DONE_{int(time.time())}"
+        work_message = build_long_running_message(work_token)
+        if not send_message(token, project_id, agent_id, work_message):
+            raise HarnessError("sendMessage returned false for continuity task")
+
+        log("waiting for agent to enter active work before deploy")
+        wait_for_agent_active(token, agent_id)
+
+        state = HarnessState(
+            token=token,
+            project_id=project_id,
+            agent_id=agent_id,
+            work_token=work_token,
+        )
+
+        run_id = trigger_deploy()
+        log(f"deploy_run={run_id}")
+        wait_for_deploy_completion(run_id)
+
+        log("waiting for control plane and preview projection to recover")
+        after = wait_for_agent_ready(token, agent_id)
+        runtime_id_after = after["previewRuntimeId"]
+        attempt_sig_after = latest_attempt_signature(after)
+
+        final_item = wait_for_final_token(token, project_id, agent_id, work_token)
+
+        same_runtime = bool(runtime_id_before) and runtime_id_before == runtime_id_after
+        no_new_restart = attempt_sig_before == attempt_sig_after
+
+        print()
+        print("Control-plane continuity results (Modal)")
+        print(f"base_url: {BASE_URL}")
+        print(f"graphql_url: {GRAPHQL_URL}")
+        print(f"project_id: {project_id}")
+        print(f"agent_id: {agent_id}")
+        print(f"deploy_run: {run_id}")
+        print(f"preview_runtime_before: {runtime_id_before}")
+        print(f"preview_runtime_after:  {runtime_id_after}")
+        print(f"same_runtime: {same_runtime}")
+        print(f"attempt_before: {attempt_sig_before}")
+        print(f"attempt_after:  {attempt_sig_after}")
+        print(f"no_new_restart_attempt: {no_new_restart}")
+        print(f"final_feed_item_id: {final_item.get('id')}")
+        print(f"final_feed_item_type: {final_item.get('type')}")
+        print(f"agent_lifecycle_after: {after['lifecycleStatus']}")
+        print(f"preview_state_after: {after['previewState']}")
+        print(f"relay_connected_after: {after['relayConnected']}")
+
+        if not same_runtime:
+            raise HarnessError("preview runtime identity changed across control-plane deploy")
+        if not no_new_restart:
+            raise HarnessError("agent lifecycle attempt changed across control-plane deploy")
+
+        print()
+        print("PASS: control-plane deploy did not interrupt the Modal runtime or lose the in-flight task.")
+        return 0
+    except HarnessError as exc:
+        print()
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        cleanup(state)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

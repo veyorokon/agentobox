@@ -26,7 +26,14 @@ from django.conf import settings
 from django.db import models
 
 
+class DesiredStatus(models.TextChoices):
+    """Backend-owned intent — what the user wants this agent to be doing."""
+    DEPLOYED = "deployed"
+    STOPPED = "stopped"
+
+
 class AgentStatus(models.TextChoices):
+    """Runtime-reported state — cached projection of what the agent reports."""
     DEPLOYING = "deploying"
     RUNNING = "running"
     WAITING = "waiting"
@@ -177,8 +184,33 @@ class Skill(models.Model):
         return f"{self.name} → {self.project.name}"
 
 
+class AgentQuerySet(models.QuerySet):
+    """Domain queries for agents. Use Agent.objects.<method>()."""
+
+    def alive(self):
+        """Agents that are not in a terminal state."""
+        return self.exclude(status__in=(AgentStatus.STOPPED, AgentStatus.ERROR))
+
+    def for_project(self, project_id):
+        return self.filter(project_id=project_id)
+
+    def needing_reconcile(self):
+        """Agents where desired state != reported state."""
+        from django.db.models import Q
+        return self.filter(
+            Q(desired_status=DesiredStatus.DEPLOYED) & Q(status__in=(AgentStatus.STOPPED, AgentStatus.ERROR))
+            | Q(desired_status=DesiredStatus.STOPPED) & ~Q(status=AgentStatus.STOPPED)
+        )
+
+    def stuck_deploys(self, threshold):
+        """Agents stuck in DEPLOYING past the given datetime threshold."""
+        return self.filter(status=AgentStatus.DEPLOYING, updated_at__lt=threshold)
+
+
 class Agent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    objects = AgentQuerySet.as_manager()
 
     @classmethod
     def from_db(cls, db, field_names, values):
@@ -198,6 +230,9 @@ class Agent(models.Model):
 
     status = models.CharField(
         max_length=20, choices=AgentStatus.choices, default=AgentStatus.DEPLOYING
+    )
+    desired_status = models.CharField(
+        max_length=20, choices=DesiredStatus.choices, default=DesiredStatus.DEPLOYED
     )
     team_name = models.CharField(max_length=100, blank=True)
     parent_session_id = models.CharField(max_length=255, blank=True)
@@ -241,11 +276,16 @@ class Agent(models.Model):
     # the source of truth is the StreamEvent log.
     session_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     capabilities = models.JSONField(null=True, blank=True)
+    # Last known runtime-owned machine status projected into the control plane.
+    # This is a backend-visible cache of agent-owned truth, not an independent
+    # source of runtime state.
+    runtime_status_projection = models.JSONField(default=dict, blank=True)
     # Current activity phase from stream_event (thinking, responding, tool-input, tool-use)
     phase = models.CharField(max_length=20, blank=True, default="")
 
     # Frontend-facing state
     mode = models.CharField(max_length=20, default="auto")               # auto | plan | supervised
+    # review is a local/card/feed signal; plan/permission require user intervention.
     attention_level = models.CharField(max_length=20, default="none")     # none | review | plan | permission
     task = models.CharField(max_length=500, blank=True, default="")       # current task description
     tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
@@ -297,9 +337,40 @@ class Agent(models.Model):
         return f"{self.name} ({self.status})"
 
     @property
+    def machine(self):
+        """Canonical machine-state interface for this agent."""
+        from agents.runtimes import get_runtime
+        from agents.services.volume import AgentMachine
+
+        return AgentMachine(
+            str(self.project_id),
+            str(self.id),
+            store=get_runtime(self.runtime).machine_store(),
+        )
+
+    @property
     def volume(self):
-        from agents.services.volume import Volume
-        return Volume(str(self.project_id), str(self.id))
+        """Compatibility alias for the older storage-centric name."""
+        return self.machine
+
+    @property
+    def is_converged(self):
+        """Desired state matches reported state — no action needed."""
+        from agents.services.runtime_projection import agent_meets_ready_boundary
+
+        if self.desired_status == DesiredStatus.DEPLOYED:
+            return (
+                self.status in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
+                and agent_meets_ready_boundary(self)
+            )
+        return self.status == AgentStatus.STOPPED
+
+    @property
+    def needs_reconcile(self):
+        """Desired state does not match reported state — drift detected."""
+        if self.desired_status == DesiredStatus.DEPLOYED:
+            return self.status not in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
+        return self.status != AgentStatus.STOPPED
 
     @property
     def compute_seconds_live(self):
@@ -489,6 +560,47 @@ class SessionResult(models.Model):
         return f"session {self.session_id[:12]} ${self.total_cost_usd} → {self.agent.name}"
 
 
+class RuntimeSegment(models.Model):
+    """One runtime-compute segment for provider-attributed usage.
+
+    A segment opens when an agent becomes operational (deployed_at set) and closes
+    when the runtime stops, errors, or is explicitly terminated. This is the
+    durable ledger for provider-side compute facts, separate from model-token cost.
+    """
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="runtime_segments")
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="runtime_segments")
+    provider = models.CharField(max_length=32, default="")
+    sandbox_id = models.CharField(max_length=100, blank=True, db_index=True)
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField()
+    compute_seconds = models.BigIntegerField(default=0)
+    close_reason = models.CharField(max_length=64, blank=True, default="")
+    cpu_cores = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    memory_mb = models.IntegerField(default=0)
+    metadata_json = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["agent", "started_at"]),
+            models.Index(fields=["project", "started_at"]),
+            models.Index(fields=["provider", "started_at"]),
+            models.Index(fields=["sandbox_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent", "provider", "sandbox_id", "started_at"],
+                name="agents_runtime_segment_unique_start",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.provider}:{self.compute_seconds}s:{self.agent.name}"
+
+
 class AgentTask(models.Model):
     """Task created by an agent via Claude Code's native TaskCreate tool.
 
@@ -601,3 +713,36 @@ class AgentFeedback(models.Model):
     def __str__(self):
         return f"rating={self.rating} → {self.agent.name} ({self.created_at:%H:%M})"
 
+
+class IncidentCapture(models.Model):
+    """Stored incident diagnosis bundle for an agent.
+
+    Captures a bounded, redacted snapshot of agent state, recent events,
+    runtime logs, and lifecycle attempts at the moment of report. Used for
+    dogfooding and debugging seam failures without manually gathering evidence.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="incidents"
+    )
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="incidents")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="incidents"
+    )
+    note = models.TextField(blank=True, default="")
+    screenshot_url = models.URLField(blank=True, default="")
+    window_minutes = models.IntegerField(default=30)
+    bundle = models.JSONField(default=dict)
+    collection_errors = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["project", "created_at"]),
+            models.Index(fields=["agent", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"incident {str(self.id)[:8]} → {self.agent.name} ({self.created_at:%H:%M})"

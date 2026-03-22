@@ -28,7 +28,7 @@ import secrets
 
 import structlog
 from asgiref.sync import sync_to_async
-from django.conf import settings
+from config.app_config import app_config
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
@@ -46,6 +46,7 @@ from agents.models import (
     Agent,
     AgentLifecycleAttempt,
     AgentLifecycleAttemptStatus,
+    DesiredStatus,
     AgentLifecycleKind,
     AgentStatus,
     IllegalTransitionError,
@@ -54,8 +55,13 @@ from agents.models import (
 )
 from agents.runtimes import get_runtime
 from agents.runtimes.base import VolumeMount
+from agents.schemas import ConfigSnapshot
 from agents.services.broadcast import broadcast_agent_update
-from agents.services.provision import provision_workspace, provision_scoped_sudo
+from agents.services.provision import provision_workspace
+from agents.services.runtime_segments import (
+    record_runtime_segment,
+    record_runtime_segment_sync,
+)
 from agents.services.utils import create_stream_event, spawn_logged_task, terminate_sandbox
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
@@ -63,8 +69,19 @@ from agents.utils import sanitize_name as _sanitize_name
 CONTAINER_WORKSPACE = "/home/agent/workspace"
 ERR_LIFECYCLE_STUCK_DEPLOY = "ERR-LIFECYCLE-STUCK-DEPLOY"
 ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
+ERR_LIFECYCLE_RUNTIME_LIMBO = "ERR-LIFECYCLE-RUNTIME-LIMBO"
 
 log = structlog.get_logger("abox.lifecycle")
+
+
+
+
+def _runtime_executor(agent_type: str, override: str = "") -> str:
+    if override:
+        return override
+    if agent_type == "claude-code":
+        return "claude_code"
+    raise ValueError(f"unsupported agent executor for agent_type={agent_type!r}")
 
 
 def transition_agent_status(agent: Agent, new_status: str, *, reason: str = "", force: bool = False) -> Agent:
@@ -94,8 +111,8 @@ def transition_agent_status(agent: Agent, new_status: str, *, reason: str = "", 
     log.info(
         "lifecycle.status_transition",
         agent_id=str(agent.id),
-        from_status=old_status,
-        to_status=new_status,
+        previous_status=old_status,
+        next_status=new_status,
         reason=reason,
         forced=force,
     )
@@ -117,15 +134,30 @@ def _resolve_api_key(model: str, secret_envs: dict[str, str] | None) -> str:
     if secret_envs and key_name and key_name in secret_envs:
         return secret_envs[key_name]
     if provider == "anthropic":
-        return getattr(settings, "ANTHROPIC_API_KEY", "")
+        return app_config.anthropic_api_key
     return ""
+
+
+async def _load_provision_inputs(agent_id: str) -> tuple[Agent, object]:
+    """Reload the latest agent/project state for a long-lived provision task.
+
+    Background lifecycle tasks can outlive the request that spawned them, so
+    hydrated ORM instances crossing that seam are only snapshots. Reload the
+    authoritative rows before using mutable agent/project state to build the
+    runtime image environment or write canonical machine files.
+    """
+    agent = await sync_to_async(
+        lambda: Agent.objects.select_related("project").get(id=agent_id),
+        thread_sensitive=False,
+    )()
+    return agent, agent.project
 
 
 
 async def create_agent(
     project_id: str,
     name: str,
-    runtime_name: str = "modal",
+    runtime_name: str,
     model: str = "claude-sonnet-4-5-20250929",
     mcp_servers: dict | None = None,
     workspace_path: str = "",
@@ -174,16 +206,16 @@ async def create_agent(
         resolved_mcps = mcp_servers
 
     # Build config snapshot for future restarts
-    config_snapshot = {
-        "runtime": runtime_name,
-        "model": model,
-        "agent_type": agent_type,
-        "mcp_servers": resolved_mcps,
-        "workspace_path": workspace_path,
-        "instructions": instructions,
-        "role": role,
-        "volume_mounts": volume_mounts or [],
-    }
+    config_snapshot = ConfigSnapshot(
+        runtime=runtime_name,
+        model=model,
+        agent_type=agent_type,
+        mcp_servers=resolved_mcps,
+        workspace_path=workspace_path,
+        instructions=instructions,
+        role=role,
+        volume_mounts=volume_mounts or [],
+    ).to_dict()
 
     agent = await Agent.objects.acreate(
         name=name,
@@ -194,6 +226,7 @@ async def create_agent(
         sandbox_id="",
         vnc_url="",
         status=AgentStatus.DEPLOYING,
+        desired_status=DesiredStatus.DEPLOYED,
         mcp_servers=resolved_mcps,
         workspace_path=workspace_path,
         volume_mounts=volume_mounts or [],
@@ -228,8 +261,7 @@ async def create_agent(
 
     spawn_logged_task(
         _provision_agent(
-            agent,
-            project,
+            str(agent.id),
             runtime_name,
             op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
             secret_envs,
@@ -246,7 +278,7 @@ async def create_agent(
     return agent
 
 
-def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id="", relay_token=""):
+def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_session_id="", relay_token="", health_url=""):
     """Sync helper: save sandbox details. Agent stays DEPLOYING until relay connects.
 
     Status transitions to IDLE in RelayConsumer.connect() — the agent isn't
@@ -260,18 +292,26 @@ def _save_agent_provisioned(agent_id, sandbox_id, vnc_url, team_name="", parent_
     agent.team_name = team_name
     agent.parent_session_id = parent_session_id
     agent.relay_token = relay_token
-    agent.save(update_fields=[
+    # Store health_url in config_snapshot (ephemeral, changes per deploy)
+    if health_url and agent.config_snapshot:
+        agent.config_snapshot["health_url"] = health_url
+    update_fields = [
         "sandbox_id", "vnc_url", "team_name",
         "parent_session_id", "relay_token", "updated_at",
-    ])
+    ]
+    if health_url and agent.config_snapshot:
+        update_fields.append("config_snapshot")
+    agent.save(update_fields=update_fields)
     return agent
 
 
-def _save_agent_failed(agent_id):
-    """Sync helper: mark agent as error."""
+def _save_agent_failed(agent_id, error_message=""):
+    """Sync helper: mark agent as error with reason."""
     agent = Agent.objects.get(id=agent_id)
     transition_agent_status(agent, AgentStatus.ERROR, reason="provision_failed")
-    agent.save(update_fields=["status", "updated_at"])
+    if error_message:
+        agent.error_message = error_message[:2000]
+    agent.save(update_fields=["status", "error_message", "updated_at"])
     return agent
 
 
@@ -434,7 +474,7 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     # Name must match the actual volume name on the platform (e.g. Docker
     # Compose prefixes with project name: "agentobox_agent-volumes").
     mounts.append(VolumeMount(
-        name=settings.AGENT_VOLUME_NAME,
+        name=app_config.agent.volume_name,
         mount_path="/vol",
     ))
 
@@ -448,7 +488,27 @@ def _build_volume_mounts(agent: Agent) -> list[VolumeMount]:
     return mounts
 
 
-async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=None,
+async def _mark_provisioned_ready(
+    runtime_name: str,
+    runtime,
+    sandbox_id: str,
+    vol,
+    agent_id: str,
+    provisioning_token: str,
+    op_log,
+) -> None:
+    """Release managed provisioning only after canonical machine state is present."""
+    vol.mark_provisioned(provisioning_token)
+
+    await runtime.await_machine_path_visible(
+        sandbox_id,
+        vol.mounted_path("_abox/provisioned.ready"),
+        expected_content=provisioning_token,
+    )
+    op_log.info("lifecycle.provisioning_ready_marked", runtime=runtime_name)
+
+
+async def _provision_agent(agent_id: str, runtime_name, op_log, secret_envs=None,
                            resume_session_id: str = "", attempt_id: str = ""):
     """
     Background task: create container, provision workspace, launch relay.
@@ -468,7 +528,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
     runtime = None
     sandbox_id = None
-    agent_id = str(agent.id)
+    agent, project = await _load_provision_inputs(agent_id)
 
     # Bind agent context for all logs in this task
     bind_agent_context(
@@ -486,33 +546,44 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             )
         runtime = get_runtime(runtime_name)
         env = _build_agent_env(agent, project)
+        executor = env["AGENTOBOX_EXECUTOR"]
+        machine = agent.machine
 
-        # Generate relay auth token for this agent
+        # Generate relay auth token for this agent.
+        # Passed as env var for the new runtime (reads RELAY_AUTH_TOKEN at boot).
+        # Also written to .relay_env on volume for the old relay.
         relay_token = secrets.token_urlsafe(32)
+        env["RELAY_AUTH_TOKEN"] = relay_token
+        # New runtime reads provisioned files from AGENTOBOX_ROOT_DIR.
+        # Volume is mounted at /vol and the machine helper owns the runtime-visible path.
+        env["AGENTOBOX_ROOT_DIR"] = machine.mounted_root()
+
+        api_key = ""
+        is_oauth = False
+        if executor == "claude_code":
+            # Resolve API key early — need it in the container
+            # env so the CC process can authenticate directly (no api-proxy).
+            api_key = _resolve_api_key(agent.model, secret_envs)
+            if not api_key:
+                from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
+                provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
+                expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
+                raise ValueError(
+                    f"No API key found for provider '{provider}'. "
+                    f"Add a project secret named '{expected_key}' or set "
+                    f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
+                )
+            is_oauth = api_key.startswith("sk-ant-oat")
+
+            # New runtime still authenticates Claude via explicit container env
+            # for non-OAuth flows. Shared secrets on the volume remain scoped;
+            # this explicit env is limited to the Claude execution path.
+            if not is_oauth:
+                env["ANTHROPIC_API_KEY"] = api_key
+                env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
 
         # Build volume mounts from agent config (explicit or workspace_path fallback)
         mounts = _build_volume_mounts(agent)
-
-        # Dev: bind-mount relay files so changes don't require image rebuild.
-        rootfs_path = getattr(settings, "AGENT_ROOTFS_PATH", "")
-        if rootfs_path:
-            import os as _os
-            # rootfs_path = agent/claude/rootfs (per-adapter)
-            # shared rootfs = agent/rootfs (shared across adapters)
-            shared_rootfs = _os.path.realpath(f"{rootfs_path}/../../rootfs")
-            dev_mounts = [
-                ("dev-relay", "/opt/abox/relay.py", f"{rootfs_path}/opt/abox/relay.py"),
-                ("dev-relay-common", "/opt/abox/relay_common.py",
-                 f"{shared_rootfs}/opt/abox/relay_common.py"),
-                ("dev-converters", "/opt/abox/converters.py",
-                 f"{shared_rootfs}/opt/abox/converters.py"),
-            ]
-            for name, mount_path, host_path in dev_mounts:
-                resolved = _os.path.realpath(host_path)
-                if _os.path.exists(resolved):
-                    mounts.append(VolumeMount(
-                        name=name, mount_path=mount_path, host_path=resolved,
-                    ))
 
         sandbox = await runtime.create(agent.name, env, volumes=mounts or None)
         sandbox_id = sandbox.id
@@ -520,7 +591,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await _update_lifecycle_attempt(
                 attempt_id,
                 step="container_created",
-                metadata={"sandbox_id": sandbox_id, "vnc_url": sandbox.vnc_url},
+                metadata={"sandbox_id": sandbox_id, "vnc_url": sandbox.vnc_url, "health_url": sandbox.health_url},
             )
 
         # Update agent context with sandbox_id now that it's available
@@ -531,7 +602,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             project_id=str(project.id),
         )
 
-        op_log.info("lifecycle.container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url)
+        op_log.info("lifecycle.container_created", sandbox_id=sandbox.id, vnc_url=sandbox.vnc_url, health_url=sandbox.health_url)
 
         # Initialize the agent's volume control plane (_abox/ directory).
         # This MUST happen before any other volume writes. The init-volume
@@ -539,26 +610,21 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
         # as its readiness gate — once this directory exists, it creates
         # symlinks and all s6 services can start. Without this, the relay
         # service blocks forever waiting for its volume symlinks.
-        vol = agent.volume
+        vol = machine
         vol.initialize()
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="volume_initialized")
 
+        # Refresh authoritative agent/project rows at the machine-state write
+        # boundary. Theme/config changes can land while provisioning is in
+        # flight; boot should consume current DB truth, not task-start
+        # snapshots.
+        agent, project = await _load_provision_inputs(agent_id)
+
         # Write shared secrets env file to volume
         from agents.services.provision import build_secrets_env_content
         secrets_content = build_secrets_env_content(secret_envs)
-        vol.write_secret("mnt/abox-state/secrets/env", secrets_content)
-
-        api_key = _resolve_api_key(agent.model, secret_envs)
-        if not api_key:
-            from agents.adapters.claude_code.registries import PROVIDER_SECRET_KEYS
-            provider = agent.model.split("/", 1)[0] if "/" in agent.model else "anthropic"
-            expected_key = PROVIDER_SECRET_KEYS.get(provider, f"PROVIDER_KEY_{provider.upper()}")
-            raise ValueError(
-                f"No API key found for provider '{provider}'. "
-                f"Add a project secret named '{expected_key}' or set "
-                f"ANTHROPIC_API_KEY in backend settings (Anthropic only)."
-            )
+        vol.write_secrets_env_document(secrets_content)
 
         team_name = project.name.lower().replace(" ", "-")
         parent_session_id = str(project.id)
@@ -570,10 +636,13 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
 
         # Write all config files to the volume. The init-volume oneshot
         # creates symlinks so the container sees these at their canonical paths.
+        # API key is in container env — don't write apiKeyHelper to settings.json.
+        # OAuth still needs credential files on disk.
+        provision_api_key = api_key if is_oauth else ""
         await provision_workspace(
             vol, project,
             agent_type=agent.agent_type,
-            api_key=api_key,
+            api_key=provision_api_key,
             mcp_servers=agent.mcp_servers or None,
             workspace_path=agent.workspace_path,
             instructions=agent.instructions,
@@ -588,16 +657,23 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             model=agent.model,
             agent_tags=agent.tags or [],
         )
+        # Clear stale OAuth credentials for API-key auth.
+        # CC prefers .credentials.json over ANTHROPIC_API_KEY from env.
+        if not is_oauth:
+            vol.write("home/agent/.claude/.credentials.json", "{}")
+
         if attempt_id:
             await _update_lifecycle_attempt(attempt_id, step="workspace_provisioned")
 
-        # Write theme tokens to volume (converter generates CSS/lua at boot)
-        if project.theme_tokens:
-            vol.write("tmp/abox-theme/tokens.json", json.dumps(project.theme_tokens))
+        # Write canonical theme document to volume (runtime derives CSS/lua at boot)
+        tokens = project.resolved_theme_tokens()
+        if tokens:
+            vol.write_theme_document(tokens, name=project.name)
 
         # Build relay environment via adapter (single source of truth for
         # env var names, model normalization, mode vocabulary, etc.)
         adapter = get_adapter(agent.agent_type)
+        relay_env_api_key = api_key if is_oauth else ""
         relay_env_content = adapter.build_relay_env(
             agent_id=agent_id,
             agent_name=agent.name,
@@ -605,7 +681,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             parent_session_id=parent_session_id,
             callback_url=callback_url,
             relay_token=relay_token,
-            api_key=api_key,
+            api_key=relay_env_api_key,
             model=agent.model,
             mode=agent.mode or "auto",
             resume_session_id=resume_session_id,
@@ -617,48 +693,50 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
             await _update_lifecycle_attempt(attempt_id, step="relay_env_written")
 
         # Write state.json — initial state for relay boot.
-        # At provision time relay isn't running, so no poke needed (use write, not mutate).
+        # At provision time relay isn't running, so no reload needed (use write, not mutate).
         state = json.dumps({"model": agent.model, "mode": agent.mode or "auto", "allowed_tools": agent.allowed_tools or []})
         vol.write("_abox/state.json", state)
 
-        # Security hardening — still uses runtime.exec() because
-        # /etc/sudoers.d/ is a system path, not on the volume.
-        await provision_scoped_sudo(runtime, sandbox_id, op_log)
-        if attempt_id:
-            await _update_lifecycle_attempt(attempt_id, step="sudo_provisioned")
-
         # Save relay_token and sandbox details BEFORE launching relay.
-        # The relay POSTs to /agents/<id>/stream/ immediately on startup,
-        # authenticated via X-Relay-Token. If the token isn't in DB yet,
-        # early relay POSTs get 401.
+        # The managed runtime is released by provisioned.ready and can attempt
+        # its first relay WS connect immediately afterward. Persist the fresh
+        # relay token before releasing that gate so the very first connect sees
+        # the correct backend-side token.
         agent = await _save_provisioned(
             agent_id, sandbox.id, sandbox.vnc_url,
             team_name, parent_session_id, relay_token,
+            health_url=sandbox.health_url,
+        )
+        if attempt_id:
+            await _update_lifecycle_attempt(
+                attempt_id,
+                step="relay_token_saved",
+                metadata={"relay_token_set": True},
+            )
+        await broadcast_agent_update(agent)
+
+        # Release the managed provisioning gate only after all files are
+        # present in the canonical machine store and the backend has already
+        # recorded the fresh relay token. The runtime adapter owns whatever
+        # visibility/sync behavior is required before the running sandbox can
+        # observe those backend-side writes.
+        await _mark_provisioned_ready(
+            runtime_name,
+            runtime,
+            sandbox_id,
+            vol,
+            agent_id,
+            relay_token,
+            op_log,
         )
         if attempt_id:
             await _update_lifecycle_attempt(
                 attempt_id,
                 step="waiting_for_relay",
-                metadata={"relay_token_set": True},
+                metadata={"provision_store_runtime": runtime_name},
             )
-        await broadcast_agent_update(agent)
 
-        # The s6-supervised relay service depends on init-volume, which
-        # waits for /vol/_abox to appear. Volume.initialize() created it
-        # above, so init-volume proceeds, creates symlinks, and relay
-        # sources .relay_env and starts. No polling needed.
-
-        # Spawn a tmux session tailing relay logs for VNC debug visibility.
-        # S6_LOGGING=1 routes service stdout/stderr through s6-log to the
-        # catch-all directory. Tail with -F to handle log rotation.
-        await runtime.exec(
-            sandbox.id,
-            ["tmux", "new-session", "-d", "-s", "claude", "-x", "200", "-y", "50",
-             "bash", "-c",
-             "exec tail -F /run/uncaught-logs/current 2>/dev/null || exec sleep infinity"],
-            user="agent",
-        )
-        op_log.info("lifecycle.relay_launched", team_name=team_name, parent_session_id=parent_session_id)
+        # Runtime manages its own process lifecycle — no tmux/s6 needed.
 
         await _capture_sandbox_logs(runtime, sandbox.id, op_log)
 
@@ -689,11 +767,12 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                 )
 
         try:
-            agent = await _save_failed(agent_id)
+            error_msg = f"{type(exc).__name__}: {exc}"
+            agent = await _save_failed(agent_id, error_message=error_msg)
             await broadcast_agent_update(agent)
             await _create_stream_event(
                 agent, "", "provision_failed",
-                {"error": "Container provisioning failed"},
+                {"error": f"Container provisioning failed: {exc}"},
             )
             if attempt_id:
                 await _update_lifecycle_attempt(
@@ -701,7 +780,7 @@ async def _provision_agent(agent, project, runtime_name, op_log, secret_envs=Non
                     step="failed",
                     status=AgentLifecycleAttemptStatus.FAILED,
                     error_code=ERR_LIFECYCLE_PROVISION_FAILED,
-                    error_detail="Container provisioning failed",
+                    error_detail=f"Container provisioning failed: {exc}",
                     metadata={"sandbox_id": sandbox_id or ""},
                 )
         except Exception as db_exc:  # intentional: DB cleanup after failed provision — nothing more to do
@@ -758,6 +837,11 @@ async def kill_agent(agent_id: str) -> bool:
         )
 
     await terminate_sandbox(agent, op_log)
+    await record_runtime_segment(
+        agent,
+        close_reason="kill_agent",
+        metadata={"status_before": agent.status},
+    )
 
     # Validate transition before atomic bulk update.
     # transition_agent_status logs but does NOT save — the aupdate below
@@ -766,7 +850,11 @@ async def kill_agent(agent_id: str) -> bool:
 
     # Accumulate compute time atomically (F-expression avoids races)
     # then set terminal status in a single update.
-    update_kwargs = {"status": AgentStatus.STOPPED, "deployed_at": None}
+    update_kwargs = {
+        "status": AgentStatus.STOPPED,
+        "desired_status": DesiredStatus.STOPPED,
+        "deployed_at": None,
+    }
     if agent.deployed_at:
         elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
         update_kwargs["compute_seconds"] = F("compute_seconds") + elapsed
@@ -849,21 +937,31 @@ def _atomic_reset_for_restart(agent_id):
         # Live fields reflect post-creation mutations (mode change, model
         # swap). config_snapshot is creation-time only — used as fallback
         # for old agent rows that may be missing newer fields.
-        config = agent.config_snapshot or {}
-        runtime_name = agent.runtime or config.get("runtime", "docker")
-        model = agent.model or config.get("model", "")
-        mcp_servers = agent.mcp_servers if agent.mcp_servers is not None else config.get("mcp_servers", [])
-        workspace_path = agent.workspace_path or config.get("workspace_path", "")
-        volume_mounts = agent.volume_mounts if agent.volume_mounts is not None else config.get("volume_mounts", [])
-        instructions = agent.instructions or config.get("instructions", "")
-        role = agent.role or config.get("role", "")
-        mode = agent.mode or config.get("mode", "auto")
+        #
+        # Runtime is the exception: it is deployment-environment policy, not
+        # a user-selected per-agent knob. Hard restart should always reprovision
+        # onto the currently configured runtime so legacy agents do not keep
+        # dragging obsolete Docker/Modal assumptions forward forever.
+        snap = ConfigSnapshot.from_dict(agent.config_snapshot) if agent.config_snapshot else None
+        runtime_name = app_config.agent.runtime
+        model = agent.model or (snap.model if snap else "")
+        mcp_servers = agent.mcp_servers if agent.mcp_servers is not None else (snap.mcp_servers if snap else [])
+        workspace_path = agent.workspace_path or (snap.workspace_path if snap else "")
+        volume_mounts = agent.volume_mounts if agent.volume_mounts is not None else (snap.volume_mounts if snap else [])
+        instructions = agent.instructions or (snap.instructions if snap else "")
+        role = agent.role or (snap.role if snap else "")
+        mode = agent.mode or "auto"
 
         # Accumulate compute time before resetting deployed_at
         if agent.deployed_at:
             elapsed = int((timezone.now() - agent.deployed_at).total_seconds())
             Agent.objects.filter(id=agent_id).update(
                 compute_seconds=F("compute_seconds") + elapsed,
+            )
+            record_runtime_segment_sync(
+                agent,
+                close_reason="hard_restart",
+                metadata={"status_before": agent.status, "old_runtime": old_runtime},
             )
 
         # Clean slate: reset ALL mutable state to DEPLOYING defaults.
@@ -873,12 +971,14 @@ def _atomic_reset_for_restart(agent_id):
         # relay_* fields reset because the old WS connection dies with
         # the old container. deployed_at resets for compute tracking.
         transition_agent_status(agent, AgentStatus.DEPLOYING, reason="hard_restart")
+        agent.desired_status = DesiredStatus.DEPLOYED
         agent.sandbox_id = ""
         agent.vnc_url = ""
         agent.session_id = ""
         agent.relay_token = ""
         agent.relay_connected = False
         agent.relay_disconnected_at = None
+        agent.runtime_status_projection = {}
         agent.deployed_at = None
         agent.latest_snapshot = {}
         agent.task = ""
@@ -894,13 +994,24 @@ def _atomic_reset_for_restart(agent_id):
         agent.role = role
         agent.mode = mode
         agent.save(update_fields=[
-            "status", "sandbox_id", "vnc_url", "session_id", "relay_token",
-            "relay_connected", "relay_disconnected_at", "deployed_at",
-            "latest_snapshot",
+            "status", "desired_status", "sandbox_id", "vnc_url", "session_id",
+            "relay_token", "relay_connected", "relay_disconnected_at", "runtime_status_projection",
+            "deployed_at", "latest_snapshot",
             "task", "phase", "attention_level", "error_message",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "mode", "updated_at",
         ])
+
+    config = {
+        "runtime": runtime_name,
+        "model": model,
+        "mcp_servers": mcp_servers,
+        "workspace_path": workspace_path,
+        "volume_mounts": volume_mounts,
+        "instructions": instructions,
+        "role": role,
+        "mode": mode,
+    }
 
     return agent, old_sandbox_id, old_runtime, resume_session_id, config
 
@@ -985,8 +1096,7 @@ async def hard_restart_agent(agent_id: str) -> Agent:
     # new container can --resume the prior conversation.
     spawn_logged_task(
         _provision_agent(
-            agent,
-            agent.project,
+            agent_id,
             runtime_name,
             op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
             secret_envs,
@@ -1042,11 +1152,16 @@ async def fail_active_lifecycle_attempts(
 async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
     """Best-effort capture of sandbox process list after provisioning."""
     try:
-        output = await runtime.exec(
-            sandbox_id,
-            ["bash", "-c", "ps aux | grep -E 'Xvfb|novnc|websockify|firefox|awesome|relay|s6-supervise.*svc-relay' | grep -v grep"],
-        )
-        truncated = output[:200] if output else "(empty)"
+        output = await runtime.exec(sandbox_id, ["ps", "aux"])
+        interesting = [
+            line
+            for line in output.splitlines()
+            if any(
+                token in line
+                for token in ("Xvfb", "novnc", "websockify", "chromium", "awesome", "relay", "svc-relay")
+            )
+        ]
+        truncated = "\n".join(interesting)[:200] if interesting else "(empty)"
         op_log.info("lifecycle.processes_captured", output=truncated)
     except Exception as exc:  # intentional: log capture is diagnostic only — never block provisioning
         op_log.warning(
@@ -1060,26 +1175,28 @@ async def _capture_sandbox_logs(runtime, sandbox_id: str, op_log) -> None:
 def _build_agent_env(agent, project) -> dict[str, str]:
     """Build environment dict for the agent container.
 
-    NOTE: ANTHROPIC_API_KEY is intentionally NOT included here.
-    The key is delivered via apiKeyHelper + tmpfs (see provision.py).
-    It remains in .relay_env so the relay can write it to tmpfs at boot,
-    but is NOT in the container's shell environment.
+    NOTE: ANTHROPIC_API_KEY is NOT included here — it's added by
+    _provision_agent() for new runtime images (direct key in env) or
+    delivered via apiKeyHelper + proxy for legacy images.
     """
     return {
         "AGENT_ID": str(agent.id),
         "AGENT_TYPE": agent.agent_type,
+        "AGENTOBOX_EXECUTOR": _runtime_executor(
+            agent.agent_type,
+            app_config.agent.executor_override.strip(),
+        ),
+        # Override the Dockerfile default so the agent runtime knows
+        # which platform adapter it is actually running on.
+        "AGENTOBOX_PLATFORM": agent.runtime,
         "PROJECT_ID": str(project.id),
         "AGENT_NAME": agent.name,
-        "ABOX_CALLBACK_URL": getattr(settings, "ABOX_CALLBACK_URL", ""),
-        "ABOX_DASHBOARD_URL": getattr(settings, "ABOX_DASHBOARD_URL", ""),
+        "ABOX_CALLBACK_URL": app_config.callback_url,
+        "ABOX_DASHBOARD_URL": app_config.dashboard_url,
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         # DO NOT set CLAUDECODE=1 — the CLI treats it as a nested session
         # marker and refuses to start. The SDK sets its own entrypoint env var
         # (CLAUDE_CODE_ENTRYPOINT=sdk-py) internally.
-        # BASH_ENV is sourced by bash for every non-interactive invocation.
-        # Claude Code's Bash tool uses non-interactive shells, so .bashrc
-        # is NOT read. BASH_ENV ensures secrets are available to all commands.
-        "BASH_ENV": "/mnt/abox-state/secrets/env",
     }
 
 
@@ -1104,7 +1221,7 @@ async def spawn_team_lead(project_id: str) -> None:
     agent = await create_agent(
         project_id=project_id,
         name=lead_config["name"],
-        runtime_name="docker",
+        runtime_name=app_config.agent.runtime,
         model=lead_config["model"],
         mcp_servers=mcp_config,
         workspace_path="",

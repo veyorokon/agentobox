@@ -3,8 +3,8 @@ Volume-based state management for agent containers.
 
 Replaces the three separate sync paths (provision-time file writes, live
 WebSocket push, theme-specialized WS handling) with one: filesystem on a
-shared volume. Backend writes files, sends a tiny WS poke. Relay reads
-the file and reloads the relevant process.
+shared volume. Backend writes files, sends a WS reload command. Relay
+reads the file and reloads the relevant process.
 
 ## Storage hierarchy
 
@@ -21,7 +21,7 @@ the file and reloads the relevant process.
               .mcp.json                   # MCP config
           tmp/abox-theme/                 # mirrors /tmp/abox-theme/
             tokens.json                   # source: backend writes CSS tokens
-            userChrome.css                # derived: converter writes
+            theme.css                     # derived: converter writes
             awesome.lua                   # derived: converter writes
             theme.json                    # derived: reference copy
           run/                            # mirrors /run/
@@ -34,11 +34,10 @@ the file and reloads the relevant process.
             secrets/env                   # shell-sourceable secrets export
           _abox/                          # control plane (NOT mirrored into container)
             state.json                    # {model, mode, allowed_tools}
-            status.json                   # {filename: sha256_hash} — convergence tracking
+            status.json                   # runtime status document (agent-owned projection)
             inbox.jsonl                   # messages to agent (backend appends)
-            inbox.pos                     # byte offset of last consumed message (relay writes)
-            outbox.jsonl                  # events from agent (hooks/relay append)
-            outbox.pos                    # byte offset of last collected event (backend writes)
+            inbox.cursor.json             # durable runtime-owned inbox cursor
+            provisioned.ready             # managed bootstrap release sentinel
 
 ## From agent perspective (inside container)
 
@@ -56,19 +55,17 @@ the file and reloads the relevant process.
     The agent sees a normal filesystem. It doesn't know about the volume.
     Backend writes are immediately visible because they're the same files.
 
-## Convergence protocol
+## Runtime status
 
-    Backend writes a config file → sends WS poke {"type": "poke", "changed": "path"}.
-    Relay reads the file, applies it, then writes the file's SHA-256 hash
-    to _abox/status.json. Backend can check is_converged() to verify the
-    relay has applied all pending changes.
+    _abox/status.json remains an agent-owned machine artifact written by the
+    runtime. Backend-visible runtime truth is consumed from the control-plane
+    projection published by the runtime over relay.
 
-## Delivery guarantee (inbox/outbox)
+## Delivery guarantee
 
-    Backend appends to inbox.jsonl, sends a poke. Relay reads from
-    inbox.pos offset, processes messages, advances the cursor. Messages
-    survive relay crashes — unread lines persist on the volume. No
-    backfill logic needed in consumers.py.
+    Backend appends to inbox.jsonl and sends a reload. The runtime tracks its
+    durable read position in _abox/inbox.cursor.json, so unread messages
+    survive relay crashes without a backend-visible delivery cursor.
 
 ## What's NOT on the volume
 
@@ -77,11 +74,17 @@ the file and reloads the relevant process.
     - /opt/abox/ (image-baked scripts, not agent state)
 """
 
-import hashlib
 import json
 from pathlib import Path
 
-from django.conf import settings
+from agents.services.project_volume import (
+    AgentMachinePaths,
+    LocalProjectVolumeStore,
+    ProjectVolumeStore,
+)
+from agents.services.relay_commands import ReloadCommand
+from agents.services.themes import format_theme_document
+from config.app_config import app_config
 
 # Directories that init-volume symlinks into the container.
 # Every volume write path MUST start with one of these prefixes.
@@ -99,9 +102,16 @@ SYMLINKED_PREFIXES = (
     "_abox/",            # control plane — accessed directly via /vol/, not symlinked
 )
 
-# Config files the backend manages. The relay tracks convergence by
-# comparing file hashes against _abox/status.json. When a file's hash
-# doesn't match, the relay hasn't applied the latest version yet.
+# Provision-time readiness sentinel.
+# init-volume waits for this file before creating symlinks and releasing
+# longrun services. This is stronger than checking for _abox/ alone because
+# _abox is created early by initialize(), before the rest of provisioning
+# files necessarily exist.
+PROVISIONING_SENTINEL = "_abox/provisioned.ready"
+
+# Config files the backend manages. Written during provisioning and
+# updated via Volume.mutate() + reload commands. The agent reads these
+# on boot and on reload notifications.
 MANAGED_CONFIG_FILES = [
     "home/agent/.claude/settings.json",
     "home/agent/workspace/CLAUDE.md",
@@ -113,7 +123,7 @@ MANAGED_CONFIG_FILES = [
     "_abox/state.json",
 ]
 
-# ── Poke registry ──────────────────────────────────────────────────────
+# ── Reload registry ───────────────────────────────────────────────────
 #
 # The single contract between backend and relay for mutable runtime state.
 # Keys = volume file paths that the backend writes and the relay handles.
@@ -124,13 +134,13 @@ MANAGED_CONFIG_FILES = [
 #   - Is NOT in this registry → it's metadata (DB) or immutable config
 #
 # Architectural tests enforce:
-#   1. Every key has a matching handler in relay._poke_handlers
+#   1. Every key has a matching handler in the relay
 #   2. Every write to a registered path goes through Volume.mutate()
 #   3. No Agent model save() touches fields owned by this registry
 #
 # To add new runtime state: add the file + fields here, add a relay handler,
 # add a Volume helper method if needed. The arch tests will guide you.
-POKE_REGISTRY: dict[str, set[str]] = {
+RELOAD_REGISTRY: dict[str, set[str]] = {
     "_abox/state.json": {"mode", "allowed_tools", "model"},
     "_abox/inbox.jsonl": {"messages"},
     "tmp/abox-theme/tokens.json": {"theme_tokens"},
@@ -141,11 +151,11 @@ POKE_REGISTRY: dict[str, set[str]] = {
 
 # Flattened set of all state fields owned by the volume.
 # Used by arch tests to verify no DB dual-writes.
-VOLUME_OWNED_FIELDS: set[str] = set().union(*POKE_REGISTRY.values())
+VOLUME_OWNED_FIELDS: set[str] = set().union(*RELOAD_REGISTRY.values())
 
 
-class Volume:
-    """Filesystem interface for an agent's shared volume.
+class AgentMachine:
+    """Filesystem interface for one agent's canonical machine surface.
 
     All paths are relative to the volume root and mirror container paths
     exactly (Mirror, Don't Map principle). A path like "home/agent/.claude/settings.json"
@@ -157,15 +167,22 @@ class Volume:
     is guaranteed atomic by POSIX.
 
     Usage:
-        vol = agent.volume                          # from Agent model property
-        vol.write("home/agent/.claude/settings.json", json_content)
-        vol.write_secret("run/secrets/proxy_key", key, mode=0o600)
-        vol.append_inbox({"type": "input", "payload": {...}})
-        assert vol.is_converged()                   # relay applied all changes
+        machine = agent.machine                     # from Agent model property
+        machine.write("home/agent/.claude/settings.json", json_content)
+        machine.write_secret("run/secrets/proxy_key", key, mode=0o600)
+        machine.append_inbox({"type": "task", "task_id": "...", "input": {...}})
     """
 
-    def __init__(self, project_id: str, agent_id: str):
-        self.root = Path(settings.VOLUME_ROOT) / "agents" / agent_id
+    def __init__(
+        self,
+        project_id: str,
+        agent_id: str,
+        *,
+        store: ProjectVolumeStore | None = None,
+    ):
+        self._machine = AgentMachinePaths(project_id=project_id, agent_id=agent_id)
+        self._store = store or LocalProjectVolumeStore(Path(app_config.volume_root))
+        self.root = self._store.local_machine_root(self._machine)
 
     @staticmethod
     def _validate_path(path: str) -> None:
@@ -189,11 +206,8 @@ class Volume:
         atomicity — relay never sees a partial file.
         """
         self._validate_path(path)
-        full = self.root / path
-        full.parent.mkdir(parents=True, exist_ok=True)
-        tmp = full.with_suffix(".tmp")
-        tmp.write_bytes(content if isinstance(content, bytes) else content.encode())
-        tmp.rename(full)
+        body = content if isinstance(content, bytes) else content.encode()
+        self._store.write_bytes(self._machine, path, body)
 
     def write_secret(self, path: str, content: str | bytes, mode: int = 0o600) -> None:
         """Atomic write with restricted permissions.
@@ -202,110 +216,144 @@ class Volume:
         through Docker bind mount to the container.
         """
         self.write(path, content)
-        (self.root / path).chmod(mode)
+        self._store.chmod(self._machine, path, mode)
 
     def read(self, path: str) -> str:
-        return (self.root / path).read_text()
+        return self._store.read_text(self._machine, path)
 
     def read_bytes(self, path: str) -> bytes:
-        return (self.root / path).read_bytes()
+        return self._store.read_bytes(self._machine, path)
+
+    def read_bytes_limited(self, path: str, max_bytes: int) -> tuple[bytes, bool]:
+        """Read up to max_bytes from a file. Returns (data, was_truncated)."""
+        return self._store.read_bytes_limited(self._machine, path, max_bytes)
 
     def exists(self, path: str) -> bool:
-        return (self.root / path).exists()
+        return self._store.exists(self._machine, path)
 
-    def status(self) -> dict:
-        """Read status.json — the relay's record of what it has applied.
+    def remove_tree(self, path: str) -> None:
+        self._validate_path(path)
+        self._store.remove_tree(self._machine, path)
 
-        Returns {filename: sha256_hash_prefix} for each config file the
-        relay has successfully read and acted on. Empty dict if the relay
-        hasn't started or status.json doesn't exist yet.
-        """
-        path = self.root / "_abox" / "status.json"
-        return json.loads(path.read_text()) if path.exists() else {}
+    def skill_dir(self, safe_name: str) -> str:
+        return self._machine.skill_dir(safe_name)
 
-    def file_hash(self, path: str) -> str:
-        """First 16 chars of SHA-256 hex digest. Sufficient for change detection."""
-        return hashlib.sha256((self.root / path).read_bytes()).hexdigest()[:16]
+    def skill_file(self, safe_name: str) -> str:
+        return self._machine.skill_file(safe_name)
 
-    def is_converged(self) -> bool:
-        """Check if the relay has applied all config files.
+    def mounted_root(self) -> str:
+        return self._machine.mounted_root()
 
-        Compares each managed config file's current hash against the hash
-        recorded in status.json. Returns True when all hashes match —
-        meaning the relay has read and applied every file the backend wrote.
-        Files that don't exist yet are skipped (not yet provisioned).
-        """
-        status = self.status()
-        for f in MANAGED_CONFIG_FILES:
-            if not self.exists(f):
+    def mounted_path(self, path: str) -> str:
+        return self._machine.mounted_path(path)
+
+    def archive_entry(self, path: str = "") -> str:
+        return self._machine.archive_entry(path)
+
+    def runtime_log_tail(self, limit: int = 20) -> list[dict]:
+        """Read the last structured runtime log events from _abox/logs/runtime.jsonl."""
+        path = "_abox/logs/runtime.jsonl"
+        if not self.exists(path):
+            return []
+        lines = [line for line in self.read(path).splitlines() if line.strip()]
+        tail = lines[-max(1, limit):]
+        events: list[dict] = []
+        for line in tail:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
                 continue
-            if status.get(f) != self.file_hash(f):
-                return False
-        return True
+            if isinstance(payload, dict):
+                events.append(payload)
+        return events
 
-    def pending_changes(self) -> list[str]:
-        """Config files whose hashes don't match status.json.
-
-        Useful for diagnostics — shows which files the relay hasn't
-        applied yet. Returns file paths relative to volume root.
-        """
-        status = self.status()
-        return [
-            f for f in MANAGED_CONFIG_FILES
-            if self.exists(f) and status.get(f) != self.file_hash(f)
-        ]
-
-    def inbox_delivered(self) -> bool:
-        """Check if all inbox messages have been consumed.
-
-        Compares inbox.pos (byte offset of last consumed message) against
-        inbox.jsonl file size. When they match, the relay has read every
-        line the backend appended.
-        """
-        pos_path = self.root / "_abox" / "inbox.pos"
-        inbox_path = self.root / "_abox" / "inbox.jsonl"
-        if not inbox_path.exists():
-            return True
-        pos = int(pos_path.read_text()) if pos_path.exists() else 0
-        return pos >= inbox_path.stat().st_size
+    def write_runtime_diagnostics(self, payload: dict) -> None:
+        """Persist the latest runtime crash diagnostics bundle for this agent."""
+        self.write("_abox/runtime-diagnostics.json", json.dumps(payload, indent=2, sort_keys=True))
 
     def append_inbox(self, message: dict) -> None:
         """Append one JSON-line message to the agent's inbox.
 
-        Backend appends, relay consumes from inbox.pos offset.
-        Messages survive relay crashes — unread lines persist.
+        Backend appends, runtime consumes using its durable inbox cursor.
 
         Note: concurrent appends from multiple backend processes could
         interleave. In practice, messages to a single agent are serialized
         through the GraphQL mutation layer.
         """
-        path = self.root / "_abox" / "inbox.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
-            f.write(json.dumps(message) + "\n")
+        self._store.append_text(self._machine, "_abox/inbox.jsonl", json.dumps(message) + "\n")
 
-    def mutate(self, path: str, content: str | bytes) -> dict:
-        """Write a poke-registered file and return the poke message.
+    def append_task(self, *, task_id: str, content: list, role: str = "user") -> None:
+        """Append one canonical task envelope to the agent inbox."""
+
+        self.append_inbox({
+            "type": "task",
+            "task_id": task_id,
+            "input": {
+                "role": role,
+                "content": content,
+            },
+        })
+
+    def write_theme_document(self, tokens: dict[str, str], *, name: str = "") -> None:
+        """Write the canonical runtime theme document to tokens.json."""
+
+        self.write("tmp/abox-theme/tokens.json", format_theme_document(tokens, name=name))
+
+    def mutate_theme_document(self, tokens: dict[str, str], *, name: str = "") -> ReloadCommand:
+        """Write the canonical runtime theme document and return a reload command."""
+
+        return self.mutate("tmp/abox-theme/tokens.json", format_theme_document(tokens, name=name))
+
+    def write_state_document(self, model: str, mode: str, allowed_tools: list) -> None:
+        """Write the canonical runtime state document to _abox/state.json."""
+
+        self.write("_abox/state.json", json.dumps({
+            "model": model,
+            "mode": mode,
+            "allowed_tools": allowed_tools,
+        }))
+
+    def write_workspace_mcp_config(self, content: str | bytes) -> None:
+        """Write the canonical workspace MCP config document."""
+
+        self.write("home/agent/workspace/.mcp.json", content)
+
+    def write_gateway_config(self, content: str | bytes) -> None:
+        """Write the canonical MCP gateway config document."""
+
+        self.write("run/mcp-gateway/config.json", content)
+
+    def write_secrets_env_document(self, content: str | bytes) -> None:
+        """Write the shared shell-sourceable secrets export."""
+
+        self.write_secret("mnt/abox-state/secrets/env", content)
+
+    def write_mcp_secret(self, server_name: str, key: str, value: str | bytes) -> None:
+        """Write one scoped MCP secret under the canonical machine path."""
+
+        self.write_secret(f"run/secrets/mcp-{server_name}/{key}", value)
+
+    def mutate(self, path: str, content: str | bytes) -> ReloadCommand:
+        """Write a reload-registered file and return the reload command.
 
         This is the ONLY way to write mutable runtime state. The caller
-        must send the returned poke dict via push_to_relay(). Using raw
-        write() for poke-registered paths is an architectural violation
+        must send the returned command via push_to_relay(). Using raw
+        write() for reload-registered paths is an architectural violation
         caught by tests.
 
-        Returns: {"type": "poke", "changed": path}
-        Raises: ValueError if path is not in POKE_REGISTRY.
+        Raises: ValueError if path is not in RELOAD_REGISTRY.
         """
-        if path not in POKE_REGISTRY:
+        if path not in RELOAD_REGISTRY:
             raise ValueError(
                 f"Volume.mutate() called with unregistered path '{path}'. "
-                f"Registered paths: {sorted(POKE_REGISTRY.keys())}. "
+                f"Registered paths: {sorted(RELOAD_REGISTRY.keys())}. "
                 f"Use write() for provision-time config, mutate() for runtime state."
             )
         self.write(path, content)
-        return {"type": "poke", "changed": path}
+        return ReloadCommand(path=path)
 
-    def mutate_state(self, model: str, mode: str, allowed_tools: list) -> dict:
-        """Write _abox/state.json and return the poke message.
+    def mutate_state(self, model: str, mode: str, allowed_tools: list) -> ReloadCommand:
+        """Write _abox/state.json and return the reload command.
 
         Convenience wrapper around mutate() that centralizes the state
         schema so callers dont construct the dict themselves.
@@ -317,8 +365,8 @@ class Volume:
         """Create empty control plane files and directory structure for a new agent.
 
         Called during provisioning before any other volume writes.
-        Creates the _abox/ directory with empty inbox/outbox files
-        and zero-offset cursors, PLUS all directories that init-volume
+        Creates the _abox/ directory with the canonical control-plane files,
+        PLUS all directories that init-volume
         will symlink into the container.
 
         This must run before the container starts so that init-volume's
@@ -328,17 +376,16 @@ class Volume:
 
         Idempotent — safe to call multiple times.
         """
-        abox = self.root / "_abox"
-        abox.mkdir(parents=True, exist_ok=True)
-        for f in ["inbox.jsonl", "outbox.jsonl"]:
-            (abox / f).touch(exist_ok=True)
-        for f in ["inbox.pos", "outbox.pos"]:
-            p = abox / f
-            if not p.exists():
-                p.write_text("0")
-        status = abox / "status.json"
-        if not status.exists():
-            status.write_text("{}")
+        self._store.mkdir(self._machine, "_abox")
+        if not self.exists("_abox/inbox.jsonl"):
+            self._store.write_bytes(self._machine, "_abox/inbox.jsonl", b"")
+        if not self.exists("_abox/status.json"):
+            self._store.write_bytes(self._machine, "_abox/status.json", b"{}")
+
+        # Clear any stale "provisioning complete" marker from a previous boot.
+        # Re-provisioning must re-establish readiness only after the new config
+        # set has been fully written.
+        self._store.unlink(self._machine, "_abox/provisioned.ready")
 
         # Pre-create all directories that init-volume symlinks into the
         # container. This eliminates the race between init-volume's
@@ -346,4 +393,20 @@ class Volume:
         for prefix in SYMLINKED_PREFIXES:
             if prefix == "_abox/":
                 continue  # already created above
-            (self.root / prefix.rstrip("/")).mkdir(parents=True, exist_ok=True)
+            self._store.mkdir(self._machine, prefix.rstrip("/"))
+
+        # Ensure workspace dir exists even without a host bind mount.
+        # The executor uses this as cwd for Claude Code.
+        self._store.mkdir(self._machine, "home/agent/workspace")
+
+    def mark_provisioned(self, token: str = "") -> None:
+        """Write the provisioning-ready sentinel.
+
+        The container boot oneshot (init-volume) waits for this file before it
+        creates symlinks and allows services like svc-relay to start.
+        """
+        self.write(PROVISIONING_SENTINEL, token)
+
+
+# Compatibility alias while the codebase converges on the machine vocabulary.
+Volume = AgentMachine

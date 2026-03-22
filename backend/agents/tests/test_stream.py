@@ -84,6 +84,7 @@ class TestSnapshotWrites:
 
         assert agent.latest_snapshot["result"] == result_event
         assert agent.latest_snapshot["assistant"]["type"] == "assistant"
+        mock_broadcast["recompute"].assert_awaited_once_with(str(agent.project_id), str(agent.id))
 
     @pytest.mark.asyncio
     async def test_new_assistant_clears_result(self, agent, mock_broadcast):

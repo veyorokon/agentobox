@@ -23,6 +23,8 @@ import React, { type ReactNode } from "react"
 
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
+import { GET_AGENT_TASKS } from "@/lib/graphql/queries/tasks"
+import { GET_SKILLS } from "@/lib/graphql/queries/skills"
 
 /* ================================================================== */
 /*  MOCKS                                                               */
@@ -76,6 +78,7 @@ vi.mock("@/components/shared/copy-button", () => ({
 
 const { TeamFeed } = await import("@/components/feed/team-feed")
 const { AgentCardRow } = await import("@/components/agent/card-row")
+const { AttentionBar } = await import("@/components/attention/attention-bar")
 const { useSidebarStore } = await import("@/lib/stores/sidebar")
 
 /* ================================================================== */
@@ -89,6 +92,8 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     id: "agent-1",
     name: "backend",
     lifecycleStatus: "running",
+    previewState: "ready",
+    previewRuntimeId: "sandbox-agent-1",
     attentionLevel: "none",
     relayConnected: true,
     mode: "auto",
@@ -106,7 +111,10 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     mcpServers: [],
     runtime: "docker",
     workspacePath: "/home/vahid-eyorokon/projects/agentobox",
+    triggers: null,
+    computeSeconds: 300,
     taskProgress: { __typename: "TaskProgressType" as const, done: 3, total: 5 },
+    tasks: [],
     ...overrides,
   }
 }
@@ -232,6 +240,20 @@ function feedMock(items: Record<string, unknown>[]): MockedResponse {
   }
 }
 
+function agentTasksMock(tasks: Record<string, unknown>[] = []): MockedResponse {
+  return {
+    request: { query: GET_AGENT_TASKS, variables: { agentId: "agent-1" } },
+    result: { data: { agent: { __typename: "AgentType" as const, id: "agent-1", tasks } } },
+  }
+}
+
+function skillsMock(skills: Record<string, unknown>[] = []): MockedResponse {
+  return {
+    request: { query: GET_SKILLS, variables: { projectId: MOCK_PROJECT_ID } },
+    result: { data: { skills } },
+  }
+}
+
 /* ================================================================== */
 /*  STATE CONSISTENCY TESTS                                             */
 /*                                                                      */
@@ -270,7 +292,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([perm])]) },
+        { wrapper: makeWrapper([feedMock([perm]), agentTasksMock(), skillsMock()]) },
       )
 
       await waitFor(() => {
@@ -301,7 +323,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([plan])]) },
+        { wrapper: makeWrapper([feedMock([plan]), agentTasksMock(), skillsMock()]) },
       )
 
       await waitFor(() => {
@@ -332,7 +354,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([summary])]) },
+        { wrapper: makeWrapper([feedMock([summary]), agentTasksMock(), skillsMock()]) },
       )
 
       // Wait for card to settle (composer @-mention is always present)
@@ -366,7 +388,7 @@ describe("state consistency: feed items visible across UI components", () => {
 
       render(
         React.createElement(AgentCardRow, { agent: makeAgent() } as any),
-        { wrapper: makeWrapper([feedMock([errorItem])]) },
+        { wrapper: makeWrapper([feedMock([errorItem]), agentTasksMock(), skillsMock()]) },
       )
 
       // Wait for card to settle
@@ -376,6 +398,23 @@ describe("state consistency: feed items visible across UI components", () => {
 
       // Error text must NOT appear — the attention bar is for actionable items only
       expect(screen.queryByText(/Agent crashed: out of memory/)).toBeNull()
+    })
+  })
+
+  describe("review attention", () => {
+    it("does NOT render in AttentionBar — reviews are feed/card affordances, not global intervention", async () => {
+      render(
+        React.createElement(AttentionBar),
+        { wrapper: makeWrapper([agentsMock([makeAgent({
+          attentionLevel: "review",
+          lastOutput: "Please review this result",
+        })]), feedMock([])]) },
+      )
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Review latest output/)).toBeNull()
+      })
+      expect(screen.queryByText(/Please review this result/)).toBeNull()
     })
   })
 })

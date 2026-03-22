@@ -20,6 +20,7 @@ import {
   Plus,
   Bell,
   BellOff,
+  Flag,
 } from "lucide-react"
 import { cn, formatCost, formatComputeTime, formatTriggerSubtitle } from "@/lib/utils"
 import { LIFECYCLE_CONFIG, MODE_CONFIG } from "@/lib/config"
@@ -34,6 +35,7 @@ import { Collapsible } from "@/components/ui/collapsible"
 import { AgentTag } from "@/components/agent/avatar"
 import { ModePill } from "@/components/agent/mode-pill"
 import { VncThumbnail } from "@/components/agent/vnc-thumbnail"
+import { IncidentModal } from "@/components/agent/incident-modal"
 import { AgentDetailFeed } from "@/components/agent/detail-feed"
 import { AgentSettingsPanel, type SettingsPanelHandle } from "@/components/agent/settings-panel"
 import { AgentSkillsView } from "@/components/agent/skills-view"
@@ -119,6 +121,7 @@ export function AgentCardRow({
 
   // Kebab menu state
   const [kebabOpen, setKebabOpen] = useState(false)
+  const [incidentOpen, setIncidentOpen] = useState(false)
   const kebabRef = useRef<HTMLDivElement>(null)
 
   // Derived from store
@@ -373,6 +376,14 @@ export function AgentCardRow({
                 >
                   <Rocket className="h-3 w-3 text-accent" strokeWidth={2.5} />
                   Redeploy
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setIncidentOpen(true); setKebabOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
+                >
+                  <Flag className="h-3 w-3 text-muted" />
+                  Report Incident
                 </button>
                 <div className="border-t border-border-subtle my-0.5" />
                 <button
@@ -653,6 +664,12 @@ export function AgentCardRow({
           </div>
         </div>
       </Collapsible>
+      <IncidentModal
+        open={incidentOpen}
+        onClose={() => setIncidentOpen(false)}
+        agentId={agent.id}
+        agentName={agent.name}
+      />
     </div>
   )
 }

@@ -1,5 +1,8 @@
 # Agentobox
 
+[![CI](https://github.com/veyorokon/agentobox/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/veyorokon/agentobox/actions/workflows/ci.yml)
+[![Deploy](https://github.com/veyorokon/agentobox/actions/workflows/deploy.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/deploy.yml)
+
 A platform for managing AI agent teams. Provision agents with full Linux desktops, observe their work in real-time via VNC and activity feeds, and coordinate multi-agent workflows through a web dashboard.
 
 ## Quick Start
@@ -30,7 +33,7 @@ Login: `demo` / `demo`
 |-------|-------|
 | **backend/** | Django 6.0 · Strawberry GraphQL · Django Channels · Daphne (ASGI) |
 | **dashboard/** | Next.js · Apollo Client · Zustand · Tailwind CSS v4 |
-| **agent/** | Debian bookworm · s6-overlay · AwesomeWM · Firefox · noVNC · Claude Code relay |
+| **agent/** | Debian bookworm · s6-overlay · AwesomeWM · Chromium · noVNC · Claude Code relay |
 | **infra/** | Terraform (DigitalOcean compute/db + Route53 DNS) · Docker Compose · Caddy |
 | **runtimes** | Docker (local dev) · Modal (serverless production) |
 
@@ -84,7 +87,7 @@ Architecture tests read source files as text and enforce invariants that code re
 |------|----------|
 | `test_secret_boundary` | Only api-proxy reads `/run/secrets/`, relay never touches it |
 | `test_poke_registry` | Every volume state path has a matching relay handler |
-| `test_theme_token_parity` | CSS tokens → Firefox + AwesomeWM produce identical output |
+| `test_theme_token_parity` | CSS tokens → Chromium + AwesomeWM produce identical output |
 | `test_architecture` | Import boundaries, broad-except annotations, field discipline |
 
 ## Key Patterns
@@ -127,11 +130,11 @@ base
 └── svc-relay (Claude Code bridge) ◀── init-volume
 ```
 
-Each service is a directory under `agent/rootfs/etc/s6-overlay/s6-rc.d/` with a `run` script and explicit `dependencies.d/` declarations.
+Each service is a directory under `agent/platform/` with a `run` script and explicit `dependencies.d/` declarations.
 
-### Rootfs Convention
+### Agent Module Layout
 
-Container filesystem files live in `agent/rootfs/` at their canonical paths. `agent/rootfs/etc/s6-overlay/` maps to `/etc/s6-overlay/` in the container. No path translation, no mapping tables — what you see in the repo is what you get in the image.
+Agent runtime code lives in `agent/runtime/` (app logic, execution, state) and `agent/transports/` (relay bridge). Platform-level services (s6, X11, VNC) live in `agent/platform/`. Desktop assets (Chromium theme, browser config) live in `agent/desktop-assets/`.
 
 ### Relay Bridge
 
@@ -166,7 +169,7 @@ Three structured comment types are extracted by `make docs`:
 | `# tech-debt: <reason>` | Known shortcuts with removal conditions | `# tech-debt: SDK monkey-patch — remove when SDK adds .to_dict()` |
 | Module/class docstrings | Auto-extracted to REFERENCE.md | First string in any `.py` file or test class |
 
-Currently scans `backend/agents/` and `agent/rootfs/`. Extending to `dashboard/` (TSDoc) and `agent/claude/` is planned.
+Currently scans `backend/agents/` and `agent/runtime/`. Dashboard reference is generated separately via `node dashboard/scripts/generate-reference.mjs`.
 
 ## Deployment
 
@@ -178,21 +181,25 @@ make up                    # docker compose up -d
 
 ### Production
 
-```bash
-# Infrastructure (DigitalOcean droplet + managed Postgres + Route53 DNS)
-cd infra/environments/dev
-terraform apply
+Automated via GitHub Actions (`deploy.yml`). Pushes to `dev` deploy to `dev.agentobox.com`; pushes to `main` deploy to `agentobox.com`.
 
-# Deploy stack on droplet
-scp docker-compose.prod.yml Caddyfile .env root@<ip>:/opt/agentobox/
-ssh root@<ip> "cd /opt/agentobox && docker compose -f docker-compose.prod.yml up -d"
+```
+PR → dev:   ci.yml (fast + smoke)
+merge dev:  deploy → dev environment → agent bootstrap + smoke
+merge main: deploy → prod environment → agent bootstrap + smoke
 ```
 
-Caddy handles TLS automatically via Let's Encrypt. Routes `/graphql`, `/ws/*`, `/admin/*` to backend; everything else to dashboard.
+Images are built, pushed to GHCR with sha-pinned tags, and deployed to the target server via SSH. Caddy handles TLS via Let's Encrypt.
 
 ### CI/CD
 
-Images are built and pushed to GHCR on every push to `main` (`:main`, `:sha-xxx`) and on version tags (`:latest`, `:v1.2.3`). A relay smoke test runs before push — broken images never reach the registry.
+Promotion is branch-driven:
+- merge to `dev` → deploy `dev`
+- merge to `main` → deploy prod
+
+Version tags/releases are bookkeeping only right now; they do not trigger deploys.
+
+Images are built and pushed to GHCR on every push to `dev` or `main` (`:branch`, `:sha-xxx`). Agent images are contract-tested before push. Post-deploy bootstrap and smoke tests verify the live environment.
 
 ## Make Commands
 
@@ -213,25 +220,30 @@ Images are built and pushed to GHCR on every push to `main` (`:main`, `:sha-xxx`
 
 | Doc | Purpose |
 |-----|---------|
-| [FOUNDATIONS](docs/FOUNDATIONS.md) | Product axioms, principles, design decisions |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System topology, data flow, service lifecycle |
+| [TESTING](docs/testing.md) | Canonical test taxonomy and CI lane mapping |
+| [HARNESSES](bin/README.md) | Deployed-equivalent proof rigs and operator/debug conventions |
+| [CONTRACTS](docs/contracts/README.md) | Ownership and invariants for provisioning, runtime, preview, and release |
+| [MACHINE CONTRACT](docs/contracts/machine.md) | Canonical state model for project volumes, agent machine surfaces, and Docker/Modal parity |
+| [CONTRIBUTING](CONTRIBUTING.md) | Issue taxonomy, labels, proof levels, and contributor workflow |
+| [RUNTIME-FAILURE-AUDIT](docs/RUNTIME-FAILURE-AUDIT.md) | Standard runtime debugging and failure classification procedure |
 | [REFERENCE](docs/REFERENCE.md) | Auto-generated: backend modules, annotations (`make docs`) |
 | [DASHBOARD-REFERENCE](docs/DASHBOARD-REFERENCE.md) | Auto-generated: dashboard modules, annotations (`make docs`) |
 | [AGENT-REFERENCE](docs/AGENT-REFERENCE.md) | Auto-generated: agent modules, s6 services, annotations (`make docs`) |
-| [DASHBOARD-UX-SPEC](docs/DASHBOARD-UX-SPEC.md) | UX framework, component hierarchy |
+| [docs/archive/superseded](docs/archive/superseded/README.md) | Historical docs retained for context, not as current source of truth |
 
 ## Project Structure
 
 ```
 agentobox/
 ├── agent/                  # Container image
-│   ├── Dockerfile.base     # Stable base layer (s6, X11, VNC, WM)
-│   ├── claude/             # Claude Code agent type
-│   │   ├── Dockerfile      # Agent-type layer (CC, relay, proxy)
-│   │   └── rootfs/         # CC-specific filesystem overlay
-│   ├── rootfs/             # Shared filesystem overlay (services, hooks)
-│   ├── mcp-servers/        # Bundled MCP servers
-│   └── tests/              # Agent-side tests (logging, security, architecture)
+│   ├── Dockerfile*         # Layered: base → managed → desktop variants
+│   ├── runtime/            # App logic (execution, state, config, inbox)
+│   ├── transports/         # Relay bridge (agentobox WS transport)
+│   ├── platform/           # Platform services (s6, X11, VNC)
+│   ├── desktop-assets/     # Browser theme and config (Chromium)
+│   ├── contracts/          # Transport protocol definitions
+│   └── tests/              # Agent-side tests (boot, health, architecture)
 ├── backend/                # Django backend
 │   ├── agents/             # Core app (models, services, adapters, GraphQL)
 │   ├── accounts/           # Auth (JWT, middleware)

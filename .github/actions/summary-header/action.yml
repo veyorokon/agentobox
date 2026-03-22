@@ -1,0 +1,42 @@
+name: Summary Header
+description: Writes a compact status headline to $GITHUB_STEP_SUMMARY.
+
+inputs:
+  title:
+    description: Summary name (e.g. "CI Fast", "Deploy (dev)")
+    required: true
+  overall:
+    description: Overall status — "success" or "attention-needed"
+    required: true
+  detail:
+    description: One-line detail for the headline (e.g. "2 of 10 lanes failed", "DEPLOYED")
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Write header
+      shell: bash
+      run: |
+        short_sha="${GITHUB_SHA::7}"
+        if [ "${{ inputs.overall }}" = "success" ]; then
+          icon="✅"
+        else
+          icon="❌"
+        fi
+
+        detail="${{ inputs.detail }}"
+        if [ -z "$detail" ]; then
+          if [ "${{ inputs.overall }}" = "success" ]; then
+            detail="passed"
+          else
+            detail="failed"
+          fi
+        fi
+
+        {
+          echo "## ${{ inputs.title }}"
+          echo
+          echo "${icon} **${detail}** &nbsp; \`${short_sha}\` · \`${{ github.ref_name }}\`"
+        } >> "$GITHUB_STEP_SUMMARY"

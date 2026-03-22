@@ -47,6 +47,20 @@ def poll_until(
     raise PollTimeout(description, timeout_s, last_value)
 
 
+class AgentTerminalError(Exception):
+    """Raised when an agent reaches a terminal error state while polling."""
+
+    def __init__(self, agent: dict):
+        self.agent = agent
+        status = agent.get("lifecycleStatus", "unknown")
+        error = agent.get("errorMessage", "no error message")
+        super().__init__(f"Agent reached terminal state '{status}': {error}")
+
+
+# Statuses that will never transition to idle — bail immediately.
+_TERMINAL_ERROR_STATUSES = {"error", "failed", "crashed"}
+
+
 def poll_agent_status(
     gql,
     agent_id: str,
@@ -57,6 +71,7 @@ def poll_agent_status(
     """Wait for an agent to reach one of the target lifecycle statuses.
 
     Returns the full agent dict when the status matches.
+    Raises AgentTerminalError immediately if agent hits a terminal error state.
     Raises PollTimeout if not reached within timeout_s.
     """
 
@@ -66,7 +81,10 @@ def poll_agent_status(
     def check(agent):
         if agent is None:
             return False
-        return agent["lifecycleStatus"] in target_statuses
+        status = agent["lifecycleStatus"]
+        if status in _TERMINAL_ERROR_STATUSES and status not in target_statuses:
+            raise AgentTerminalError(agent)
+        return status in target_statuses
 
     return poll_until(
         fetch,

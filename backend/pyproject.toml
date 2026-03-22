@@ -13,19 +13,22 @@ dependencies = [
     "daphne>=4.2.1",
     "django>=6.0.2",
     "django-cors-headers>=4.7.0",
-    "django-environ>=0.12.0",
     "fastmcp>=3.0.0",
     "django-structlog>=10.0.0",
     "docker>=7.1.0",
     "httpx>=0.28.0",
     "modal>=1.3.2",
     "orjson>=3.11.7",
+    "pydantic-settings>=2.8.0",
     "pgvector>=0.4.2", # Required by 0001_initial migration (VectorExtension, VectorField); removable after migration squash
     "psycopg[binary]>=3.3.2",
-    "pyjwt>=2.11.0",
+    "pyasn1>=0.6.3", # Security floor for transitive auth stack dependency
+    "pyjwt>=2.12.0",
+    "pyopenssl>=26.0.0", # Security floor for TLS/auth runtime dependency
     "strawberry-graphql>=0.291.0",
     "strawberry-graphql-django>=0.75.0",
     "structlog>=25.5.0",
+    "ujson>=5.12.0", # Security floor for transitive JSON dependency
     "websockets>=14.0",
 ]
 
@@ -49,6 +52,7 @@ testpaths = [
     "config",
 ]
 markers = [
+    # Backend pytest config is the authority for backend-local taxonomy.
     "unit: Fast tests with no external dependencies",
     "integration: Tests requiring database/redis/docker",
     "chaos: Failure injection tests",

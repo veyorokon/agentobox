@@ -1,0 +1,52 @@
+name: Security Infra
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/security-infra.yml"
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/security-infra.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "22 7 * * *"
+
+concurrency:
+  group: security-infra-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-infra:
+    name: trivy-infra
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trivy infra config scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: infra
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: infra/.trivyignore
+      - name: Write summary header
+        if: always()
+        uses: ./.github/actions/summary-header
+        with:
+          title: Security Infra
+          overall: ${{ job.status == 'success' && 'success' || 'attention-needed' }}
+          detail: ${{ job.status == 'success' && 'no findings' || 'findings detected' }}
+      - name: Write scan details
+        if: failure()
+        run: |
+          {
+            echo
+            echo "trivy config scan · \`infra/\` · severity: HIGH,CRITICAL"
+          } >> "$GITHUB_STEP_SUMMARY"

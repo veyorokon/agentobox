@@ -3,7 +3,7 @@ GraphQL mutations for agent lifecycle, communication, and configuration.
 
 All mutations require Bearer auth — authorize_project or authorize_agent
 checks ownership before any state change. Mutations delegate to service
-functions (lifecycle.py, comms.py, feed.py) for the actual work; this
+functions (lifecycle.py, relay.py, feed.py) for the actual work; this
 module is the thin GraphQL boundary that handles input parsing, auth,
 and response shaping.
 
@@ -18,12 +18,13 @@ Key mutation groups:
 """
 import structlog
 
+from config.app_config import app_config
 import strawberry
 from strawberry import ID
 from strawberry.scalars import JSON
 
 from agents.graphql.auth import authorize_agent, authorize_project
-from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTaskType, AgentType, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
+from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTaskType, AgentType, IncidentCaptureResult, ProjectSecretType, SkillType, TeamFeedItemType, VncTokenResult
 
 log = structlog.get_logger("abox.graphql")
 
@@ -51,7 +52,6 @@ class VolumeMountInput:
 class CreateAgentInput:
     project_id: ID
     name: str
-    runtime: str = "modal"
     model: str = "claude-sonnet-4-5-20250929"
     mcp_servers: JSON | None = None
     workspace_path: str = ""
@@ -142,6 +142,14 @@ class UpdateSkillInput:
     assigned_to_all: bool | None = None
 
 
+@strawberry.input
+class CaptureIncidentInput:
+    agent_id: ID
+    note: str = ""
+    screenshot_url: str = ""
+    window_minutes: int = 30
+
+
 # --- Skill push helpers (hot-reload without restart) ---
 
 async def _get_matching_agents(project_id, assigned_to_all: bool, assigned_tags: list[str] | None):
@@ -201,7 +209,7 @@ class AgentMutation:
         return await create_agent(
             project_id=input.project_id,
             name=input.name,
-            runtime_name=input.runtime,
+            runtime_name=app_config.agent.runtime,
             model=input.model,
             mcp_servers=mcp_config,
             workspace_path=input.workspace_path,
@@ -237,21 +245,21 @@ class AgentMutation:
 
     @strawberry.mutation
     async def interrupt_agent(self, agent_id: ID, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import interrupt_agent
+        from agents.services.relay import interrupt_agent
 
         await authorize_agent(info, agent_id)
         return await interrupt_agent(agent_id)
 
     @strawberry.mutation
     async def restart_agent(self, agent_id: ID, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import restart_agent
+        from agents.services.relay import restart_agent
 
         await authorize_agent(info, agent_id)
         return await restart_agent(agent_id)
 
     @strawberry.mutation
     async def clear_agent_session(self, agent_id: ID, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import clear_agent_session
+        from agents.services.relay import clear_agent_session
 
         await authorize_agent(info, agent_id)
         return await clear_agent_session(agent_id)
@@ -259,7 +267,7 @@ class AgentMutation:
     @strawberry.mutation
     async def set_agent_mode(self, agent_id: ID, mode: str, info: strawberry.types.Info) -> AgentType:
         """Accept frontend vocabulary (auto/plan/supervised), map to Claude Code mode."""
-        from agents.services.comms import set_agent_mode
+        from agents.services.relay import set_agent_mode
 
         await authorize_agent(info, agent_id)
         return await set_agent_mode(agent_id, mode)
@@ -274,7 +282,7 @@ class AgentMutation:
     ) -> bool:
         """Send message to resolved agents. Recipients can be agent names, tags, or 'all'."""
         from agents.models import Agent
-        from agents.services.comms import send_message as _send_single, broadcast_message
+        from agents.services.relay import send_message as _send_single, broadcast_message
 
         await authorize_project(info, project_id)
 
@@ -333,7 +341,7 @@ class AgentMutation:
 
     @strawberry.mutation
     async def answer_question(self, input: AnswerQuestionInput, info: strawberry.types.Info) -> bool:
-        from agents.services.comms import answer_question
+        from agents.services.relay import answer_question
 
         await authorize_agent(info, input.agent_id)
         return await answer_question(input.agent_id, input.tool_use_id, input.answer_text)
@@ -399,22 +407,21 @@ class AgentMutation:
 
     @strawberry.mutation
     async def update_agent_instructions(self, input: UpdateAgentInstructionsInput, info: strawberry.types.Info) -> AgentType:
-        from agents.runtimes import get_runtime
         from agents.adapters import get_adapter
 
         agent = await authorize_agent(info, input.agent_id)
         agent.instructions = input.instructions
         await agent.asave(update_fields=["instructions"])
 
-        # Rewrite CLAUDE.md on the running container if it has a sandbox
+        # Live CLAUDE.md update via canonical volume + reload path.
+        # Instructions are saved to DB above; volume write makes them
+        # visible to the running agent without restart.
         if agent.sandbox_id:
             try:
-                # Build team roster (same as provisioning)
                 from agents.services.utils import get_team_roster
                 team_members = await get_team_roster(agent.project)
 
                 team_name = agent.project.name.lower().replace(" ", "-")
-                runtime = get_runtime(agent.runtime)
                 adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
                 claude_md = adapter.build_instructions(
                     project_name=agent.project.name,
@@ -426,10 +433,9 @@ class AgentMutation:
                     team_members=team_members,
                     team_name=team_name,
                 )
-                await runtime.write_file(
-                    agent.sandbox_id,
-                    claude_md.encode("utf-8"),
-                    "/home/agent/CLAUDE.md",
+                from agents.services.relay import update_volume_and_reload
+                await update_volume_and_reload(
+                    agent, "home/agent/workspace/CLAUDE.md", claude_md,
                 )
             except Exception:  # intentional: CLAUDE.md write is best-effort — instructions saved to DB regardless
                 log.exception("graphql.claude_md_failed", agent_name=agent.name)
@@ -531,12 +537,14 @@ class AgentMutation:
         # Tags changed — hot-update skills on the volume without restart
         if input.tags is not None and agent.tags != old_tags:
             from agents.models import Skill
+            from agents.services.machine_write import get_machine_writer
             from asgiref.sync import sync_to_async
 
             skills = await sync_to_async(
                 lambda: list(Skill.objects.filter(project_id=agent.project_id)),
                 thread_sensitive=False,
             )()
+            writer = get_machine_writer(agent)
             for skill in skills:
                 should_have = skill.assigned_to_all or any(
                     tag in (agent.tags or []) for tag in (skill.assigned_tags or [])
@@ -550,16 +558,13 @@ class AgentMutation:
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
                         skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
-                        agent.volume.write(skill_path, skill.content)
+                        await writer.write(skill_path, skill.content)
                 elif had_before and not should_have:
                     # Lost skill match — remove from volume
-                    import shutil
                     from agents.utils import sanitize_skill_name
                     safe_name = sanitize_skill_name(skill.name)
                     if safe_name:
-                        skill_dir = agent.volume.root / f"home/agent/workspace/.claude/skills/{safe_name}"
-                        if skill_dir.exists():
-                            shutil.rmtree(skill_dir)
+                        await writer.remove_tree(agent.machine.skill_dir(safe_name))
 
         # No restart needed — return the updated agent
         return agent
@@ -668,7 +673,7 @@ class AgentMutation:
             raise ValueError(f"A skill named '{input.name}' already exists in this project")
 
         # Push skill to matching running agents (hot-reload without restart)
-        from agents.services.comms import push_skill_to_agents as _push_skill
+        from agents.services.relay import push_skill_to_agents as _push_skill
         await _push_skill(skill, operation="write")
 
         return skill
@@ -725,11 +730,11 @@ class AgentMutation:
                 agents_to_cleanup = old_matching_agents - new_matching_agents
 
                 if agents_to_cleanup:
-                    from agents.services.comms import push_skill_delete_to_specific_agents
+                    from agents.services.relay import push_skill_delete_to_specific_agents
                     await push_skill_delete_to_specific_agents(skill.name, agents_to_cleanup)
 
             # Push updated skill to matching running agents (hot-reload without restart)
-            from agents.services.comms import push_skill_to_agents as _push_skill
+            from agents.services.relay import push_skill_to_agents as _push_skill
         await _push_skill(skill, operation="write")
 
         return skill
@@ -747,7 +752,7 @@ class AgentMutation:
 
         # Push delete command to matching running agents BEFORE deleting from DB
         # (need skill properties to determine which agents to notify)
-        from agents.services.comms import push_skill_to_agents as _push_skill_del
+        from agents.services.relay import push_skill_to_agents as _push_skill_del
         await _push_skill_del(skill, operation="delete")
 
         await skill.adelete()
@@ -876,3 +881,44 @@ class AgentMutation:
 
         return secret
 
+    @strawberry.mutation
+    async def capture_incident(
+        self, input: CaptureIncidentInput, info: strawberry.types.Info,
+    ) -> IncidentCaptureResult:
+        """Capture a diagnosis bundle for an agent and store it."""
+        from agents.models import IncidentCapture
+        from agents.services.incident import capture_incident_bundle
+
+        agent = await authorize_agent(info, input.agent_id)
+        user = info.context["request"].user
+
+        bundle, collection_errors = await capture_incident_bundle(
+            agent,
+            note=input.note,
+            screenshot_url=input.screenshot_url,
+            window_minutes=input.window_minutes,
+        )
+
+        incident = await IncidentCapture.objects.acreate(
+            project_id=agent.project_id,
+            agent=agent,
+            created_by=user,
+            note=input.note,
+            screenshot_url=input.screenshot_url,
+            window_minutes=input.window_minutes,
+            bundle=bundle,
+            collection_errors=collection_errors,
+        )
+
+        log.info(
+            "graphql.incident_captured",
+            agent_id=str(agent.id),
+            incident_id=str(incident.id),
+        )
+
+        return IncidentCaptureResult(
+            incident_id=strawberry.ID(str(incident.id)),
+            agent_id=strawberry.ID(str(agent.id)),
+            project_id=strawberry.ID(str(agent.project_id)),
+            created_at=incident.created_at.isoformat(),
+        )

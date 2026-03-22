@@ -1,4 +1,5 @@
 import strawberry_django
+import strawberry
 from strawberry import auto
 from strawberry.scalars import JSON
 
@@ -11,6 +12,13 @@ class ProjectType:
     name: auto
     description: auto
     settings: JSON
-    theme_tokens: JSON
     created_at: auto
     archived_at: auto
+
+    @strawberry.field
+    def theme_document(self) -> JSON:
+        return self.resolved_theme_document()
+
+    @strawberry.field
+    def theme_tokens(self) -> JSON:
+        return self.resolved_theme_tokens()

@@ -18,6 +18,11 @@ from agents.models import AgentStatus
 from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
+    REASON_RECONCILER_DEAD_RUNTIME,
+    REASON_RECONCILER_RUNTIME_LIMBO,
+    REASON_RECONCILER_RUNTIME_MISSING,
+    _detect_dead_containers,
+    _detect_runtime_limbo,
     _detect_stuck_deploys,
     _reap_errored_agents,
     _reap_orphans_sync,
@@ -132,6 +137,178 @@ class TestDetectStuckDeploys:
         # Modal agents don't get the Docker liveness probe
         mock_runtime.get_status.assert_not_awaited()
         mock_terminate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reconciler_mark_error_routes_through_shared_runtime_unavailable_helper():
+    marked = SimpleNamespace(id="agent-1")
+
+    with patch(
+        "agents.services.reconcile.mark_agent_runtime_unavailable",
+        new_callable=AsyncMock,
+        return_value=marked,
+    ) as mock_mark:
+        from agents.services.reconcile import _mark_error
+
+        result = await _mark_error("agent-1", error_message="container died")
+
+    assert result is marked
+    mock_mark.assert_awaited_once_with(
+        "agent-1",
+        reason=REASON_RECONCILER_DEAD_RUNTIME,
+        error_message="container died",
+    )
+
+
+@pytest.mark.asyncio
+async def test_detect_dead_containers_marks_missing_runtime_explicitly():
+    written_diagnostics = {}
+    machine = SimpleNamespace(
+        runtime_log_tail=lambda limit=10: [],
+        write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
+    )
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        sandbox_id="missing-container",
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        project_id="project-1",
+        runtime_status_projection={"runtime_state": "ready"},
+        machine=machine,
+        volume=machine,
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
+    mock_runtime = AsyncMock()
+    mock_runtime.get_status = AsyncMock(return_value="missing")
+    mock_runtime.get_crash_info = AsyncMock(return_value=None)
+    mock_runtime.get_event_tail = AsyncMock(return_value=[])
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock) as mock_fail_attempt,
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock),
+        patch("agents.services.reconcile.create_feed_item", new_callable=AsyncMock),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        await _detect_dead_containers()
+
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Runtime container is missing",
+        reason=REASON_RECONCILER_RUNTIME_MISSING,
+    )
+    mock_fail_attempt.assert_awaited_once()
+    assert written_diagnostics["container_status"] == "missing"
+    assert written_diagnostics["runtime_status"] == {"runtime_state": "ready"}
+
+
+@pytest.mark.asyncio
+async def test_detect_dead_containers_includes_last_runtime_event_for_missing_runtime():
+    written_diagnostics = {}
+    machine = SimpleNamespace(
+        runtime_log_tail=lambda limit=10: [
+            {"event": "provisioning.release_complete"},
+            {"event": "runtime.booting"},
+            {"event": "transport.connected"},
+        ],
+        write_runtime_diagnostics=lambda payload: written_diagnostics.update(payload),
+    )
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        sandbox_id="missing-container",
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        project_id="project-1",
+        runtime_status_projection={"runtime_state": "stopped"},
+        machine=machine,
+        volume=machine,
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent", project_id="project-1")
+    mock_runtime = AsyncMock()
+    mock_runtime.get_status = AsyncMock(return_value="missing")
+    mock_runtime.get_crash_info = AsyncMock(return_value=None)
+    mock_runtime.get_event_tail = AsyncMock(return_value=[{"action": "kill", "signal": "15"}])
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock),
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock),
+        patch("agents.services.reconcile.create_feed_item", new_callable=AsyncMock) as mock_feed_item,
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        await _detect_dead_containers()
+
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Runtime container is missing\nLast runtime event: transport.connected\nLast docker action: kill",
+        reason=REASON_RECONCILER_RUNTIME_MISSING,
+    )
+    mock_feed_item.assert_awaited_once()
+    assert mock_feed_item.await_args.kwargs["text"] == "Runtime container is missing"
+    assert written_diagnostics["docker_event_tail"] == [{"action": "kill", "signal": "15"}]
+
+
+@pytest.mark.asyncio
+async def test_detect_runtime_limbo_marks_connected_nonready_agent_error():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        status=AgentStatus.IDLE,
+        desired_status="deployed",
+        relay_connected=True,
+        sandbox_id="sb-123",
+        vnc_url="ws://vnc",
+        runtime_status_projection={},
+        updated_at=timezone.now() - timedelta(seconds=DEPLOY_GRACE_S + 10),
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent")
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock) as mock_fail_attempt,
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+    ):
+        await _detect_runtime_limbo(timezone.now())
+
+    mock_terminate.assert_awaited_once()
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Relay connected but runtime never reached ready state",
+        reason=REASON_RECONCILER_RUNTIME_LIMBO,
+    )
+    mock_fail_attempt.assert_awaited_once()
+    mock_broadcast.assert_awaited_once_with(marked)
+
+
+@pytest.mark.asyncio
+async def test_detect_runtime_limbo_skips_ready_agent():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        status=AgentStatus.IDLE,
+        desired_status="deployed",
+        relay_connected=True,
+        sandbox_id="sb-123",
+        vnc_url="ws://vnc",
+        runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+        updated_at=timezone.now() - timedelta(seconds=DEPLOY_GRACE_S + 10),
+    )
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock) as mock_mark_error,
+    ):
+        await _detect_runtime_limbo(timezone.now())
+
+    mock_terminate.assert_not_awaited()
+    mock_mark_error.assert_not_awaited()
 
 
 class TestReapOrphans:
@@ -273,7 +450,8 @@ class TestErrorReapDebugMode:
     """Failure-injection coverage for errored-agent cleanup behavior."""
 
     async def test_keep_failed_containers_skips_reap(self, monkeypatch):
-        monkeypatch.setenv("KEEP_FAILED_AGENT_CONTAINERS", "1")
+        from config.app_config import app_config
+        monkeypatch.setattr(app_config.reconciler, "keep_failed_containers", True)
         agent = _make_agent(agent_id="error-agent-1")
 
         with (
@@ -289,7 +467,8 @@ class TestErrorReapDebugMode:
         mock_broadcast.assert_not_awaited()
 
     async def test_default_mode_reaps_failed_agents(self, monkeypatch):
-        monkeypatch.delenv("KEEP_FAILED_AGENT_CONTAINERS", raising=False)
+        from config.app_config import app_config
+        monkeypatch.setattr(app_config.reconciler, "keep_failed_containers", False)
         agent = _make_agent(agent_id="error-agent-2")
 
         with (
@@ -301,5 +480,8 @@ class TestErrorReapDebugMode:
             await _reap_errored_agents(timezone.now())
 
         mock_terminate.assert_awaited_once()
-        mock_mark_stopped.assert_awaited_once_with(agent.id)
+        mock_mark_stopped.assert_awaited_once_with(
+            agent.id,
+            reason="reconciler.error_reap",
+        )
         mock_broadcast.assert_awaited_once_with(agent)

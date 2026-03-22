@@ -5,6 +5,8 @@ This is the materialized view layer. StreamEvent = raw audit log.
 TeamFeedItem = curated dashboard feed items created when feed-worthy events occur.
 """
 
+import json
+
 import structlog
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
@@ -48,9 +50,10 @@ async def create_feed_item(project_id, source_event=None, agent_record=None, **k
 
     # Push to dashboard WebSocket group
     try:
-        from agents.consumers import _serialize_feed_item_for_ws
+        from agents.serializers import serialize_feed_item
         channel_layer = get_channel_layer()
-        payload = _serialize_feed_item_for_ws(item)
+        payload = serialize_feed_item(item)
+        payload["_t"] = "feed"
         await channel_layer.group_send(
             f"dashboard_{item.project_id}",
             {"type": "dashboard.feed_item", "payload": payload},
@@ -79,9 +82,10 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
 
     # Push updated item to dashboard WebSocket group
     try:
-        from agents.consumers import _serialize_feed_item_for_ws
+        from agents.serializers import serialize_feed_item
         channel_layer = get_channel_layer()
-        payload = _serialize_feed_item_for_ws(item)
+        payload = serialize_feed_item(item)
+        payload["_t"] = "feed"
         await channel_layer.group_send(
             f"dashboard_{item.project_id}",
             {"type": "dashboard.feed_item", "payload": payload},
@@ -99,11 +103,12 @@ async def update_feed_item(item: TeamFeedItem, **kwargs) -> TeamFeedItem:
     return item
 
 
-async def recompute_attention(project_id, agent_id: str, after_result: bool = False) -> None:
-    """Recompute attention_level from pending TeamFeedItems.
+async def recompute_attention(project_id, agent_id: str) -> None:
+    """Recompute agent attention from pending TeamFeedItems.
 
-    after_result: if True and no pending items, set "review" instead of "none"
-    (agent just finished a turn, output available for review).
+    Attention is now intervention-only. Successful turns do not create a
+    separate "review" state; only pending permission and plan items should
+    surface as actionable attention in supervised mode.
     """
     has_perm = await TeamFeedItem.objects.filter(
         project_id=project_id,
@@ -121,8 +126,6 @@ async def recompute_attention(project_id, agent_id: str, after_result: bool = Fa
         plan_status="pending",
     ).aexists():
         level = "plan"
-    elif after_result:
-        level = "review"
     else:
         level = "none"
 
@@ -164,17 +167,20 @@ async def resolve_permission(
     # If relay is disconnected, revert feed item to pending — the agent's
     # callback Future is gone anyway (relay disconnect kills the process).
     if item.tool_use_id and item.agent_record_id:
-        from agents.services.comms import push_to_relay
-        result = (
-            {"behavior": "allow"}
-            if verdict == "allowed"
-            else {"behavior": "deny", "message": "Denied by user"}
-        )
-        sent = await push_to_relay(str(item.agent_record_id), {
-            "type": "callback_response",
-            "request_id": item.tool_use_id,
-            "result": result,
-        })
+        from agents.services.relay import push_to_relay
+        from agents.services.relay_commands import CallbackBehavior, CallbackResponseCommand
+        if verdict == "allowed":
+            cmd = CallbackResponseCommand(
+                request_id=item.tool_use_id,
+                behavior=CallbackBehavior.ALLOW,
+            )
+        else:
+            cmd = CallbackResponseCommand(
+                request_id=item.tool_use_id,
+                behavior=CallbackBehavior.DENY,
+                message="Denied by user",
+            )
+        sent = await push_to_relay(str(item.agent_record_id), cmd)
         if not sent:
             # Revert — agent didn't receive the verdict
             item = await update_feed_item(item, perm_status="pending")
@@ -236,12 +242,17 @@ async def _persist_allowed_tool(item: TeamFeedItem) -> None:
         str(item.agent_record_id), tool_name
     )
     if agent is not None:
-        # Poke relay so allowed_tools take effect immediately (no redeploy needed).
-        poke = agent.volume.mutate_state(
-            agent.model or "", agent.mode or "auto", agent.allowed_tools or []
+        # Reload relay so allowed_tools take effect immediately (no redeploy needed).
+        from agents.services.relay import update_volume_and_reload
+        await update_volume_and_reload(
+            agent,
+            "_abox/state.json",
+            json.dumps({
+                "model": agent.model or "",
+                "mode": agent.mode or "auto",
+                "allowed_tools": agent.allowed_tools or [],
+            }),
         )
-        from agents.services.comms import push_to_relay
-        await push_to_relay(str(agent.id), poke)
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
 
@@ -271,7 +282,7 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
         # Don't restart a dead agent just to tell it "rejected"
         is_dead = agent and agent.status in (AgentStatus.STOPPED, AgentStatus.ERROR)
         if not (verdict == "rejected" and is_dead):
-            from agents.services.comms import send_message
+            from agents.services.relay import send_message
             msg = (
                 "Plan approved. Proceed with the implementation."
                 if verdict == "approved"
@@ -283,5 +294,3 @@ async def resolve_plan(item: TeamFeedItem, verdict: str) -> TeamFeedItem:
         await recompute_attention(str(item.project_id), str(item.agent_record_id))
 
     return item
-
-

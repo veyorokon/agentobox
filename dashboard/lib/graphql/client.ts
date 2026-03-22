@@ -17,6 +17,7 @@ import { getAuthHeader, clearTokenAndRedirect } from "@/lib/auth"
 /* ================================================================== */
 
 const log = createLogger("apollo")
+const GRAPHQL_TIMEOUT_MS = 15_000
 
 /** Derive GraphQL HTTP URL from the current browser location.
  *  - NEXT_PUBLIC_API_URL override: always wins (build-time or runtime).
@@ -76,10 +77,33 @@ const authErrorLink = onError(({ error }) => {
   }
 })
 
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), GRAPHQL_TIMEOUT_MS)
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal,
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`GraphQL request timed out after ${GRAPHQL_TIMEOUT_MS}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 /* ── Network links ───────────────────────────────────────────────── */
 
 const httpLink = new HttpLink({
   uri: getApiUrl,
+  fetch: fetchWithTimeout,
   headers: {
     get authorization() {
       return getAuthHeader()

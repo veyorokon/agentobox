@@ -1,32 +1,44 @@
-.PHONY: dev migrate makemigrations createsuperuser check schema agent-image agent-image-base agent-image-claude up down docs test test-local _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server
+.PHONY: dev migrate makemigrations createsuperuser check schema codegen agent-image agent-image-runtime agent-image-runtime-managed agent-image-runtime-desktop agent-image-runtime-desktop-managed up down docs test test-local test-agent _test-backend _test-agent _test-dashboard lint test-e2e test-e2e-full test-e2e-agents test-e2e-dashboard test-integration seed test-unit test-invariant test-all test-bootstrap test-smoke test-smoke-modal test-modal-local-bootstrap test-agent-contract test-agent-runtime-docker-contract test-agent-runtime-desktop-docker-contract test-agent-runtime-modal-contract modal-contract modal-debug modal-contract-local modal-contract-local-rebuild modal-debug-local modal-debug-local-rebuild modal-shell modal-status modal-logs modal-stop test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck test-ci-fast test-ci-smoke-bootstrap test-ci-smoke-roundtrip tf-bootstrap tf-init tf-plan tf-apply tf-output tf-destroy tf-pull tf-push ssh aws-check setup-server smoke
 
 dev:
-	cd backend && uv run daphne -b 0.0.0.0 -p 8000 config.asgi:application
+	uv --directory backend run daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
 migrate:
-	cd backend && uv run python manage.py migrate
+	uv --directory backend run python manage.py migrate
 
 makemigrations:
-	cd backend && uv run python manage.py makemigrations
+	uv --directory backend run python manage.py makemigrations
 
 createsuperuser:
-	cd backend && uv run python manage.py createsuperuser
+	uv --directory backend run python manage.py createsuperuser
 
 check:
-	cd backend && uv run python manage.py check
+	uv --directory backend run python manage.py check
 
 schema:
 	docker compose exec -T backend uv run python -c "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); import django; django.setup(); from schema import schema; print(schema.as_str())" > dashboard/schema.graphql
 
+codegen: schema
+	cd dashboard && pnpm codegen
+
 PLATFORM ?= linux/amd64
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+MODAL_HARNESS_RESULT_FILE ?= .playwright-mcp/modal-harness-latest.json
+MODAL_HARNESS_LOG_FILE ?= .playwright-mcp/modal-latest.log
 
-agent-image-base:
-	docker build --platform $(PLATFORM) -f agent/Dockerfile.base -t agentobox-agent-base:latest ./agent
+agent-image: agent-image-runtime-desktop-managed
 
-agent-image-claude: agent-image-base
-	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-base:latest -f agent/claude/Dockerfile -t agentobox-agent-claude:latest ./agent
+agent-image-runtime:
+	docker build --platform $(PLATFORM) --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile -t agentobox-agent-runtime:latest ./agent
 
-agent-image: agent-image-claude
+agent-image-runtime-managed:
+	docker build --platform $(PLATFORM) --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile.managed -t agentobox-agent-runtime-managed:latest ./agent
+
+agent-image-runtime-desktop: agent-image-runtime
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-runtime:latest --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile.desktop -t agentobox-agent-runtime-desktop:latest ./agent
+
+agent-image-runtime-desktop-managed: agent-image-runtime-managed
+	docker build --platform $(PLATFORM) --build-arg BASE_IMAGE=agentobox-agent-runtime-managed:latest --build-arg AGENTOBOX_GIT_COMMIT=$(GIT_COMMIT) -f agent/Dockerfile.desktop.managed -t agentobox-agent-runtime-desktop-managed:latest ./agent
 
 up:
 	AGENT_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo latest) docker compose up --build
@@ -45,48 +57,140 @@ test:
 test-local: _test-backend _test-agent _test-dashboard
 
 _test-backend:
-	cd backend && uv run python -m pytest agents/tests/ -v
+	uv --directory backend run python -m pytest agents/tests/ -v
 
 _test-agent:
-	uv run pytest agent/tests/ tests/architecture/ -v -o "addopts="
+	uv run --project . pytest agent/tests/ tests/architecture/ -v -o "addopts="
 
 _test-dashboard:
 	cd dashboard && pnpm vitest run
 
 test-agent:
-	docker run --rm --entrypoint python3 -v ./agent/tests:/opt/abox/tests agentobox-agent-claude:latest \
-		-m pytest /opt/abox/tests -v
+	PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/ -v -o addopts=
+
+test-backend-unit:
+	uv --directory backend run pytest -m "unit" --tb=short -q
+
+test-backend-integration:
+	uv --directory backend run pytest -m "integration" --tb=short -q -o "DJANGO_SETTINGS_MODULE=config.settings"
+
+test-backend-chaos:
+	uv --directory backend run pytest -m "chaos" --tb=short -q
+
+test-backend-architecture:
+	uv --directory backend run python agents/tests/check_architecture.py
+
+test-backend-lint:
+	uv --directory backend run ruff check agents/
+
+test-agent-unit:
+	PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/ -q -o addopts=
+
+test-agent-contract:
+	PYTHONPATH=$(CURDIR) uv --directory agent run pytest -m "contract" tests/ -q -o addopts=
+
+test-agent-lint:
+	uv --directory agent run ruff check .
+
+test-dashboard-unit:
+	cd dashboard && pnpm vitest run
+
+test-dashboard-typecheck:
+	cd dashboard && pnpm exec tsc --noEmit
+
+test-ci-fast: test-backend-unit test-backend-integration test-backend-chaos test-backend-architecture test-backend-lint test-agent-unit test-agent-lint test-dashboard-unit test-dashboard-typecheck lint
+
+test-ci-smoke-bootstrap:
+	uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -o "addopts="
+
+test-ci-smoke-roundtrip:
+	uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+
+test-agent-runtime-docker-contract:
+	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts=
+
+test-agent-runtime-desktop-docker-contract:
+	AGENTOBOX_RUN_DOCKER_CONTRACT_TESTS=1 ./.venv/bin/python -m pytest agent/tests/test_managed_docker_contract.py -q -o addopts= -k desktop
+
+test-agent-runtime-modal-contract:
+	AGENTOBOX_RUN_MODAL_CONTRACT_TESTS=1 PYTHONPATH=$(CURDIR) uv --directory agent run pytest tests/test_managed_modal_contract.py -q -o addopts=
+
+modal-contract:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-debug:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --image-ref "$${AGENTOBOX_MODAL_CONTRACT_IMAGE:?set AGENTOBOX_MODAL_CONTRACT_IMAGE}" --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --isolated --keep-alive --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-contract-local:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-contract-local-rebuild:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --force-build --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-debug-local:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --isolated --keep-alive --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-debug-local-rebuild:
+	agent/.venv/bin/python agent/scripts/modal_managed_harness.py --local-direct --force-build --callback-url "$${AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL:-https://example.com/graphql}" --isolated --keep-alive --result-file "$(MODAL_HARNESS_RESULT_FILE)" --log-file "$(MODAL_HARNESS_LOG_FILE)"
+
+modal-shell:
+	@modal shell "$${SANDBOX_ID:?set SANDBOX_ID}"
+
+modal-status:
+	@python3 -c 'import json; from pathlib import Path; path = Path(".playwright-mcp/modal-harness-latest.json"); \
+assert path.exists(), "missing .playwright-mcp/modal-harness-latest.json; run modal-debug or modal-debug-local first"; \
+obj = json.loads(path.read_text()); \
+print(json.dumps({"sandbox_id": obj["sandbox_id"], "container_id": obj.get("container_id", ""), "image_ref": obj["image_ref"], "health_url": obj["health_url"], "vnc_url": obj["vnc_url"], "status_payload": obj["status_payload"]}, indent=2))'
+
+modal-logs:
+	@CONTAINER_ID="$${CONTAINER_ID:-$$(python3 -c 'import json; from pathlib import Path; path = Path(".playwright-mcp/modal-harness-latest.json"); print(json.loads(path.read_text()).get("container_id", "")) if path.exists() else print("")')}"; \
+	test -n "$$CONTAINER_ID" || { echo "missing CONTAINER_ID and no container_id in .playwright-mcp/modal-harness-latest.json"; exit 1; }; \
+	MODAL_ENVIRONMENT="$${MODAL_ENVIRONMENT:-dev}" modal container logs "$$CONTAINER_ID"
+
+modal-stop:
+	@CONTAINER_ID="$${CONTAINER_ID:-$$(python3 -c 'import json; from pathlib import Path; path = Path(".playwright-mcp/modal-harness-latest.json"); print(json.loads(path.read_text()).get("container_id", "")) if path.exists() else print("")')}"; \
+	test -n "$$CONTAINER_ID" || { echo "missing CONTAINER_ID and no container_id in .playwright-mcp/modal-harness-latest.json"; exit 1; }; \
+	MODAL_ENVIRONMENT="$${MODAL_ENVIRONMENT:-dev}" modal container stop "$$CONTAINER_ID"
 
 lint:
-	cd backend && uv run ruff check agents/
+	uv --directory backend run ruff check agents/
 	cd dashboard && pnpm next lint
 
 test-e2e:
-	uv run --group e2e pytest tests/e2e/ -v || test $$? -eq 5
+	uv run --project . --group e2e pytest tests/e2e/ -v || test $$? -eq 5
 
 test-e2e-full:
-	uv run --group e2e pytest tests/e2e/ -v -m "e2e"
+	uv run --project . --group e2e pytest tests/e2e/ -v -m "e2e"
 
 test-e2e-agents:
-	uv run --group e2e pytest tests/e2e/ -v -m "e2e and agent"
+	uv run --project . --group e2e pytest tests/e2e/ -v -m "e2e and agent"
 
 test-e2e-dashboard:
-	uv run --group e2e pytest tests/e2e/ -v -m "e2e and dashboard"
+	uv run --project . --group e2e pytest tests/e2e/ -v -m "e2e and dashboard"
 
 test-integration:
-	uv run --group e2e pytest tests/integration/ -v --timeout=30 -m "integration" -o "addopts="
+	uv run --project . --group e2e pytest tests/integration/ -v --timeout=30 -m "integration" -o "addopts="
 
 test-visual:
 	ABOX_VISUAL_TESTS=1 uv run pytest agent/tests/test_theme_visual.py -v --timeout=120 -s
 
-test-unit:
-	cd backend && uv run pytest -m "unit" --tb=short -q
+test-unit: test-backend-unit
 
 test-invariant:
-	cd backend && uv run pytest -m "invariant" --tb=short -q
+	uv --directory backend run pytest -m "invariant" --tb=short -q
 
 test-all:
 	docker compose exec backend uv run pytest --tb=short -q
+
+test-bootstrap: test-ci-smoke-bootstrap
+
+test-smoke: test-ci-smoke-roundtrip
+
+test-smoke-modal:
+	SMOKE_RUNTIME=modal uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -o "addopts="
+
+test-modal-local-bootstrap:
+	bash bin/modal-local-bootstrap
 
 seed:
 	docker compose exec backend uv run python manage.py seed_dev_data
@@ -189,3 +293,7 @@ setup-server: ## Initial server setup — SCP files + run setup script. ENV=dev
 	ok "Files copied"; \
 	step "Running setup script..."; \
 	ssh ubuntu@$$IP 'sudo bash /tmp/setup-server.sh'
+
+
+smoke:
+	@bash bin/smoke-test.sh https://dev.agentobox.com

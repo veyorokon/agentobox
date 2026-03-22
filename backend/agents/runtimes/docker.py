@@ -18,13 +18,15 @@ import asyncio
 import io
 import tarfile
 import time
-from pathlib import PurePosixPath
+from decimal import Decimal
+from pathlib import Path, PurePosixPath
 
 import docker
 import structlog
-from django.conf import settings
+from config.app_config import app_config
 
-from agents.runtimes.base import SandboxInstance, VolumeMount
+from agents.runtimes.base import RuntimeResources, SandboxInstance, VolumeMount
+from agents.services.project_volume import LocalProjectVolumeStore
 
 log = structlog.get_logger("abox.runtime.docker")
 
@@ -48,9 +50,8 @@ class DockerRuntime:
         # Select image based on agent_type. The env dict carries AGENT_TYPE
         # (set by lifecycle.py from the Agent model field).
         agent_type = env.get("AGENT_TYPE", "claude-code")
-        image_map = getattr(settings, "AGENT_IMAGE_MAP", {})
-        image = image_map.get(agent_type, getattr(settings, "AGENT_IMAGE", "agentobox-agent:latest"))
-        network = getattr(settings, "DOCKER_NETWORK", "agentobox_default")
+        image = app_config.agent.image_map.get(agent_type, app_config.agent.image)
+        network = app_config.docker_network
 
         op = log.bind(op="create", agent_name=name, image=image)
         op.info("runtime.container_creating", volumes=[m.name for m in volumes] if volumes else [])
@@ -83,7 +84,7 @@ class DockerRuntime:
                 detach=True,
                 name=container_name,
                 environment=env,
-                ports={"6080/tcp": None},
+                ports={"6080/tcp": None, "8080/tcp": None},
                 labels={
                     "agentobox.managed": "true",
                     "agentobox.agent": name,
@@ -102,13 +103,15 @@ class DockerRuntime:
             # Both containers share the Docker network, so container name
             # DNS works. Same pattern as Guacamole / Kasm Workspaces.
             vnc_url = f"http://{container_name}:6080"
-            return SandboxInstance(id=container.id, vnc_url=vnc_url)
+            health_url = f"http://{container_name}:8080"
+            return SandboxInstance(id=container.id, vnc_url=vnc_url, health_url=health_url)
 
         result = await self._run_sync(_create)
         op.info(
             "runtime.container_created",
             container_id=result.id[:12],
             vnc_url=result.vnc_url,
+            health_url=result.health_url,
             elapsed_s=round(time.monotonic() - t0, 2),
         )
         return result
@@ -131,6 +134,9 @@ class DockerRuntime:
         if exit_code != 0:
             op.warning("runtime.exec_failed", exit_code=exit_code, elapsed_s=elapsed,
                        output=result[:200] if result else "")
+            raise RuntimeError(
+                f"Docker exec failed (exit_code={exit_code}): {result[:200] if result else ''}"
+            )
         else:
             op.info("runtime.exec_done", elapsed_s=elapsed)
         return result
@@ -161,6 +167,46 @@ class DockerRuntime:
 
         await self._run_sync(_write)
         op.info("runtime.write_file_done", elapsed_s=round(time.monotonic() - t0, 2))
+
+    def machine_store(self):
+        return LocalProjectVolumeStore(Path(app_config.volume_root))
+
+    def resource_snapshot(self) -> RuntimeResources:
+        return RuntimeResources(cpu_cores=Decimal("0"), memory_mb=0)
+
+    async def sync_machine_volume(self, sandbox_id: str, mount_path: str = "/vol") -> None:
+        """Docker bind/named volumes are already runtime-visible."""
+        return None
+
+    async def mirror_machine_append(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str,
+    ) -> None:
+        """Docker bind/named volumes already reflect canonical appends."""
+        return None
+
+    async def mirror_machine_write(
+        self,
+        sandbox_id: str,
+        path: str,
+        content: str | bytes,
+    ) -> None:
+        """Docker bind/named volumes already reflect canonical overwrites."""
+        return None
+
+    async def await_machine_path_visible(
+        self,
+        sandbox_id: str,
+        path: str,
+        *,
+        expected_content: str = "",
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.25,
+    ) -> None:
+        """Docker bind/named volumes are already runtime-visible."""
+        return None
 
     async def terminate(self, sandbox_id: str) -> None:
         op = log.bind(op="terminate", container_id=sandbox_id[:12])
@@ -211,7 +257,7 @@ class DockerRuntime:
                 container.reload()
                 return container.status  # "running", "exited", etc.
             except docker.errors.NotFound:
-                return "dead"
+                return "missing"
 
         return await self._run_sync(_status)
 
@@ -233,3 +279,34 @@ class DockerRuntime:
                 return None
 
         return await self._run_sync(_inspect)
+
+    async def get_event_tail(self, sandbox_id: str, *, limit: int = 20) -> list[dict]:
+        """Capture recent Docker daemon events correlated to the sandbox."""
+
+        def _events():
+            since = max(0, int(time.time()) - 300)
+            until = int(time.time()) + 1
+            results = []
+            for event in self._client.events(
+                since=since,
+                until=until,
+                decode=True,
+                filters={"container": sandbox_id},
+            ):
+                if not isinstance(event, dict):
+                    continue
+                actor = event.get("Actor", {}) or {}
+                attrs = actor.get("Attributes", {}) or {}
+                entry = {
+                    "time": event.get("time"),
+                    "type": event.get("Type", ""),
+                    "action": event.get("Action", ""),
+                }
+                for key in ("signal", "exitCode", "name"):
+                    value = attrs.get(key)
+                    if value not in (None, ""):
+                        entry[key] = value
+                results.append(entry)
+            return results[-max(1, limit):]
+
+        return await self._run_sync(_events)
