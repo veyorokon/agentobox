@@ -106,6 +106,38 @@ Notes:
 - `MODAL_ENVIRONMENT` should match the real production Modal environment name.
 - `SMOKE_TEST_USER` must correspond to a real bootstrap/smoke user in prod.
 
+Recommended first-pass template:
+
+```json
+{
+  "DOMAIN": "agentobox.com",
+  "VERSION": "main",
+  "AGENT_VERSION": "main",
+  "ENVIRONMENT": "prod",
+  "ABOX_CALLBACK_URL": "https://agentobox.com/graphql",
+  "ABOX_DASHBOARD_URL": "https://agentobox.com",
+  "ALLOWED_HOSTS": "agentobox.com,www.agentobox.com",
+  "CSRF_TRUSTED_ORIGINS": "https://agentobox.com,https://www.agentobox.com",
+  "CORS_ALLOWED_ORIGINS": "https://agentobox.com,https://www.agentobox.com",
+  "MODAL_ENVIRONMENT": "main",
+  "MODAL_APP_NAME": "agentobox",
+  "MEDIA_BUCKET": "agentobox-media",
+  "MEDIA_CDN_URL": "",
+  "GOOGLE_CLIENT_ID": "<prod-google-client-id>",
+  "GITHUB_CLIENT_ID": "<prod-github-client-id>",
+  "AGENT_RUNTIME": "modal",
+  "SMOKE_TEST_USER": "demo"
+}
+```
+
+Why these keys:
+
+- `DOMAIN` is consumed directly by the deploy workflow.
+- `ABOX_CALLBACK_URL` and `ABOX_DASHBOARD_URL` make the prod surface explicit instead of inheriting dev-ish defaults.
+- `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, and `CORS_ALLOWED_ORIGINS` should be explicit for prod.
+- `ENVIRONMENT=prod` keeps the app/runtime labeling honest.
+- `MODAL_ENVIRONMENT` should match the real Modal environment name you decide to use for prod.
+
 ### 5. Populate `APP_SECRETS`
 
 Minimum required prod secrets:
@@ -129,6 +161,102 @@ Generate fresh production-only values for:
 - `ABOX_ENCRYPTION_KEY`
 
 Do not reuse local or dev values.
+
+Recommended first-pass template:
+
+```json
+{
+  "DATABASE_URL": "postgres://<user>:<password>@<host>:5432/<db>",
+  "REDIS_URL": "redis://redis:6379/0",
+  "SECRET_KEY": "<fresh-django-secret-key>",
+  "ABOX_ENCRYPTION_KEY": "<fresh-fernet-compatible-key>",
+  "MODAL_TOKEN_ID": "<prod-modal-token-id>",
+  "MODAL_TOKEN_SECRET": "<prod-modal-token-secret>",
+  "GOOGLE_CLIENT_SECRET": "<prod-google-client-secret>",
+  "GITHUB_CLIENT_SECRET": "<prod-github-client-secret>",
+  "SMOKE_TEST_PASS": "<prod-demo-password>"
+}
+```
+
+Possible later additions:
+
+- `ANTHROPIC_API_KEY`
+- other provider keys if prod will run platform-managed usage
+- any storage/provider secrets required by the final prod topology
+
+Notes:
+
+- `DATABASE_URL` is required by `AppConfig`; there is no valid prod deploy without it.
+- `REDIS_URL` has a default, but it is better to make the real prod value explicit.
+- `SMOKE_TEST_PASS` is optional in workflow code, but should be explicitly set for real prod canaries.
+- `DEPLOY_HOST` and `DEPLOY_SSH_KEY` are separate GitHub environment secrets, not part of `APP_SECRETS`.
+
+### 5a. Load values into the GitHub `prod` environment
+
+The deploy workflow reads:
+
+- `vars.APP_CONFIG`
+- `secrets.APP_SECRETS`
+- `secrets.DEPLOY_HOST`
+- `secrets.DEPLOY_SSH_KEY`
+
+The easiest clean path is to create local JSON files, then load them with `gh`.
+
+Example:
+
+```bash
+cat > /tmp/agentobox-prod-app-config.json <<'EOF'
+{
+  "DOMAIN": "agentobox.com",
+  "VERSION": "main",
+  "AGENT_VERSION": "main",
+  "ENVIRONMENT": "prod",
+  "ABOX_CALLBACK_URL": "https://agentobox.com/graphql",
+  "ABOX_DASHBOARD_URL": "https://agentobox.com",
+  "ALLOWED_HOSTS": "agentobox.com,www.agentobox.com",
+  "CSRF_TRUSTED_ORIGINS": "https://agentobox.com,https://www.agentobox.com",
+  "CORS_ALLOWED_ORIGINS": "https://agentobox.com,https://www.agentobox.com",
+  "MODAL_ENVIRONMENT": "main",
+  "MODAL_APP_NAME": "agentobox",
+  "MEDIA_BUCKET": "agentobox-media",
+  "MEDIA_CDN_URL": "",
+  "GOOGLE_CLIENT_ID": "<prod-google-client-id>",
+  "GITHUB_CLIENT_ID": "<prod-github-client-id>",
+  "AGENT_RUNTIME": "modal",
+  "SMOKE_TEST_USER": "demo"
+}
+EOF
+
+cat > /tmp/agentobox-prod-app-secrets.json <<'EOF'
+{
+  "DATABASE_URL": "postgres://<user>:<password>@<host>:5432/<db>",
+  "REDIS_URL": "redis://redis:6379/0",
+  "SECRET_KEY": "<fresh-django-secret-key>",
+  "ABOX_ENCRYPTION_KEY": "<fresh-fernet-compatible-key>",
+  "MODAL_TOKEN_ID": "<prod-modal-token-id>",
+  "MODAL_TOKEN_SECRET": "<prod-modal-token-secret>",
+  "GOOGLE_CLIENT_SECRET": "<prod-google-client-secret>",
+  "GITHUB_CLIENT_SECRET": "<prod-github-client-secret>",
+  "SMOKE_TEST_PASS": "<prod-demo-password>"
+}
+EOF
+```
+
+Then load them:
+
+```bash
+gh variable set APP_CONFIG --env prod < /tmp/agentobox-prod-app-config.json
+gh secret set APP_SECRETS --env prod < /tmp/agentobox-prod-app-secrets.json
+gh secret set DEPLOY_HOST --env prod
+gh secret set DEPLOY_SSH_KEY --env prod < /path/to/prod-deploy-key
+```
+
+Verification:
+
+```bash
+gh variable list --env prod
+gh secret list --env prod
+```
 
 ### 6. Configure OAuth providers for prod
 

@@ -91,7 +91,17 @@ output "password" {
 }
 
 output "uri" {
-  value     = digitalocean_database_cluster.main.private_uri
+  # Export an app-ready connection string for the created database, not the
+  # cluster defaultdb URI. The cluster-level private_uri points at defaultdb,
+  # which is not the database this module creates for the app.
+  value = format(
+    "postgresql://%s:%s@%s:%s/%s?sslmode=require",
+    digitalocean_database_cluster.main.user,
+    urlencode(digitalocean_database_cluster.main.password),
+    digitalocean_database_cluster.main.private_host,
+    digitalocean_database_cluster.main.port,
+    digitalocean_database_db.main.name,
+  )
   sensitive = true
   description = "Full connection string (private network)"
 }
