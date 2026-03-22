@@ -1,8 +1,15 @@
-# Deploy pipeline: validate → ci → build → deploy → bootstrap
+# Deploy pipeline: validate → ci → build/promote → deploy → bootstrap
 #
 # Branch → environment mapping:
 #   dev  branch → dev  environment (dev.agentobox.com)
 #   main branch → prod environment (agentobox.com)
+#
+# Image identity contract:
+#   dev:  builds images, writes canonical release manifest to GHCR
+#   main: resolves promoted dev manifest from GHCR, does not rebuild
+#
+# The manifest is keyed by the dev commit SHA (immutable). A dev-latest
+# convenience tag is also published but is not the promotion source.
 #
 # Release tags are bookkeeping only. They do not deploy environments.
 # Promotion happens only via branch merges:
@@ -11,12 +18,12 @@
 #
 # Flow:
 #   PR → dev:  ci.yml
-#   merge dev: deploy to dev → agent bootstrap against dev.agentobox.com
-#   merge main: deploy to prod → agent bootstrap against agentobox.com
+#   merge dev: build → manifest → deploy to dev → bootstrap
+#   merge main: resolve manifest → deploy to prod → bootstrap
 #
 # Required GitHub Secrets (per environment):
 #   DEPLOY_HOST     — Server IP or domain
-#   DEPLOY_SSH_KEY  — SSH private key for ubuntu user
+#   DEPLOY_SSH_KEY  — SSH private key for the canonical deploy user
 #   APP_SECRETS     — JSON object of actual secrets (DATABASE_URL, SECRET_KEY,
 #                     ABOX_ENCRYPTION_KEY, MODAL_TOKEN_*, OAuth secrets, etc.)
 #
@@ -36,6 +43,11 @@ on:
       - "**.md"
       - "docs/**"
   workflow_dispatch:
+    inputs:
+      allow_rebuild:
+        description: "Allow rebuilding images on main (bypasses promotion)"
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -46,6 +58,7 @@ env:
   BACKEND_IMAGE: ghcr.io/veyorokon/agentobox-backend
   DASHBOARD_IMAGE: ghcr.io/veyorokon/agentobox-dashboard
   AGENT_DESKTOP_IMAGE: ghcr.io/veyorokon/agentobox-agent-runtime-desktop-managed
+  MANIFEST_IMAGE: ghcr.io/veyorokon/agentobox-release-manifest
 
 jobs:
   # ─── Validate Secrets ─────────────────────────────────────────────
@@ -102,9 +115,10 @@ jobs:
 
   # ─── Agent Image ───────────────────────────────────────────────────
   # Build the managed desktop agent image once, in parallel with CI.
-  # Deploy and Modal bootstrap then consume that exact immutable sha image.
+  # Only runs on dev (or when allow_rebuild is set on manual dispatch).
   agent-image:
     name: Agent Image
+    if: github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild)
     permissions:
       contents: read
       packages: write
@@ -112,8 +126,11 @@ jobs:
     secrets: inherit
 
   # ─── Build ─────────────────────────────────────────────────────────
+  # Only runs on dev (or when allow_rebuild is set on manual dispatch).
+  # main promotes the exact dev artifacts via the manifest instead.
   build:
     name: Build & Push Images
+    if: github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild)
     runs-on: ubuntu-latest
     needs: validate-secrets
     permissions:
@@ -121,7 +138,9 @@ jobs:
       packages: write
     outputs:
       backend-image: ${{ steps.backend-image-ref.outputs.ref }}
+      backend-digest: ${{ steps.backend-image-ref.outputs.digest-ref }}
       dashboard-image: ${{ steps.dashboard-image-ref.outputs.ref }}
+      dashboard-digest: ${{ steps.dashboard-image-ref.outputs.digest-ref }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -145,7 +164,8 @@ jobs:
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v7
+      - id: push-backend
+        uses: docker/build-push-action@v7
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
@@ -158,7 +178,9 @@ jobs:
           cache-to: type=gha,scope=backend,mode=max
       - id: backend-image-ref
         name: Record backend image ref
-        run: echo "ref=${{ env.BACKEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "ref=${{ env.BACKEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+          echo "digest-ref=${{ env.BACKEND_IMAGE }}@${{ steps.push-backend.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
       # Dashboard image
       - id: dashboard-meta
@@ -170,7 +192,8 @@ jobs:
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v7
+      - id: push-dashboard
+        uses: docker/build-push-action@v7
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
@@ -183,12 +206,181 @@ jobs:
           cache-to: type=gha,scope=dashboard,mode=max
       - id: dashboard-image-ref
         name: Record dashboard image ref
-        run: echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
+          echo "digest-ref=${{ env.DASHBOARD_IMAGE }}@${{ steps.push-dashboard.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+  # ─── Release Manifest ─────────────────────────────────────────────
+  # Single source of truth for image identity in the pipeline.
+  #
+  # dev path:  assembles manifest from build + agent-image outputs,
+  #            pushes to GHCR keyed by commit SHA (immutable) + dev-latest.
+  # main path: resolves the promoted dev manifest from GHCR using the
+  #            merge commit's second parent (the dev HEAD that was merged).
+  # rebuild path: allow_rebuild=true on main builds fresh images instead
+  #               of promoting. Manifest records provenance as "rebuild".
+  #
+  # All downstream jobs consume image refs from this job's outputs.
+  #
+  # TEMPORARY: HEAD^2 resolution assumes merge-commit PRs for dev→main.
+  # If the merge strategy changes (rebase, squash), this seam breaks.
+  # Follow-up: replace with explicit manifest tag passed as input or
+  # resolved from a promotion API. Also: pin digests instead of tags.
+  manifest:
+    name: Release Manifest
+    needs: [build, agent-image]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-image: ${{ steps.output.outputs.backend-image }}
+      dashboard-image: ${{ steps.output.outputs.dashboard-image }}
+      agent-managed-image: ${{ steps.output.outputs.agent-managed-image }}
+      agent-desktop-image: ${{ steps.output.outputs.agent-desktop-image }}
+      source-commit: ${{ steps.output.outputs.source-commit }}
+      manifest-tag: ${{ steps.output.outputs.manifest-tag }}
+      provenance: ${{ steps.output.outputs.provenance }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # fetch-depth: 0 ensures HEAD^2 is available for merge-commit
+          # resolution on main. Shallow clones (depth 2) do not reliably
+          # include the second parent of a merge commit.
+          fetch-depth: 0
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oras-project/setup-oras@v1
+
+      # ── Build path: write manifest from build outputs ──
+      # Runs on dev (normal) or main with allow_rebuild (escape hatch).
+      # Canonical image refs use digests. Tag refs are convenience/debug only.
+      - name: Write manifest (build)
+        if: needs.build.result == 'success' && needs.agent-image.result == 'success'
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BRANCH="${{ github.ref_name }}"
+
+          # Provenance: "build" for normal dev flow, "rebuild" for allow_rebuild on main
+          if [ "$BRANCH" = "dev" ]; then
+            PROVENANCE="build"
+          else
+            PROVENANCE="rebuild"
+          fi
+
+          jq -n \
+            --arg sv "1" \
+            --arg sc "$GITHUB_SHA" \
+            --arg sb "$BRANCH" \
+            --arg pv "$PROVENANCE" \
+            --arg wr "${{ github.run_id }}" \
+            --arg ca "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg bi "${{ needs.build.outputs.backend-digest }}" \
+            --arg di "${{ needs.build.outputs.dashboard-digest }}" \
+            --arg ami "${{ needs.agent-image.outputs.managed-digest }}" \
+            --arg adi "${{ needs.agent-image.outputs.desktop-digest }}" \
+            --arg bi_tag "${{ needs.build.outputs.backend-image }}" \
+            --arg di_tag "${{ needs.build.outputs.dashboard-image }}" \
+            --arg ami_tag "${{ needs.agent-image.outputs.managed-image }}" \
+            --arg adi_tag "${{ needs.agent-image.outputs.desktop-image }}" \
+            '{
+              schema_version: $sv,
+              source_commit: $sc,
+              source_branch: $sb,
+              provenance: $pv,
+              workflow_run_id: $wr,
+              created_at: $ca,
+              backend_image: $bi,
+              dashboard_image: $di,
+              agent_managed_image: $ami,
+              agent_desktop_image: $adi,
+              tags: {
+                backend_image: $bi_tag,
+                dashboard_image: $di_tag,
+                agent_managed_image: $ami_tag,
+                agent_desktop_image: $adi_tag
+              }
+            }' > manifest.json
+
+          echo "Manifest contents:"
+          cat manifest.json
+
+          # Immutable tag keyed by commit SHA
+          oras push "${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}" manifest.json:application/json
+
+          # Convenience pointer — only publish dev-latest for actual dev builds
+          if [ "$BRANCH" = "dev" ]; then
+            oras push "${{ env.MANIFEST_IMAGE }}:dev-latest" manifest.json:application/json
+          fi
+
+          echo "Pushed manifest as sha-${SHORT_SHA} (provenance: ${PROVENANCE})"
+
+      # ── Main path: resolve promoted dev manifest ──
+      # TEMPORARY: assumes merge-commit PRs. HEAD^2 gives the dev branch
+      # tip that was merged. Squash/rebase merges will fail here by design.
+      # Follow-up: pass manifest tag explicitly or resolve via API.
+      - name: Resolve promoted manifest (main)
+        if: github.ref_name == 'main' && needs.build.result == 'skipped'
+        run: |
+          # Verify this is actually a merge commit (two parents)
+          PARENT_COUNT=$(git cat-file -p HEAD | grep -c '^parent ')
+          if [ "$PARENT_COUNT" -lt 2 ]; then
+            echo "::error::HEAD is not a merge commit (has ${PARENT_COUNT} parent(s))."
+            echo "::error::Promotion requires a merge-commit PR from dev."
+            echo "::error::If this was a squash/rebase merge, use allow_rebuild=true."
+            echo "::error::This is a known temporary limitation — see deploy.yml comments."
+            exit 1
+          fi
+
+          # Extract the dev commit from the merge commit's second parent
+          DEV_SHA=$(git rev-parse HEAD^2)
+          SHORT_SHA="${DEV_SHA::7}"
+
+          echo "Resolving manifest for dev commit: ${DEV_SHA} (sha-${SHORT_SHA})"
+
+          oras pull "${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}" || {
+            echo "::error::No manifest found at ${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}."
+            echo "::error::Dev may not have deployed commit ${DEV_SHA}. Deploy dev first."
+            exit 1
+          }
+
+          echo "Resolved manifest (provenance: $(jq -r .provenance manifest.json)):"
+          cat manifest.json
+
+      # ── Export outputs ──
+      - name: Export manifest outputs
+        id: output
+        run: |
+          if [ ! -f manifest.json ]; then
+            echo "::error::No manifest available. Build failed or manifest resolution failed."
+            exit 1
+          fi
+
+          echo "backend-image=$(jq -r .backend_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "dashboard-image=$(jq -r .dashboard_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "agent-managed-image=$(jq -r .agent_managed_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "agent-desktop-image=$(jq -r .agent_desktop_image manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "source-commit=$(jq -r .source_commit manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "manifest-tag=sha-$(jq -r '.source_commit[:7]' manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "provenance=$(jq -r .provenance manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: manifest.json
+          retention-days: 90
 
   # ─── Deploy ────────────────────────────────────────────────────────
   agent-modal-contract:
     name: Agent Modal Contract (${{ github.ref_name }})
-    needs: [validate-secrets, ci, agent-image]
+    needs: [validate-secrets, ci, manifest]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -201,7 +393,7 @@ jobs:
       - name: Run managed Modal contract test
         env:
           AGENTOBOX_RUN_MODAL_CONTRACT_TESTS: "1"
-          AGENTOBOX_MODAL_CONTRACT_IMAGE: ${{ needs.agent-image.outputs.desktop-image }}
+          AGENTOBOX_MODAL_CONTRACT_IMAGE: ${{ needs.manifest.outputs.agent-desktop-image }}
           AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           MODAL_TOKEN_ID: ${{ fromJson(secrets.APP_SECRETS).MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ fromJson(secrets.APP_SECRETS).MODAL_TOKEN_SECRET }}
@@ -210,7 +402,7 @@ jobs:
 
   deploy:
     name: Deploy (${{ github.ref_name }})
-    needs: [build, ci, agent-image, agent-modal-contract]
+    needs: [manifest, ci, agent-modal-contract]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     steps:
@@ -240,6 +432,8 @@ jobs:
             id
             mkdir -p /opt/agentobox
             test -w /opt/agentobox
+            : > /opt/agentobox/.deploy-preflight
+            rm -f /opt/agentobox/.deploy-preflight
             docker ps >/dev/null
 
       - name: Write .env from APP_SECRETS + APP_CONFIG
@@ -251,6 +445,7 @@ jobs:
           envs: _APP_CONFIG,_APP_SECRETS,_BACKEND_IMAGE,_DASHBOARD_IMAGE,_MODAL_AGENT_IMAGE
           script: |
             mkdir -p /opt/agentobox
+            rm -f /opt/agentobox/.env
             python3 -c "
             import json, os
 
@@ -279,9 +474,9 @@ jobs:
         env:
           _APP_CONFIG: ${{ vars.APP_CONFIG }}
           _APP_SECRETS: ${{ secrets.APP_SECRETS }}
-          _BACKEND_IMAGE: ${{ needs.build.outputs.backend-image }}
-          _DASHBOARD_IMAGE: ${{ needs.build.outputs.dashboard-image }}
-          _MODAL_AGENT_IMAGE: ${{ needs.agent-image.outputs.desktop-image }}
+          _BACKEND_IMAGE: ${{ needs.manifest.outputs.backend-image }}
+          _DASHBOARD_IMAGE: ${{ needs.manifest.outputs.dashboard-image }}
+          _MODAL_AGENT_IMAGE: ${{ needs.manifest.outputs.agent-desktop-image }}
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
@@ -416,8 +611,9 @@ jobs:
       - validate-secrets
       - ci
       - agent-image
-      - agent-modal-contract
       - build
+      - manifest
+      - agent-modal-contract
       - deploy
       - agent-bootstrap
       - agent-smoke
@@ -434,18 +630,20 @@ jobs:
             [ci]="${{ needs.ci.result }}"
             [build]="${{ needs.build.result }}"
             [image]="${{ needs.agent-image.result }}"
+            [manifest]="${{ needs.manifest.result }}"
             [modal_contract]="${{ needs.agent-modal-contract.result }}"
             [deploy]="${{ needs.deploy.result }}"
             [bootstrap]="${{ needs.agent-bootstrap.result }}"
             [smoke]="${{ needs.agent-smoke.result }}"
           )
 
-          # Find first failure in pipeline order
+          # Find first failure in pipeline order.
+          # Skipped jobs (build/image on main) are not failures.
           overall=success
           blocked_at=""
-          for gate in secrets ci build image modal_contract deploy bootstrap smoke; do
+          for gate in secrets ci build image manifest modal_contract deploy bootstrap smoke; do
             r="${gates[$gate]}"
-            if [ "$r" != "success" ] && [ -z "$blocked_at" ]; then
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ] && [ -z "$blocked_at" ]; then
               overall=attention-needed
               blocked_at="$gate"
             fi
@@ -458,10 +656,23 @@ jobs:
           fi
           echo "overall=${overall}" >> "$GITHUB_OUTPUT"
 
+          # Determine pipeline mode from current branch and build path,
+          # not from manifest provenance (which describes how the manifest
+          # was originally created, not what the current pipeline is doing).
+          build_result="${{ needs.build.result }}"
+          branch="${{ github.ref_name }}"
+          if [ "$branch" = "dev" ]; then
+            echo "mode=build" >> "$GITHUB_OUTPUT"
+          elif [ "$build_result" = "skipped" ]; then
+            echo "mode=promote" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=rebuild" >> "$GITHUB_OUTPUT"
+          fi
+
           # Build pipeline graph with icons
           graph_line1=""
           graph_line2=""
-          for gate in secrets ci build image modal_contract; do
+          for gate in secrets ci manifest modal_contract; do
             r="${gates[$gate]}"
             if [ "$r" = "success" ]; then icon="✅";
             elif [ "$r" = "failure" ]; then icon="❌";
@@ -485,12 +696,12 @@ jobs:
         with:
           title: "Deploy (${{ github.ref_name == 'main' && 'prod' || 'dev' }})"
           overall: ${{ steps.status.outputs.overall }}
-          detail: ${{ steps.status.outputs.detail }}
+          detail: "${{ steps.status.outputs.detail }} (${{ steps.status.outputs.mode }})"
 
       - name: Write body
         run: |
           {
-            echo "\`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\`"
+            echo "\`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` — mode: **${{ steps.status.outputs.mode }}**"
             echo
             echo '```'
             echo "${{ steps.status.outputs.graph_line1 }}"
@@ -500,16 +711,42 @@ jobs:
             echo
             echo "| Image | Ref |"
             echo "|-------|-----|"
-            echo "| backend | \`${{ needs.build.outputs.backend-image || '—' }}\` |"
-            echo "| dashboard | \`${{ needs.build.outputs.dashboard-image || '—' }}\` |"
-            echo "| agent | \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` |"
+            echo "| backend | \`${{ needs.manifest.outputs.backend-image || '—' }}\` |"
+            echo "| dashboard | \`${{ needs.manifest.outputs.dashboard-image || '—' }}\` |"
+            echo "| agent managed | \`${{ needs.manifest.outputs.agent-managed-image || '—' }}\` |"
+            echo "| agent desktop | \`${{ needs.manifest.outputs.agent-desktop-image || '—' }}\` |"
+            echo
+            echo "| Source commit | Manifest tag |"
+            echo "|---------------|--------------|"
+            echo "| \`${{ needs.manifest.outputs.source-commit || '—' }}\` | \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` |"
             echo
             echo "| Gate | Artifact Consumed | Provenance |"
             echo "|------|-------------------|------------|"
             echo "| ci | source checkout | reusable PR-quality CI graph |"
-            echo "| agent-image | managed + desktop agent images | managed built once, desktop contract-tested before push |"
-            echo "| agent-modal-contract | \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` | pushed desktop sha image on Modal |"
-            echo "| deploy | backend \`${{ needs.build.outputs.backend-image || '—' }}\`, dashboard \`${{ needs.build.outputs.dashboard-image || '—' }}\`, agent \`${{ needs.agent-image.outputs.desktop-image || '—' }}\` | pushed sha images written into server env |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          MODE="${{ steps.status.outputs.mode }}"
+          if [ "$MODE" = "build" ]; then
+            {
+              echo "| build | backend + dashboard images | built and pushed from Dockerfiles |"
+              echo "| agent-image | managed + desktop agent images | managed built once, desktop contract-tested before push |"
+              echo "| manifest | build + agent-image outputs | assembled and pushed to GHCR as \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MODE" = "rebuild" ]; then
+            {
+              echo "| build | backend + dashboard images | **rebuilt on main** via allow_rebuild — not promoted from dev |"
+              echo "| agent-image | managed + desktop agent images | **rebuilt on main** via allow_rebuild |"
+              echo "| manifest | build + agent-image outputs | assembled as \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` (provenance: rebuild) |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "| manifest | promoted dev manifest from GHCR | resolved \`${{ needs.manifest.outputs.manifest-tag || '—' }}\` — no rebuild |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "| agent-modal-contract | \`${{ needs.manifest.outputs.agent-desktop-image || '—' }}\` | desktop image verified on Modal |"
+            echo "| deploy | all images from manifest | manifest-sourced refs written into server env |"
             echo "| agent-bootstrap | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy control plane + runtime handoff |"
             echo "| agent-smoke | deployed \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` environment | real post-deploy round-trip message |"
           } >> "$GITHUB_STEP_SUMMARY"
