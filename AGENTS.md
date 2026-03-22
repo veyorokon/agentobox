@@ -563,6 +563,22 @@ When modeling or debugging a system, inspect the concrete artifacts first:
 
 Do not design from imagined shapes when the real shape is available.
 
+### Search Heuristics For Large Codebases
+
+When the repo is too large to hold in working memory, search for the seam, not
+just the topic.
+
+Heuristics that generally work well:
+- start from the user-visible surface or external entrypoint, then trace inward
+- search for canonical write or resolve points, not just every read site
+- search for exact literals that define the contract: env vars, file paths, GraphQL fields, status values, workflow outputs
+- use tests as contract documentation, especially when test names already encode the intended behavior
+- look for local contradictions: comments, config, and code paths that describe incompatible truths
+- treat absence as evidence too; if a path or artifact is referenced in config but never appears in image/build/runtime setup, that gap matters
+
+These are search heuristics, not rigid steps. Use them to find the canonical
+path faster, not to create ceremony.
+
 ### Remote-First Debugging
 
 When the bug is environment-specific, it is acceptable and often correct to:
