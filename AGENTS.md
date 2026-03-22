@@ -91,6 +91,34 @@ Questions:
 - Is the current implementation honoring the contract, or working around it?
 - If the implementation changed, would the contract still be satisfied?
 
+### Goals
+
+A goal is the desired state of the world a thread is trying to make true.
+
+If a seam tells you where responsibility changes hands, and a contract tells you
+what must hold at that handoff, the goal tells you why the thread exists and
+what world should exist when the thread is done.
+
+Goals should be stated explicitly instead of being inferred from implementation
+ideas.
+
+A good goal:
+- describes the desired state, not the patch
+- distinguishes current state from desired state
+- is testable at the right proof level
+- makes the stopping condition obvious
+
+Examples:
+- release goal: prod promotes the exact tested dev artifact set by explicit manifest ref
+- runtime goal: executor readiness is explicit and independent from optional desktop services
+- state goal: one canonical writer owns live mutable machine state
+
+Questions:
+- What is true today?
+- What should be true instead?
+- Is this thread changing the world in the intended way, or only changing code shape?
+- Would we still want this outcome if the implementation path changed completely?
+
 ### Threads
 
 A thread is a coherent line of work across one or more seams.
@@ -105,6 +133,7 @@ Threads are not the same as components, files, or tickets.
 
 A good thread:
 - has one main question or failure mode
+- states the current state and the desired state
 - names the seams it crosses
 - has a clear stopping condition
 - can be tested at the earliest honest level
@@ -127,9 +156,10 @@ Use threads to organize the work.
 
 Preferred pattern:
 1. identify the thread
-2. locate the failing seam inside it
-3. fix the seam
-4. close the thread only when the end-to-end question is resolved
+2. state the current state and desired state explicitly
+3. locate the failing seam inside it
+4. fix the seam
+5. close the thread only when the end-to-end question is resolved
 
 When a thread starts crossing too many unrelated seams, split it.
 When two threads are really symptoms of one broken seam, merge them.

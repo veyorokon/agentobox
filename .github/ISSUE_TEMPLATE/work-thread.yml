@@ -19,6 +19,22 @@ body:
       required: true
 
   - type: textarea
+    id: current_state
+    attributes:
+      label: Current state
+      description: What is actually true today at the relevant seam(s).
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired_state
+    attributes:
+      label: Desired state / goal
+      description: What should be true instead when this thread is done.
+    validations:
+      required: true
+
+  - type: textarea
     id: seams
     attributes:
       label: Seams crossed
@@ -32,7 +48,7 @@ body:
     id: target_shape
     attributes:
       label: Target shape / canonical contract
-      description: Describe the intended end state at the right level of abstraction.
+      description: Describe the intended end state at the right level of abstraction, including the canonical contract if it matters.
     validations:
       required: true
 
