@@ -9,7 +9,8 @@ Use it to make prod real end to end before treating `main` as a normal promotion
 
 As of March 22, 2026:
 
-- `deploy.yml` supports `main -> prod`
+- `deploy-dev.yml` supports `dev -> dev`
+- `promote-prod.yml` is the intended prod promotion path
 - the GitHub `prod` environment is not configured
 - `infra/environments/prod` was missing and is now scaffolded
 - `agentobox.com` is not yet resolving
@@ -20,7 +21,7 @@ So this runbook is not a cleanup nicety. It is the missing environment bootstrap
 
 Make this true:
 
-1. `main` is a valid production promotion branch
+1. `promote-prod.yml` is a valid production promotion workflow
 2. GitHub Actions has the required `prod` secrets and variables
 3. `agentobox.com` resolves to a real host
 4. OAuth works on the prod domain
@@ -32,7 +33,8 @@ Make this true:
 
 ## Source Of Truth
 
-- [`deploy.yml`](../../.github/workflows/deploy.yml)
+- [`deploy-dev.yml`](../../.github/workflows/deploy-dev.yml)
+- [`promote-prod.yml`](../../.github/workflows/promote-prod.yml)
 - [`README.md`](../../README.md)
 - [`app_config.py`](../../backend/config/app_config.py)
 - [`infra/environments/prod/main.tf`](../../infra/environments/prod/main.tf)
@@ -327,18 +329,17 @@ On the target host:
 Promotion path:
 
 1. let the target `dev` deploy finish green
-2. run `bin/write-release-manifest` on `dev`
-3. commit only `.github/release-manifest.json`
-4. open / merge `dev -> main`
-5. watch `deploy.yml` on `main`
+2. copy the emitted `manifest_ref` from `deploy-dev.yml`
+3. run `promote-prod.yml(manifest_ref=...)`
+4. watch `promote-prod.yml`
+5. merge the bookkeeping PR to `main`
 
 Required gates:
 
 - `Validate Secrets`
-- `CI`
-- `Agent Image`
-- `Agent Modal Contract (main)`
-- `Deploy (main)`
+- `Resolve Manifest`
+- `Agent Modal Contract (prod)`
+- `Deploy (prod)`
 - `Agent Bootstrap (prod)`
 - `Agent Smoke (prod)`
 
@@ -397,7 +398,7 @@ Prod should not be considered real until all of the following are true:
 
 1. `agentobox.com` resolves
 2. GitHub `prod` environment is populated
-3. `main` deploy can run end to end
+3. `promote-prod.yml` can run end to end against a tested dev `manifest_ref`
 4. bootstrap and smoke pass against prod
 
-Until then, `main -> prod` is only a configured workflow path, not an actual release path.
+Until then, explicit prod promotion is only a configured workflow path, not an actual release path.

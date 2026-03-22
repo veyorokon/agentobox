@@ -19,75 +19,6 @@ permissions:
   pull-requests: read
 
 jobs:
-  release-contract:
-    name: Release Contract
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: oras-project/setup-oras@v1
-      - name: Validate release manifest handoff
-        env:
-          RELEASE_FILE: .github/release-manifest.json
-          MANIFEST_IMAGE: ghcr.io/veyorokon/agentobox-release-manifest
-        run: |
-          if [ ! -f "${RELEASE_FILE}" ]; then
-            echo "::error::${RELEASE_FILE} is required for dev -> main release PRs."
-            exit 1
-          fi
-
-          mapfile -t tip_files < <(git diff-tree --no-commit-id --name-only -r HEAD)
-          if [ "${#tip_files[@]}" -ne 1 ] || [ "${tip_files[0]}" != "${RELEASE_FILE}" ]; then
-            echo "::error::The tip commit of a dev -> main release PR must update only ${RELEASE_FILE}."
-            exit 1
-          fi
-
-          SOURCE_COMMIT=$(jq -r '.source_commit // empty' "${RELEASE_FILE}")
-          MANIFEST_REF=$(jq -r '.manifest_ref // empty' "${RELEASE_FILE}")
-          if [ -z "${SOURCE_COMMIT}" ] || [ -z "${MANIFEST_REF}" ]; then
-            echo "::error::${RELEASE_FILE} must contain source_commit and manifest_ref."
-            exit 1
-          fi
-
-          EXPECTED_SOURCE_COMMIT=$(git rev-parse HEAD^)
-          if [ "${SOURCE_COMMIT}" != "${EXPECTED_SOURCE_COMMIT}" ]; then
-            echo "::error::${RELEASE_FILE} source_commit must match the commit immediately before the metadata-only release commit."
-            echo "::error::expected=${EXPECTED_SOURCE_COMMIT} actual=${SOURCE_COMMIT}"
-            exit 1
-          fi
-
-          EXPECTED_MANIFEST_REF="${MANIFEST_IMAGE}:sha-${SOURCE_COMMIT::7}"
-          if [ "${MANIFEST_REF}" != "${EXPECTED_MANIFEST_REF}" ]; then
-            echo "::error::${RELEASE_FILE} manifest_ref must be ${EXPECTED_MANIFEST_REF}."
-            echo "::error::actual=${MANIFEST_REF}"
-            exit 1
-          fi
-
-          oras pull "${MANIFEST_REF}"
-
-          MANIFEST_SOURCE_COMMIT=$(jq -r '.source_commit' manifest.json)
-          MANIFEST_SOURCE_BRANCH=$(jq -r '.source_branch' manifest.json)
-          MANIFEST_PROVENANCE=$(jq -r '.provenance' manifest.json)
-
-          if [ "${MANIFEST_SOURCE_COMMIT}" != "${SOURCE_COMMIT}" ]; then
-            echo "::error::Manifest source_commit (${MANIFEST_SOURCE_COMMIT}) does not match ${RELEASE_FILE} (${SOURCE_COMMIT})."
-            exit 1
-          fi
-
-          if [ "${MANIFEST_SOURCE_BRANCH}" != "dev" ] || [ "${MANIFEST_PROVENANCE}" != "build" ]; then
-            echo "::error::Release PRs must promote a normal dev build."
-            echo "::error::Observed source_branch=${MANIFEST_SOURCE_BRANCH} provenance=${MANIFEST_PROVENANCE}."
-            exit 1
-          fi
-
   fast:
     name: CI Fast
     uses: ./.github/workflows/ci-fast.yml
@@ -95,7 +26,7 @@ jobs:
 
   smoke:
     name: CI Smoke
-    needs: [release-contract, fast]
-    if: always() && needs.fast.result == 'success' && (needs.release-contract.result == 'success' || needs.release-contract.result == 'skipped')
+    needs: fast
+    if: needs.fast.result == 'success'
     uses: ./.github/workflows/ci-smoke.yml
     secrets: inherit

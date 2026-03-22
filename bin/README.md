@@ -74,11 +74,6 @@ Harnesses should:
 - `smoke-test.sh`
   - post-deploy HTTP/GraphQL smoke harness
 
-## Current Operator Scripts
-
-- `write-release-manifest`
-  - writes `.github/release-manifest.json` for the exact dev artifact set that `main` should promote
-
 ## Non-Goals
 
 - no generic harness framework

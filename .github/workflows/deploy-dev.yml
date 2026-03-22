@@ -1,63 +1,27 @@
-# Deploy pipeline: validate → ci → build/promote → deploy → bootstrap
-#
-# Branch → environment mapping:
-#   dev  branch → dev  environment (dev.agentobox.com)
-#   main branch → prod environment (agentobox.com)
-#
-# Image identity contract:
-#   dev:  builds images, writes canonical release manifest to GHCR
-#   main: resolves an explicit promoted manifest ref, does not rebuild
-#
-# The manifest is keyed by the dev commit SHA (immutable). A dev-latest
-# convenience tag is also published but is not the promotion source.
-#
-# Promotion handoff contract:
-#   1. let a dev deploy finish green
-#   2. write .github/release-manifest.json pointing at that dev manifest
-#   3. commit only that file on dev
-#   4. open/merge dev -> main
-#   5. main deploy reads that exact manifest ref and promotes it
-#
-# Release tags are bookkeeping only. They do not deploy environments.
-# Promotion happens only via branch merges:
-#   dev  -> staging/dev
-#   main -> production
-#
-# Flow:
-#   PR → dev:  ci.yml
-#   merge dev: build → manifest → deploy to dev → bootstrap
-#   merge main: resolve manifest → deploy to prod → bootstrap
-#
-# Required GitHub Secrets (per environment):
-#   DEPLOY_HOST     — Server IP or domain
-#   DEPLOY_SSH_KEY  — SSH private key for the canonical deploy user
-#   APP_SECRETS     — JSON object of actual secrets (DATABASE_URL, SECRET_KEY,
-#                     ABOX_ENCRYPTION_KEY, MODAL_TOKEN_*, OAuth secrets, etc.)
-#
-# Required GitHub Variables (per environment):
-#   APP_CONFIG      — JSON object of non-secret config (DOMAIN, OAuth client IDs,
-#                     MEDIA_BUCKET, MEDIA_CDN_URL, SMOKE_TEST_USER, etc.)
-#
-# Both are merged into /opt/agentobox/.env on each deploy. Secrets are write-only
-# in GitHub; config is readable and individually editable.
+name: Deploy Dev
 
-name: Deploy
+# Dev release-candidate pipeline.
+#
+# Responsibilities:
+# - validate deploy config
+# - run shared CI
+# - build canonical app + agent artifacts once
+# - publish one immutable release manifest to GHCR
+# - deploy the exact manifest artifact set to dev
+# - prove the live dev environment with bootstrap + smoke
+#
+# This workflow is the only place release artifacts are built.
 
 on:
   push:
-    branches: [dev, main]
+    branches: [dev]
     paths-ignore:
       - "**.md"
       - "docs/**"
   workflow_dispatch:
-    inputs:
-      allow_rebuild:
-        description: "Allow rebuilding images on main (bypasses promotion)"
-        type: boolean
-        default: false
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-dev-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -68,46 +32,10 @@ env:
   MANIFEST_IMAGE: ghcr.io/veyorokon/agentobox-release-manifest
 
 jobs:
-  changes:
-    name: Detect release metadata-only push
-    runs-on: ubuntu-latest
-    outputs:
-      deploy-required: ${{ steps.detect.outputs.deploy-required }}
-      release-metadata-only: ${{ steps.detect.outputs.release-metadata-only }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 2
-      - id: detect
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          DEPLOY_REQUIRED=true
-          RELEASE_METADATA_ONLY=false
-
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "dev" ]; then
-            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-              mapfile -t files < <(git diff --name-only "$BEFORE" "$GITHUB_SHA")
-              if [ "${#files[@]}" -eq 1 ] && [ "${files[0]}" = ".github/release-manifest.json" ]; then
-                DEPLOY_REQUIRED=false
-                RELEASE_METADATA_ONLY=true
-              fi
-            fi
-          fi
-
-          echo "deploy-required=${DEPLOY_REQUIRED}" >> "$GITHUB_OUTPUT"
-          echo "release-metadata-only=${RELEASE_METADATA_ONLY}" >> "$GITHUB_OUTPUT"
-
-  # ─── Validate Secrets ─────────────────────────────────────────────
-  # Runs in parallel with tests. Fails fast if APP_SECRETS is missing
-  # required keys. Uses pydantic AppConfig as the schema — no hardcoded
-  # key list to maintain. If app_config imports, all required vars exist.
   validate-secrets:
     name: Validate Secrets
-    needs: changes
-    if: needs.changes.outputs.deploy-required == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -120,12 +48,10 @@ jobs:
           _APP_CONFIG: ${{ vars.APP_CONFIG }}
           _APP_SECRETS: ${{ secrets.APP_SECRETS }}
         run: |
-          # Merge APP_CONFIG (non-secret) + APP_SECRETS (secret) into env vars
           eval "$(python3 -c "
           import json, os, sys
 
           merged = {}
-
           for name, env_key in [('APP_CONFIG', '_APP_CONFIG'), ('APP_SECRETS', '_APP_SECRETS')]:
               raw = os.environ.get(env_key, '')
               if raw.strip():
@@ -144,10 +70,8 @@ jobs:
           ")"
           uv --directory backend run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
 
-  # ─── Test ──────────────────────────────────────────────────────────
   ci:
-    if: needs.changes.outputs.deploy-required == 'true'
-    needs: changes
+    needs: validate-secrets
     permissions:
       contents: read
       packages: read
@@ -155,27 +79,19 @@ jobs:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
-  # ─── Agent Image ───────────────────────────────────────────────────
-  # Build the managed desktop agent image once, in parallel with CI.
-  # Only runs on dev (or when allow_rebuild is set on manual dispatch).
   agent-image:
     name: Agent Image
-    needs: [changes]
-    if: needs.changes.outputs.deploy-required == 'true' && (github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild))
+    needs: ci
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/agent-image.yml
     secrets: inherit
 
-  # ─── Build ─────────────────────────────────────────────────────────
-  # Only runs on dev (or when allow_rebuild is set on manual dispatch).
-  # main promotes the exact dev artifacts via the manifest instead.
   build:
     name: Build & Push Images
-    if: needs.changes.outputs.deploy-required == 'true' && (github.ref_name == 'dev' || (github.event_name == 'workflow_dispatch' && inputs.allow_rebuild))
     runs-on: ubuntu-latest
-    needs: [changes, validate-secrets]
+    needs: ci
     permissions:
       contents: read
       packages: write
@@ -192,12 +108,10 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - id: sha
         name: Compute short sha
         run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      # Backend image
       - id: backend-meta
         uses: docker/metadata-action@v6
         with:
@@ -205,8 +119,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
       - id: push-backend
         uses: docker/build-push-action@v7
         env:
@@ -225,7 +137,6 @@ jobs:
           echo "ref=${{ env.BACKEND_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
           echo "digest-ref=${{ env.BACKEND_IMAGE }}@${{ steps.push-backend.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
-      # Dashboard image
       - id: dashboard-meta
         uses: docker/metadata-action@v6
         with:
@@ -233,8 +144,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-,format=short
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
       - id: push-dashboard
         uses: docker/build-push-action@v7
         env:
@@ -253,21 +162,10 @@ jobs:
           echo "ref=${{ env.DASHBOARD_IMAGE }}:sha-${{ steps.sha.outputs.short }}" >> "$GITHUB_OUTPUT"
           echo "digest-ref=${{ env.DASHBOARD_IMAGE }}@${{ steps.push-dashboard.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
-  # ─── Release Manifest ─────────────────────────────────────────────
-  # Single source of truth for image identity in the pipeline.
-  #
-  # dev path:  assembles manifest from build + agent-image outputs,
-  #            pushes to GHCR keyed by commit SHA (immutable) + dev-latest.
-  # main path: reads .github/release-manifest.json and resolves the exact
-  #            promoted dev manifest ref recorded in the release PR.
-  # rebuild path: allow_rebuild=true on main builds fresh images instead
-  #               of promoting. Manifest records provenance as "rebuild".
-  #
-  # All downstream jobs consume image refs from this job's outputs.
   manifest:
     name: Release Manifest
-    needs: [changes, build, agent-image]
-    if: needs.changes.outputs.deploy-required == 'true' && (always() || github.event_name == 'workflow_dispatch')
+    needs: [build, agent-image]
+    if: needs.build.result == 'success' && needs.agent-image.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -282,36 +180,22 @@ jobs:
       provenance: ${{ steps.output.outputs.provenance }}
     steps:
       - uses: actions/checkout@v5
-
       - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: oras-project/setup-oras@v1
-
-      # ── Build path: write manifest from build outputs ──
-      # Runs on dev (normal) or main with allow_rebuild (escape hatch).
-      # Canonical image refs use digests. Tag refs are convenience/debug only.
-      - name: Write manifest (build)
-        if: needs.build.result == 'success' && needs.agent-image.result == 'success'
+      - name: Write manifest
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
-          BRANCH="${{ github.ref_name }}"
-
-          # Provenance: "build" for normal dev flow, "rebuild" for allow_rebuild on main
-          if [ "$BRANCH" = "dev" ]; then
-            PROVENANCE="build"
-          else
-            PROVENANCE="rebuild"
-          fi
+          MANIFEST_REF="${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}"
 
           jq -n \
             --arg sv "1" \
             --arg sc "$GITHUB_SHA" \
-            --arg sb "$BRANCH" \
-            --arg pv "$PROVENANCE" \
+            --arg sb "dev" \
+            --arg pv "build" \
             --arg wr "${{ github.run_id }}" \
             --arg ca "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg bi "${{ needs.build.outputs.backend-digest }}" \
@@ -341,85 +225,18 @@ jobs:
               }
             }' > manifest.json
 
-          echo "Manifest contents:"
-          cat manifest.json
-
-          # Immutable tag keyed by commit SHA
-          MANIFEST_REF="${{ env.MANIFEST_IMAGE }}:sha-${SHORT_SHA}"
           oras push "${MANIFEST_REF}" manifest.json:application/json
-
-          # Convenience pointer — only publish dev-latest for actual dev builds
-          if [ "$BRANCH" = "dev" ]; then
-            oras push "${{ env.MANIFEST_IMAGE }}:dev-latest" manifest.json:application/json
-          fi
-
-          echo "Pushed manifest as ${MANIFEST_REF} (provenance: ${PROVENANCE})"
-
-      - name: Resolve promoted manifest (main)
-        if: github.ref_name == 'main' && needs.build.result == 'skipped'
-        run: |
-          RELEASE_FILE=".github/release-manifest.json"
-          if [ ! -f "${RELEASE_FILE}" ]; then
-            echo "::error::${RELEASE_FILE} is missing."
-            echo "::error::Prepare a release manifest on dev before merging to main."
-            exit 1
-          fi
-
-          MANIFEST_REF=$(jq -r '.manifest_ref // empty' "${RELEASE_FILE}")
-          RELEASE_SOURCE_COMMIT=$(jq -r '.source_commit // empty' "${RELEASE_FILE}")
-          if [ -z "${MANIFEST_REF}" ] || [ -z "${RELEASE_SOURCE_COMMIT}" ]; then
-            echo "::error::${RELEASE_FILE} must contain manifest_ref and source_commit."
-            exit 1
-          fi
-
-          echo "Resolving promoted manifest: ${MANIFEST_REF}"
-          oras pull "${MANIFEST_REF}" || {
-            echo "::error::No manifest found at ${MANIFEST_REF}."
-            echo "::error::Dev may not have published the referenced manifest yet."
-            exit 1
-          }
-
-          MANIFEST_SOURCE_COMMIT=$(jq -r '.source_commit' manifest.json)
-          MANIFEST_SOURCE_BRANCH=$(jq -r '.source_branch' manifest.json)
-          MANIFEST_PROVENANCE=$(jq -r '.provenance' manifest.json)
-
-          if [ "${MANIFEST_SOURCE_COMMIT}" != "${RELEASE_SOURCE_COMMIT}" ]; then
-            echo "::error::Release file source_commit (${RELEASE_SOURCE_COMMIT}) does not match manifest source_commit (${MANIFEST_SOURCE_COMMIT})."
-            exit 1
-          fi
-
-          if [ "${MANIFEST_SOURCE_BRANCH}" != "dev" ] || [ "${MANIFEST_PROVENANCE}" != "build" ]; then
-            echo "::error::Promoted manifests must come from a normal dev build."
-            echo "::error::Observed source_branch=${MANIFEST_SOURCE_BRANCH} provenance=${MANIFEST_PROVENANCE}."
-            exit 1
-          fi
-
-          echo "Resolved manifest (provenance: $(jq -r .provenance manifest.json)):"
-          cat manifest.json
-
-      # ── Export outputs ──
+          oras push "${{ env.MANIFEST_IMAGE }}:dev-latest" manifest.json:application/json
       - name: Export manifest outputs
         id: output
         run: |
-          if [ ! -f manifest.json ]; then
-            echo "::error::No manifest available. Build failed or manifest resolution failed."
-            exit 1
-          fi
-
           echo "backend-image=$(jq -r .backend_image manifest.json)" >> "$GITHUB_OUTPUT"
           echo "dashboard-image=$(jq -r .dashboard_image manifest.json)" >> "$GITHUB_OUTPUT"
           echo "agent-managed-image=$(jq -r .agent_managed_image manifest.json)" >> "$GITHUB_OUTPUT"
           echo "agent-desktop-image=$(jq -r .agent_desktop_image manifest.json)" >> "$GITHUB_OUTPUT"
           echo "source-commit=$(jq -r .source_commit manifest.json)" >> "$GITHUB_OUTPUT"
-          if [ "${{ needs.build.result }}" = "success" ]; then
-            echo "manifest-ref=${{ env.MANIFEST_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "main" ] && [ "${{ needs.build.result }}" = "skipped" ]; then
-            echo "manifest-ref=$(jq -r '.manifest_ref' .github/release-manifest.json)" >> "$GITHUB_OUTPUT"
-          else
-            echo "manifest-ref=${{ env.MANIFEST_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          fi
+          echo "manifest-ref=${{ env.MANIFEST_IMAGE }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "provenance=$(jq -r .provenance manifest.json)" >> "$GITHUB_OUTPUT"
-
       - name: Upload manifest artifact
         uses: actions/upload-artifact@v4
         with:
@@ -427,13 +244,11 @@ jobs:
           path: manifest.json
           retention-days: 90
 
-  # ─── Deploy ────────────────────────────────────────────────────────
   agent-modal-contract:
-    name: Agent Modal Contract (${{ github.ref_name }})
-    if: needs.changes.outputs.deploy-required == 'true'
-    needs: [changes, validate-secrets, ci, manifest]
+    name: Agent Modal Contract (dev)
+    needs: [validate-secrets, ci, manifest]
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -448,18 +263,16 @@ jobs:
           AGENTOBOX_MODAL_CONTRACT_CALLBACK_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           MODAL_TOKEN_ID: ${{ fromJson(secrets.APP_SECRETS).MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ fromJson(secrets.APP_SECRETS).MODAL_TOKEN_SECRET }}
-          MODAL_ENVIRONMENT: ${{ github.ref_name }}
+          MODAL_ENVIRONMENT: dev
         run: PYTHONPATH=${{ github.workspace }} uv --directory agent run pytest tests/test_managed_modal_contract.py -q -o addopts=
 
   deploy:
-    name: Deploy (${{ github.ref_name }})
-    if: needs.changes.outputs.deploy-required == 'true'
-    needs: [changes, manifest, ci, agent-modal-contract]
+    name: Deploy (dev)
+    needs: [manifest, ci, agent-modal-contract]
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v5
-
       - name: Sync deploy artifacts
         env:
           DEPLOY_USER: ${{ vars.DEPLOY_USER || 'agentobox' }}
@@ -470,7 +283,6 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           source: docker-compose.prod.yml,Caddyfile
           target: /opt/agentobox
-
       - name: Verify deploy access
         uses: appleboy/ssh-action@v1
         with:
@@ -487,7 +299,6 @@ jobs:
             : > /opt/agentobox/.deploy-preflight
             rm -f /opt/agentobox/.deploy-preflight
             docker ps >/dev/null
-
       - name: Write .env from APP_SECRETS + APP_CONFIG
         uses: appleboy/ssh-action@v1
         with:
@@ -502,7 +313,6 @@ jobs:
             import json, os
 
             merged = {}
-
             for env_key in ('_APP_CONFIG', '_APP_SECRETS'):
                 raw = os.environ.get(env_key, '')
                 if raw.strip():
@@ -529,7 +339,6 @@ jobs:
           _BACKEND_IMAGE: ${{ needs.manifest.outputs.backend-image }}
           _DASHBOARD_IMAGE: ${{ needs.manifest.outputs.dashboard-image }}
           _MODAL_AGENT_IMAGE: ${{ needs.manifest.outputs.agent-desktop-image }}
-
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1
         with:
@@ -538,37 +347,22 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/agentobox
-
-            # Pull images tagged with branch name (dev → :dev, main → :main)
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            export VERSION=${{ github.ref_name }}
-            export MODAL_ENVIRONMENT=${{ github.ref_name }}
-
+            export VERSION=dev
+            export MODAL_ENVIRONMENT=dev
             docker compose -f docker-compose.prod.yml pull
-
-            # Deploy
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-            # Run migrations
             docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
-
-            # Ensure smoke test user exists (for CI agent-smoke job)
             docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
-
-            # Cleanup old images
             docker image prune -f
-
       - name: Wait for backend startup
         run: |
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           for i in $(seq 1 30); do
-            curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' \
-              -d '{"query":"{ __typename }"}' && break
+            curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' -d '{"query":"{ __typename }"}' && break
             echo "  Waiting for backend... attempt $i/30"
             sleep 5
           done
-
       - name: Smoke test (HTTP surface)
         env:
           SMOKE_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
@@ -577,29 +371,19 @@ jobs:
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
           bash bin/smoke-test.sh "https://${DOMAIN}"
 
-  # ─── Agent Bootstrap (Modal) ───────────────────────────────────────
-  # Runs a real agent against the deployed environment and verifies the
-  # provisioning contract: create → relay connect → idle.
-  #
-  # Runs on both dev and main after deploy. Uses the environment's
-  # Modal credentials (dev Modal env for dev, prod Modal env for main).
   agent-bootstrap:
-    name: Agent Bootstrap (${{ github.ref_name }})
-    if: needs.changes.outputs.deploy-required == 'true'
-    needs: [changes, deploy]
+    name: Agent Bootstrap (dev)
+    needs: deploy
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-
       - name: Install test dependencies
         run: uv sync --project . --group e2e
-
       - name: Run agent bootstrap test
-        id: test
         env:
           ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
@@ -610,7 +394,6 @@ jobs:
         run: |
           mkdir -p diagnosis-artifacts
           uv run --project . --group e2e pytest tests/e2e/lifecycle/test_agent_boot.py::TestAgentBoot -v --timeout=300 -x --tb=long -o "addopts="
-
       - name: Upload failure diagnosis
         if: failure()
         uses: actions/upload-artifact@v4
@@ -620,15 +403,11 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # ─── Agent Smoke (Modal) ───────────────────────────────────────────
-  # Final deploy confidence: a fully booted agent can complete one
-  # deterministic round-trip message.
   agent-smoke:
-    name: Agent Smoke (${{ github.ref_name }})
-    if: needs.changes.outputs.deploy-required == 'true'
-    needs: [changes, agent-bootstrap]
+    name: Agent Smoke (dev)
+    needs: agent-bootstrap
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -637,7 +416,6 @@ jobs:
       - name: Install test dependencies
         run: uv sync --project . --group e2e
       - name: Run agent smoke test
-        id: test
         env:
           ABOX_API_URL: https://${{ fromJson(vars.APP_CONFIG).DOMAIN }}/graphql
           ABOX_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
@@ -648,7 +426,6 @@ jobs:
         run: |
           mkdir -p diagnosis-artifacts
           uv run --project . --group e2e pytest tests/smoke/ -v --timeout=300 -x --tb=long -o "addopts="
-
       - name: Upload failure diagnosis
         if: failure()
         uses: actions/upload-artifact@v4
@@ -662,7 +439,6 @@ jobs:
     name: summary
     if: always()
     needs:
-      - changes
       - validate-secrets
       - ci
       - agent-image
@@ -673,7 +449,7 @@ jobs:
       - agent-bootstrap
       - agent-smoke
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v5
       - name: Compute status
@@ -692,29 +468,29 @@ jobs:
             [smoke]="${{ needs.agent-smoke.result }}"
           )
 
-          if [ "${{ needs.changes.outputs.deploy-required }}" != "true" ]; then
-            echo "detail=RELEASE MANIFEST UPDATED" >> "$GITHUB_OUTPUT"
-            echo "overall=success" >> "$GITHUB_OUTPUT"
-            echo "mode=release-metadata-update" >> "$GITHUB_OUTPUT"
-            echo "blocked_at=—" >> "$GITHUB_OUTPUT"
-            echo "next_debug_target=—" >> "$GITHUB_OUTPUT"
-            {
-              echo "gate_rows<<GHEOF"
-              echo "| release-metadata | \`success\` | .github/release-manifest.json | open dev -> main PR |"
-              echo "GHEOF"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Find first failure in pipeline order.
-          # Skipped jobs (build/image on main) are not failures.
           overall=success
           blocked_at=""
+          next_debug_target="—"
+          gate_rows=""
+
           for gate in secrets ci build image manifest modal_contract deploy bootstrap smoke; do
             r="${gates[$gate]}"
+            case "$gate" in
+              secrets) consumed="APP_CONFIG + APP_SECRETS"; debug="check Validate Secrets job output" ;;
+              ci) consumed="source checkout"; debug="inspect reusable CI workflow summary" ;;
+              build) consumed="backend + dashboard image builds"; debug="check Build & Push Images job" ;;
+              image) consumed="managed + desktop agent image builds"; debug="check Agent Image workflow" ;;
+              manifest) consumed="release manifest"; debug="check Release Manifest job or artifact" ;;
+              modal_contract) consumed="agent desktop image"; debug="check Agent Modal Contract job" ;;
+              deploy) consumed="manifest image refs + server env"; debug="check deploy access, compose pull, and remote host state" ;;
+              bootstrap) consumed="deployed environment"; debug="download failure-diagnosis-agent-bootstrap" ;;
+              smoke) consumed="deployed environment"; debug="download failure-diagnosis-agent-smoke" ;;
+            esac
+            gate_rows="${gate_rows}| ${gate} | \`${r}\` | ${consumed} | ${debug} |"$'\n'
             if [ "$r" != "success" ] && [ "$r" != "skipped" ] && [ -z "$blocked_at" ]; then
               overall=attention-needed
               blocked_at="$gate"
+              next_debug_target="$debug"
             fi
           done
 
@@ -724,81 +500,20 @@ jobs:
             echo "detail=BLOCKED AT ${blocked_at}" >> "$GITHUB_OUTPUT"
           fi
           echo "overall=${overall}" >> "$GITHUB_OUTPUT"
-
-          # Determine pipeline mode from current branch and build path,
-          # not from manifest provenance (which describes how the manifest
-          # was originally created, not what the current pipeline is doing).
-          build_result="${{ needs.build.result }}"
-          branch="${{ github.ref_name }}"
-          if [ "$branch" = "dev" ]; then
-            echo "mode=build" >> "$GITHUB_OUTPUT"
-          elif [ "$build_result" = "skipped" ]; then
-            echo "mode=promote" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=rebuild" >> "$GITHUB_OUTPUT"
-          fi
-
-          next_debug_target="—"
-          gate_rows=""
-          for gate in secrets ci build image manifest modal_contract deploy bootstrap smoke; do
-            r="${gates[$gate]}"
-            case "$gate" in
-              secrets)
-                consumed="APP_CONFIG + APP_SECRETS"
-                debug="check Validate Secrets job output"
-                ;;
-              ci)
-                consumed="source checkout"
-                debug="inspect reusable CI workflow summary"
-                ;;
-              build)
-                consumed="backend + dashboard image builds"
-                debug="check Build & Push Images job"
-                ;;
-              image)
-                consumed="managed + desktop agent image builds"
-                debug="check Agent Image workflow"
-                ;;
-              manifest)
-                consumed="release manifest"
-                debug="check Release Manifest job or artifact"
-                ;;
-              modal_contract)
-                consumed="agent desktop image"
-                debug="check Agent Modal Contract job"
-                ;;
-              deploy)
-                consumed="manifest image refs + server env"
-                debug="check deploy access, compose pull, and remote host state"
-                ;;
-              bootstrap)
-                consumed="deployed environment"
-                debug="download failure-diagnosis-agent-bootstrap"
-                ;;
-              smoke)
-                consumed="deployed environment"
-                debug="download failure-diagnosis-agent-smoke"
-                ;;
-            esac
-            gate_rows="${gate_rows}| ${gate} | \`${r}\` | ${consumed} | ${debug} |"$'\n'
-            if [ "$r" != "success" ] && [ "$r" != "skipped" ] && [ "$next_debug_target" = "—" ]; then
-              next_debug_target="$debug"
-            fi
-          done
-
+          echo "mode=build" >> "$GITHUB_OUTPUT"
+          echo "blocked_at=${blocked_at:-—}" >> "$GITHUB_OUTPUT"
+          echo "next_debug_target=${next_debug_target}" >> "$GITHUB_OUTPUT"
           {
             echo "gate_rows<<GHEOF"
             echo "$gate_rows"
             echo "GHEOF"
           } >> "$GITHUB_OUTPUT"
-          echo "blocked_at=${blocked_at:-—}" >> "$GITHUB_OUTPUT"
-          echo "next_debug_target=${next_debug_target}" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/summary-header
         with:
-          title: "Deploy (${{ github.ref_name == 'main' && 'prod' || 'dev' }})"
+          title: "Deploy (dev)"
           overall: ${{ steps.status.outputs.overall }}
-          detail: "${{ steps.status.outputs.detail }} (${{ steps.status.outputs.mode }})"
+          detail: "${{ steps.status.outputs.detail }} (build)"
 
       - name: Write body
         run: |
@@ -807,10 +522,10 @@ jobs:
             echo "| Field | Value |"
             echo "|-------|-------|"
             echo "| Domain | \`${{ fromJson(vars.APP_CONFIG).DOMAIN }}\` |"
-            echo "| Environment | \`${{ github.ref_name == 'main' && 'prod' || 'dev' }}\` |"
-            echo "| Mode | \`${{ steps.status.outputs.mode }}\` |"
+            echo "| Environment | \`dev\` |"
+            echo "| Mode | \`build\` |"
             echo "| Deploy user | \`${{ vars.DEPLOY_USER || 'agentobox' }}\` |"
-            echo "| Modal environment | \`${{ github.ref_name }}\` |"
+            echo "| Modal environment | \`dev\` |"
             echo "| Source commit | \`${{ needs.manifest.outputs.source-commit || '—' }}\` |"
             echo "| Manifest ref | \`${{ needs.manifest.outputs.manifest-ref || '—' }}\` |"
             echo
@@ -826,13 +541,11 @@ jobs:
             echo "${{ steps.status.outputs.gate_rows }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Surface diagnosis artifact pointers for failed seam tests
-          blocked_at="${{ steps.status.outputs.blocked_at }}"
           if [ "${{ steps.status.outputs.overall }}" != "success" ]; then
             failure_artifact="—"
-            if echo "$blocked_at" | grep -qi "bootstrap"; then
+            if echo "${{ steps.status.outputs.blocked_at }}" | grep -qi "bootstrap"; then
               failure_artifact="failure-diagnosis-agent-bootstrap"
-            elif echo "$blocked_at" | grep -qi "smoke"; then
+            elif echo "${{ steps.status.outputs.blocked_at }}" | grep -qi "smoke"; then
               failure_artifact="failure-diagnosis-agent-smoke"
             fi
             {
@@ -840,7 +553,7 @@ jobs:
               echo "### Diagnosis"
               echo "| Field | Value |"
               echo "|-------|-------|"
-              echo "| First broken gate | \`${blocked_at}\` |"
+              echo "| First broken gate | \`${{ steps.status.outputs.blocked_at }}\` |"
               echo "| Next debug target | ${{ steps.status.outputs.next_debug_target }} |"
               echo "| Failure artifact | \`${failure_artifact}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
