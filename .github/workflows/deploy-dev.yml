@@ -351,7 +351,7 @@ jobs:
           upload_text_file Caddyfile /opt/agentobox/Caddyfile
           upload_text_file .deploy.env /opt/agentobox/.env
 
-          ssh_retry "set -euxo pipefail
+          ssh_retry "set -euo pipefail
           whoami
           test \"\$(whoami)\" = \"${DEPLOY_USER}\"
           id
@@ -359,15 +359,21 @@ jobs:
           test -w /opt/agentobox
           : > /opt/agentobox/.deploy-preflight
           rm -f /opt/agentobox/.deploy-preflight
+          echo 'Docker access OK'
           docker ps >/dev/null
           cd /opt/agentobox
+          echo 'Logging into GHCR'
           echo '${GITHUB_TOKEN}' | docker login ghcr.io -u '${GITHUB_ACTOR}' --password-stdin
           export VERSION=dev
           export MODAL_ENVIRONMENT=dev
+          echo 'Pulling and starting compose stack'
           docker compose -f docker-compose.prod.yml pull
           docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          echo 'Running migrations'
           docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py migrate --noinput
+          echo 'Ensuring smoke user'
           docker compose -f docker-compose.prod.yml exec -T backend uv run python manage.py ensure_smoke_user
+          echo 'Pruning old images'
           docker image prune -f"
       - name: Wait for backend startup
         run: |
