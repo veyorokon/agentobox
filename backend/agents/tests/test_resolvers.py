@@ -278,7 +278,11 @@ class TestConfigMutationFileWrites:
             f"Expected .mcp.json write, got paths: {written_paths}"
         )
 
-        # Verify .mcp.json content includes the requested MCP server
+        # Verify .mcp.json has valid structure with the requested MCP server
+        import json
         mcp_call = next(c for c in write_calls if c[0][0] == "home/agent/.mcp.json")
-        mcp_content = mcp_call[0][1]
-        assert "playwright" in mcp_content
+        mcp_config = json.loads(mcp_call[0][1])
+        assert "mcpServers" in mcp_config, f"Missing mcpServers key: {mcp_config.keys()}"
+        assert "playwright" in mcp_config["mcpServers"], (
+            f"Expected playwright in mcpServers, got: {list(mcp_config['mcpServers'].keys())}"
+        )
