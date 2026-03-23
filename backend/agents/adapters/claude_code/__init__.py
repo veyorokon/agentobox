@@ -530,7 +530,7 @@ class ClaudeCodeAdapter:
             sections.append(
                 "## Workspace\n"
                 "\n"
-                "You are working in `/home/agent/workspace` (mounted from host).\n"
+                "You are working in `/workspace` (mounted from host).\n"
                 "This is a shared volume — changes you make are visible on the host and\n"
                 "to other agents. Stay within this directory for project work.\n"
             )

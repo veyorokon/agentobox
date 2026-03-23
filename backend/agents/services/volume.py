@@ -64,9 +64,11 @@ reads the file and reloads the relevant process.
     durable read position in _abox/inbox.cursor.json, so unread messages
     survive relay crashes without a backend-visible delivery cursor.
 
-## What's NOT on the volume
+## Shared workspace
 
-    - /home/agent/workspace (bind-mounted from host, shared across ALL agents)
+    - /workspace is the shared project mount presented inside the container
+    - when a host/project workspace is mounted, it is project-shared state, not
+      agent-private volume authority
     - /etc/sudoers.d/ (system file, still written via runtime.exec)
     - /opt/abox/ (image-baked scripts, not agent state)
 """
@@ -384,7 +386,7 @@ class AgentMachine:
 
         # Ensure workspace dir exists even without a host bind mount.
         # The executor uses this as cwd for Claude Code.
-        self._store.mkdir(self._machine, "home/agent/workspace")
+        self._store.mkdir(self._machine, "workspace")
 
     def mark_provisioned(self, token: str = "") -> None:
         """Write the provisioning-ready sentinel.

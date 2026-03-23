@@ -14,7 +14,7 @@ class StandaloneProvisioningProvider(BaseProvisioningProvider):
 
     def prepare(self, root: Path) -> ProvisioningReport:
         manifest = standalone_manifest()
-        (root / "home/agent/workspace").mkdir(parents=True, exist_ok=True)
+        (root / "workspace").mkdir(parents=True, exist_ok=True)
         (root / "tmp/abox-theme").mkdir(parents=True, exist_ok=True)
         (root / "mnt/abox-state/secrets").mkdir(parents=True, exist_ok=True)
         (root / "_abox").mkdir(parents=True, exist_ok=True)
@@ -25,4 +25,3 @@ class StandaloneProvisioningProvider(BaseProvisioningProvider):
 
         validate_manifest(root, manifest)
         return ProvisioningReport(manifest=manifest, root=root)
-

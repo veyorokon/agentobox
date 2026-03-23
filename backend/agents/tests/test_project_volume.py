@@ -118,9 +118,9 @@ def test_modal_project_volume_store_mkdir_materializes_directory_marker(monkeypa
     store = ModalProjectVolumeStore("agentobox_agent-volumes", environment_name="dev")
     machine = AgentMachinePaths(project_id="proj-1", agent_id="agent-1")
 
-    store.mkdir(machine, "home/agent/workspace")
+    store.mkdir(machine, "workspace")
 
     assert captured["force"] is True
-    assert captured["remote_path"] == "/agents/agent-1/home/agent/workspace/.agentobox.keep"
+    assert captured["remote_path"] == "/agents/agent-1/workspace/.agentobox.keep"
     assert captured["content"] == b""
     assert captured["mode"] is None

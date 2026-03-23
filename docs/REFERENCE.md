@@ -622,7 +622,7 @@ reads the file and reloads the relevant process.
         /home/agent/.relay_env    → /vol/agents/$AGENT_ID/home/agent/.relay_env
         /home/agent/CLAUDE.md     → /vol/agents/$AGENT_ID/home/agent/CLAUDE.md
         /home/agent/.mcp.json     → /vol/agents/$AGENT_ID/home/agent/.mcp.json
-        /home/agent/workspace     → /vol/agents/$AGENT_ID/home/agent/workspace
+        /workspace                → /vol/agents/$AGENT_ID/workspace
         /tmp/abox-theme           → /vol/agents/$AGENT_ID/tmp/abox-theme
         /run/secrets              → /vol/agents/$AGENT_ID/run/secrets
         /mnt/abox-state           → /vol/agents/$AGENT_ID/mnt/abox-state
@@ -644,7 +644,8 @@ reads the file and reloads the relevant process.
 
 ## What's NOT on the volume
 
-    - /home/agent/workspace (bind-mounted from host, shared across ALL agents)
+    - /workspace (project-shared mount; when bind-mounted from host it is not
+      agent-private volume authority)
     - /etc/sudoers.d/ (system file, still written via runtime.exec)
     - /opt/abox/ (image-baked scripts, not agent state)
 

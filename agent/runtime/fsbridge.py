@@ -17,6 +17,7 @@ import sys
 
 
 _TOP_LEVEL_LINKS = (
+    ("workspace", "workspace"),
     ("tmp/abox-theme", "tmp/abox-theme"),
     ("run/secrets", "run/secrets"),
     ("mnt/abox-state", "mnt/abox-state"),
@@ -29,9 +30,7 @@ _HOME_FILE_BINDINGS = (
     ("home/agent/CLAUDE.md", "CLAUDE.md"),
 )
 
-_HOME_DIR_BINDINGS = (
-    ("home/agent/workspace", "workspace"),
-)
+_HOME_DIR_BINDINGS = ()
 
 _CLAUDE_FILE_BINDINGS = (
     ("home/agent/.claude/settings.json", ".claude/settings.json"),

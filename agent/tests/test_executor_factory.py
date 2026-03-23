@@ -47,6 +47,7 @@ def test_build_executor_returns_claude_code_cli_executor(tmp_path, monkeypatch):
 
     assert isinstance(executor, ClaudeCodeCLIExecutor)
     assert executor._config.permission_mode == "bypassPermissions"
+    assert executor._config.cwd == tmp_path / "workspace"
 
 
 def test_build_executor_maps_supervised_to_noninteractive_cli_mode(tmp_path, monkeypatch):
@@ -70,3 +71,4 @@ def test_build_executor_maps_supervised_to_noninteractive_cli_mode(tmp_path, mon
 
     assert isinstance(executor, ClaudeCodeCLIExecutor)
     assert executor._config.permission_mode == "bypassPermissions"
+    assert executor._config.cwd == tmp_path / "workspace"

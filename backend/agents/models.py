@@ -248,7 +248,7 @@ class Agent(models.Model):
     # MCP server config: {"server-name": {"command": "...", "args": [...]}}
     mcp_servers = models.JSONField(default=dict, blank=True)
 
-    # Host path to bind-mount into the container as /home/agent/workspace
+    # Host path to bind-mount into the container as /workspace
     workspace_path = models.CharField(max_length=500, blank=True)
 
     # Explicit volume mounts: [{"name": "...", "mount_path": "...", "host_path": "", "read_only": false}]

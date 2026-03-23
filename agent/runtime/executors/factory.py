@@ -18,7 +18,7 @@ def build_executor(config: RuntimeConfig) -> TaskExecutor:
             ClaudeCodeExecutorConfig(
                 model=_env("CLAUDE_MODEL"),
                 permission_mode=_translate_permission_mode(_env("AGENT_MODE")),
-                cwd=config.root_dir / "home/agent/workspace",
+                cwd=config.root_dir / "workspace",
                 resume_session_id=_env("RESUME_SESSION_ID"),
                 allowed_tools=_parse_allowed_tools(_env("ALLOWED_TOOLS")),
                 env=_executor_env(),

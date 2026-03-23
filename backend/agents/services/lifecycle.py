@@ -67,7 +67,7 @@ from agents.services.utils import create_stream_event, spawn_logged_task, termin
 from agents.adapters import get_adapter
 from agents.utils import sanitize_name as _sanitize_name
 
-CONTAINER_WORKSPACE = "/home/agent/workspace"
+CONTAINER_WORKSPACE = "/workspace"
 ERR_LIFECYCLE_STUCK_DEPLOY = "ERR-LIFECYCLE-STUCK-DEPLOY"
 ERR_LIFECYCLE_RUNTIME_DEAD = "ERR-LIFECYCLE-RUNTIME-DEAD"
 ERR_LIFECYCLE_RUNTIME_LIMBO = "ERR-LIFECYCLE-RUNTIME-LIMBO"

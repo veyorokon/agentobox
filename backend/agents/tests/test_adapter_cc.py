@@ -470,7 +470,7 @@ class TestBuildInstructions:
             agent_name="a",
             workspace_path="/some/path",
         )
-        assert "/home/agent/workspace" in md
+        assert "/workspace" in md
         assert "shared volume" in md
 
     def test_workspace_section_without_path(self, adapter):

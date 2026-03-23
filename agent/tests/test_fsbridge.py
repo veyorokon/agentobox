@@ -20,6 +20,8 @@ def test_materialize_runtime_bindings_projects_canonical_paths(tmp_path: Path):
     (root_dir / "home/agent/.relay_env").write_text("CLAUDE_MODEL=claude-haiku-4-5\n")
     (root_dir / "run/secrets").mkdir(parents=True, exist_ok=True)
     (root_dir / "run/secrets/proxy_key").write_text("secret")
+    (root_dir / "workspace").mkdir(parents=True, exist_ok=True)
+    (root_dir / "workspace/README.md").write_text("workspace")
     (root_dir / "mnt/abox-state/secrets").mkdir(parents=True, exist_ok=True)
     (root_dir / "mnt/abox-state/secrets/env").write_text("export ANTHROPIC_API_KEY=secret\n")
     (root_dir / "tmp/abox-theme").mkdir(parents=True, exist_ok=True)
@@ -39,6 +41,8 @@ def test_materialize_runtime_bindings_projects_canonical_paths(tmp_path: Path):
     assert (agent_home / ".relay_env").is_symlink()
     assert (container_root / "run/secrets").is_symlink()
     assert (container_root / "run/secrets/proxy_key").read_text() == "secret"
+    assert (container_root / "workspace").is_symlink()
+    assert (container_root / "workspace/README.md").read_text() == "workspace"
     assert (container_root / "mnt/abox-state").is_symlink()
     assert (container_root / "tmp/abox-theme").is_symlink()
 
