@@ -202,6 +202,19 @@ This is especially important when:
 - runtime/control/UI semantics are being clarified incrementally
 - the work spans multiple sessions or deploy cycles
 
+While waiting on CI, deploys, or another agent:
+- use the time to reconcile issue state
+- update stale issue bodies/comments while discoveries are still fresh
+- narrow umbrella issues when child threads have become clearer
+- close or relabel issues whose original scope is no longer accurate
+- run targeted audits for drift in:
+  - visible vocabulary
+  - contracts
+  - tests
+  - docs/comments
+
+Audits are a good use of waiting time when they stay specific and thread-relevant.
+
 ### Seamless
 
 “Seamless” does not mean “no seams.”
