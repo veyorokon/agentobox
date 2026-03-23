@@ -177,6 +177,31 @@ Preferred pattern:
 When a thread starts crossing too many unrelated seams, split it.
 When two threads are really symptoms of one broken seam, merge them.
 
+### Issues As Shared Memory
+
+GitHub issues are not just backlog items in this repo. They are also part of the
+working memory for active threads.
+
+Use issue comments to externalize important discoveries so progress does not
+depend on one agent's transient context window.
+
+Preferred pattern:
+1. keep one relevant issue (or one umbrella issue plus linked child issues) per thread
+2. when understanding changes, update the issue
+3. record:
+   - the seam
+   - the contract
+   - the current finding
+   - the proof level
+   - the next step
+4. prefer updating the existing issue over leaving important orientation only in chat
+
+This is especially important when:
+- multiple agents are working in parallel
+- a thread splits into child threads
+- runtime/control/UI semantics are being clarified incrementally
+- the work spans multiple sessions or deploy cycles
+
 ### Seamless
 
 “Seamless” does not mean “no seams.”

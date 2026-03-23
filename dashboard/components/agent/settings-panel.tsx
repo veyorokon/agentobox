@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react"
+import { useState, useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react"
 import { useParams } from "next/navigation"
 import {
   Trash2,
@@ -10,7 +10,7 @@ import {
   ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Agent } from "@/lib/types"
+import type { Agent, ConfigSyncState } from "@/lib/types"
 import { TagInput } from "@/components/shared/tag-input"
 import { Collapsible } from "@/components/ui/collapsible"
 import {
@@ -22,16 +22,82 @@ import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-m
 import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
 import { toast } from "@/lib/toast"
 
+/* ------------------------------------------------------------------ */
+/*  Pure helpers — exported for testing                                */
+/* ------------------------------------------------------------------ */
+
+export type ConfigFields = {
+  model: string
+  instructions: string
+  tags: string[]
+  mcpNames: string[]
+}
+
+/** Single extraction point for all three comparison surfaces. */
+export function extractConfigFields(source: {
+  model: string
+  instructions: string
+  tags: string[]
+  mcpServers?: string[]
+  mcpNames?: string[]
+}): ConfigFields {
+  return {
+    model: source.model,
+    instructions: source.instructions,
+    tags: source.tags,
+    mcpNames: source.mcpServers ?? source.mcpNames ?? [],
+  }
+}
+
+function fieldsEqual(a: ConfigFields, b: ConfigFields): boolean {
+  return (
+    a.model === b.model &&
+    a.instructions === b.instructions &&
+    JSON.stringify(a.tags) === JSON.stringify(b.tags) &&
+    JSON.stringify(a.mcpNames) === JSON.stringify(b.mcpNames)
+  )
+}
+
+/**
+ * Derive next sync status from three-way comparison.
+ *
+ * - local: current form values
+ * - lastSubmittedConfig: snapshot captured at save time (null when not saving)
+ * - server: latest agent props from Apollo cache
+ * - current: current sync status
+ */
+export function deriveConfigSyncStatus(
+  local: ConfigFields,
+  lastSubmittedConfig: ConfigFields | null,
+  server: ConfigFields,
+  current: ConfigSyncState["status"],
+): ConfigSyncState["status"] {
+  const localMatchesServer = fieldsEqual(local, server)
+
+  if (current === "saving") {
+    // Refetch hasnt landed until server matches what we submitted
+    if (!lastSubmittedConfig || !fieldsEqual(server, lastSubmittedConfig)) return "saving"
+    // Refetch landed — check if user edited during save
+    return localMatchesServer ? "in-sync" : "unsaved"
+  }
+
+  return localMatchesServer ? "in-sync" : "unsaved"
+}
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
 export interface SettingsPanelHandle {
-  applyChanges: () => void
+  saveChanges: () => void
 }
 
 export interface AgentSettingsPanelProps {
   agent: Agent
-  onDirtyChange?: (dirty: boolean) => void
+  onSyncStateChange?: (state: ConfigSyncState) => void
 }
 
-export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsPanelProps>(function AgentSettingsPanel({ agent, onDirtyChange }, ref) {
+export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsPanelProps>(function AgentSettingsPanel({ agent, onSyncStateChange }, ref) {
   const { projectId } = useParams<{ projectId: string }>()
   const { models } = useAvailableModels()
   const { providers } = useProviderStatus(projectId ?? "")
@@ -55,8 +121,36 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
 
   // Combined display list: registry names + custom server names
   const allMcpNames = [...mcpRegistryNames, ...Object.keys(mcpCustomServers)]
-  const mcpDirty = JSON.stringify(allMcpNames) !== JSON.stringify(agent.mcpServers)
-  const dirty = model !== agent.model || instructions !== agent.instructions || JSON.stringify(agentTags) !== JSON.stringify(agent.tags) || mcpDirty
+
+  // --- Config sync state machine ---
+  const [syncState, setSyncState] = useState<ConfigSyncState>({ status: "in-sync" })
+  const lastSubmittedConfigRef = useRef<ConfigFields | null>(null)
+
+  const localFields: ConfigFields = { model, instructions, tags: agentTags, mcpNames: allMcpNames }
+  const serverFields = extractConfigFields(agent)
+
+  useEffect(() => {
+    const next = deriveConfigSyncStatus(
+      localFields,
+      lastSubmittedConfigRef.current,
+      serverFields,
+      syncState.status,
+    )
+    if (next !== syncState.status) {
+      const nextState: ConfigSyncState = next === "save-error"
+        ? { status: "save-error", message: "" }
+        : { status: next }
+      // Clear submitted snapshot when leaving saving state
+      if (syncState.status === "saving" && next !== "saving") {
+        lastSubmittedConfigRef.current = null
+      }
+      setSyncState(nextState)
+    }
+  })
+
+  useEffect(() => {
+    onSyncStateChange?.(syncState)
+  }, [syncState, onSyncStateChange])
 
   const remove = useRemoveAgent()
   const updateInstructions = useUpdateAgentInstructions()
@@ -64,15 +158,15 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
 
   const isDeploying = agent.lifecycleStatus === "deploying"
 
-  useEffect(() => {
-    onDirtyChange?.(dirty)
-  }, [dirty, onDirtyChange])
+  const handleSaveChanges = useCallback(async () => {
+    if (syncState.status === "saving") return
+    if (syncState.status === "in-sync") return
 
-  const [applying, setApplying] = useState(false)
+    lastSubmittedConfigRef.current = extractConfigFields({
+      model, instructions, tags: agentTags, mcpServers: allMcpNames,
+    })
+    setSyncState({ status: "saving" })
 
-  const handleApplyChanges = useCallback(async () => {
-    if (!dirty || applying) return
-    setApplying(true)
     try {
       if (instructions !== agent.instructions) {
         await updateInstructions(agent.id, instructions)
@@ -80,7 +174,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
       const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, { command: string; args: string[] }> } = {}
       if (model !== agent.model) configDelta.model = model
       if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
-      if (mcpDirty) {
+      if (JSON.stringify(allMcpNames) !== JSON.stringify(agent.mcpServers)) {
         configDelta.mcpRegistryNames = mcpRegistryNames
         if (Object.keys(mcpCustomServers).length > 0) {
           configDelta.mcpCustomServers = mcpCustomServers
@@ -89,17 +183,17 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
       if (Object.keys(configDelta).length > 0) {
         await updateConfig(agent.id, configDelta)
       }
-      toast.success("Changes applied")
+      toast.success("Changes saved")
     } catch (err: any) {
-      toast.error(err.message || "Failed to apply changes")
-    } finally {
-      setApplying(false)
+      lastSubmittedConfigRef.current = null
+      setSyncState({ status: "save-error", message: err.message || "Failed to save" })
+      toast.error(err.message || "Failed to save")
     }
-  }, [dirty, applying, agent.id, agent.instructions, agent.model, agent.tags, instructions, model, agentTags, mcpDirty, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
+  }, [syncState.status, agent.id, agent.instructions, agent.model, agent.tags, agent.mcpServers, instructions, model, agentTags, allMcpNames, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
 
   useImperativeHandle(ref, () => ({
-    applyChanges: handleApplyChanges,
-  }), [handleApplyChanges])
+    saveChanges: handleSaveChanges,
+  }), [handleSaveChanges])
 
   const addMcp = useCallback((name: string) => {
     if (!mcpRegistryNames.includes(name)) {
@@ -174,6 +268,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
           }
           return null
         })()}
+        <p className="text-[9px] text-muted/40 mt-0.5">Saved to backend — runtime picks this up when supported</p>
       </div>
 
       {/* Instructions textarea */}
@@ -187,6 +282,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
           rows={4}
           className="w-full bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 text-xs font-mono text-default outline-none focus:border-accent/50 transition-colors resize-none"
         />
+        <p className="text-[9px] text-muted/40 mt-0.5">Saved to backend — takes effect on next task</p>
       </div>
 
       {/* Tags */}
@@ -197,6 +293,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
         <div className="bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 focus-within:border-accent/50 transition-colors">
           <TagInput tags={agentTags} onChange={setAgentTags} placeholder="Add tag..." />
         </div>
+        <p className="text-[9px] text-muted/40 mt-0.5">Saved to backend</p>
       </div>
 
       {/* MCP Servers — interactive */}
@@ -360,6 +457,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
             </div>
           </Collapsible>
         </div>
+        <p className="text-[9px] text-muted/40 mt-0.5">Saved to backend — runtime picks this up when supported</p>
       </div>
 
       {/* Info line */}

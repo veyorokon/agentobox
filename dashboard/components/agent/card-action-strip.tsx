@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Shield, FileText, AlertTriangle, BookOpen, X, CheckCircle2 } from "lucide-react"
+import { Shield, FileText, AlertTriangle, BookOpen, X, CheckCircle2, Loader2 } from "lucide-react"
 import type { CardActionItem } from "@/lib/types"
 import { ActionButtonPair } from "@/components/feed/action-button-pair"
 import { StepperNav } from "@/components/shared/stepper-nav"
@@ -10,7 +10,7 @@ interface CardActionStripProps {
   items: CardActionItem[]
   onResolvePermission: (id: string, verdict: string, alwaysAllow?: boolean) => void
   onResolvePlan: (id: string, verdict: string) => void
-  onApply?: () => void
+  onSave?: () => void
   onDismissSkill?: (skillId: string) => void
   onViewSkill?: (skillId: string) => void
 }
@@ -19,7 +19,7 @@ export function CardActionStrip({
   items,
   onResolvePermission,
   onResolvePlan,
-  onApply,
+  onSave,
   onDismissSkill,
   onViewSkill,
 }: CardActionStripProps) {
@@ -71,20 +71,48 @@ export function CardActionStrip({
           </>
         )}
 
-        {current.kind === "config-dirty" && (
+        {current.kind === "config-sync" && current.syncState.status === "unsaved" && (
           <>
             <AlertTriangle className="h-3 w-3 text-warning shrink-0" />
             <span className="text-[11px] text-warning font-medium truncate flex-1 min-w-0">
               Unsaved changes
             </span>
-            {onApply && (
+            {onSave && (
               <button
                 type="button"
-                onClick={onApply}
+                onClick={onSave}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-accent border border-accent/30 hover:bg-accent/10 transition-colors shrink-0"
               >
                 <CheckCircle2 className="h-2.5 w-2.5" />
-                Apply changes
+                Save changes
+              </button>
+            )}
+          </>
+        )}
+
+        {current.kind === "config-sync" && current.syncState.status === "saving" && (
+          <>
+            <Loader2 className="h-3 w-3 text-muted animate-spin shrink-0" />
+            <span className="text-[11px] text-muted font-medium truncate flex-1 min-w-0">
+              Saving...
+            </span>
+          </>
+        )}
+
+        {current.kind === "config-sync" && current.syncState.status === "save-error" && (
+          <>
+            <AlertTriangle className="h-3 w-3 text-danger shrink-0" />
+            <span className="text-[11px] text-danger font-medium truncate flex-1 min-w-0">
+              {current.syncState.message || "Save failed"}
+            </span>
+            {onSave && (
+              <button
+                type="button"
+                onClick={onSave}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-accent border border-accent/30 hover:bg-accent/10 transition-colors shrink-0"
+              >
+                <CheckCircle2 className="h-2.5 w-2.5" />
+                Retry
               </button>
             )}
           </>

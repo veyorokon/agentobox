@@ -42,7 +42,7 @@ import { AgentSkillsView } from "@/components/agent/skills-view"
 import { AgentTasksView } from "@/components/agent/tasks-view"
 import { CardActionStrip } from "@/components/agent/card-action-strip"
 import { useClickOutside } from "@/lib/hooks/use-click-outside"
-import type { Agent, CardActionItem, ViewMode } from "@/lib/types"
+import type { Agent, CardActionItem, ConfigSyncState, ViewMode } from "@/lib/types"
 
 export interface AgentCardRowProps {
   agent: Agent
@@ -128,9 +128,9 @@ export function AgentCardRow({
   const isOpen = !selectable && isExpanded
   const pendingItems = useMemo(() => getPendingItemsForAgent(feedItems, agent.name), [feedItems, agent.name])
 
-  // Settings panel ref + dirty state
+  // Settings panel ref + sync state
   const settingsRef = useRef<SettingsPanelHandle>(null)
-  const [settingsDirty, setSettingsDirty] = useState(false)
+  const [configSyncState, setConfigSyncState] = useState<ConfigSyncState>({ status: "in-sync" })
 
   // Ephemeral state — view tab resets when card collapses
   const [viewMode, setViewMode] = useState<ViewMode>("terminal")
@@ -179,7 +179,7 @@ export function AgentCardRow({
     setViewMode("skills")
   }, [])
 
-  // Build unified action items: permissions → plans → new skills → config-dirty
+  // Build unified action items: permissions → plans → new skills → config-sync
   const actionItems = useMemo(() => {
     const items: CardActionItem[] = []
     for (const p of pendingItems) {
@@ -190,11 +190,11 @@ export function AgentCardRow({
     for (const skill of newSkills) {
       items.push({ kind: "new-skill", skillId: skill.id, skillName: skill.name })
     }
-    if (viewMode === "settings" && settingsDirty) {
-      items.push({ kind: "config-dirty" })
+    if (viewMode === "settings" && configSyncState.status !== "in-sync") {
+      items.push({ kind: "config-sync", syncState: configSyncState })
     }
     return items
-  }, [pendingItems, newSkills, viewMode, settingsDirty])
+  }, [pendingItems, newSkills, viewMode, configSyncState])
 
   // Auto-expand on new activity (unless muted)
   const prevActivityCount = useRef(0)
@@ -442,18 +442,18 @@ export function AgentCardRow({
             )}
             {viewMode === "settings" && (
               <div className="absolute inset-0 overflow-y-auto px-3 pb-2">
-                <AgentSettingsPanel ref={settingsRef} agent={agent} onDirtyChange={setSettingsDirty} />
+                <AgentSettingsPanel ref={settingsRef} agent={agent} onSyncStateChange={setConfigSyncState} />
               </div>
             )}
           </div>
         </div>
 
-        {/* Attention bar — actionable items only: permissions, plans, new skills, config-dirty */}
+        {/* Attention bar — actionable items only: permissions, plans, new skills, config-sync */}
         <CardActionStrip
           items={actionItems}
           onResolvePermission={resolvePermission}
           onResolvePlan={resolvePlan}
-          onApply={() => settingsRef.current?.applyChanges()}
+          onSave={() => settingsRef.current?.saveChanges()}
           onDismissSkill={handleDismissSkill}
           onViewSkill={handleViewSkill}
         />

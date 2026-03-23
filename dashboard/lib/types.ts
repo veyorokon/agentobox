@@ -130,8 +130,29 @@ export type AgentTask = {
   updatedAt: string
 }
 
+/**
+ * Config sync state machine — settings panel to backend.
+ *
+ * Transitions:
+ *   in-sync    → unsaved    (user edits a field)
+ *   unsaved    → saving     (user clicks Save)
+ *   saving     → in-sync    (mutation succeeds + refetch lands, fields match)
+ *   saving     → unsaved    (refetch lands but user edited during save)
+ *   saving     → save-error (mutation throws)
+ *   save-error → saving     (user retries)
+ *   save-error → unsaved    (user edits again)
+ *
+ * "Applied to runtime" is intentionally NOT modeled — no backend ack loop
+ * exists. See #148 for the acknowledgment contract thread.
+ */
+export type ConfigSyncState =
+  | { status: "in-sync" }
+  | { status: "unsaved" }
+  | { status: "saving" }
+  | { status: "save-error"; message: string }
+
 export type CardActionItem =
   | { kind: "permission"; feedItem: Extract<TeamFeedItem, { type: "permission" }> }
   | { kind: "plan"; feedItem: Extract<TeamFeedItem, { type: "plan" }> }
-  | { kind: "config-dirty" }
+  | { kind: "config-sync"; syncState: ConfigSyncState }
   | { kind: "new-skill"; skillId: string; skillName: string }
