@@ -271,6 +271,19 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
         if event_type == "task_update":
             task_id = content.get("task_id", "")
             task_state = content.get("state", "")
+            task_data = {
+                "task_id": task_id,
+                "state": task_state,
+            }
+            input_text = content.get("input_text", "")
+            output_text = content.get("output_text", "")
+            error_text = content.get("error", "")
+            if isinstance(input_text, str) and input_text:
+                task_data["input_text"] = input_text
+            if isinstance(output_text, str) and output_text:
+                task_data["output_text"] = output_text
+            if isinstance(error_text, str) and error_text:
+                task_data["error"] = error_text
             log.info(
                 "relay.task_update",
                 agent_id=self.agent_id,
@@ -285,7 +298,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                     agent_id=self.agent_id,
                     session_id=content.get("session_id", ""),
                     event_type="task_update",
-                    data={"task_id": task_id, "state": task_state},
+                    data=task_data,
                     is_canonical=True,
                 )
             except Exception as exc:  # intentional: persistence is secondary — don't crash relay

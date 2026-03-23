@@ -108,6 +108,9 @@ async def test_receive_json_persists_task_update():
         "task_id": "task-1",
         "state": "failed",
         "session_id": "sess-abc",
+        "input_text": "hello",
+        "output_text": "partial output",
+        "error": "cwd does not exist",
     }
 
     with (
@@ -126,6 +129,9 @@ async def test_receive_json_persists_task_update():
     assert call_kwargs["event_type"] == "task_update"
     assert call_kwargs["data"]["task_id"] == "task-1"
     assert call_kwargs["data"]["state"] == "failed"
+    assert call_kwargs["data"]["input_text"] == "hello"
+    assert call_kwargs["data"]["output_text"] == "partial output"
+    assert call_kwargs["data"]["error"] == "cwd does not exist"
     assert call_kwargs["session_id"] == "sess-abc"
     assert call_kwargs["is_canonical"] is True
 
