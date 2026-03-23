@@ -624,6 +624,7 @@ def setup_agent_with_task_failure():
                 "client_active": False,
                 "task_id": "task-abc",
                 "task_state": "failed",
+                "task_error": "cwd does not exist",
             },
             "fatal": "executor crashed",
             "degraded": ["api-proxy"],
@@ -657,6 +658,7 @@ async def test_observed_includes_runtime_task_and_diagnosis_fields(setup_agent_w
     # Executor task fields
     assert observed["runtime_task_id"] == "task-abc"
     assert observed["runtime_task_state"] == "failed"
+    assert observed["runtime_task_error"] == "cwd does not exist"
     assert observed["runtime_client_active"] is False
     # Runtime health diagnosis
     assert observed["fatal"] == "executor crashed"
@@ -681,6 +683,7 @@ async def test_observed_task_fields_null_without_projection(setup_agent_no_sandb
     observed = bundle["observed"]
     assert observed["runtime_task_id"] is None
     assert observed["runtime_task_state"] is None
+    assert observed["runtime_task_error"] is None
     assert observed["runtime_client_active"] is None
     assert observed["fatal"] is None
     assert observed["degraded"] == []

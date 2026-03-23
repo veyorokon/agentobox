@@ -55,3 +55,67 @@ def test_runtime_status_projector_skips_identical_payloads(tmp_path):
 
     assert projector.project(status) is True
     assert projector.project(status) is False
+
+
+def test_status_document_to_dict_includes_task_error():
+    """Contract: StatusDocument.to_dict() surfaces runtime.task_error."""
+    doc = StatusDocument(
+        mode=AgentMode.STANDALONE,
+        platform=PlatformKind.LOCAL,
+        profile=RuntimeProfile.CORE,
+        build=BuildMetadata(),
+        startup_stage=StartupStage.RUNTIME_READY,
+        runtime_state=RuntimeState.READY,
+        runtime=RuntimeSnapshot(
+            task_id="task-fail",
+            task_state="failed",
+            task_error="cwd does not exist",
+        ),
+        transport=TransportSnapshot(
+            enabled=False,
+            state=TransportState.DISABLED,
+            connected=False,
+        ),
+    )
+    d = doc.to_dict()
+    assert d["runtime"]["task_error"] == "cwd does not exist"
+    assert d["runtime"]["task_state"] == "failed"
+    assert d["runtime"]["task_id"] == "task-fail"
+
+
+def test_status_document_to_dict_task_error_empty_on_success():
+    """Contract: task_error is empty string when task succeeds or is idle."""
+    doc = StatusDocument(
+        mode=AgentMode.STANDALONE,
+        platform=PlatformKind.LOCAL,
+        profile=RuntimeProfile.CORE,
+        build=BuildMetadata(),
+        startup_stage=StartupStage.RUNTIME_READY,
+        runtime_state=RuntimeState.READY,
+        runtime=RuntimeSnapshot(task_id="task-ok", task_state="completed"),
+        transport=TransportSnapshot(
+            enabled=False,
+            state=TransportState.DISABLED,
+            connected=False,
+        ),
+    )
+    d = doc.to_dict()
+    assert d["runtime"]["task_error"] == ""
+
+    # Idle case — no task
+    idle_doc = StatusDocument(
+        mode=AgentMode.STANDALONE,
+        platform=PlatformKind.LOCAL,
+        profile=RuntimeProfile.CORE,
+        build=BuildMetadata(),
+        startup_stage=StartupStage.RUNTIME_READY,
+        runtime_state=RuntimeState.READY,
+        runtime=RuntimeSnapshot(),
+        transport=TransportSnapshot(
+            enabled=False,
+            state=TransportState.DISABLED,
+            connected=False,
+        ),
+    )
+    d2 = idle_doc.to_dict()
+    assert d2["runtime"]["task_error"] == ""
