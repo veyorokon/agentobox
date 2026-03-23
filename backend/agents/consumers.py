@@ -307,6 +307,15 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                     agent_id=self.agent_id,
                     error_class=type(exc).__name__,
                 )
+            # Update task_started_at when task begins running
+            if task_state == "running":
+                try:
+                    from agents.models import Agent
+                    await Agent.objects.filter(id=self.agent_id).aupdate(
+                        task_started_at=timezone.now(),
+                    )
+                except Exception:
+                    pass  # best-effort timestamp
             return
 
         if event_type == "execution_event":
@@ -328,7 +337,14 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                         error_class=type(exc).__name__,
                         operation="process_stream_event",
                     )
-                return
+            # Update last_execution_event_at on all execution events, not just raw_message
+            try:
+                from agents.models import Agent
+                await Agent.objects.filter(id=self.agent_id).aupdate(
+                    last_execution_event_at=timezone.now(),
+                )
+            except Exception:
+                pass  # best-effort timestamp
             return
 
         from agents.services.stream import process_stream_event

@@ -355,6 +355,9 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
         # Build provenance
         "build_image_ref": build.get("image_ref") or None,
         "build_git_commit": build.get("git_commit") or None,
+        # Task timing (for watchdog classification)
+        "task_started_at": getattr(agent, "task_started_at", None),
+        "last_execution_event_at": getattr(agent, "last_execution_event_at", None),
         "source": "agent_model+runtime_projection",
     }
 

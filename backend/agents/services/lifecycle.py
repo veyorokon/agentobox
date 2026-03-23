@@ -990,6 +990,8 @@ def _atomic_reset_for_restart(agent_id):
         agent.phase = ""
         agent.attention_level = "none"
         agent.error_message = ""
+        agent.task_started_at = None
+        agent.last_execution_event_at = None
         agent.runtime = runtime_name
         agent.model = model
         agent.mcp_servers = mcp_servers
@@ -1003,6 +1005,7 @@ def _atomic_reset_for_restart(agent_id):
             "relay_token", "relay_connected", "relay_disconnected_at", "runtime_status_projection",
             "deployed_at", "latest_snapshot",
             "task", "phase", "attention_level", "error_message",
+            "task_started_at", "last_execution_event_at",
             "runtime", "model", "mcp_servers", "workspace_path",
             "volume_mounts", "instructions", "role", "mode", "updated_at",
         ])
