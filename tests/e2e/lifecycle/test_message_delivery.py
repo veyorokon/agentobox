@@ -1,24 +1,23 @@
 """
 Message delivery guarantee e2e tests.
 
-Tests the backfill pipeline that ensures messages sent to stopped/restarting
-agents are delivered once the relay connects:
+Tests the durable inbox / restart path that ensures messages sent to
+stopped or restarting agents are delivered after the runtime comes back:
 
     sendMessage → StreamEvent(type=user) persisted → hard_restart_agent →
-    container deploys → relay connects while status=DEPLOYING →
-    consumers.py backfill loop finds pending messages → sends to relay →
-    Claude Code processes message → agent goes RUNNING
+    container deploys → canonical inbox survives restart →
+    runtime reconciles inbox on connect/poll → Claude Code processes message
 
-The DEPLOYING→IDLE transition was moved from lifecycle provisioning to
-RelayConsumer.connect(), ensuring the backfill check (status==DEPLOYING)
-is still true when the relay connects.
+The current contract is not a relay-connect backfill loop. Delivery depends on
+the durable inbox on the machine surface plus the managed runtime's inbox
+reconciliation behavior after provisioning/reconnect.
 
 Chain under test:
   comms.send_message() → StreamEvent(type=user) saved →
   _needs_restart() → hard_restart_agent() → container created →
-  relay connects → RelayConsumer.connect() →
-  status still DEPLOYING → backfill pending messages →
-  DEPLOYING → IDLE → Claude processes → RUNNING
+  runtime reconnects/reconciles inbox →
+  pending task appears in managed runtime →
+  Claude processes → RUNNING/IDLE
 
 Run:
   make test-e2e-agents
@@ -51,8 +50,8 @@ class TestMessageDelivery:
     """Verify that messages sent to stopped agents are delivered after restart.
 
     The delivery guarantee: any message persisted as a StreamEvent before the
-    relay connects will be backfilled to Claude Code on relay connect, as long
-    as the agent status is still DEPLOYING at connect time.
+    restart survives in the durable inbox and is picked up by the managed
+    runtime after it reconnects and reconciles that inbox.
     """
 
     def _create_and_wait(self, gql, test_project):

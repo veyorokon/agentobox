@@ -13,7 +13,8 @@ Key invariants:
 - hard_restart uses select_for_update()+transaction.atomic() to prevent
   concurrent restarts from orphaning containers.
 - config_snapshot preserves creation-time config so restarts reprovision
-  identically. session_id is captured for --resume context preservation.
+  identically. session_id is captured as a best-effort `--resume` hint,
+  not a guaranteed continuity contract by itself.
 - resolve_agent_secrets applies project-level secret scoping: a secret
   goes to an agent if it has no scoped_agents (default-all) or the agent
   is in its scoped set.
@@ -21,7 +22,7 @@ Key invariants:
 Container provisioning sequence:
     create container → symlink .claude to volume → write secrets →
     provision_workspace → write .relay_env → save relay_token →
-    relay self-starts (polls for .relay_env) → spawn tmux log tail
+    managed runtime self-starts from the provisioned files and reports status
 """
 import json
 import os
@@ -1026,11 +1027,13 @@ def _atomic_reset_for_restart(agent_id):
 
 async def hard_restart_agent(agent_id: str) -> Agent:
     """
-    Hard restart: kill container + reprovision with context preservation.
+    Hard restart: kill container + reprovision with best-effort context resume.
 
     Terminates the existing container, resets the agent's state, and provisions
     a new container with the same configuration that was used at creation time.
-    Captures the current session_id so the new container can --resume it.
+    Captures the current session_id so the new container can attempt `--resume`
+    with it. Continuity is only confirmed by the new runtime's subsequent
+    session/output, not by passing the hint alone.
 
     Uses select_for_update() to prevent concurrent restarts from orphaning
     containers.

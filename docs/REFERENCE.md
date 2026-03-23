@@ -410,7 +410,8 @@ Key invariants:
 - hard_restart uses select_for_update()+transaction.atomic() to prevent
   concurrent restarts from orphaning containers.
 - config_snapshot preserves creation-time config so restarts reprovision
-  identically. session_id is captured for --resume context preservation.
+  identically. session_id is captured as a best-effort `--resume` hint,
+  not a guaranteed continuity contract by itself.
 - resolve_agent_secrets applies project-level secret scoping: a secret
   goes to an agent if it has no scoped_agents (default-all) or the agent
   is in its scoped set.
@@ -418,7 +419,7 @@ Key invariants:
 Container provisioning sequence:
     create container → symlink .claude to volume → write secrets →
     provision_workspace → write .relay_env → save relay_token →
-    relay self-starts (polls for .relay_env) → spawn tmux log tail
+    managed runtime self-starts from the provisioned files and reports status
 
 ### app/agents/services/mcp_coord.py
 

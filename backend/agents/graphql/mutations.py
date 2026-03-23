@@ -151,7 +151,7 @@ class CaptureIncidentInput:
     window_minutes: int = 30
 
 
-# --- Skill push helpers (hot-reload without restart) ---
+# --- Skill push helpers (saved now, effective on the next Claude invocation) ---
 
 async def _get_matching_agents(project_id, assigned_to_all: bool, assigned_tags: list[str] | None):
     """Get running/idle agents matching the given assignment criteria.
@@ -705,7 +705,8 @@ class AgentMutation:
         except IntegrityError:
             raise ValueError(f"A skill named '{input.name}' already exists in this project")
 
-        # Push skill to matching running agents (hot-reload without restart)
+        # Push skill files to matching running agents. Claude reads them on the
+        # next invocation; this is not a generic live-reload contract.
         from agents.services.relay import push_skill_to_agents as _push_skill
         await _push_skill(skill, operation="write")
 
@@ -766,7 +767,8 @@ class AgentMutation:
                     from agents.services.relay import push_skill_delete_to_specific_agents
                     await push_skill_delete_to_specific_agents(skill.name, agents_to_cleanup)
 
-            # Push updated skill to matching running agents (hot-reload without restart)
+            # Push updated skill files to matching running agents. Claude reads
+            # them on the next invocation; this is not a generic live-reload contract.
             from agents.services.relay import push_skill_to_agents as _push_skill
         await _push_skill(skill, operation="write")
 

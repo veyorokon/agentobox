@@ -674,6 +674,13 @@ class TestBuildRelayEnv:
         # Real OAuth token must NOT appear in env
         assert "sk-ant-oat01-real-oauth-token" not in env
 
+    def test_resume_session_id_is_emitted_as_resume_hint(self, adapter):
+        env = adapter.build_relay_env(
+            **self._base_kwargs(),
+            resume_session_id="sess-resume-123",
+        )
+        assert "export RESUME_SESSION_ID=sess-resume-123" in env
+
 
 # ── MCP config builders ──
 

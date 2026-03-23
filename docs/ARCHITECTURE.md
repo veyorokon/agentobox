@@ -134,7 +134,7 @@ The AI coding team use case is one workflow template among many. Dogfooding (usi
 | 6. SDK client starts | managed session creates executor, spawns Claude CLI subprocess | `agent/runtime/managed_session.py` `ManagedRelaySession` |
 | 7. Events stream back | SDK messages forwarded as raw JSON dicts over WS to `RelayConsumer` | `consumers.py` `RelayConsumer.receive_json()` → `services/stream.py` |
 
-On restart (`hard_restart_agent`), the old container is terminated, agent is reset to `deploying`, and a new container is provisioned with `--resume` using the previous `session_id`. On kill, the container is terminated and status set to `stopped`.
+On restart (`hard_restart_agent`), the old container is terminated, the agent is reset to `deploying`, and a new container is provisioned with a best-effort `--resume` hint using the previous `session_id`. Continuity is only confirmed by the new runtime's subsequent session/output, not by passing that hint alone. On kill, the container is terminated and status set to `stopped`.
 
 ## Communication Architecture
 

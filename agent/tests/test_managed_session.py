@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import time
+import pytest
 
 from agent.contracts.execution import ExecutorKind
 from agent.contracts.input import TaskInput
@@ -251,6 +252,15 @@ def test_managed_session_reloads_runtime_state_without_degrading_transport(tmp_p
     assert os.environ["AGENT_MODE"] == "auto"
     assert os.environ["ALLOWED_TOOLS"] == '["Read"]'
     assert session.drain_outbound_messages() == []
+
+
+@pytest.mark.parametrize("path", ["home/agent/.mcp.json", "home/agent/CLAUDE.md"])
+def test_managed_session_rejects_unsupported_agent_private_reload_paths(tmp_path, path):
+    runner = _build_runner()
+    session = ManagedRelaySession(_managed_runtime_config(tmp_path), runner, runner._state)
+
+    with pytest.raises(ValueError, match="unsupported reload path"):
+        session.on_command(ReloadCommand(path=path))
 
 
 def test_managed_session_clear_action_clears_pending_tasks(tmp_path):

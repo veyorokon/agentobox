@@ -95,7 +95,7 @@ Architecture tests read source files as text and enforce invariants that code re
 
 ### Volume-Based State
 
-All agent runtime state flows through a shared volume. The backend writes files, sends a WebSocket "poke" to the relay, and the relay reloads from disk. One protocol replaces multiple ad-hoc sync mechanisms.
+Canonical mutable runtime state flows through the shared machine surface. The backend writes files there, and the relay/runtime reload only the explicitly supported runtime-state paths. Agent-private config such as `CLAUDE.md` and `.mcp.json` is also written there, but those files are read on the next Claude invocation rather than through a general live-reload protocol.
 
 ```
 VOLUME_ROOT/agents/{agent_id}/

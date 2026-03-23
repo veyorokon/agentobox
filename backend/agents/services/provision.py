@@ -329,10 +329,11 @@ def build_secrets_env_content(secret_envs: dict[str, str] | None) -> str:
 
 
 async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
-    """Hot-reload secrets on a running agent via volume write + reload.
+    """Rewrite secrets and dependent config on the machine surface.
 
     Replaces the old runtime.write_file + runtime.exec approach.
-    Writes secrets to volume and rebuilds MCP config for the next Claude invocation.
+    Writes secrets to the machine surface and rebuilds MCP config for the next
+    Claude invocation. This is not a general live-reload guarantee.
     """
     vol = agent.machine
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
