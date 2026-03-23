@@ -238,7 +238,7 @@ def send_message(token: str, project_id: str, agent_id: str, text: str) -> bool:
 
 
 def build_long_running_message(work_token: str) -> str:
-    log_path = "/home/agent/workspace/continuity.log"
+    log_path = "/workspace/continuity.log"
     command = (
         f"rm -f {log_path}; "
         f"for i in $(seq 1 {WORK_TICKS}); do "
