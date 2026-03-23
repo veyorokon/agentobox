@@ -558,7 +558,9 @@ class AgentMutation:
                 coord_server=coord_server,
             )
             await writer.write("home/agent/CLAUDE.md", claude_md)
-            await writer.write("home/agent/.mcp.json", mcp_config)
+            # Write .mcp.json + send reload so the agent re-reads config
+            from agents.services.relay import update_volume_and_reload
+            await update_volume_and_reload(agent, "home/agent/.mcp.json", mcp_config)
 
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)

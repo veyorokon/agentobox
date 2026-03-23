@@ -315,8 +315,8 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                     await Agent.objects.filter(id=self.agent_id).aupdate(
                         task_started_at=timezone.now(),
                     )
-                except Exception:
-                    pass  # best-effort timestamp
+                except Exception:  # intentional: best-effort timestamp — must not block task_update flow
+                    pass
             return
 
         if event_type == "execution_event":
@@ -346,8 +346,8 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 await Agent.objects.filter(id=self.agent_id).aupdate(
                     last_execution_event_at=timezone.now(),
                 )
-            except Exception:
-                pass  # best-effort timestamp
+            except Exception:  # intentional: best-effort timestamp — must not block execution_event flow
+                pass
             return
 
         from agents.services.stream import process_stream_event
