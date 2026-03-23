@@ -11,7 +11,7 @@
 
 import type { ApolloClient, ApolloCache } from "@apollo/client/core"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
-import { GET_FEED } from "@/lib/graphql/queries/feed"
+import { GET_FEED, GET_AGENT_FEED } from "@/lib/graphql/queries/feed"
 import { deriveAttentionFromFeed } from "@/lib/attention"
 import { gql } from "@apollo/client"
 import { createLogger } from "@/lib/logger"
@@ -76,7 +76,7 @@ export function upsertAgent(
     data: { agents: updatedAgents },
   })
 
-  client.refetchQueries({ include: ["GetAgentFeed"] })
+  client.refetchQueries({ include: [GET_AGENT_FEED] })
 }
 
 /** Upsert single feed item from WS incremental update */
