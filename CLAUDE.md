@@ -15,3 +15,7 @@ Repo-specific implementation reference lives in:
 - [docs/contracts/README.md](./docs/contracts/README.md)
 - [docs/contracts/machine.md](./docs/contracts/machine.md)
 - [docs/testing.md](./docs/testing.md)
+
+## Git Rules
+
+Never mention Claude, Anthropic, or any AI tool in commit messages, PR titles, PR descriptions, or Co-Authored-By lines. Git artifacts should read as if written by a human engineer.
