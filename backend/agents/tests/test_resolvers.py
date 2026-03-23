@@ -1,10 +1,12 @@
-"""Tests for GraphQL resolver adapter delegation.
+"""Tests for GraphQL resolver adapter delegation and mutation side effects.
 
 Verifies that display field resolvers read from latest_snapshot via adapter,
-not from stale model columns.
+not from stale model columns. Also verifies that config mutations write the
+expected agent-private files to the machine volume.
 """
 
 import pytest
+from unittest.mock import AsyncMock, patch, call
 from asgiref.sync import sync_to_async
 from django.test import RequestFactory
 
@@ -153,3 +155,130 @@ class TestResolverAdapterDelegation:
         """phase is an auto field that reads directly from the model."""
         agent.phase = "thinking"
         assert agent.phase == "thinking"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestConfigMutationFileWrites:
+    """Black-box mutation tests proving config resolvers write expected files.
+
+    These complement the source-grep invariants in test_architecture.py with
+    actual resolver execution. The writer is mocked at the import seam so we
+    verify the resolver calls write() with the correct paths and content.
+    """
+
+    @pytest.fixture
+    def agent_with_sandbox(self, db):
+        from projects.models import Project
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.create_user(username="test_config_mut", password="pw")
+        project = Project.objects.create(name="Vahid Eyorokon Config Test", owner=user)
+        return Agent.objects.create(
+            name="config-test-agent",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            sandbox_id="sb-config-test",
+            agent_type="claude-code",
+            role="worker",
+            instructions="original instructions",
+            mcp_servers=[],
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_agent_instructions_writes_claude_md(self, agent_with_sandbox):
+        """updateAgentInstructions must write home/agent/CLAUDE.md via writer."""
+        from schema import schema
+
+        mock_writer = AsyncMock()
+        agent = agent_with_sandbox
+
+        request = RequestFactory().post("/graphql")
+        request.user = await sync_to_async(lambda: agent.project.owner)()
+
+        with patch(
+            "agents.services.machine_write.get_machine_writer",
+            return_value=mock_writer,
+        ):
+            result = await schema.execute(
+                """
+                mutation ($input: UpdateAgentInstructionsInput!) {
+                    updateAgentInstructions(input: $input) {
+                        id
+                        instructions
+                    }
+                }
+                """,
+                variable_values={
+                    "input": {
+                        "agentId": str(agent.id),
+                        "instructions": "Vahid Eyorokon wants this behavior",
+                    },
+                },
+                context_value={"request": request},
+            )
+
+        assert result.errors is None, f"Mutation errors: {result.errors}"
+        assert result.data["updateAgentInstructions"]["instructions"] == "Vahid Eyorokon wants this behavior"
+
+        # Verify writer.write was called with CLAUDE.md
+        mock_writer.write.assert_awaited_once()
+        write_path, write_content = mock_writer.write.call_args[0]
+        assert write_path == "home/agent/CLAUDE.md"
+        assert "Vahid Eyorokon wants this behavior" in write_content
+
+    @pytest.mark.asyncio
+    async def test_update_agent_config_writes_claude_md_and_mcp_json(self, agent_with_sandbox):
+        """updateAgentConfig must write both CLAUDE.md and .mcp.json when MCP changes."""
+        from schema import schema
+
+        mock_writer = AsyncMock()
+        agent = agent_with_sandbox
+
+        request = RequestFactory().post("/graphql")
+        request.user = await sync_to_async(lambda: agent.project.owner)()
+
+        with patch(
+            "agents.services.machine_write.get_machine_writer",
+            return_value=mock_writer,
+        ), patch(
+            "agents.services.relay.update_volume_and_reload",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "agents.services.broadcast.broadcast_agent_update",
+            new_callable=AsyncMock,
+        ):
+            result = await schema.execute(
+                """
+                mutation ($input: UpdateAgentConfigInput!) {
+                    updateAgentConfig(input: $input) {
+                        id
+                    }
+                }
+                """,
+                variable_values={
+                    "input": {
+                        "agentId": str(agent.id),
+                        "mcpRegistryNames": ["playwright"],
+                    },
+                },
+                context_value={"request": request},
+            )
+
+        assert result.errors is None, f"Mutation errors: {result.errors}"
+
+        # Verify writer.write was called for both files
+        write_calls = mock_writer.write.call_args_list
+        written_paths = [c[0][0] for c in write_calls]
+        assert "home/agent/CLAUDE.md" in written_paths, (
+            f"Expected CLAUDE.md write, got paths: {written_paths}"
+        )
+        assert "home/agent/.mcp.json" in written_paths, (
+            f"Expected .mcp.json write, got paths: {written_paths}"
+        )
+
+        # Verify .mcp.json content includes the requested MCP server
+        mcp_call = next(c for c in write_calls if c[0][0] == "home/agent/.mcp.json")
+        mcp_content = mcp_call[0][1]
+        assert "playwright" in mcp_content
