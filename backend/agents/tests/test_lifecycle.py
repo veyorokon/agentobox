@@ -563,6 +563,39 @@ async def test_atomic_reset_for_restart_clears_stale_runtime_projection():
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_atomic_reset_for_restart_carries_session_id_as_resume_hint():
+    def _setup():
+        owner = User.objects.create_user(username="owner6bb", password="pw")
+        project = _create_project_without_signals(name="Test Project 6bb", owner=owner)
+        return Agent.objects.create(
+            name="resume-hint-agent",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            desired_status=DesiredStatus.DEPLOYED,
+            session_id="sess-current-123",
+            config_snapshot={
+                "runtime": "docker",
+                "model": "claude-sonnet-4-5-20250929",
+                "agent_type": "claude-code",
+                "mcp_servers": {},
+                "workspace_path": "",
+                "instructions": "",
+                "role": "worker",
+                "volume_mounts": [],
+            },
+        )
+
+    agent = await sync_to_async(_setup, thread_sensitive=True)()
+
+    result = await _atomic_reset_for_restart(str(agent.id))
+    assert result is not None
+    _reset_agent, _old_sandbox_id, _previous_runtime, resume_session_id, _config = result
+    assert resume_session_id == "sess-current-123"
+
+
+@pytest.mark.django_db(transaction=True)
 async def test_atomic_reset_for_restart_clears_task_timestamps():
     def _setup():
         owner = User.objects.create_user(username="owner6c", password="pw")
