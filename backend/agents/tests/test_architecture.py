@@ -1153,27 +1153,31 @@ _POLICY_VARS = {
 }
 
 
-class TestMcpReloadContract:
-    """Principle: MCP config writes must trigger a reload signal.
+class TestMcpConfigContract:
+    """Principle: .mcp.json is saved-now, effective-next-task config on managed runtime.
 
-    Writing .mcp.json without a reload means the running agent won't
-    pick up new MCP servers until the next task invocation. The mutation
-    must use update_volume_and_reload (not bare writer.write) for .mcp.json.
+    Managed runtime only supports live reload for a narrow runtime-state subset.
+    Agent-private config files such as .mcp.json are read fresh by Claude on the
+    next invocation, so update_agent_config must write them directly instead of
+    pretending they are live-reloadable.
     """
 
-    def test_mcp_config_write_uses_reload_path(self):
-        """update_agent_config must call update_volume_and_reload for .mcp.json."""
+    def test_mcp_config_write_does_not_claim_live_reload(self):
+        """update_agent_config must write .mcp.json directly, not via reload."""
         src = _read_source(GRAPHQL_DIR / "mutations.py")
-        # Find the .mcp.json write — it must go through update_volume_and_reload
-        assert "update_volume_and_reload" in src and ".mcp.json" in src, (
-            "mutations.py must use update_volume_and_reload for .mcp.json writes. "
-            "Bare writer.write() skips the reload signal."
-        )
-        # Ensure .mcp.json is NOT written via bare writer.write
         import re
-        bare_mcp_write = re.search(r'writer\.write\([^)]*\.mcp\.json', src)
-        assert bare_mcp_write is None, (
-            "mutations.py writes .mcp.json via writer.write() — use update_volume_and_reload instead."
+
+        direct_mcp_write = re.search(r'writer\.write\([^)]*\.mcp\.json', src)
+        assert direct_mcp_write is not None, (
+            "mutations.py must write .mcp.json directly. MCP config is picked up "
+            "on the next task invocation, not via a managed-runtime reload path."
+        )
+
+        mcp_reload = re.search(r'update_volume_and_reload\([^)]*\.mcp\.json', src)
+        assert mcp_reload is None, (
+            "mutations.py sends a live reload for .mcp.json, but managed runtime "
+            "does not support that reload path. Keep MCP config honest: save now, "
+            "take effect on the next task."
         )
 
 

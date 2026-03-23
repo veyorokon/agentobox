@@ -557,10 +557,12 @@ class AgentMutation:
                 mcp_servers=agent.mcp_servers or None,
                 coord_server=coord_server,
             )
+            # Agent-private config is read on the next Claude invocation.
+            # Managed runtime only live-reloads a narrow runtime-state subset,
+            # so CLAUDE.md and .mcp.json must be treated as saved-now,
+            # effective-next-task config.
             await writer.write("home/agent/CLAUDE.md", claude_md)
-            # Write .mcp.json + send reload so the agent re-reads config
-            from agents.services.relay import update_volume_and_reload
-            await update_volume_and_reload(agent, "home/agent/.mcp.json", mcp_config)
+            await writer.write("home/agent/.mcp.json", mcp_config)
 
         from agents.services.broadcast import broadcast_agent_update
         await broadcast_agent_update(agent)
