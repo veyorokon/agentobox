@@ -23,6 +23,7 @@ class MutableRuntimeState:
     client_active: bool = False
     task_id: str = ""
     task_state: str = "idle"
+    task_error: str = ""
     transport_enabled: bool = False
     transport_state: TransportState = TransportState.DISABLED
     transport_connected: bool = False
@@ -75,10 +76,11 @@ class RuntimeStateStore:
             last_error=snapshot.last_error,
         )
 
-    def set_task(self, *, task_id: str, task_state: str, client_active: bool) -> None:
+    def set_task(self, *, task_id: str, task_state: str, client_active: bool, task_error: str = "") -> None:
         with self._lock:
             self._state.task_id = task_id
             self._state.task_state = task_state
+            self._state.task_error = task_error
             self._state.client_active = client_active
 
     def set_session(self, session_id: str) -> None:
@@ -178,6 +180,7 @@ class RuntimeStateStore:
                 client_active=self._state.client_active,
                 task_id=self._state.task_id,
                 task_state=self._state.task_state,
+                task_error=self._state.task_error,
             )
             transport = TransportSnapshot(
                 enabled=self._state.transport_enabled,

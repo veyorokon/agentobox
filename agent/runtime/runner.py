@@ -219,7 +219,12 @@ class TaskRunner:
                 )
                 self._notify("on_task_failed", record)
             finally:
-                self._state.set_task(task_id=request.id, task_state=record.state, client_active=False)
+                self._state.set_task(
+                    task_id=request.id,
+                    task_state=record.state,
+                    client_active=False,
+                    task_error=getattr(record, "error", "") or "",
+                )
                 self._state.update_runtime_state(RuntimeState.READY)
 
     def _notify(self, method_name: str, record: TaskRecord) -> None:

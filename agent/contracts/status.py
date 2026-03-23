@@ -25,6 +25,7 @@ class RuntimeSnapshot:
     client_active: bool = False
     task_id: str = ""
     task_state: str = "idle"
+    task_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class StatusDocument:
                 "client_active": self.runtime.client_active,
                 "task_id": self.runtime.task_id,
                 "task_state": self.runtime.task_state,
+                "task_error": self.runtime.task_error,
             },
             "transport": {
                 "enabled": self.transport.enabled,

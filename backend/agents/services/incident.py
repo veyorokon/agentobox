@@ -20,7 +20,7 @@ from agents.services.task_health import classify_task_health
 
 log = structlog.get_logger("abox.incident")
 
-BUNDLE_SCHEMA_VERSION = "4"
+BUNDLE_SCHEMA_VERSION = "5"
 
 # Caps to keep bundles bounded
 MAX_STREAM_EVENTS = 200
@@ -359,6 +359,7 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
         # Runtime executor task state (not AgentTask team-board)
         "runtime_task_id": rt.get("task_id") or None,
         "runtime_task_state": rt.get("task_state") or None,
+        "runtime_task_error": rt.get("task_error") or None,
         "runtime_client_active": rt.get("client_active"),
         # Runtime health diagnosis
         "fatal": runtime_status.get("fatal"),
