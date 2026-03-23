@@ -95,10 +95,11 @@ export default function ProjectPage() {
   // a stale error object even after a successful refetch/WS snapshot.
   const hasProjectData = Boolean(projectData?.project)
   const hasAgentData = Boolean(agentsData?.agents)
-  const hasProviderData = providers.length > 0
+  // Provider status is auxiliary UI data for key badges/forms. It should not
+  // keep the whole project page in a "load failed" state once the core page
+  // data (project + agents) has loaded.
   const backendError = (!hasProjectData && projectError)
     || (!hasAgentData && agentsError)
-    || (!hasProviderData && providerError)
     || null
 
   // ── Local state ─────────────────────────────────────────────────

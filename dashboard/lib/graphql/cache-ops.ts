@@ -16,8 +16,30 @@ import { deriveAttentionFromFeed } from "@/lib/attention"
 import { gql } from "@apollo/client"
 import { createLogger } from "@/lib/logger"
 import type { TeamFeedItem } from "@/lib/types"
+import type { DocumentNode } from "graphql"
 
 const log = createLogger("cache-ops")
+
+function operationName(document: DocumentNode): string | null {
+  for (const definition of document.definitions) {
+    if (definition.kind === "OperationDefinition") {
+      return definition.name?.value ?? null
+    }
+  }
+  return null
+}
+
+function refetchActiveQueryByDocument(client: ApolloClient, document: DocumentNode): void {
+  const targetName = operationName(document)
+  if (!targetName) return
+
+  for (const observable of client.getObservableQueries("active")) {
+    const queryDocument = (observable as { options?: { query?: DocumentNode } }).options?.query
+    if (!queryDocument) continue
+    if (operationName(queryDocument) !== targetName) continue
+    void observable.refetch()
+  }
+}
 
 // ---------------------------------------------------------------------------
 // WS authoritative writes
@@ -76,13 +98,9 @@ export function upsertAgent(
     data: { agents: updatedAgents },
   })
 
-  // Refetch active agent feed queries if any component is watching.
-  // onQueryUpdated returns the observable result only for active queries,
-  // so this is a silent no-op when no GetAgentFeed is mounted.
-  client.refetchQueries({
-    include: [GET_AGENT_FEED],
-    onQueryUpdated(query) { return query.refetch() },
-  })
+  // Refetch only already-mounted agent feed queries. Using Apollo's include
+  // array still warns when no GetAgentFeed observer exists.
+  refetchActiveQueryByDocument(client, GET_AGENT_FEED)
 }
 
 /** Upsert single feed item from WS incremental update */

@@ -34,11 +34,9 @@ function deriveBackendError({
 }): Error | null {
   const hasProjectData = Boolean(projectData?.project)
   const hasAgentData = Boolean(agentsData?.agents)
-  const hasProviderData = providers.length > 0
   return (
     (!hasProjectData && projectError)
     || (!hasAgentData && agentsError)
-    || (!hasProviderData && providerError)
     || null
   ) as Error | null
 }
@@ -90,6 +88,18 @@ describe("Project error banner state", () => {
       agentsError: undefined,
       providers: [{ slug: "anthropic", configured: true }],
       providerError: mockError, // stale error
+    })
+    expect(result).toBeNull()
+  })
+
+  it("does not block the page when provider status fails but core data loads", () => {
+    const result = deriveBackendError({
+      projectData: { project: { id: "p1", name: "Test" } },
+      projectError: undefined,
+      agentsData: { agents: [{ id: "a1" }] },
+      agentsError: undefined,
+      providers: [],
+      providerError: mockError,
     })
     expect(result).toBeNull()
   })
