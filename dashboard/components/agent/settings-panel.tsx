@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react"
+import { useState, useCallback, useEffect, useImperativeHandle, useMemo, useRef, forwardRef } from "react"
 import { useParams } from "next/navigation"
 import {
   Trash2,
@@ -14,11 +14,13 @@ import type { Agent, ConfigSyncState } from "@/lib/types"
 import { TagInput } from "@/components/shared/tag-input"
 import { Collapsible } from "@/components/ui/collapsible"
 import {
+  useAgents,
   useRemoveAgent,
   useUpdateAgentInstructions,
   useUpdateAgentConfig,
 } from "@/lib/graphql/hooks/use-agents"
 import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-models"
+import { useSkills } from "@/lib/graphql/hooks/use-skills"
 import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
 import { toast } from "@/lib/toast"
 
@@ -101,6 +103,16 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
   const { projectId } = useParams<{ projectId: string }>()
   const { models } = useAvailableModels()
   const { providers } = useProviderStatus(projectId ?? "")
+  const { data: agentsData } = useAgents()
+  const { data: skillsData } = useSkills()
+
+  // Derive project-wide tag suggestions from cached agents + skills
+  const tagSuggestions = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of agentsData?.agents ?? []) for (const t of a.tags) set.add(t)
+    for (const s of skillsData?.skills ?? []) for (const t of s.assignedTags) set.add(t)
+    return Array.from(set).sort()
+  }, [agentsData, skillsData])
 
   const [model, setModel] = useState(agent.model)
   const [instructions, setInstructions] = useState(agent.instructions)
@@ -291,7 +303,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
           Tags
         </label>
         <div className="bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 focus-within:border-accent/50 transition-colors">
-          <TagInput tags={agentTags} onChange={setAgentTags} placeholder="Add tag..." />
+          <TagInput tags={agentTags} onChange={setAgentTags} placeholder="Add tag..." suggestions={tagSuggestions} />
         </div>
         <p className="text-[9px] text-muted/40 mt-0.5">Saved to backend</p>
       </div>

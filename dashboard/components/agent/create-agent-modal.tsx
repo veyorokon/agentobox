@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect, type FormEvent } from "react"
+import { useState, useEffect, useMemo, type FormEvent } from "react"
 import { useParams } from "next/navigation"
 import { X } from "lucide-react"
-import { useCreateAgent } from "@/lib/graphql/hooks/use-agents"
+import { useAgents, useCreateAgent } from "@/lib/graphql/hooks/use-agents"
+import { useSkills } from "@/lib/graphql/hooks/use-skills"
 import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-models"
 import { TagInput } from "@/components/shared/tag-input"
 
@@ -37,6 +38,15 @@ export function CreateAgentModal({
   const [tags, setTags] = useState<string[]>([])
 
   const { create: createAgent, loading, error } = useCreateAgent()
+  const { data: agentsData } = useAgents()
+  const { data: skillsData } = useSkills()
+
+  const tagSuggestions = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of agentsData?.agents ?? []) for (const t of a.tags) set.add(t)
+    for (const s of skillsData?.skills ?? []) for (const t of s.assignedTags) set.add(t)
+    return Array.from(set).sort()
+  }, [agentsData, skillsData])
 
   // Set default model once loaded
   useEffect(() => {
@@ -219,7 +229,7 @@ export function CreateAgentModal({
               <span className="text-muted/50 ml-1 font-normal">optional</span>
             </label>
             <div className="rounded-md border border-border-default bg-surface-sunken px-3 py-2">
-              <TagInput tags={tags} onChange={setTags} placeholder="Add tag..." />
+              <TagInput tags={tags} onChange={setTags} placeholder="Add tag..." suggestions={tagSuggestions} />
             </div>
           </div>
 

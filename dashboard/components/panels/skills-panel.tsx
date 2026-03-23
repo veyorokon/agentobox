@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils"
 import { toast } from "@/lib/toast"
 import { useSidebarStore } from "@/lib/stores/sidebar"
+import { useAgents } from "@/lib/graphql/hooks/use-agents"
 import { useSkills, useCreateSkill, useDeleteSkill } from "@/lib/graphql/hooks/use-skills"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Collapsible } from "@/components/ui/collapsible"
@@ -30,6 +31,7 @@ export function SkillsPanel() {
   const allExpanded = useSidebarStore(s => s.skillsAllExpanded)
 
   // Data hooks
+  const { data: agentsData } = useAgents()
   const { data: skillsData } = useSkills()
   const skills = skillsData?.skills ?? []
   const createSkill = useCreateSkill()
@@ -45,6 +47,12 @@ export function SkillsPanel() {
   const { selectMode, selectedIds: selectedSkills, setSelectMode, toggleSelect: toggleSkillSelect, toggleAll: toggleAllSkills, exitSelectMode: exitSkillSelectMode } = useSelectMode<typeof skills[number]>()
 
   const allSkillTags = useMemo(() => Array.from(new Set(skills.flatMap(s => s.assignedTags))).sort(), [skills])
+  // Project-wide tags for autocomplete — includes both agent and skill tags
+  const allProjectTags = useMemo(() => {
+    const set = new Set(allSkillTags)
+    for (const a of agentsData?.agents ?? []) for (const t of a.tags) set.add(t)
+    return Array.from(set).sort()
+  }, [allSkillTags, agentsData])
 
   const handleCreateSkill = () => {
     if (!newName.trim()) return
@@ -144,7 +152,7 @@ export function SkillsPanel() {
               Assign to tags
             </label>
             <div className="bg-surface-sunken/60 border border-border-default rounded-md px-2.5 py-1.5 focus-within:border-accent/50 transition-colors">
-              <TagInput tags={newTags} onChange={setNewTags} placeholder="Add tag..." />
+              <TagInput tags={newTags} onChange={setNewTags} placeholder="Add tag..." suggestions={allProjectTags} />
             </div>
           </div>
           <label className="flex items-center gap-2 cursor-pointer select-none">
