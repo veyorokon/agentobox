@@ -11,7 +11,13 @@ import tempfile
 
 import pytest
 
-from tests.diagnosis import Diagnosis, REQUIRED_FIELDS, validate_diagnosis
+from tests.diagnosis import (
+    Diagnosis,
+    REQUIRED_FIELDS,
+    attach_incident_refs,
+    validate_diagnosis,
+    write_incident_artifact,
+)
 
 
 class TestDiagnosisSchema:
@@ -96,3 +102,67 @@ class TestDiagnosisSchema:
         data = diag.to_dict()
         extra = set(data.keys()) - REQUIRED_FIELDS
         assert extra == set(), f"Unexpected fields in artifact: {extra}"
+
+    def test_write_incident_artifact_writes_bundle_payload(self):
+        class FakeGQL:
+            def capture_incident(self, agent_id, note=""):
+                assert agent_id == "a-123"
+                assert note == "smoke failure"
+                return {"incidentId": "inc-1", "agentId": agent_id}
+
+            def query_incident(self, incident_id):
+                assert incident_id == "inc-1"
+                return {"id": incident_id, "bundle": {"observed": {"runtime_task_state": "failed"}}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = write_incident_artifact(
+                FakeGQL(),
+                "a-123",
+                "incident-agent-smoke",
+                note="smoke failure",
+                directory=tmpdir,
+            )
+
+            assert result["incident_id"] == "inc-1"
+            with open(result["path"]) as f:
+                data = json.load(f)
+
+            assert data["capture"]["incidentId"] == "inc-1"
+            assert data["incident"]["bundle"]["observed"]["runtime_task_state"] == "failed"
+
+    def test_write_incident_artifact_writes_error_payload_on_failure(self):
+        class FakeGQL:
+            def capture_incident(self, agent_id, note=""):
+                raise RuntimeError("boom")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = write_incident_artifact(
+                FakeGQL(),
+                "a-123",
+                "incident-agent-smoke",
+                note="smoke failure",
+                directory=tmpdir,
+            )
+
+            assert "error" in result
+            with open(result["path"]) as f:
+                data = json.load(f)
+
+            assert "capture_error" in data
+            assert data["agent_id"] == "a-123"
+
+    def test_attach_incident_refs_rewrites_diagnosis_with_incident_pointer(self):
+        diag = self._make_diagnosis()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = attach_incident_refs(
+                diag,
+                "failure-diagnosis-agent-smoke",
+                "incident-agent-smoke",
+                {"incident_id": "inc-1", "path": "/tmp/incident-agent-smoke.json"},
+                directory=tmpdir,
+            )
+            with open(path) as f:
+                data = json.load(f)
+
+            assert data["refs"]["incident_id"] == "inc-1"
+            assert data["refs"]["incident_artifact"] == "incident-agent-smoke.json"

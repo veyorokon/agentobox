@@ -165,3 +165,77 @@ def validate_diagnosis(data: dict[str, Any]) -> list[str]:
             errors.append(f"{str_field} must be a str, got {type(val).__name__}")
 
     return errors
+
+
+def write_incident_artifact(
+    gql: Any,
+    agent_id: str,
+    artifact_name: str,
+    *,
+    note: str = "",
+    directory: str = "",
+) -> dict[str, str]:
+    """Best-effort capture + write of an incident bundle artifact.
+
+    Returns a small result dict:
+      {
+        "incident_id": "...",
+        "path": "/abs/path/to/artifact.json",
+        "error": "..."  # only when capture/query failed
+      }
+
+    Never raises. If capture is not possible, no artifact is written and
+    the returned dict only contains an ``error`` field.
+    """
+    if not gql or not agent_id:
+        return {"error": "incident capture skipped: missing gql or agent_id"}
+
+    out_dir = directory or os.environ.get("DIAGNOSIS_ARTIFACT_DIR", ".")
+    path = Path(out_dir) / f"{artifact_name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        capture = gql.capture_incident(agent_id, note=note)
+        incident_id = capture.get("incidentId", "")
+        if not incident_id:
+            return {"error": f"incident capture returned no incidentId: {capture!r}"}
+
+        incident = gql.query_incident(incident_id)
+        payload = {
+            "capture": capture,
+            "incident": incident,
+        }
+        path.write_text(json.dumps(payload, indent=2) + "\n")
+        return {"incident_id": incident_id, "path": str(path.resolve())}
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        payload = {
+            "capture_error": error,
+            "agent_id": agent_id,
+            "note": note,
+        }
+        path.write_text(json.dumps(payload, indent=2) + "\n")
+        return {"error": error, "path": str(path.resolve())}
+
+
+def attach_incident_refs(
+    diag: Diagnosis,
+    diagnosis_artifact_name: str,
+    artifact_name: str,
+    incident_result: dict[str, str],
+    *,
+    directory: str = "",
+) -> str:
+    """Attach incident metadata to an existing diagnosis artifact and rewrite it."""
+    if incident_result.get("incident_id"):
+        diag.set_refs(
+            incident_id=incident_result["incident_id"],
+            incident_artifact=f"{artifact_name}.json",
+        )
+    elif incident_result.get("error"):
+        diag.set_refs(
+            incident_capture_error=incident_result["error"],
+            incident_artifact=f"{artifact_name}.json",
+        )
+
+    return diag.write(diagnosis_artifact_name, directory=directory)
