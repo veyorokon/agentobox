@@ -520,3 +520,45 @@ def test_claude_code_cli_executor_rejects_nonzero_exit():
         assert "claude exited with code 1" in str(exc)
 
     assert observer.events[-1][1].type.value == "process_exit"
+
+
+def test_claude_code_cli_executor_passes_resume_session_id_to_cli():
+    process = FakeCLIProcess(['{"type":"result","subtype":"success","result":"pong","session_id":"sess-latest"}\n'])
+    captured: dict[str, object] = {}
+
+    def _popen(args, *, cwd, env):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return process
+
+    executor = ClaudeCodeCLIExecutor(
+        ClaudeCodeExecutorConfig(
+            cwd=Path.cwd(),
+            model="claude-opus-4-6",
+            permission_mode="bypassPermissions",
+            resume_session_id="sess-resume-123",
+            env={"PATH": ""},
+        ),
+        popen_factory=_popen,
+    )
+
+    output = executor.execute(TaskRequest(id="task-cli-resume", input=TaskInput.from_text("ping")))
+
+    assert output == "pong"
+    assert captured["args"] == [
+        "claude",
+        "-p",
+        "ping",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--model",
+        "claude-opus-4-6",
+        "--permission-mode",
+        "bypassPermissions",
+        "--setting-sources",
+        "user",
+        "--resume",
+        "sess-resume-123",
+    ]

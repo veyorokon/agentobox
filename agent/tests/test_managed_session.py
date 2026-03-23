@@ -10,6 +10,8 @@ from agent.contracts.platform import PlatformKind
 from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.config import ManagedConfig, RuntimeConfig
 from agent.runtime.execution import ExecutionEvent, ExecutionEventType
+from agent.runtime.executors.claude_code import ClaudeCodeCLIExecutor
+from agent.runtime.executors.factory import build_executor
 from agent.runtime.inbox import load_inbox_cursor
 from agent.runtime.managed_session import ManagedRelaySession
 from agent.runtime.runner import TaskRunner
@@ -34,6 +36,22 @@ def _managed_runtime_config(tmp_path):
         mode=AgentMode.MANAGED,
         platform=PlatformKind.LOCAL,
         executor=ExecutorKind.ECHO,
+        bind_host="127.0.0.1",
+        port=0,
+        root_dir=tmp_path,
+        managed=ManagedConfig(
+            agent_id="agent-123",
+            callback_url="https://example.com",
+            relay_auth_token="token",
+        ),
+    )
+
+
+def _managed_claude_runtime_config(tmp_path):
+    return RuntimeConfig(
+        mode=AgentMode.MANAGED,
+        platform=PlatformKind.LOCAL,
+        executor=ExecutorKind.CLAUDE_CODE,
         bind_host="127.0.0.1",
         port=0,
         root_dir=tmp_path,
@@ -221,7 +239,10 @@ def test_managed_session_reloads_runtime_state_without_degrading_transport(tmp_p
         pass
 
     replacement = ReplacementExecutor()
-    monkeypatch.setattr("agent.runtime.managed_session.build_executor", lambda _config: replacement)
+    monkeypatch.setattr(
+        "agent.runtime.managed_session.build_executor",
+        lambda _config, *, resume_session_id=None: replacement,
+    )
 
     session.on_command(ReloadCommand(path=CANONICAL_PATHS["runtime_state"]))
 
@@ -392,6 +413,31 @@ def test_managed_session_publishes_result_execution_events(tmp_path):
         }
     ]
     assert runner._state.snapshot().runtime.session_id == "sess-2"
+
+
+def test_managed_session_updates_executor_resume_session_from_execution_events(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_MODEL", "claude-sonnet-4")
+    monkeypatch.setenv("AGENT_MODE", "auto")
+    runner = TaskRunner(
+        RuntimeStateStore(mode=AgentMode.MANAGED, platform=PlatformKind.LOCAL),
+        build_executor(_managed_claude_runtime_config(tmp_path)),
+    )
+    session = ManagedRelaySession(_managed_claude_runtime_config(tmp_path), runner, runner._state)
+
+    assert isinstance(runner._executor, ClaudeCodeCLIExecutor)
+    assert runner._executor._config.resume_session_id == ""
+
+    session.on_execution_event(
+        "task-2",
+        ExecutionEvent(
+            type=ExecutionEventType.RESULT,
+            payload={"output_text": "done", "subtype": "success"},
+            session_id="sess-next-task",
+        ),
+    )
+
+    assert isinstance(runner._executor, ClaudeCodeCLIExecutor)
+    assert runner._executor._config.resume_session_id == "sess-next-task"
 
 
 def test_managed_session_publishes_completed_task_updates(tmp_path):

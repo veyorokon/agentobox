@@ -29,6 +29,7 @@ def test_build_executor_returns_claude_code_cli_executor(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_MODEL", "claude-sonnet-4")
     monkeypatch.setenv("AGENT_MODE", "auto")
     monkeypatch.setenv("ALLOWED_TOOLS", '["Read","Glob"]')
+    monkeypatch.setenv("RESUME_SESSION_ID", "sess-env")
     config = RuntimeConfig(
         mode=AgentMode.MANAGED,
         platform=PlatformKind.LOCAL,
@@ -48,6 +49,7 @@ def test_build_executor_returns_claude_code_cli_executor(tmp_path, monkeypatch):
     assert isinstance(executor, ClaudeCodeCLIExecutor)
     assert executor._config.permission_mode == "bypassPermissions"
     assert executor._config.cwd == tmp_path / "workspace"
+    assert executor._config.resume_session_id == "sess-env"
 
 
 def test_build_executor_maps_supervised_to_noninteractive_cli_mode(tmp_path, monkeypatch):
@@ -72,3 +74,27 @@ def test_build_executor_maps_supervised_to_noninteractive_cli_mode(tmp_path, mon
     assert isinstance(executor, ClaudeCodeCLIExecutor)
     assert executor._config.permission_mode == "bypassPermissions"
     assert executor._config.cwd == tmp_path / "workspace"
+
+
+def test_build_executor_override_resume_session_id_wins_over_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_MODEL", "claude-sonnet-4")
+    monkeypatch.setenv("AGENT_MODE", "auto")
+    monkeypatch.setenv("RESUME_SESSION_ID", "sess-env")
+    config = RuntimeConfig(
+        mode=AgentMode.MANAGED,
+        platform=PlatformKind.LOCAL,
+        executor=ExecutorKind.CLAUDE_CODE,
+        bind_host="127.0.0.1",
+        port=0,
+        root_dir=tmp_path,
+        managed=ManagedConfig(
+            agent_id="agent-123",
+            callback_url="https://example.com",
+            relay_auth_token="token",
+        ),
+    )
+
+    executor = build_executor(config, resume_session_id="sess-latest")
+
+    assert isinstance(executor, ClaudeCodeCLIExecutor)
+    assert executor._config.resume_session_id == "sess-latest"

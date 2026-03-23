@@ -8,7 +8,7 @@ from agent.runtime.executors.claude_code import ClaudeCodeCLIExecutor, ClaudeCod
 from agent.runtime.runner import EchoExecutor, TaskExecutor
 
 
-def build_executor(config: RuntimeConfig) -> TaskExecutor:
+def build_executor(config: RuntimeConfig, *, resume_session_id: str | None = None) -> TaskExecutor:
     """Build the configured executor for this runtime instance."""
 
     if config.executor is ExecutorKind.ECHO:
@@ -19,7 +19,7 @@ def build_executor(config: RuntimeConfig) -> TaskExecutor:
                 model=_env("CLAUDE_MODEL"),
                 permission_mode=_translate_permission_mode(_env("AGENT_MODE")),
                 cwd=config.root_dir / "workspace",
-                resume_session_id=_env("RESUME_SESSION_ID"),
+                resume_session_id=resume_session_id if resume_session_id is not None else _env("RESUME_SESSION_ID"),
                 allowed_tools=_parse_allowed_tools(_env("ALLOWED_TOOLS")),
                 env=_executor_env(),
             ),

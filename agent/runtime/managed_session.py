@@ -180,6 +180,7 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
     def on_execution_event(self, task_id: str, event: ExecutionEvent) -> None:
         if event.session_id:
             self._state.set_session(event.session_id)
+            self._runner.set_executor(build_executor(self._config, resume_session_id=event.session_id))
         if event.type in {
             ExecutionEventType.RAW_MESSAGE,
             ExecutionEventType.RESULT,
@@ -212,7 +213,8 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
         if command.path == CANONICAL_PATHS["runtime_state"]:
             state_env = load_runtime_state_env(self._root_dir)
             apply_env_overrides(state_env, override=True)
-            self._runner.set_executor(build_executor(self._config))
+            current_session_id = self._state.snapshot().runtime.session_id
+            self._runner.set_executor(build_executor(self._config, resume_session_id=current_session_id))
             emit_event(
                 RuntimeEvent.RUNTIME_UPDATED.value,
                 source="managed_session",

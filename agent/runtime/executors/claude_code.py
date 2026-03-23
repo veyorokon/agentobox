@@ -464,6 +464,8 @@ def _build_cli_args(config: ClaudeCodeExecutorConfig, prompt_text: str) -> list[
         "--setting-sources",
         ",".join(config.setting_sources),
     ]
+    if config.resume_session_id:
+        args.extend(["--resume", config.resume_session_id])
     if config.allowed_tools:
         args.extend(["--allowedTools", ",".join(config.allowed_tools)])
     return args
