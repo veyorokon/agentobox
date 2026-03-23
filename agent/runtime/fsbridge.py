@@ -30,11 +30,8 @@ _HOME_FILE_BINDINGS = (
     ("home/agent/CLAUDE.md", "CLAUDE.md"),
 )
 
-_HOME_DIR_BINDINGS = ()
-
-_CLAUDE_FILE_BINDINGS = (
-    ("home/agent/.claude/settings.json", ".claude/settings.json"),
-    ("home/agent/.claude/.credentials.json", ".claude/.credentials.json"),
+_HOME_DIR_BINDINGS = (
+    ("home/agent/.claude", ".claude"),
 )
 
 
@@ -66,13 +63,6 @@ def materialize_runtime_bindings(
             _materialize_binding(source, agent_home / rel_target)
 
     for rel_source, rel_target in _HOME_DIR_BINDINGS:
-        source = root_dir / rel_source
-        if source.exists():
-            _materialize_binding(source, agent_home / rel_target)
-
-    claude_dir = agent_home / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    for rel_source, rel_target in _CLAUDE_FILE_BINDINGS:
         source = root_dir / rel_source
         if source.exists():
             _materialize_binding(source, agent_home / rel_target)

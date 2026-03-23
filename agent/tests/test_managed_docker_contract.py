@@ -142,11 +142,13 @@ class FakeRelayServer:
 def _write_managed_contract(root_dir: Path) -> None:
     (root_dir / "home/agent").mkdir(parents=True, exist_ok=True)
     (root_dir / "home/agent/.claude").mkdir(parents=True, exist_ok=True)
+    (root_dir / "home/agent/.claude/projects/proj-1").mkdir(parents=True, exist_ok=True)
     (root_dir / "_abox").mkdir(parents=True, exist_ok=True)
     (root_dir / "run/secrets").mkdir(parents=True, exist_ok=True)
     (root_dir / "mnt/abox-state/secrets").mkdir(parents=True, exist_ok=True)
     (root_dir / CANONICAL_PATHS["relay_env"]).write_text("RELAY_AUTH_TOKEN=test-token\n")
     (root_dir / CANONICAL_PATHS["claude_settings"]).write_text('{"theme":"dark"}')
+    (root_dir / "home/agent/.claude/projects/proj-1/session.json").write_text('{"session":"sess-123"}')
     (root_dir / "home/agent/.claude.json").write_text('{"hasCompletedOnboarding":true}')
     (root_dir / "run/secrets/proxy_key").write_text("proxy-key")
     (root_dir / CANONICAL_PATHS["secret_env"]).write_text("export ANTHROPIC_API_KEY=secret\n")
@@ -308,9 +310,11 @@ def test_managed_docker_image_waits_for_provisioning_then_reaches_ready(tmp_path
         )
         assert status_msg["payload"]["runtime_state"] == "ready"
         settings = _container_exec(container_id, "cat", "/home/agent/.claude/settings.json")
+        session_state = _container_exec(container_id, "cat", "/home/agent/.claude/projects/proj-1/session.json")
         onboarding = _container_exec(container_id, "cat", "/home/agent/.claude.json")
         proxy_key = _container_exec(container_id, "cat", "/run/secrets/proxy_key")
         assert settings.stdout.strip() == '{"theme":"dark"}'
+        assert session_state.stdout.strip() == '{"session":"sess-123"}'
         assert onboarding.stdout.strip() == '{"hasCompletedOnboarding":true}'
         assert proxy_key.stdout.strip() == "proxy-key"
 
@@ -427,10 +431,12 @@ def test_managed_desktop_docker_image_reaches_ready_and_serves_novnc(
         )
         assert status_msg["payload"]["runtime_state"] == "ready"
         settings = _container_exec(container_id, "cat", "/home/agent/.claude/settings.json")
+        session_state = _container_exec(container_id, "cat", "/home/agent/.claude/projects/proj-1/session.json")
         onboarding = _container_exec(container_id, "cat", "/home/agent/.claude.json")
         proxy_key = _container_exec(container_id, "cat", "/run/secrets/proxy_key")
         claude_version = _container_exec(container_id, "claude", "--version")
         assert settings.stdout.strip() == '{"theme":"dark"}'
+        assert session_state.stdout.strip() == '{"session":"sess-123"}'
         assert onboarding.stdout.strip() == '{"hasCompletedOnboarding":true}'
         assert proxy_key.stdout.strip() == "proxy-key"
         assert claude_version.stdout.strip().startswith("2.1.71")

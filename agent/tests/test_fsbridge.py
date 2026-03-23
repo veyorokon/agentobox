@@ -33,10 +33,9 @@ def test_materialize_runtime_bindings_projects_canonical_paths(tmp_path: Path):
     materialize_runtime_bindings(root_dir, agent_home=agent_home, container_root=container_root)
 
     assert (agent_home / ".claude").is_dir()
+    assert (agent_home / ".claude").is_symlink()
     assert (agent_home / ".claude/settings.json").read_text() == '{"theme":"dark"}'
-    assert (agent_home / ".claude/settings.json").is_symlink()
     assert (agent_home / ".claude/.credentials.json").read_text() == '{"accessToken":"secret"}'
-    assert (agent_home / ".claude/.credentials.json").is_symlink()
     assert (agent_home / ".claude.json").is_symlink()
     assert (agent_home / ".relay_env").is_symlink()
     assert (container_root / "run/secrets").is_symlink()
@@ -45,6 +44,27 @@ def test_materialize_runtime_bindings_projects_canonical_paths(tmp_path: Path):
     assert (container_root / "workspace/README.md").read_text() == "workspace"
     assert (container_root / "mnt/abox-state").is_symlink()
     assert (container_root / "tmp/abox-theme").is_symlink()
+
+
+def test_materialize_runtime_bindings_preserves_claude_session_state(tmp_path: Path):
+    root_dir = tmp_path / "root"
+    container_root = tmp_path / "container"
+    agent_home = container_root / "home/agent"
+
+    claude_root = root_dir / "home/agent/.claude"
+    (claude_root / "projects/proj-1").mkdir(parents=True, exist_ok=True)
+    (claude_root / "projects/proj-1/session.json").write_text('{"session":"sess-123"}')
+    (claude_root / "settings.json").write_text('{"theme":"dark"}')
+    (claude_root / ".credentials.json").write_text('{"accessToken":"secret"}')
+
+    # Simulate image-baked placeholder directory that should be replaced.
+    (agent_home / ".claude").mkdir(parents=True, exist_ok=True)
+
+    materialize_runtime_bindings(root_dir, agent_home=agent_home, container_root=container_root)
+
+    persisted = agent_home / ".claude/projects/proj-1/session.json"
+    assert (agent_home / ".claude").is_symlink()
+    assert persisted.read_text() == '{"session":"sess-123"}'
 
 
 def test_materialize_runtime_bindings_falls_back_for_busy_mount_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -75,7 +95,7 @@ def test_materialize_runtime_bindings_falls_back_for_busy_mount_dir(tmp_path: Pa
 
     assert (busy_target / "secrets").is_symlink()
     assert (busy_target / "secrets/env").read_text() == "export ANTHROPIC_API_KEY=secret\n"
-    assert (agent_home / ".claude/settings.json").is_symlink()
+    assert (agent_home / ".claude").is_symlink()
 
 
 def test_wait_for_provisioned_ready_blocks_until_sentinel(tmp_path: Path):
