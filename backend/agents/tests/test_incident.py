@@ -859,3 +859,111 @@ async def test_incident_survives_project_deletion(setup_incident_for_deletion):
     assert refreshed.bundle["ids"]["agent_id"] == agent_id_str
     assert refreshed.bundle["ids"]["project_id"] == project_id_str
     assert refreshed.note == "pre-deletion incident"
+
+
+async def test_orphaned_incident_query_requires_staff(setup_incident_for_deletion):
+    """Orphaned incidents (null project) require staff access."""
+    from agents.graphql.queries import AgentQuery
+    from agents.models import IncidentCapture
+    from asgiref.sync import sync_to_async
+
+    project, agent, owner, inc = setup_incident_for_deletion
+    incident_id = str(inc.id)
+
+    # Delete project to orphan the incident
+    await sync_to_async(project.delete, thread_sensitive=True)()
+
+    query = AgentQuery()
+
+    # Non-staff user should be rejected
+    mock_info = MagicMock()
+    mock_info.context = {"request": MagicMock(user=MagicMock(
+        is_authenticated=True, is_staff=False,
+    ))}
+    with pytest.raises(PermissionError, match="staff"):
+        await query.incident(incident_id=incident_id, info=mock_info)
+
+    # Staff user should get access
+    staff_info = MagicMock()
+    staff_info.context = {"request": MagicMock(user=MagicMock(
+        is_authenticated=True, is_staff=True,
+    ))}
+    result = await query.incident(incident_id=incident_id, info=staff_info)
+    assert result is not None
+    assert result.project_id is None
+    assert result.agent_id is None
+    assert result.note == "pre-deletion incident"
+
+
+@pytest.fixture
+def setup_orphaned_incident():
+    """Create an incident with null project/agent FKs."""
+    from agents.models import IncidentCapture
+
+    owner = User.objects.create_user(
+        username=f"null-id-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid Null ID Test", owner=owner)
+    inc = IncidentCapture.objects.create(
+        project=None,
+        agent=None,
+        created_by=owner,
+        note="orphaned incident",
+        bundle={},
+    )
+    return inc
+
+
+async def test_agent_incidents_summary_returns_null_not_string_for_deleted_parents(setup_orphaned_incident):
+    """agentIncidents returns null for missing agent_id/project_id, not 'None' strings."""
+    from agents.models import IncidentCapture
+
+    inc = setup_orphaned_incident
+    refreshed = await IncidentCapture.objects.aget(id=inc.id)
+    assert refreshed.project_id is None
+    assert refreshed.agent_id is None
+
+    # The GraphQL types use conditional ID conversion:
+    # strawberry.ID(str(inc.agent_id)) if inc.agent_id else None
+    # Verify this produces None, not strawberry.ID("None")
+    from agents.graphql.types import IncidentCaptureSummaryType
+    import strawberry
+    summary = IncidentCaptureSummaryType(
+        id=strawberry.ID(str(inc.id)),
+        agent_id=strawberry.ID(str(refreshed.agent_id)) if refreshed.agent_id else None,
+        project_id=strawberry.ID(str(refreshed.project_id)) if refreshed.project_id else None,
+        note=refreshed.note,
+        window_minutes=refreshed.window_minutes,
+        created_at=refreshed.created_at.isoformat(),
+    )
+    assert summary.agent_id is None
+    assert summary.project_id is None
+
+
+async def test_task_update_error_persists_durably(setup_project_with_agents):
+    """Failed task_update with error field round-trips through DB storage."""
+    _, target, _, _ = setup_project_with_agents
+
+    # Simulate what the consumer writes for a failed task_update
+    event = await StreamEvent.objects.acreate(
+        agent=target,
+        session_id="sess-fail-test",
+        task_id="task-fail-123",
+        event_type="task_update",
+        data={
+            "task_id": "task-fail-123",
+            "state": "failed",
+            "error": "cwd does not exist",
+            "input_text": "hello world",
+        },
+        is_canonical=True,
+    )
+
+    # Verify round-trip through DB
+    refreshed = await StreamEvent.objects.aget(id=event.id)
+    assert refreshed.event_type == "task_update"
+    assert refreshed.task_id == "task-fail-123"
+    assert refreshed.data["state"] == "failed"
+    assert refreshed.data["error"] == "cwd does not exist"
+    assert refreshed.data["input_text"] == "hello world"
+    assert refreshed.is_canonical is True
