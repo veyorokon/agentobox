@@ -19,8 +19,10 @@ from agents.services.reconcile import (
     DEPLOY_GRACE_S,
     DEPLOY_HARD_LIMIT_S,
     REASON_RECONCILER_DEAD_RUNTIME,
+    REASON_RECONCILER_RELAY_DISCONNECTED,
     REASON_RECONCILER_RUNTIME_LIMBO,
     REASON_RECONCILER_RUNTIME_MISSING,
+    _detect_active_relay_disconnect,
     _detect_dead_containers,
     _detect_runtime_limbo,
     _detect_stuck_deploys,
@@ -309,6 +311,43 @@ async def test_detect_runtime_limbo_skips_ready_agent():
 
     mock_terminate.assert_not_awaited()
     mock_mark_error.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detect_active_relay_disconnect_marks_non_converged_agent_error():
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="test-agent",
+        project_id="project-1",
+        status=AgentStatus.IDLE,
+        desired_status="deployed",
+        relay_connected=False,
+        relay_disconnected_at=timezone.now() - timedelta(seconds=DEPLOY_GRACE_S + 10),
+        sandbox_id="sb-123",
+        vnc_url="ws://vnc",
+        runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
+        updated_at=timezone.now() - timedelta(seconds=DEPLOY_GRACE_S + 30),
+        is_converged=False,
+    )
+    marked = SimpleNamespace(id="agent-1", name="test-agent")
+
+    with (
+        patch("agents.services.reconcile._get_agents", new_callable=AsyncMock, return_value=[agent]),
+        patch("agents.services.reconcile.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+        patch("agents.services.reconcile._mark_error", new_callable=AsyncMock, return_value=marked) as mock_mark_error,
+        patch("agents.services.reconcile.fail_active_lifecycle_attempts", new_callable=AsyncMock) as mock_fail_attempt,
+        patch("agents.services.reconcile.broadcast_agent_update", new_callable=AsyncMock) as mock_broadcast,
+    ):
+        await _detect_active_relay_disconnect(timezone.now())
+
+    mock_terminate.assert_awaited_once()
+    mock_mark_error.assert_awaited_once_with(
+        "agent-1",
+        error_message="Agent remains active while relay is disconnected and the agent is not converged",
+        reason=REASON_RECONCILER_RELAY_DISCONNECTED,
+    )
+    mock_fail_attempt.assert_awaited_once()
+    mock_broadcast.assert_awaited_once_with(marked)
 
 
 class TestReapOrphans:

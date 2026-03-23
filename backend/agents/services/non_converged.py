@@ -62,8 +62,11 @@ def classify_non_converged_active_agent(
     """Return a concrete non-converged signature when an active agent is half-alive but not converged."""
 
     now = now or timezone.now()
-    updated_at = getattr(agent, "updated_at", None)
-    age_seconds = int((now - updated_at).total_seconds()) if updated_at else 0
+    relay_connected = bool(getattr(agent, "relay_connected", False))
+    age_anchor = getattr(agent, "updated_at", None)
+    if not relay_connected and getattr(agent, "relay_disconnected_at", None):
+        age_anchor = getattr(agent, "relay_disconnected_at", None)
+    age_seconds = int((now - age_anchor).total_seconds()) if age_anchor else 0
 
     if age_seconds < grace_seconds:
         return None
@@ -72,7 +75,6 @@ def classify_non_converged_active_agent(
     if getattr(agent, "status", "") not in ACTIVE_STATUSES:
         return None
 
-    relay_connected = bool(getattr(agent, "relay_connected", False))
     preview_state = _derive_preview_state_safe(agent)
     preview_runtime_id = str(getattr(agent, "sandbox_id", "") or "")
     runtime_status = read_runtime_status(agent)
@@ -84,9 +86,9 @@ def classify_non_converged_active_agent(
     if relay_connected and not agent_meets_ready_boundary(agent):
         signature = "relay_connected_not_ready"
         reason = "Relay connected but runtime never crossed the ready boundary"
-    elif preview_state == "ready" and not relay_connected and not is_converged:
-        signature = "preview_ready_relay_disconnected"
-        reason = "Preview projects ready while relay is disconnected and the agent is not converged"
+    elif not relay_connected and not is_converged:
+        signature = "active_relay_disconnected"
+        reason = "Agent remains active while relay is disconnected and the agent is not converged"
 
     if not signature or not reason:
         return None

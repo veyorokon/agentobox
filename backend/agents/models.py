@@ -373,9 +373,7 @@ class Agent(models.Model):
     @property
     def needs_reconcile(self):
         """Desired state does not match reported state — drift detected."""
-        if self.desired_status == DesiredStatus.DEPLOYED:
-            return self.status not in (AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING)
-        return self.status != AgentStatus.STOPPED
+        return not Agent.is_converged.fget(self)
 
     @property
     def compute_seconds_live(self):

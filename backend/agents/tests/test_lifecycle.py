@@ -855,6 +855,13 @@ class TestConvergence:
             relay_connected=True,
             runtime_status_projection={},
         ) is False
+        ns = SimpleNamespace(
+            desired_status=DesiredStatus.DEPLOYED,
+            status=AgentStatus.IDLE,
+            relay_connected=True,
+            runtime_status_projection={},
+        )
+        assert Agent.needs_reconcile.fget(ns) is True
 
     def test_deployed_but_stopped_needs_reconcile(self):
         assert self._converged(DesiredStatus.DEPLOYED, AgentStatus.STOPPED) is False

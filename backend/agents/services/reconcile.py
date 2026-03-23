@@ -38,6 +38,7 @@ from agents.services.lifecycle import (
     fail_active_lifecycle_attempts,
     succeed_active_lifecycle_attempts,
 )
+from agents.services.non_converged import classify_non_converged_active_agent
 from agents.services.runtime_projection import agent_meets_ready_boundary, read_runtime_status
 from agents.services.utils import mark_agent_runtime_unavailable, terminate_sandbox
 
@@ -50,6 +51,7 @@ REASON_RECONCILER_DEAD_RUNTIME = "reconciler.dead_runtime"
 REASON_RECONCILER_RUNTIME_MISSING = "reconciler.runtime_missing"
 REASON_RECONCILER_STUCK_DEPLOY = "reconciler.stuck_deploy"
 REASON_RECONCILER_RUNTIME_LIMBO = "reconciler.runtime_limbo"
+REASON_RECONCILER_RELAY_DISCONNECTED = "reconciler.relay_disconnected"
 REASON_RECONCILER_ERROR_REAP = "reconciler.error_reap"
 
 _task: asyncio.Task | None = None
@@ -90,6 +92,7 @@ async def reconcile_agents():
     await _detect_dead_containers()
     await _detect_stuck_deploys(now)
     await _detect_runtime_limbo(now)
+    await _detect_active_relay_disconnect(now)
     await _reap_errored_agents(now)
     await _reconcile_lifecycle_attempts(now)
 
@@ -432,6 +435,57 @@ async def _detect_runtime_limbo(now):
             "reconciler.runtime_limbo",
             agent_id=str(agent.id),
             agent_name=agent.name,
+        )
+
+
+async def _detect_active_relay_disconnect(now):
+    """Recover active deployed agents whose relay stayed disconnected past grace."""
+
+    cutoff = now - timedelta(seconds=DEPLOY_GRACE_S)
+    agents = await _get_agents(
+        status__in=[AgentStatus.IDLE, AgentStatus.RUNNING, AgentStatus.WAITING],
+        desired_status=DesiredStatus.DEPLOYED,
+        relay_connected=False,
+    )
+
+    for agent in agents:
+        relay_disconnected_at = getattr(agent, "relay_disconnected_at", None)
+        if relay_disconnected_at and relay_disconnected_at > cutoff:
+            continue
+
+        candidate = classify_non_converged_active_agent(
+            agent,
+            now=now,
+            grace_seconds=DEPLOY_GRACE_S,
+        )
+        if candidate is None:
+            continue
+        if candidate.signature != "active_relay_disconnected":
+            continue
+
+        error_detail = candidate.reason
+        await terminate_sandbox(
+            agent,
+            log.bind(agent_id=str(agent.id), reason=REASON_RECONCILER_RELAY_DISCONNECTED),
+        )
+        agent = await _mark_error(
+            agent.id,
+            error_message=error_detail,
+            reason=REASON_RECONCILER_RELAY_DISCONNECTED,
+        )
+        await fail_active_lifecycle_attempts(
+            str(agent.id),
+            step="relay_disconnected_limbo",
+            error_code=ERR_LIFECYCLE_RUNTIME_LIMBO,
+            error_detail=error_detail,
+            metadata={"relay_connected": False, "signature": candidate.signature},
+        )
+        await broadcast_agent_update(agent)
+        log.info(
+            "reconciler.relay_disconnected_limbo",
+            agent_id=str(agent.id),
+            agent_name=agent.name,
+            signature=candidate.signature,
         )
 
 

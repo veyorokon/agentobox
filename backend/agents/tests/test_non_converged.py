@@ -22,6 +22,7 @@ def _agent(**overrides):
         status=AgentStatus.IDLE,
         desired_status=DesiredStatus.DEPLOYED,
         relay_connected=True,
+        relay_disconnected_at=None,
         sandbox_id="sb-123",
         updated_at=now - timedelta(seconds=180),
         runtime_status_projection={},
@@ -49,9 +50,10 @@ def test_classify_non_converged_active_agent_detects_relay_connected_not_ready()
     assert candidate.relay_connected is True
 
 
-def test_classify_non_converged_active_agent_detects_preview_ready_relay_disconnected():
+def test_classify_non_converged_active_agent_detects_active_relay_disconnected():
     agent = _agent(
         relay_connected=False,
+        relay_disconnected_at=timezone.now() - timedelta(seconds=180),
         runtime_status_projection={"profile": "desktop", "startup_stage": "managed_ready"},
         is_converged=False,
     )
@@ -67,8 +69,9 @@ def test_classify_non_converged_active_agent_detects_preview_ready_relay_disconn
         )
 
     assert candidate is not None
-    assert candidate.signature == "preview_ready_relay_disconnected"
-    assert candidate.preview_state == "ready"
+    assert candidate is not None
+    assert candidate.signature == "active_relay_disconnected"
+    assert candidate.relay_connected is False
 
 
 def test_classify_non_converged_active_agent_skips_healthy_ready_agent():
