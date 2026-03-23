@@ -1181,6 +1181,56 @@ class TestMcpConfigContract:
         )
 
 
+class TestAgentPrivateConfigWriteContract:
+    """Principle: mutation resolvers write agent-private config files to the volume.
+
+    update_agent_instructions must write CLAUDE.md.
+    update_agent_config must write both CLAUDE.md and .mcp.json when role/MCP changes.
+    Neither path should use update_volume_and_reload — they are saved-now,
+    effective-next-task config.
+    """
+
+    def test_update_agent_instructions_writes_claude_md(self):
+        """update_agent_instructions writes home/agent/CLAUDE.md via writer.write."""
+        src = _read_source(GRAPHQL_DIR / "mutations.py")
+        # Find the update_agent_instructions method and check it writes CLAUDE.md
+        assert re.search(r'writer\.write\([^)]*CLAUDE\.md', src), (
+            "update_agent_instructions must write home/agent/CLAUDE.md via writer.write(). "
+            "Instructions are saved to the volume so the agent reads them on next task."
+        )
+
+    def test_update_agent_instructions_does_not_claim_live_reload(self):
+        """CLAUDE.md from update_agent_instructions must not use reload."""
+        src = _read_source(GRAPHQL_DIR / "mutations.py")
+        # Ensure no update_volume_and_reload for CLAUDE.md
+        assert not re.search(r'update_volume_and_reload\([^)]*CLAUDE\.md', src), (
+            "update_agent_instructions sends a live reload for CLAUDE.md, but managed "
+            "runtime does not support that reload path. Instructions are read fresh by "
+            "Claude on the next invocation."
+        )
+
+    def test_update_agent_config_writes_claude_md_on_role_change(self):
+        """update_agent_config writes home/agent/CLAUDE.md when role changes."""
+        src = _read_source(GRAPHQL_DIR / "mutations.py")
+        # The config mutation should also write CLAUDE.md (for role changes)
+        # Find writer.write calls with CLAUDE.md — should appear at least twice
+        # (once in update_agent_instructions, once in update_agent_config)
+        matches = re.findall(r'writer\.write\([^)]*CLAUDE\.md', src)
+        assert len(matches) >= 2, (
+            f"Expected CLAUDE.md to be written in both update_agent_instructions and "
+            f"update_agent_config, but found only {len(matches)} writer.write() calls. "
+            f"Role/MCP changes in update_agent_config must regenerate CLAUDE.md."
+        )
+
+    def test_update_agent_config_writes_mcp_json(self):
+        """update_agent_config writes home/agent/.mcp.json via writer.write."""
+        src = _read_source(GRAPHQL_DIR / "mutations.py")
+        assert re.search(r'writer\.write\([^)]*\.mcp\.json', src), (
+            "update_agent_config must write home/agent/.mcp.json via writer.write(). "
+            "MCP config is picked up on the next task invocation."
+        )
+
+
 class TestConfigOwnership:
     """Principle: settings.py owns Django, app_config owns product/runtime policy."""
 
