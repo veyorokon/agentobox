@@ -169,7 +169,7 @@ export function useInterruptAgent() {
 
 export function useUpdateAgentInstructions() {
   const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS, {
-    refetchQueries: ["Agents"],
+    refetchQueries: ["GetAgents"],
   })
   return useCallback(async (agentId: string, instructions: string) => {
     await mutate({ variables: { input: { agentId, instructions } } })
@@ -178,7 +178,7 @@ export function useUpdateAgentInstructions() {
 
 export function useUpdateAgentConfig() {
   const [mutate] = useMutation(UPDATE_AGENT_CONFIG, {
-    refetchQueries: ["Agents"],
+    refetchQueries: ["GetAgents"],
   })
   return useCallback(async (agentId: string, config: {
     model?: string
