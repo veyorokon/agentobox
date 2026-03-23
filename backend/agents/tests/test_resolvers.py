@@ -286,3 +286,48 @@ class TestConfigMutationFileWrites:
         assert "playwright" in mcp_config["mcpServers"], (
             f"Expected playwright in mcpServers, got: {list(mcp_config['mcpServers'].keys())}"
         )
+
+    @pytest.mark.asyncio
+    async def test_update_agent_config_rejects_unknown_registry_mcp(self, agent_with_sandbox):
+        """Unknown MCP registry names must fail loudly instead of saving empty config."""
+        from schema import schema
+
+        mock_writer = AsyncMock()
+        agent = agent_with_sandbox
+
+        request = RequestFactory().post("/graphql")
+        request.user = await sync_to_async(lambda: agent.project.owner)()
+
+        with patch(
+            "agents.services.machine_write.get_machine_writer",
+            return_value=mock_writer,
+        ), patch(
+            "agents.services.relay.update_volume_and_reload",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "agents.services.broadcast.broadcast_agent_update",
+            new_callable=AsyncMock,
+        ):
+            result = await schema.execute(
+                """
+                mutation ($input: UpdateAgentConfigInput!) {
+                    updateAgentConfig(input: $input) {
+                        id
+                    }
+                }
+                """,
+                variable_values={
+                    "input": {
+                        "agentId": str(agent.id),
+                        "mcpRegistryNames": ["io.github.domdomegg/computer-use-mcp"],
+                    },
+                },
+                context_value={"request": request},
+            )
+
+        assert result.data is None or result.data["updateAgentConfig"] is None
+        assert result.errors is not None
+        assert "Unsupported MCP server(s) for this runtime" in str(result.errors[0])
+        assert "io.github.domdomegg/computer-use-mcp" in str(result.errors[0])
+        mock_writer.write.assert_not_awaited()
