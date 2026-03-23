@@ -26,7 +26,7 @@ import { cn, formatCost, formatComputeTime, formatTriggerSubtitle } from "@/lib/
 import { LIFECYCLE_CONFIG, MODE_CONFIG } from "@/lib/config"
 import { getPendingItemsForAgent } from "@/lib/attention"
 import { useSidebarStore } from "@/lib/stores/sidebar"
-import { useAcknowledgeAgent, useSetAgentMode, useInterruptAgent, useRestartAgent, useHardRestartAgent, useRemoveAgent } from "@/lib/graphql/hooks/use-agents"
+import { useAcknowledgeAgent, useSetAgentMode, useInterruptAgent, useClearAgentSession, useHardRestartAgent, useRemoveAgent } from "@/lib/graphql/hooks/use-agents"
 import { useFeed, useResolvePermission, useResolvePlan, useSendMessage } from "@/lib/graphql/hooks/use-feed"
 import { useAgentTasks, useCreateTask } from "@/lib/graphql/hooks/use-tasks"
 import { useSkills } from "@/lib/graphql/hooks/use-skills"
@@ -85,7 +85,7 @@ export function AgentCardRow({
   const resolvePlan = useResolvePlan()
   const sendMessage = useSendMessage()
   const interruptAgent = useInterruptAgent()
-  const restartAgent = useRestartAgent()
+  const clearAgentSession = useClearAgentSession()
   const hardRestartAgent = useHardRestartAgent()
   const removeAgent = useRemoveAgent()
   const handleModeChange = (mode: Agent["mode"]) => setAgentMode(agent.id, mode)
@@ -334,7 +334,7 @@ export function AgentCardRow({
             )}
           </button>
 
-          {/* Kebab menu — interrupt / restart / remove */}
+          {/* Kebab menu — interrupt / clear session / redeploy / remove */}
           <div ref={kebabRef} className="relative shrink-0">
             <button
               type="button"
@@ -361,14 +361,16 @@ export function AgentCardRow({
                     Interrupt
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); restartAgent(agent.id); setKebabOpen(false) }}
-                  className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
-                >
-                  <RotateCcw className="h-3 w-3 text-muted" />
-                  Restart
-                </button>
+                {(isRunning || agent.lifecycleStatus === "idle") && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); clearAgentSession(agent.id); setKebabOpen(false) }}
+                    className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
+                  >
+                    <RotateCcw className="h-3 w-3 text-muted" />
+                    Clear Session
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); hardRestartAgent(agent.id); setKebabOpen(false) }}

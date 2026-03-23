@@ -59,7 +59,7 @@ export function SecretsModal({
   const [newValue, setNewValue] = useState("")
   const [newLevel, setNewLevel] = useState<"account" | "project">("project")
   const [dirty, setDirty] = useState(false)
-  const [restarted, setRestarted] = useState(false)
+  const [redeployAcknowledged, setRedeployAcknowledged] = useState(false)
 
   // Build lookup sets for provider resolution
   const accountKeySet = useMemo(() => new Set(accountSecrets.map((s) => s.key)), [accountSecrets])
@@ -113,7 +113,7 @@ export function SecretsModal({
   useEffect(() => {
     if (!open) {
       setDirty(false)
-      setRestarted(false)
+      setRedeployAcknowledged(false)
       setNewKey("")
       setNewValue("")
       setNewLevel(hasProject ? "project" : "account")
@@ -123,7 +123,7 @@ export function SecretsModal({
   if (!open) return null
 
   const activeAgents = agents.filter((a) => a.lifecycleStatus === "running" || a.lifecycleStatus === "idle" || a.lifecycleStatus === "deploying")
-  const needsRestart = dirty && !restarted
+  const needsRedeploy = dirty && !redeployAcknowledged
 
   const handleAdd = async () => {
     if (!newKey.trim() || !newValue.trim()) return
@@ -140,7 +140,7 @@ export function SecretsModal({
     setNewKey("")
     setNewValue("")
     setDirty(true)
-    setRestarted(false)
+    setRedeployAcknowledged(false)
   }
 
   const handleDelete = async (secret: MergedSecret) => {
@@ -151,7 +151,7 @@ export function SecretsModal({
       await deleteSecret(secret.key)
     }
     setDirty(true)
-    setRestarted(false)
+    setRedeployAcknowledged(false)
   }
 
   const handleOverride = (key: string) => {
@@ -164,11 +164,11 @@ export function SecretsModal({
     if (!projectId) return
     await deleteSecret(key)
     setDirty(true)
-    setRestarted(false)
+    setRedeployAcknowledged(false)
   }
 
-  const handleRestart = () => {
-    setRestarted(true)
+  const acknowledgeRedeployRequirement = () => {
+    setRedeployAcknowledged(true)
   }
 
   /** Resolve how a provider key is sourced for this project */
@@ -442,30 +442,30 @@ export function SecretsModal({
           </div>
         </div>
 
-        {/* Restart banner */}
-        {needsRestart && activeAgents.length > 0 && (
+        {/* Redeploy-required banner */}
+        {needsRedeploy && activeAgents.length > 0 && (
           <div className="px-5 py-3 border-t border-warning/20 bg-warning-subtle/30 flex items-center gap-3">
             <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
             <span className="text-xs text-warning flex-1">
-              {activeAgents.length} agent{activeAgents.length !== 1 ? "s" : ""} need restart to pick up changes
+              {activeAgents.length} agent{activeAgents.length !== 1 ? "s" : ""} need redeploy to pick up updated environment
             </span>
             <button
               type="button"
-              onClick={handleRestart}
+              onClick={acknowledgeRedeployRequirement}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-warning/20 text-warning text-xs font-medium hover:bg-warning/30 transition-colors shrink-0"
             >
               <RefreshCw className="h-3 w-3" />
-              Restart All
+              Got it
             </button>
           </div>
         )}
 
-        {/* Restarted confirmation */}
-        {restarted && (
+        {/* Redeploy requirement acknowledged */}
+        {redeployAcknowledged && (
           <div className="px-5 py-3 border-t border-success/20 bg-success-subtle/30 flex items-center gap-3">
             <Check className="h-3.5 w-3.5 text-success shrink-0" />
             <span className="text-xs text-success">
-              {activeAgents.length} agent{activeAgents.length !== 1 ? "s" : ""} restarting with updated environment
+              {activeAgents.length} agent{activeAgents.length !== 1 ? "s" : ""} will need redeploy to use the updated environment
             </span>
           </div>
         )}

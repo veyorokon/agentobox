@@ -17,7 +17,7 @@ import React, { type ReactNode } from "react"
 
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { GET_FEED } from "@/lib/graphql/queries/feed"
-import { RESOLVE_PERMISSION, RESOLVE_PLAN, RESTART_AGENT, HARD_RESTART_AGENT } from "@/lib/graphql/mutations/agents"
+import { RESOLVE_PERMISSION, RESOLVE_PLAN, RESTART_AGENT, HARD_RESTART_AGENT, CLEAR_AGENT_SESSION } from "@/lib/graphql/mutations/agents"
 
 /* ── Mock next/navigation ────────────────────────────────────────── */
 
@@ -30,7 +30,7 @@ vi.mock("next/navigation", () => ({
 
 /* ── Import hooks after mocks are in place ───────────────────────── */
 
-const { useAgents, useRestartAgent, useHardRestartAgent } = await import("@/lib/graphql/hooks/use-agents")
+const { useAgents, useRestartAgent, useHardRestartAgent, useClearAgentSession } = await import("@/lib/graphql/hooks/use-agents")
 const { useFeed, useResolvePermission, useResolvePlan } = await import("@/lib/graphql/hooks/use-feed")
 
 /* ── Fixtures ────────────────────────────────────────────────────── */
@@ -545,10 +545,9 @@ describe("useResolvePlan", () => {
 /*  match what the backend actually does. A mismatch means the cache   */
 /*  lies about agent state, causing UI glitches (e.g. VNC drops).      */
 /*                                                                      */
-/*  Contract: soft restart (useRestartAgent) sends a signal — backend   */
-/*  does NOT change lifecycleStatus. The cache must not change it       */
-/*  either. Hard restart (useHardRestartAgent) does a full redeploy —  */
-/*  backend sets status=DEPLOYING, so the optimistic update is valid.  */
+/*  Contract: signal-style actions (restart/clear) do NOT change cache  */
+/*  lifecycleStatus optimistically. Hard restart does a full redeploy,  */
+/*  so the optimistic DEPLOYING update is valid there.                  */
 /* ================================================================== */
 
 describe("optimistic update contracts: lifecycle hooks", () => {
@@ -694,5 +693,38 @@ describe("optimistic update contracts: lifecycle hooks", () => {
       `,
     })
     expect(cached?.relayConnected).toBe(true)
+  })
+
+  it("useClearAgentSession does NOT change lifecycleStatus (clear = signal path, not redeploy)", async () => {
+    const cache = makeCache()
+    const agent = makeAgent()
+
+    cache.writeQuery({
+      query: GET_AGENTS,
+      variables: { projectId: MOCK_PROJECT_ID },
+      data: { agents: [agent] },
+    })
+
+    const clearMock: MockedResponse = {
+      request: { query: CLEAR_AGENT_SESSION, variables: { agentId: "agent-1" } },
+      result: { data: { clearAgentSession: true } },
+    }
+
+    const { result } = renderHook(() => useClearAgentSession(), {
+      wrapper: makeWrapper([clearMock], cache),
+    })
+
+    act(() => {
+      result.current("agent-1")
+    })
+
+    const agentRef = cache.identify({ __typename: "AgentType", id: "agent-1" })
+    const cached = cache.readFragment<{ lifecycleStatus: string }>({
+      id: agentRef,
+      fragment: (await import("@apollo/client")).gql`
+        fragment ClearSessionStatus on AgentType { lifecycleStatus }
+      `,
+    })
+    expect(cached?.lifecycleStatus).toBe("running")
   })
 })

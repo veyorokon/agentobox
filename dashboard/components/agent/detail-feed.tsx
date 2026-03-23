@@ -120,12 +120,12 @@ function TimelineEntryRow({
   entry,
   agentName,
   toolResultMap,
-  onRestart,
+  onRedeploy,
 }: {
   entry: TimelineEntry
   agentName: string
   toolResultMap: Map<string, { content: string; isError: boolean }>
-  onRestart?: () => void
+  onRedeploy?: () => void
 }) {
   const data = entry.data as Record<string, unknown>
 
@@ -192,7 +192,7 @@ function TimelineEntryRow({
 
       if (isError) {
         const errorText = String(data?.error ?? "Agent encountered an error")
-        return <ErrorBubble agent={agentName} text={errorText} showAgent={false} onRestart={onRestart} />
+        return <ErrorBubble agent={agentName} text={errorText} showAgent={false} onRedeploy={onRedeploy} />
       }
 
       return (
@@ -297,7 +297,7 @@ export function AgentDetailFeed({ agent }: AgentDetailFeedProps) {
             entry={entry}
             agentName={agent.name}
             toolResultMap={toolResultMap}
-            onRestart={() => hardRestart(agent.id)}
+            onRedeploy={() => hardRestart(agent.id)}
           />
         ))}
       </div>

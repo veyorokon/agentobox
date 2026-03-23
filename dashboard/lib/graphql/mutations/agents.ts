@@ -69,6 +69,12 @@ export const INTERRUPT_AGENT = gql`
   }
 `
 
+export const CLEAR_AGENT_SESSION = gql`
+  mutation ClearAgentSession($agentId: ID!) {
+    clearAgentSession(agentId: $agentId)
+  }
+`
+
 export const UPDATE_AGENT_INSTRUCTIONS = gql`
   mutation UpdateAgentInstructions($input: UpdateAgentInstructionsInput!) {
     updateAgentInstructions(input: $input) {

@@ -10,6 +10,7 @@ import {
   HARD_RESTART_AGENT,
   RESTART_AGENT,
   INTERRUPT_AGENT,
+  CLEAR_AGENT_SESSION,
   UPDATE_AGENT_INSTRUCTIONS,
   UPDATE_AGENT_CONFIG,
   CREATE_AGENT,
@@ -163,6 +164,16 @@ export function useInterruptAgent() {
     log("mutation.interruptAgent", { agentId })
     mutate({ variables: { agentId } }).catch(err => {
       log("mutation.error", { mutation: "interruptAgent", agentId, error: err.message })
+    })
+  }, [mutate])
+}
+
+export function useClearAgentSession() {
+  const [mutate] = useMutation(CLEAR_AGENT_SESSION)
+  return useCallback((agentId: string) => {
+    log("mutation.clearAgentSession", { agentId })
+    mutate({ variables: { agentId } }).catch(err => {
+      log("mutation.error", { mutation: "clearAgentSession", agentId, error: err.message })
     })
   }, [mutate])
 }
