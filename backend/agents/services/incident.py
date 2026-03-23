@@ -19,7 +19,7 @@ from agents.models import Agent, StreamEvent, TeamFeedItem
 
 log = structlog.get_logger("abox.incident")
 
-BUNDLE_SCHEMA_VERSION = "3"
+BUNDLE_SCHEMA_VERSION = "4"
 
 # Caps to keep bundles bounded
 MAX_STREAM_EVENTS = 200
@@ -34,6 +34,8 @@ RAW_BUNDLE_FILES = (
     "_abox/state.json",
     # Runtime observed state
     "_abox/status.json",
+    # Task submission evidence
+    "_abox/inbox.jsonl",
     # Applied theme artifacts
     "tmp/abox-theme/tokens.json",
     "tmp/abox-theme/theme.json",
@@ -330,6 +332,10 @@ def _extract_desired(agent: Agent, theme_fingerprint: str | None) -> dict:
 
 def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
     """What the backend/runtime believes is true."""
+    rt = runtime_status.get("runtime", {}) if isinstance(runtime_status.get("runtime"), dict) else {}
+    transport = runtime_status.get("transport", {}) if isinstance(runtime_status.get("transport"), dict) else {}
+    build = runtime_status.get("build", {}) if isinstance(runtime_status.get("build"), dict) else {}
+
     return {
         "lifecycle_status": agent.status,
         "preview_state": _derive_preview_state_safe(agent),
@@ -337,6 +343,18 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
         "runtime_startup_stage": runtime_status.get("startup_stage"),
         "runtime_profile": runtime_status.get("profile"),
         "runtime_state": runtime_status.get("runtime_state"),
+        # Runtime executor task state (not AgentTask team-board)
+        "runtime_task_id": rt.get("task_id") or None,
+        "runtime_task_state": rt.get("task_state") or None,
+        "runtime_client_active": rt.get("client_active"),
+        # Runtime health diagnosis
+        "fatal": runtime_status.get("fatal"),
+        "degraded": runtime_status.get("degraded", []),
+        "transport_state": transport.get("state"),
+        "transport_last_error": transport.get("last_error"),
+        # Build provenance
+        "build_image_ref": build.get("image_ref") or None,
+        "build_git_commit": build.get("git_commit") or None,
         "source": "agent_model+runtime_projection",
     }
 

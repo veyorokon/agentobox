@@ -598,3 +598,112 @@ async def test_platform_crash_info_skipped_without_sandbox(setup_agent_no_sandbo
     assert bundle["platform_events"] == []
     assert not any("platform_crash_info" in e for e in errors)
     assert not any("platform_events" in e for e in errors)
+
+
+@pytest.fixture
+def setup_agent_with_task_failure():
+    """Agent with runtime_status_projection showing a failed executor task."""
+    owner = User.objects.create_user(
+        username=f"task-fail-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid Task Failure Test", owner=owner)
+    agent = Agent.objects.create(
+        name="task-fail-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        sandbox_id="sandbox-task-fail",
+        runtime_status_projection={
+            "startup_stage": "managed_ready",
+            "runtime_state": "running",
+            "profile": "desktop",
+            "runtime": {
+                "session_id": "sess-task-abc",
+                "client_active": False,
+                "task_id": "task-abc",
+                "task_state": "failed",
+            },
+            "fatal": "executor crashed",
+            "degraded": ["api-proxy"],
+            "transport": {
+                "enabled": True,
+                "state": "connected",
+                "connected": True,
+                "last_error": "",
+            },
+            "build": {
+                "image_ref": "ghcr.io/veyorokon/agentobox:sha-abc123",
+                "image_digest": "sha256:deadbeef",
+                "git_commit": "abc123",
+            },
+        },
+    )
+    return agent
+
+
+async def test_observed_includes_runtime_task_and_diagnosis_fields(setup_agent_with_task_failure):
+    """Observed layer surfaces executor task state and runtime diagnosis fields."""
+    agent = setup_agent_with_task_failure
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(agent)
+
+    observed = bundle["observed"]
+    # Executor task fields
+    assert observed["runtime_task_id"] == "task-abc"
+    assert observed["runtime_task_state"] == "failed"
+    assert observed["runtime_client_active"] is False
+    # Runtime health diagnosis
+    assert observed["fatal"] == "executor crashed"
+    assert observed["degraded"] == ["api-proxy"]
+    assert observed["transport_state"] == "connected"
+    assert observed["transport_last_error"] == ""
+    # Build provenance
+    assert observed["build_image_ref"] == "ghcr.io/veyorokon/agentobox:sha-abc123"
+    assert observed["build_git_commit"] == "abc123"
+
+
+async def test_observed_task_fields_null_without_projection(setup_agent_no_sandbox):
+    """Observed task/diagnosis fields degrade to None/empty without projection."""
+    agent = setup_agent_no_sandbox
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(agent)
+
+    observed = bundle["observed"]
+    assert observed["runtime_task_id"] is None
+    assert observed["runtime_task_state"] is None
+    assert observed["runtime_client_active"] is None
+    assert observed["fatal"] is None
+    assert observed["degraded"] == []
+    assert observed["transport_state"] is None
+    assert observed["build_image_ref"] is None
+    assert observed["build_git_commit"] is None
+
+
+async def test_inbox_in_raw_support(setup_project_with_agents):
+    """inbox.jsonl is captured in raw support bundle."""
+    _, target, _, _ = setup_project_with_agents
+
+    inbox_content = b'{"type":"task","task_id":"task-1","input":{"role":"user","content":[{"type":"text","text":"hello"}]}}\n'
+
+    def mock_bounded_read(machine, path, max_bytes):
+        if "inbox.jsonl" in path:
+            return inbox_content, False
+        return b"", False
+
+    mock_runtime = MagicMock()
+    mock_runtime.exec = AsyncMock(return_value="")
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.services.incident._bounded_read_sync", side_effect=mock_bounded_read),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, _ = await capture_incident_bundle(target)
+
+    files = {f["path"]: f for f in bundle["raw_support"]["files"]}
+    assert "_abox/inbox.jsonl" in files
+    inbox = files["_abox/inbox.jsonl"]
+    assert inbox["content"] is not None
+    assert "task-1" in inbox["content"]
