@@ -1153,6 +1153,30 @@ _POLICY_VARS = {
 }
 
 
+class TestMcpReloadContract:
+    """Principle: MCP config writes must trigger a reload signal.
+
+    Writing .mcp.json without a reload means the running agent won't
+    pick up new MCP servers until the next task invocation. The mutation
+    must use update_volume_and_reload (not bare writer.write) for .mcp.json.
+    """
+
+    def test_mcp_config_write_uses_reload_path(self):
+        """update_agent_config must call update_volume_and_reload for .mcp.json."""
+        src = _read_source(GRAPHQL_DIR / "mutations.py")
+        # Find the .mcp.json write — it must go through update_volume_and_reload
+        assert "update_volume_and_reload" in src and ".mcp.json" in src, (
+            "mutations.py must use update_volume_and_reload for .mcp.json writes. "
+            "Bare writer.write() skips the reload signal."
+        )
+        # Ensure .mcp.json is NOT written via bare writer.write
+        import re
+        bare_mcp_write = re.search(r'writer\.write\([^)]*\.mcp\.json', src)
+        assert bare_mcp_write is None, (
+            "mutations.py writes .mcp.json via writer.write() — use update_volume_and_reload instead."
+        )
+
+
 class TestConfigOwnership:
     """Principle: settings.py owns Django, app_config owns product/runtime policy."""
 
