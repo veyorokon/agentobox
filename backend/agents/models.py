@@ -729,11 +729,13 @@ class IncidentCapture(models.Model):
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     project = models.ForeignKey(
-        "projects.Project", on_delete=models.CASCADE, related_name="incidents"
+        "projects.Project", on_delete=models.SET_NULL, null=True, related_name="incidents"
     )
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="incidents")
+    agent = models.ForeignKey(
+        Agent, on_delete=models.SET_NULL, null=True, related_name="incidents"
+    )
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="incidents"
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="incidents"
     )
     note = models.TextField(blank=True, default="")
     screenshot_url = models.URLField(blank=True, default="")
@@ -751,4 +753,5 @@ class IncidentCapture(models.Model):
         ]
 
     def __str__(self):
-        return f"incident {str(self.id)[:8]} → {self.agent.name} ({self.created_at:%H:%M})"
+        agent_name = self.agent.name if self.agent else "(deleted)"
+        return f"incident {str(self.id)[:8]} → {agent_name} ({self.created_at:%H:%M})"

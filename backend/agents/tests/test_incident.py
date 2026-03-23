@@ -646,6 +646,9 @@ def setup_agent_with_task_failure():
 async def test_observed_includes_runtime_task_and_diagnosis_fields(setup_agent_with_task_failure):
     """Observed layer surfaces executor task state and runtime diagnosis fields."""
     agent = setup_agent_with_task_failure
+    agent.task_started_at = timezone.now() - timedelta(seconds=5)
+    agent.last_execution_event_at = None
+    await agent.asave(update_fields=["task_started_at", "last_execution_event_at"])
 
     with patch("agents.services.incident._read_runtime_logs", return_value=[]):
         bundle, _ = await capture_incident_bundle(agent)
@@ -663,6 +666,9 @@ async def test_observed_includes_runtime_task_and_diagnosis_fields(setup_agent_w
     # Build provenance
     assert observed["build_image_ref"] == "ghcr.io/veyorokon/agentobox:sha-abc123"
     assert observed["build_git_commit"] == "abc123"
+    # Derived task health
+    assert observed["task_health"]["kind"] == "failed_fast"
+    assert observed["task_health"]["runtime_task_state"] == "failed"
 
 
 async def test_observed_task_fields_null_without_projection(setup_agent_no_sandbox):
@@ -681,6 +687,7 @@ async def test_observed_task_fields_null_without_projection(setup_agent_no_sandb
     assert observed["transport_state"] is None
     assert observed["build_image_ref"] is None
     assert observed["build_git_commit"] is None
+    assert observed["task_health"] is None
 
 
 async def test_inbox_in_raw_support(setup_project_with_agents):
@@ -794,3 +801,58 @@ def test_task_state_discrepancy_matches_specific_task_id():
     assert result["discrepancy_kind"] == "missing_terminal_update"
     assert result["runtime_task_id"] == "task-2"
     assert result["persisted_task_state"] is None
+
+
+# ---------------------------------------------------------------------------
+# Incident durability — bundles survive parent deletion (#138)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def setup_incident_for_deletion():
+    """Create project + agent + incident for deletion durability test."""
+    from agents.models import IncidentCapture
+
+    owner = User.objects.create_user(
+        username=f"durability-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid Durability Test", owner=owner)
+    agent = Agent.objects.create(
+        name="durability-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+    )
+    inc = IncidentCapture.objects.create(
+        project=project,
+        agent=agent,
+        created_by=owner,
+        note="pre-deletion incident",
+        bundle={"ids": {"agent_id": str(agent.id), "project_id": str(project.id)}},
+    )
+    return project, agent, owner, inc
+
+
+async def test_incident_survives_project_deletion(setup_incident_for_deletion):
+    """Incident bundle persists after project (and cascaded agent) deletion."""
+    from agents.models import IncidentCapture
+    from asgiref.sync import sync_to_async
+
+    project, agent, owner, inc = setup_incident_for_deletion
+    incident_id = inc.id
+    agent_id_str = str(agent.id)
+    project_id_str = str(project.id)
+    owner_id = owner.id
+
+    # Delete the project — agent cascades via Agent.project (CASCADE)
+    await sync_to_async(project.delete, thread_sensitive=True)()
+
+    # Incident still exists with null project/agent FKs
+    refreshed = await IncidentCapture.objects.aget(id=incident_id)
+    assert refreshed.project_id is None
+    assert refreshed.agent_id is None  # agent cascades via Agent.project (CASCADE)
+    assert refreshed.created_by_id == owner_id  # user not deleted
+    # Bundle is still readable — self-contained evidence
+    assert refreshed.bundle["ids"]["agent_id"] == agent_id_str
+    assert refreshed.bundle["ids"]["project_id"] == project_id_str
+    assert refreshed.note == "pre-deletion incident"

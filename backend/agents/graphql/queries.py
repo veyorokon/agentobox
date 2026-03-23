@@ -343,8 +343,8 @@ class AgentQuery:
         return [
             IncidentCaptureSummaryType(
                 id=strawberry.ID(str(inc.id)),
-                agent_id=strawberry.ID(str(inc.agent_id)),
-                project_id=strawberry.ID(str(inc.project_id)),
+                agent_id=strawberry.ID(str(inc.agent_id)) if inc.agent_id else None,
+                project_id=strawberry.ID(str(inc.project_id)) if inc.project_id else None,
                 note=inc.note,
                 window_minutes=inc.window_minutes,
                 created_at=inc.created_at.isoformat(),
@@ -368,13 +368,18 @@ class AgentQuery:
         except IncidentCapture.DoesNotExist:
             return None
 
-        # Use canonical auth path — same as other project-scoped queries
-        await authorize_project(info, str(inc.project_id))
+        # Auth: project-scoped if project exists, staff-only if orphaned
+        if inc.project_id:
+            await authorize_project(info, str(inc.project_id))
+        else:
+            user = info.context["request"].user
+            if not user.is_authenticated or not user.is_staff:
+                raise PermissionError("Orphaned incidents require staff access")
 
         return IncidentCaptureType(
             id=strawberry.ID(str(inc.id)),
-            agent_id=strawberry.ID(str(inc.agent_id)),
-            project_id=strawberry.ID(str(inc.project_id)),
+            agent_id=strawberry.ID(str(inc.agent_id)) if inc.agent_id else None,
+            project_id=strawberry.ID(str(inc.project_id)) if inc.project_id else None,
             note=inc.note,
             screenshot_url=inc.screenshot_url,
             window_minutes=inc.window_minutes,
