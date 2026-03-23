@@ -39,6 +39,7 @@ from agents.services.lifecycle import (
     _mark_provisioned_ready,
     _runtime_executor,
     _update_lifecycle_attempt_sync,
+    hard_restart_agent,
     transition_agent_status,
 )
 from agents.services.project_volume import AgentMachinePaths, LocalProjectVolumeStore
@@ -593,6 +594,92 @@ async def test_atomic_reset_for_restart_carries_session_id_as_resume_hint():
     assert result is not None
     _reset_agent, _old_sandbox_id, _previous_runtime, resume_session_id, _config = result
     assert resume_session_id == "sess-current-123"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_hard_restart_agent_passes_resume_session_id_into_provision_task(monkeypatch):
+    def _setup():
+        owner = User.objects.create_user(username="owner6bb-restart", password="pw")
+        project = _create_project_without_signals(name="Test Project 6bb Restart", owner=owner)
+        return Agent.objects.create(
+            name="resume-chain-agent",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            desired_status=DesiredStatus.DEPLOYED,
+            sandbox_id="sandbox-old-123",
+            session_id="sess-chain-123",
+            model="claude-sonnet-4-5-20250929",
+            role="worker",
+            mode="auto",
+            config_snapshot={
+                "runtime": "docker",
+                "model": "claude-sonnet-4-5-20250929",
+                "agent_type": "claude-code",
+                "mcp_servers": {},
+                "workspace_path": "",
+                "instructions": "",
+                "role": "worker",
+                "volume_mounts": [],
+            },
+        )
+
+    agent = await sync_to_async(_setup, thread_sensitive=True)()
+
+    class _FakeRuntime:
+        terminate = AsyncMock(return_value=None)
+
+    fake_runtime = _FakeRuntime()
+    monkeypatch.setattr("agents.services.lifecycle.get_runtime", lambda runtime_name: fake_runtime)
+    monkeypatch.setattr("agents.services.lifecycle.resolve_agent_secrets", AsyncMock(return_value={}))
+    monkeypatch.setattr("agents.services.lifecycle.broadcast_agent_update", AsyncMock(return_value=None))
+    monkeypatch.setattr("agents.services.lifecycle.create_stream_event", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "agents.services.lifecycle._create_lifecycle_attempt",
+        AsyncMock(return_value=SimpleNamespace(id="attempt-123")),
+    )
+
+    captured: dict[str, object] = {}
+    provision_coro = object()
+
+    def _fake_provision_agent(agent_id, runtime_name, op_log, secret_envs=None, resume_session_id="", attempt_id=""):
+        captured["provision_agent_id"] = agent_id
+        captured["provision_runtime_name"] = runtime_name
+        captured["secret_envs"] = secret_envs
+        captured["resume_session_id"] = resume_session_id
+        captured["attempt_id"] = attempt_id
+        captured["op_log"] = op_log
+        return provision_coro
+
+    monkeypatch.setattr("agents.services.lifecycle._provision_agent", _fake_provision_agent)
+
+    def _fake_spawn_logged_task(coro, *, op_log, task_name, event, **context):
+        captured["spawn_coro"] = coro
+        captured["spawn_task_name"] = task_name
+        captured["spawn_event"] = event
+        captured["spawn_context"] = context
+        captured["spawn_op_log"] = op_log
+        return SimpleNamespace()
+
+    monkeypatch.setattr("agents.services.lifecycle.spawn_logged_task", _fake_spawn_logged_task)
+
+    restarted = await hard_restart_agent(str(agent.id))
+
+    assert str(restarted.id) == str(agent.id)
+    fake_runtime.terminate.assert_awaited_once_with("sandbox-old-123")
+    assert captured["resume_session_id"] == "sess-chain-123"
+    assert captured["provision_agent_id"] == str(agent.id)
+    assert captured["provision_runtime_name"] == app_config.agent.runtime
+    assert captured["secret_envs"] == {}
+    assert captured["attempt_id"] == "attempt-123"
+    assert captured["spawn_coro"] is provision_coro
+    assert captured["spawn_task_name"] == f"agent-restart:{agent.id}"
+    assert captured["spawn_event"] == "lifecycle.provision_task"
+    assert captured["spawn_context"]["agent_id"] == str(agent.id)
+    assert captured["spawn_context"]["attempt_id"] == "attempt-123"
+    assert isinstance(captured["spawn_context"]["correlation_id"], str)
+    assert len(captured["spawn_context"]["correlation_id"]) == 24
 
 
 @pytest.mark.django_db(transaction=True)
