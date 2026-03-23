@@ -139,6 +139,8 @@ class LocalProjectVolumeStore:
 class ModalProjectVolumeStore:
     """Modal Volume-backed machine store for runtime-visible agent state."""
 
+    _DIR_MARKER = ".agentobox.keep"
+
     def __init__(self, volume_name: str, *, environment_name: str | None = None):
         self._volume_name = volume_name
         self._environment_name = environment_name or os.environ.get("MODAL_ENVIRONMENT") or app_config.environment
@@ -198,8 +200,9 @@ class ModalProjectVolumeStore:
             batch.put_file(io.BytesIO(body), self._volume_path(machine, path), mode=mode)
 
     def mkdir(self, machine: AgentMachinePaths, path: str) -> None:
-        # Managed runtime no longer requires empty directory precreation on Modal.
-        return None
+        marker_path = f"{path.rstrip('/')}/{self._DIR_MARKER}"
+        with self.volume.batch_upload(force=True) as batch:
+            batch.put_file(io.BytesIO(b""), self._volume_path(machine, marker_path))
 
     def unlink(self, machine: AgentMachinePaths, path: str) -> None:
         try:
