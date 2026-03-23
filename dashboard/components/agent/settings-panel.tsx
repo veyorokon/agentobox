@@ -20,6 +20,7 @@ import {
 } from "@/lib/graphql/hooks/use-agents"
 import { useAvailableModels, useProviderStatus } from "@/lib/graphql/hooks/use-models"
 import { useMcpSearch } from "@/lib/graphql/hooks/use-mcp-search"
+import { toast } from "@/lib/toast"
 
 export interface SettingsPanelHandle {
   applyChanges: () => void
@@ -67,24 +68,34 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
 
-  const handleApplyChanges = useCallback(() => {
-    if (!dirty) return
-    if (instructions !== agent.instructions) {
-      updateInstructions(agent.id, instructions)
-    }
-    const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, { command: string; args: string[] }> } = {}
-    if (model !== agent.model) configDelta.model = model
-    if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
-    if (mcpDirty) {
-      configDelta.mcpRegistryNames = mcpRegistryNames
-      if (Object.keys(mcpCustomServers).length > 0) {
-        configDelta.mcpCustomServers = mcpCustomServers
+  const [applying, setApplying] = useState(false)
+
+  const handleApplyChanges = useCallback(async () => {
+    if (!dirty || applying) return
+    setApplying(true)
+    try {
+      if (instructions !== agent.instructions) {
+        await updateInstructions(agent.id, instructions)
       }
+      const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, { command: string; args: string[] }> } = {}
+      if (model !== agent.model) configDelta.model = model
+      if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
+      if (mcpDirty) {
+        configDelta.mcpRegistryNames = mcpRegistryNames
+        if (Object.keys(mcpCustomServers).length > 0) {
+          configDelta.mcpCustomServers = mcpCustomServers
+        }
+      }
+      if (Object.keys(configDelta).length > 0) {
+        await updateConfig(agent.id, configDelta)
+      }
+      toast.success("Changes applied")
+    } catch (err: any) {
+      toast.error(err.message || "Failed to apply changes")
+    } finally {
+      setApplying(false)
     }
-    if (Object.keys(configDelta).length > 0) {
-      updateConfig(agent.id, configDelta)
-    }
-  }, [dirty, agent.id, agent.instructions, agent.model, agent.tags, instructions, model, agentTags, mcpDirty, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
+  }, [dirty, applying, agent.id, agent.instructions, agent.model, agent.tags, instructions, model, agentTags, mcpDirty, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
 
   useImperativeHandle(ref, () => ({
     applyChanges: handleApplyChanges,

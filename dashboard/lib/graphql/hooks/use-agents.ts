@@ -168,26 +168,26 @@ export function useInterruptAgent() {
 }
 
 export function useUpdateAgentInstructions() {
-  const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS)
-  return useCallback((agentId: string, instructions: string) => {
-    mutate({ variables: { input: { agentId, instructions } } }).catch(err => {
-      log("mutation.error", { mutation: "updateAgentInstructions", agentId, error: err.message })
-    })
+  const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS, {
+    refetchQueries: ["Agents"],
+  })
+  return useCallback(async (agentId: string, instructions: string) => {
+    await mutate({ variables: { input: { agentId, instructions } } })
   }, [mutate])
 }
 
 export function useUpdateAgentConfig() {
-  const [mutate] = useMutation(UPDATE_AGENT_CONFIG)
-  return useCallback((agentId: string, config: {
+  const [mutate] = useMutation(UPDATE_AGENT_CONFIG, {
+    refetchQueries: ["Agents"],
+  })
+  return useCallback(async (agentId: string, config: {
     model?: string
     role?: string
     tags?: string[]
     mcpRegistryNames?: string[]
     mcpCustomServers?: Record<string, { command: string; args: string[] }>
   }) => {
-    mutate({ variables: { input: { agentId, ...config } } }).catch(err => {
-      log("mutation.error", { mutation: "updateAgentConfig", agentId, error: err.message })
-    })
+    await mutate({ variables: { input: { agentId, ...config } } })
   }, [mutate])
 }
 
