@@ -24,12 +24,21 @@ jobs:
           enable-cache: true
       - name: Generate CI secrets
         run: |
-          python3 - <<'PY' >> "$GITHUB_ENV"
+          python3 - <<'PY'
           import base64
           import os
           import secrets
-          print(f"SECRET_KEY={secrets.token_urlsafe(48)}")
-          print(f"ABOX_ENCRYPTION_KEY={base64.urlsafe_b64encode(os.urandom(32)).decode()}")
+
+          secret_key = secrets.token_urlsafe(48)
+          encryption_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+
+          # Mask generated per-run secrets before they appear in later step env blocks.
+          print(f"::add-mask::{secret_key}")
+          print(f"::add-mask::{encryption_key}")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"SECRET_KEY={secret_key}\n")
+              env_file.write(f"ABOX_ENCRYPTION_KEY={encryption_key}\n")
           PY
       - name: Export Anthropic credential if configured
         env:

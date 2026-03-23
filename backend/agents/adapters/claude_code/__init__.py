@@ -402,12 +402,12 @@ class ClaudeCodeAdapter:
     def provision_paths(self, workspace: str) -> dict:
         """Claude Code file paths for provisioning."""
         return {
-            "instruction_file": f"{workspace}/CLAUDE.md",
-            "settings_file": f"{workspace}/.claude/settings.json",
-            "mcp_config_file": f"{workspace}/.mcp.json",
-            "onboarding_file": f"{workspace}/.claude.json",
-            "config_dir": f"{workspace}/.claude",
-            "skills_dir": f"{workspace}/.claude/skills",
+            "instruction_file": "/home/agent/CLAUDE.md",
+            "settings_file": "/home/agent/.claude/settings.json",
+            "mcp_config_file": "/home/agent/.mcp.json",
+            "onboarding_file": "/home/agent/.claude.json",
+            "config_dir": "/home/agent/.claude",
+            "skills_dir": "/home/agent/.claude/skills",
         }
 
     # ── Provisioning config builders (pure data, no I/O) ──
@@ -687,57 +687,44 @@ class ClaudeCodeAdapter:
         secret_envs: dict[str, str] | None = None,
         coord_server: dict | None = None,
     ) -> str:
-        """Build .mcp.json content with HTTP-only entries (no secrets, no commands).
-
-        CC-specific: Claude Code reads .mcp.json for MCP server configs.
-        MCP servers are managed by the mcp-gateway service, which bridges
-        stdio<>HTTP on localhost ports. CC connects via HTTP — never sees
-        secrets or subprocess commands.
-
-        secret_envs is accepted for signature compatibility but ignored —
-        secrets are delivered to per-MCP dirs by provisioning, read by the gateway.
-        """
+        """Build .mcp.json content with direct stdio/remote server entries."""
         servers = {}
         if mcp_servers:
             for name, config in mcp_servers.items():
-                port = config.get("port") if isinstance(config, dict) else None
-                if not port:
-                    log.warning("adapter.mcp_missing_port", server=name)
+                if not isinstance(config, dict):
+                    log.warning("adapter.mcp_invalid_config", server=name)
                     continue
+                if config.get("type") in {"http", "sse"} and config.get("url"):
+                    entry = {
+                        "type": config["type"],
+                        "url": config["url"],
+                    }
+                    if config.get("headers"):
+                        entry["headers"] = config["headers"]
+                    if config.get("oauth"):
+                        entry["oauth"] = config["oauth"]
+                    servers[name] = entry
+                    continue
+
+                command = config.get("command")
+                if not command:
+                    log.warning("adapter.mcp_missing_command", server=name)
+                    continue
+                env = dict(config.get("env", {}))
+                for key in config.get("secrets", []):
+                    if secret_envs and key in secret_envs:
+                        env[key] = secret_envs[key]
                 servers[name] = {
-                    "type": "sse",
-                    "url": f"http://localhost:{port}",
+                    "type": "stdio",
+                    "command": command,
+                    "args": config.get("args", []),
+                    "env": env,
                 }
 
         if coord_server:
             servers["team"] = coord_server
 
         return json.dumps({"mcpServers": servers}, indent=2)
-
-    def build_gateway_config(self, *, mcp_servers: dict | None = None) -> str:
-        """Build /run/mcp-gateway/config.json — commands + ports, no secrets.
-
-        The gateway reads this to know which MCP subprocesses to manage.
-        Secrets are delivered separately to /run/secrets/mcp-<name>/ dirs.
-        """
-        servers = {}
-        if mcp_servers:
-            for name, config in mcp_servers.items():
-                if not isinstance(config, dict):
-                    log.warning("adapter.gateway_invalid_config", server=name)
-                    continue
-                command = config.get("command")
-                port = config.get("port")
-                if not command or not port:
-                    log.warning("adapter.gateway_missing_fields", server=name,
-                                has_command=bool(command), has_port=bool(port))
-                    continue
-                servers[name] = {
-                    "command": command,
-                    "args": config.get("args", []),
-                    "port": port,
-                }
-        return json.dumps({"servers": servers}, indent=2)
 
     def build_api_key_files(self, api_key: str) -> list[dict]:
         """File specs for API key delivery.
@@ -909,7 +896,7 @@ class ClaudeCodeAdapter:
             resolved[name] = {
                 "command": entry["command"],
                 "args": entry["args"],
-                "port": entry["port"],
+                "env": entry.get("env", {}),
                 "secrets": entry.get("secrets", []),
             }
         return resolved

@@ -290,6 +290,11 @@ class Agent(models.Model):
     task = models.CharField(max_length=500, blank=True, default="")       # current task description
     tags = models.JSONField(default=list, blank=True)                      # string tags for grouping
 
+    # Task timing — set by consumer on task_update and execution_event.
+    # Used for watchdog classification (hung, failed-fast, silent).
+    task_started_at = models.DateTimeField(null=True, blank=True)
+    last_execution_event_at = models.DateTimeField(null=True, blank=True)
+
     # Last error context — stderr excerpt or crash diagnostics.
     # Written by stream.py (process_exit) or reconcile.py (dead container).
     # Cleared on successful restart.

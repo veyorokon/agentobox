@@ -26,7 +26,7 @@ def _make_vol(tmp_path: Path) -> AgentMachine:
 
 
 @pytest.mark.asyncio
-async def test_provision_workspace_writes_files_under_executor_workspace(tmp_path, monkeypatch):
+async def test_provision_workspace_writes_files_under_agent_home(tmp_path, monkeypatch):
     vol = _make_vol(tmp_path)
     vol.initialize()
 
@@ -55,8 +55,8 @@ async def test_provision_workspace_writes_files_under_executor_workspace(tmp_pat
         agent_tags=[],
     )
 
-    assert (tmp_path / "home/agent/workspace").is_dir()
-    assert (tmp_path / "home/agent/workspace/CLAUDE.md").exists()
-    assert (tmp_path / "home/agent/workspace/.claude/settings.json").exists()
-    assert (tmp_path / "home/agent/workspace/.mcp.json").exists()
-    assert (tmp_path / "home/agent/workspace/.claude.json").exists()
+    assert (tmp_path / "home/agent").is_dir()
+    assert (tmp_path / "home/agent/CLAUDE.md").exists()
+    assert (tmp_path / "home/agent/.claude/settings.json").exists()
+    assert (tmp_path / "home/agent/.mcp.json").exists()
+    assert (tmp_path / "home/agent/.claude.json").exists()

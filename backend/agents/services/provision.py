@@ -11,8 +11,7 @@ creates symlinks so the container sees these files at their canonical paths.
     3. MCP config — .mcp.json, skipped if empty
     4. Onboarding state — .claude.json, skipped if empty
     5. Skills — project skills matching agent tags
-    6. MCP Gateway config — commands + ports, no secrets
-    7. Per-MCP scoped secrets — /run/secrets/mcp-{name}/{KEY}
+    6. Per-MCP scoped secrets — /run/secrets/mcp-{name}/{KEY}
 
 Security hardening (API key files, scoped sudo) still uses runtime.exec()
 because those operate on system paths (/opt/abox/, /etc/sudoers.d/) that
@@ -43,7 +42,7 @@ def _container_to_vol(container_path: str) -> str:
     """Convert an absolute container path to a volume-relative path.
 
     e.g. "/home/agent/.claude/settings.json" → "home/agent/.claude/settings.json"
-         "/home/agent/workspace/CLAUDE.md"   → "home/agent/workspace/CLAUDE.md"
+         "/home/agent/CLAUDE.md"             → "home/agent/CLAUDE.md"
 
     Adapter paths are absolute container paths. The volume mirrors the
     container filesystem, so we just strip the leading slash.
@@ -123,11 +122,10 @@ async def provision_workspace(
     settings_content = adapter.build_settings(api_key=api_key, mode=mode, model=model)
     vol.write(_container_to_vol(paths["settings_file"]), settings_content)
 
-    # MCP servers config — the adapter determines where MCP config lives
-    # (separate .mcp.json or merged into settings). Config is written when:
+    # MCP servers config — the adapter determines where MCP config lives.
+    # Direct .mcp.json config is written when:
     #   - Agent has user-configured MCP servers, OR
     #   - Agent has a relay_token (team coord server is always injected)
-    # Skipped entirely if the adapter returns an empty mcp_config_file path.
     mcp_config_path = paths["mcp_config_file"]
     coord_server = (
         _build_coord_server_config(callback_url, relay_token)
@@ -144,28 +142,17 @@ async def provision_workspace(
             merged.update(json.loads(mcp_config))
             vol.write(_container_to_vol(mcp_config_path), json.dumps(merged, indent=2))
         else:
-            vol.write_workspace_mcp_config(mcp_config)
+            vol.write_mcp_config(mcp_config)
 
-    # MCP Gateway config (commands + ports, no secrets)
-    if mcp_servers and hasattr(adapter, "build_gateway_config"):
-        gateway_config = adapter.build_gateway_config(mcp_servers=mcp_servers)
-        vol.write_gateway_config(gateway_config)
-
-        # Write per-MCP scoped secrets to volume
-        if secret_envs:
-            for name, config in mcp_servers.items():
-                needed = config.get("secrets", [])
-                if not needed:
-                    continue
-                for key in needed:
-                    if key in secret_envs:
-                        vol.write_mcp_secret(name, key, secret_envs[key])
-
-    # Prevent host .mcp.json from bleeding through workspace bind mount.
-    # Each agent gets its own .mcp.json on the volume; the workspace
-    # bind-mount's .mcp.json is masked by the volume symlink.
-    if workspace_path:
-        vol.write_workspace_mcp_config('{"mcpServers": {}}')
+    # Write per-MCP scoped secrets to volume
+    if mcp_servers and secret_envs:
+        for name, config in mcp_servers.items():
+            needed = config.get("secrets", [])
+            if not needed:
+                continue
+            for key in needed:
+                if key in secret_envs:
+                    vol.write_mcp_secret(name, key, secret_envs[key])
 
     # Write project skills that match this agent's tags
     skills_dir = paths["skills_dir"]
@@ -345,11 +332,8 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
     """Hot-reload secrets on a running agent via volume write + reload.
 
     Replaces the old runtime.write_file + runtime.exec approach.
-    Writes secrets to volume, rebuilds MCP config, then reloads the relay.
+    Writes secrets to volume and rebuilds MCP config for the next Claude invocation.
     """
-    from agents.services.relay import push_to_relay
-    from agents.services.relay_commands import ReloadCommand
-
     vol = agent.machine
     adapter = get_adapter(getattr(agent, "agent_type", "claude-code"))
     workspace = "/home/agent/workspace"
@@ -385,8 +369,6 @@ async def push_secrets_to_agent(agent, secret_envs: dict[str, str]) -> None:
             for key in needed:
                 if key in secret_envs:
                     vol.write_mcp_secret(name, key, secret_envs[key])
-        # Reload gateway config
-        await push_to_relay(str(agent.id), ReloadCommand(path="run/mcp-gateway/config.json"))
 
     log.info(
         "lifecycle.secrets_pushed",

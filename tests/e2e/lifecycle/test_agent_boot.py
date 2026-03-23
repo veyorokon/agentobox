@@ -23,7 +23,7 @@ from helpers.graphql import AboxGraphQL
 from helpers.polling import AgentTerminalError, PollTimeout, poll_agent_status
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from diagnosis import Diagnosis
+from diagnosis import Diagnosis, attach_incident_refs, write_incident_artifact
 
 API_URL = os.environ.get("ABOX_API_URL", "http://localhost:8000/graphql")
 SMOKE_RUNTIME = os.environ.get("SMOKE_RUNTIME", "docker")
@@ -71,6 +71,16 @@ def _build_bootstrap_diagnosis(agent_dict, *, seam, contract, observed_steps, ne
     return diag, path
 
 
+def _capture_bootstrap_incident(gql, agent_id, *, note):
+    """Best-effort incident bundle capture for bootstrap failures."""
+    return write_incident_artifact(
+        gql,
+        agent_id,
+        "incident-agent-bootstrap",
+        note=note,
+    )
+
+
 @pytest.mark.bootstrap
 class TestAgentBoot:
     """Verify an agent boots and reaches idle via GraphQL polling."""
@@ -99,7 +109,7 @@ class TestAgentBoot:
             )
         except AgentTerminalError as exc:
             # Agent hit error/failed — immediate diagnosis
-            _build_bootstrap_diagnosis(
+            diag, _ = _build_bootstrap_diagnosis(
                 exc.agent,
                 seam="agent_provisioning",
                 contract="agent must reach idle after create (provision + relay connect)",
@@ -114,11 +124,27 @@ class TestAgentBoot:
                     f"check lifecycle attempts and error message"
                 ),
             )
+            incident = _capture_bootstrap_incident(
+                gql,
+                exc.agent.get("id", ""),
+                note="agent bootstrap terminal failure",
+            )
+            attach_incident_refs(
+                diag,
+                "failure-diagnosis-agent-bootstrap",
+                "incident-agent-bootstrap",
+                incident,
+            )
+            if incident.get("incident_id"):
+                print(
+                    f"Bootstrap incident captured: {incident['incident_id']} "
+                    f"({incident.get('path', '')})"
+                )
             raise
         except PollTimeout as exc:
             # Timed out — fetch latest agent state for diagnosis
             latest = exc.last_value or {}
-            _build_bootstrap_diagnosis(
+            diag, _ = _build_bootstrap_diagnosis(
                 latest,
                 seam="agent_provisioning",
                 contract="agent must reach idle within timeout",
@@ -133,6 +159,22 @@ class TestAgentBoot:
                     f"check container status and relay logs"
                 ),
             )
+            incident = _capture_bootstrap_incident(
+                gql,
+                latest.get("id", ""),
+                note="agent bootstrap timeout failure",
+            )
+            attach_incident_refs(
+                diag,
+                "failure-diagnosis-agent-bootstrap",
+                "incident-agent-bootstrap",
+                incident,
+            )
+            if incident.get("incident_id"):
+                print(
+                    f"Bootstrap incident captured: {incident['incident_id']} "
+                    f"({incident.get('path', '')})"
+                )
             raise
 
         yield {"agent": idle_agent, "gql": gql}

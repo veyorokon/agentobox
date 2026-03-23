@@ -512,6 +512,44 @@ jobs:
           overall: ${{ steps.status.outputs.overall }}
           detail: "${{ steps.status.outputs.detail }} (promote)"
 
+      - name: Download failure diagnosis
+        if: ${{ steps.status.outputs.overall != 'success' && (steps.status.outputs.blocked_at == 'bootstrap' || steps.status.outputs.blocked_at == 'smoke') }}
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ steps.status.outputs.blocked_at == 'bootstrap' && 'failure-diagnosis-agent-bootstrap' || 'failure-diagnosis-agent-smoke' }}
+          path: summary-diagnosis
+
+      - name: Extract diagnosis details
+        if: ${{ steps.status.outputs.overall != 'success' && (steps.status.outputs.blocked_at == 'bootstrap' || steps.status.outputs.blocked_at == 'smoke') }}
+        id: diag
+        shell: bash
+        run: |
+          python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          files = sorted(Path("summary-diagnosis").glob("*.json"))
+          if not files:
+              print("seam=—")
+              print("contract=—")
+              print("first_broken_step=—")
+              print("incident_id=—")
+              print("ids=—")
+              raise SystemExit(0)
+
+          data = json.loads(files[0].read_text())
+          refs = data.get("refs", {}) or {}
+          ids = data.get("ids", {}) or {}
+          id_summary = ", ".join(f"{k}={v}" for k, v in ids.items() if v) or "—"
+
+          print(f"seam={data.get('seam', '—')}")
+          print(f"contract={data.get('contract', '—')}")
+          print(f"first_broken_step={data.get('first_broken_step', '—')}")
+          print(f"incident_id={refs.get('incident_id', '—')}")
+          print(f"ids={id_summary}")
+          PY
+
       - name: Write body
         run: |
           {
@@ -553,6 +591,13 @@ jobs:
               echo "| Field | Value |"
               echo "|-------|-------|"
               echo "| First broken gate | \`${{ steps.status.outputs.blocked_at }}\` |"
+              if [ "${{ steps.diag.outputs.seam || '' }}" != "" ]; then
+                echo "| Seam | \`${{ steps.diag.outputs.seam }}\` |"
+                echo "| Contract | ${{ steps.diag.outputs.contract }} |"
+                echo "| First broken step | \`${{ steps.diag.outputs.first_broken_step }}\` |"
+                echo "| Incident | \`${{ steps.diag.outputs.incident_id }}\` |"
+                echo "| IDs | \`${{ steps.diag.outputs.ids }}\` |"
+              fi
               echo "| Next debug target | ${{ steps.status.outputs.next_debug_target }} |"
               echo "| Failure artifact | \`${failure_artifact}\` |"
             } >> "$GITHUB_STEP_SUMMARY"

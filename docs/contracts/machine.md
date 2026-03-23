@@ -19,6 +19,11 @@ The current system has a real abstraction leak:
 - Modal does not provide the same direct host-path visibility
 - backend serializers then fall back to stale or empty state and the UI lies
 
+That leak is bigger than a single status file. Shared project files and
+agent-private config must not share the same root. Workspace files belong to
+the shared project workspace; instructions and MCP config belong under
+`/home/agent`.
+
 The fix is not more special-casing. The fix is to define a proper machine
 state contract and a runtime-agnostic volume abstraction.
 
@@ -79,6 +84,7 @@ Backend owns desired state and policy:
 - lifecycle intent
 - secrets materialization
 - MCP gateway configuration
+- agent-private config projection (`/home/agent/CLAUDE.md`, `/home/agent/.mcp.json`, `/home/agent/.claude/settings.json`)
 - user-facing feed/events
 - projected read models
 
@@ -105,33 +111,43 @@ the machine wins.
 
 ## Filesystem Shape
 
-The project volume contains one subtree per agent:
+The contract separates shared project files from agent-private config:
 
 ```text
 project-volume/
+  shared/
+    workspace/
+      # project code and shared project files only
   agents/
     {agent_id}/
-      machine/
-        home/agent/
-        tmp/
-        run/
-          secrets/
-          mcp-gateway/
-        mnt/abox-state/
-        _abox/
-          desired.json
-          status.json
-          facts.json
-          inbox.jsonl
-          inbox.cursor.json
-          outbox.jsonl
-          outbox.cursor.json
+      home/agent/
+        CLAUDE.md
+        .mcp.json
+        .claude/
+          settings.json
+        .relay_env
+        .claude.json
+      tmp/
+        abox-theme/
+      run/
+        secrets/
+      mnt/abox-state/
+      _abox/
+        desired.json
+        status.json
+        facts.json
+        inbox.jsonl
+        inbox.cursor.json
+        outbox.jsonl
+        outbox.cursor.json
 ```
 
 Important rule:
 
-- this is the entire mutable machine surface
-- not just a handful of config files
+- `shared/workspace/` is for project-shared files only
+- `home/agent/` is for agent-private config and instructions only
+- no agent-private file should be written under the shared workspace
+- this is the entire mutable machine surface, not just a handful of config files
 
 The runtime should treat this as the writable machine state it owns.
 
@@ -147,6 +163,7 @@ Purpose:
 - model/mode/tool policy
 - desired launch/runtime settings
 - other control-plane instructions that the runtime must reconcile
+- agent-private config that the backend projects into the machine surface
 
 ### `_abox/status.json`
 
@@ -203,8 +220,8 @@ This contract still cleanly supports separate secrets and root-owned files.
 Recommended paths:
 
 - `run/secrets/...`
-- `run/mcp-gateway/config.json`
 - `mnt/abox-state/secrets/env`
+- `/home/agent/.mcp.json`
 
 Rules:
 
@@ -212,11 +229,11 @@ Rules:
 - runtime reads those files locally
 - file permissions remain explicit
 - root-owned vs agent-owned paths are still valid distinctions
+- the agent-facing MCP config is private to `/home/agent`, not shared workspace state
 
 Nothing about the machine-volume model conflicts with:
 
 - scoped secrets
-- MCP gateway config
 - root-only secret files
 
 It makes them more explicit by placing them inside the canonical machine
@@ -237,9 +254,9 @@ design.
 | `tmp/abox-theme/tokens.json` | canonical theme document |
 | `home/agent/.relay_env` | relay configuration |
 | `home/agent/.claude/settings.json` | CC settings |
-| `home/agent/workspace/CLAUDE.md` | agent instructions |
+| `home/agent/CLAUDE.md` | agent instructions |
+| `home/agent/.mcp.json` | agent MCP config |
 | `run/secrets/*` | materialized secrets |
-| `run/mcp-gateway/config.json` | MCP gateway configuration |
 
 ### Observed (runtime-reported truth)
 

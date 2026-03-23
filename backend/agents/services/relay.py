@@ -522,9 +522,8 @@ async def restart_agent(agent_id: str) -> bool:
 async def push_skill_to_agents(skill, operation: str = "write") -> None:
     """Push a skill write/delete to all matching running agents.
 
-    Skills are written directly to the volume — CC discovers them via
-    filesystem. No reload needed; CC reads .claude/skills/ at startup and
-    picks up changes on the next invocation.
+    Skills are written directly to the agent-private Claude config tree.
+    No reload needed; CC discovers .claude/skills/ on the next invocation.
     """
     all_agents = [
         a async for a in Agent.objects.filter(
@@ -544,7 +543,7 @@ async def push_skill_to_agents(skill, operation: str = "write") -> None:
 
     for agent in matching_agents:
         try:
-            skill_path = f"home/agent/workspace/.claude/skills/{safe_name}/SKILL.md"
+            skill_path = f"home/agent/.claude/skills/{safe_name}/SKILL.md"
             writer = get_machine_writer(agent)
             if operation == "write":
                 await writer.write(skill_path, skill.content)

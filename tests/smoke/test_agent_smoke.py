@@ -36,7 +36,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "e2e"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from helpers.polling import poll_until
-from diagnosis import Diagnosis
+from diagnosis import Diagnosis, attach_incident_refs, write_incident_artifact
 
 # Timeouts — generous because cold boot + LLM inference can be slow.
 BOOT_TIMEOUT_S = 120
@@ -131,6 +131,16 @@ def _build_smoke_diagnosis(
     return diag, path
 
 
+def _capture_smoke_incident(gql, agent_id, *, note):
+    """Best-effort incident bundle capture for smoke failures."""
+    return write_incident_artifact(
+        gql,
+        agent_id,
+        "incident-agent-smoke",
+        note=note,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------
@@ -171,7 +181,7 @@ class TestAgentSmoke:
             current_agent = _team_lead_ready()
             current_id = current_agent.get("id", "") if current_agent else ""
 
-            _build_smoke_diagnosis(
+            diag, _ = _build_smoke_diagnosis(
                 gql, docker_ops, current_id, "team-lead", project_id,
                 seam="agent_boot",
                 contract="team-lead must reach idle with relay connected",
@@ -185,8 +195,30 @@ class TestAgentSmoke:
             artifacts = _collect_failure_artifacts(
                 gql, docker_ops, current_id, "team-lead", ""
             )
+            incident = _capture_smoke_incident(
+                gql,
+                current_id,
+                note="agent smoke bootstrap failure",
+            )
+            attach_incident_refs(
+                diag,
+                "failure-diagnosis-agent-smoke",
+                "incident-agent-smoke",
+                incident,
+            )
+            incident_lines = []
+            if incident.get("incident_id"):
+                incident_lines.append(
+                    f"\nIncident: {incident['incident_id']} ({incident.get('path', '')})"
+                )
+            elif incident.get("path") or incident.get("error"):
+                incident_lines.append(
+                    f"\nIncident capture: {incident.get('error', 'failed')} ({incident.get('path', 'no artifact')})"
+                )
             pytest.fail(
-                f"Team lead failed to reach idle within {BOOT_TIMEOUT_S}s.{artifacts}"
+                f"Team lead failed to reach idle within {BOOT_TIMEOUT_S}s."
+                + "".join(incident_lines)
+                + artifacts
             )
 
         agent_id = idle_agent["id"]
@@ -280,7 +312,7 @@ class TestAgentSmoke:
             )
             steps["feed_response_seen"] = True
         except Exception:
-            _build_smoke_diagnosis(
+            diag, _ = _build_smoke_diagnosis(
                 gql, docker_ops, agent_id, smoke_agent["agent_name"], project_id,
                 seam="send_message_to_runtime",
                 contract="message sent to agent must produce feed response within timeout",
@@ -291,8 +323,30 @@ class TestAgentSmoke:
                 gql, docker_ops, agent_id,
                 smoke_agent["agent_name"], "",
             )
+            incident = _capture_smoke_incident(
+                gql,
+                agent_id,
+                note="agent smoke message round-trip failure",
+            )
+            attach_incident_refs(
+                diag,
+                "failure-diagnosis-agent-smoke",
+                "incident-agent-smoke",
+                incident,
+            )
+            incident_lines = []
+            if incident.get("incident_id"):
+                incident_lines.append(
+                    f"\nIncident: {incident['incident_id']} ({incident.get('path', '')})"
+                )
+            elif incident.get("path") or incident.get("error"):
+                incident_lines.append(
+                    f"\nIncident capture: {incident.get('error', 'failed')} ({incident.get('path', 'no artifact')})"
+                )
             pytest.fail(
-                f"No response from agent within {RESPONSE_TIMEOUT_S}s.{artifacts}"
+                f"No response from agent within {RESPONSE_TIMEOUT_S}s."
+                + "".join(incident_lines)
+                + artifacts
             )
 
         # Step 4: Verify smoke token in response
@@ -304,16 +358,30 @@ class TestAgentSmoke:
         steps["smoke_token_in_response"] = token_found
 
         if not token_found:
-            _build_smoke_diagnosis(
+            diag, _ = _build_smoke_diagnosis(
                 gql, docker_ops, agent_id, smoke_agent["agent_name"], project_id,
                 seam="agent_response_content",
                 contract="agent response must contain the smoke token",
                 observed_steps=steps,
                 next_debug_target="check agent response content — LLM may have reformatted or refused",
             )
+            incident = _capture_smoke_incident(
+                gql,
+                agent_id,
+                note="agent smoke response content failure",
+            )
+            attach_incident_refs(
+                diag,
+                "failure-diagnosis-agent-smoke",
+                "incident-agent-smoke",
+                incident,
+            )
+            incident_suffix = ""
+            if incident.get("incident_id"):
+                incident_suffix = f" Incident: {incident['incident_id']}."
             pytest.fail(
                 f"Smoke token '{self.SMOKE_TOKEN}' not found in agent responses. "
-                f"Got: {response_texts}"
+                f"Got: {response_texts}{incident_suffix}"
             )
 
     # -- Incident capture canary --

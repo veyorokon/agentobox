@@ -320,3 +320,35 @@ class ModalRuntime:
             return "exited"
         except modal.exception.NotFoundError:
             return "dead"
+
+    MAX_PLATFORM_LOG_BYTES = 4096
+
+    async def get_crash_info(self, sandbox_id: str) -> dict | None:
+        """Capture exit code and bounded stderr from a dead/exited sandbox.
+
+        Iterates the stderr stream line-by-line and stops at MAX_PLATFORM_LOG_BYTES
+        to stay bounded at collection time. Modal StreamReader.read() is unbounded
+        (fetches full stream until EOF), so we iterate instead.
+        """
+        try:
+            sb = await modal.Sandbox.from_id.aio(sandbox_id)
+            if sb.returncode is None:
+                return None  # still running
+            lines: list[str] = []
+            total = 0
+            async for line in sb.stderr:
+                total += len(line)
+                lines.append(line)
+                if total >= self.MAX_PLATFORM_LOG_BYTES:
+                    break
+            return {
+                "exit_code": sb.returncode,
+                "oom_killed": False,  # Modal does not expose OOM flag
+                "logs": "".join(lines),
+            }
+        except modal.exception.NotFoundError:
+            return None
+
+    async def get_event_tail(self, sandbox_id: str, *, limit: int = 20) -> list[dict]:
+        """Modal SDK does not expose platform events. Return empty list."""
+        return []

@@ -127,7 +127,7 @@ The AI coding team use case is one workflow template among many. Dogfooding (usi
 | Step | What happens | File |
 |------|-------------|------|
 | 1. `createAgent` mutation | Creates Agent row (status=`deploying`), spawns background task | `services/lifecycle.py` `create_agent()` |
-| 2. Container provisioning | Runtime creates container, writes CLAUDE.md, `.mcp.json`, settings, secrets, API key to tmpfs | `services/lifecycle.py` `_provision_agent()`, `services/provision.py` |
+| 2. Container provisioning | Runtime creates container, writes agent-private `CLAUDE.md`, `.mcp.json`, settings, secrets, API key to the machine surface | `services/lifecycle.py` `_provision_agent()`, `services/provision.py` |
 | 3. Relay env written | `.relay_env` written with agent ID, token, model, team config | `services/lifecycle.py` `_provision_agent()` |
 | 4. Agent marked IDLE | `relay_token` + `sandbox_id` saved to DB, s6 relay service signaled to start | `services/lifecycle.py` `_save_provisioned()` |
 | 5. Relay connects | transport reads env, opens WS to `/ws/relay/<agent_id>/` with Bearer token | `agent/transports/agentobox/client.py` `AgentoboxTransportClient` |
@@ -322,27 +322,24 @@ MCP servers give agents capabilities beyond the CLI — browser control, compute
 
 ```
 MCP_REGISTRY (registries.py)
-  Each entry: {command, args, port, secrets[], compat[], instructions}
-  ├── "computer-use": {node, dist/main.js, port: 7002, secrets: []}
-  └── "playwright":   {npx @playwright/mcp, port: 7003, secrets: []}
+  Each entry: {command, args, env, secrets[], compat[], instructions}
+  └── "playwright":   {npx @playwright/mcp, secrets: []}
                 │
                 ▼
-createAgent(mcp_servers: ["computer-use", "playwright"])
+createAgent(mcp_servers: ["playwright"])
                 │
                 ▼
 adapter.resolve_mcp_servers(names, variant="debian")
-  → filters by compat, returns {name: {command, args, port, secrets}}
+  → filters by compat, returns {name: {command, args, env, secrets}}
   → stored on Agent.mcp_servers (JSONField)
                 │
                 ▼
 provision_workspace()
-  ├── adapter.build_gateway_config()
-  │     → writes /vol/.../run/mcp-gateway/config.json
-  │       {"servers": {"computer-use": {command, args, port}}}
-  │
+  ├── adapter.build_instructions()
+  │     → writes /vol/.../home/agent/CLAUDE.md
   ├── adapter.build_mcp_config()
   │     → writes /vol/.../home/agent/.mcp.json
-  │       {"mcpServers": {"computer-use": {type: "sse", url: "http://localhost:7002"}}}
+  │       {"mcpServers": {"playwright": {command, args, env}}}
   │
   └── write scoped secrets
         → /vol/.../run/secrets/mcp-{name}/{KEY} (0600 permissions)
@@ -350,41 +347,31 @@ provision_workspace()
                 ▼
 Container Boot (s6-overlay)
   ├── init-volume oneshot
-  │     → symlinks /run/mcp-gateway → volume path
   │     → symlinks /run/secrets → volume path
   │
-  └── svc-mcp-gateway longrun
-        → reads /run/mcp-gateway/config.json
-        → for each server in config:
-            ├── loads secrets from /run/secrets/mcp-{name}/*
-            ├── spawns subprocess with scoped env
-            ├── binds HTTP bridge on localhost:{port}
-            └── monitors health, restarts on crash
+  └── runtime starts
+        → mounts agent-private home
+        → mounts shared workspace
+        → makes /run/secrets available
                 │
                 ▼
-Claude Code starts
-  ├── reads .mcp.json
-  ├── preflight: HTTP GET to each MCP endpoint
-  ├── connects via SSE transport
+Claude Code invocation starts
+  ├── reads /home/agent/.mcp.json
+  ├── spawns stdio MCPs directly from config
+  ├── connects to remote MCPs directly from config
   └── makes JSON-RPC tool calls (screenshot, click, navigate, etc.)
 ```
 
-### Secret Isolation via Gateway
+### Secret Isolation
 
-The gateway (`mcp-gateway.py`) provides process-level secret isolation. Each MCP subprocess gets only its own secrets — the agent process never possesses them.
+Provisioning materializes scoped MCP secrets under `run/secrets/mcp-{name}`. When the backend renders `/home/agent/.mcp.json`, it injects only the env keys explicitly required by that MCP. Claude then spawns stdio MCPs directly using that config.
 
 ```
-s6 process tree
-  ├── svc-relay (user: agent)
-  │     └── Claude Code CLI — sees only .mcp.json URLs, no secrets
-  │
-  ├── svc-apiproxy (user: root)
-  │     └── reads /run/secrets/proxy_key — Anthropic API key
-  │
-  └── svc-mcp-gateway (user: root)
-        ├── computer-use subprocess — env: {} (no secrets needed)
-        ├── tavily subprocess — env: {TAVILY_API_KEY=sk-...}
-        └── github subprocess — env: {GITHUB_TOKEN=ghp_...}
+Claude Code invocation
+  ├── reads /home/agent/.mcp.json
+  ├── spawns playwright stdio server — env: {}
+  ├── spawns tavily stdio server — env: {TAVILY_API_KEY=sk-...}
+  └── connects to remote MCPs — headers/oauth inline in config when required
 ```
 
 **How secrets flow:**
@@ -401,14 +388,14 @@ provision_workspace() — matches MCP registry secrets[] to resolved secrets:
     vol.write_secret("run/secrets/mcp-tavily/TAVILY_API_KEY", value)
         │
         ▼
-mcp-gateway.py _load_secrets(name):
+adapter.build_mcp_config():
   reads /run/secrets/mcp-{name}/* as {filename: contents} dict
-  injects as env vars when spawning subprocess
+  injects only the declared secret keys into that MCP's env block
         │
         ▼
-MCP subprocess runs with scoped env:
+Claude spawns MCP subprocess with scoped env:
   TAVILY_API_KEY=sk-... (only this MCP sees it)
-  Claude Code cannot access — only talks HTTP to localhost:{port}
+  other MCPs do not receive it
 ```
 
 ### MCP Registry
@@ -418,20 +405,20 @@ MCP subprocess runs with scoped env:
 | Field | Purpose |
 |-------|---------|
 | `command` | Executable to spawn (e.g. `node`, `npx`) |
-| `args` | Command arguments (e.g. `["/opt/mcp-servers/computer-use/dist/main.js"]`) |
-| `port` | localhost port for HTTP bridge |
+| `args` | Command arguments (e.g. `["@playwright/mcp@latest"]`) |
+| `env` | Non-secret environment variables required by the MCP |
 | `secrets` | List of required secret key names (e.g. `["TAVILY_API_KEY"]`) |
 | `compat` | Compatible image variants (e.g. `["debian"]`) |
-| `instructions` | Behavioral guidance injected into CLAUDE.md |
+| `instructions` | Behavioral guidance injected into `/home/agent/CLAUDE.md` |
 
-Bundled MCPs (pre-installed in image): `computer-use`, `playwright`.
+Bundled MCPs are only the ones the image actually ships or can invoke directly. Today the canonical bundled MCP is `playwright`.
 
-Adding a new MCP requires: (1) add to `MCP_REGISTRY`, (2) install binary in Dockerfile or use npx, (3) document required secrets in the `secrets` field. The gateway handles everything else — no new s6 service needed.
+Adding a new MCP requires: (1) add to `MCP_REGISTRY`, (2) install the binary in the image or use an explicit external command, (3) document required secrets in the `secrets` field, and (4) prove the path exists in the target image/profile. The config writer handles everything else — there is no separate gateway service.
 
-### Gateway vs Per-Service Architecture
+### Direct Config vs Service Gateway
 
-The gateway pattern (one s6 service managing N subprocesses) was chosen over per-MCP s6 services because:
-- **Dynamic**: MCPs are configured per-agent at provision time, not baked into the image
-- **Config-driven reload**: SIGHUP triggers config re-read and subprocess restart
-- **Simpler image**: no need to create linux users or s6 service directories per MCP
-- **Same isolation**: each subprocess gets scoped env, agent process only sees HTTP URLs
+The current architecture uses direct Claude Code config rather than an in-container gateway service because:
+- **Honest image contract**: the config only references tools the current image/profile can actually execute
+- **Lower indirection**: no localhost bridge, port allocation, or secondary supervisor to debug
+- **Per-agent configuration**: MCP availability comes from the agent's private `.mcp.json`, not shared runtime services
+- **Simpler reload model**: updating `.mcp.json` changes the next Claude invocation without a container redeploy

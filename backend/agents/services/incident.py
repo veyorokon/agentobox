@@ -19,7 +19,7 @@ from agents.models import Agent, StreamEvent, TeamFeedItem
 
 log = structlog.get_logger("abox.incident")
 
-BUNDLE_SCHEMA_VERSION = "2"
+BUNDLE_SCHEMA_VERSION = "4"
 
 # Caps to keep bundles bounded
 MAX_STREAM_EVENTS = 200
@@ -34,6 +34,8 @@ RAW_BUNDLE_FILES = (
     "_abox/state.json",
     # Runtime observed state
     "_abox/status.json",
+    # Task submission evidence
+    "_abox/inbox.jsonl",
     # Applied theme artifacts
     "tmp/abox-theme/tokens.json",
     "tmp/abox-theme/theme.json",
@@ -216,6 +218,28 @@ async def capture_incident_bundle(
         log.warning("incident.source_failed", source="runtime_logs", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         errors.append(f"runtime_logs: {type(exc).__name__}: {exc}")
 
+    # -- Platform crash info (provider-level, best-effort) --
+    platform_crash_info = None
+    if agent.sandbox_id:
+        try:
+            from agents.runtimes import get_runtime
+            runtime = get_runtime(agent.runtime)
+            platform_crash_info = await runtime.get_crash_info(agent.sandbox_id)
+        except Exception as exc:  # intentional: best-effort — platform API may be unavailable
+            log.warning("incident.source_failed", source="platform_crash_info", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+            errors.append(f"platform_crash_info: {type(exc).__name__}: {exc}")
+
+    # -- Platform events (provider-level, best-effort) --
+    platform_events: list[dict] = []
+    if agent.sandbox_id:
+        try:
+            from agents.runtimes import get_runtime
+            runtime = get_runtime(agent.runtime)
+            platform_events = await runtime.get_event_tail(agent.sandbox_id)
+        except Exception as exc:  # intentional: best-effort — platform API may be unavailable
+            log.warning("incident.source_failed", source="platform_events", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
+            errors.append(f"platform_events: {type(exc).__name__}: {exc}")
+
     # -- Runtime status projection --
     runtime_status = {}
     try:
@@ -234,6 +258,13 @@ async def capture_incident_bundle(
     except Exception as exc:  # intentional: best-effort — supplementary diagnosis field
         log.debug("incident.source_failed", source="desired_theme", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
 
+    # -- Derive session_id: prefer agent model, fall back to runtime projection --
+    runtime_session_id = ""
+    if isinstance(runtime_status, dict):
+        rt = runtime_status.get("runtime", {})
+        if isinstance(rt, dict):
+            runtime_session_id = rt.get("session_id", "") or ""
+
     # -- Structural diagnosis layers --
     desired = _extract_desired(agent, desired_theme_fingerprint)
     observed = _extract_observed(agent, runtime_status)
@@ -247,6 +278,11 @@ async def capture_incident_bundle(
         log.warning("incident.source_failed", source="raw_support", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         errors.append(f"raw_support: {type(exc).__name__}: {exc}")
 
+    # -- Task state discrepancy detection --
+    task_state_discrepancy = _compute_task_state_discrepancy(
+        runtime_status, stream_events,
+    )
+
     bundle = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
         "captured_at": now.isoformat(),
@@ -257,7 +293,7 @@ async def capture_incident_bundle(
             "agent_id": agent_id,
             "project_id": project_id,
             "sandbox_id": agent.sandbox_id or "",
-            "session_id": agent.session_id or "",
+            "session_id": agent.session_id or runtime_session_id,
         },
         "desired": desired,
         "observed": observed,
@@ -269,6 +305,9 @@ async def capture_incident_bundle(
         "feed_items": feed_items,
         "runtime_logs": runtime_logs,
         "runtime_status": runtime_status,
+        "platform_crash_info": platform_crash_info,
+        "platform_events": platform_events,
+        "task_state_discrepancy": task_state_discrepancy,
         "collection_errors": errors,
     }
 
@@ -299,6 +338,10 @@ def _extract_desired(agent: Agent, theme_fingerprint: str | None) -> dict:
 
 def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
     """What the backend/runtime believes is true."""
+    rt = runtime_status.get("runtime", {}) if isinstance(runtime_status.get("runtime"), dict) else {}
+    transport = runtime_status.get("transport", {}) if isinstance(runtime_status.get("transport"), dict) else {}
+    build = runtime_status.get("build", {}) if isinstance(runtime_status.get("build"), dict) else {}
+
     return {
         "lifecycle_status": agent.status,
         "preview_state": _derive_preview_state_safe(agent),
@@ -306,7 +349,74 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
         "runtime_startup_stage": runtime_status.get("startup_stage"),
         "runtime_profile": runtime_status.get("profile"),
         "runtime_state": runtime_status.get("runtime_state"),
+        # Runtime executor task state (not AgentTask team-board)
+        "runtime_task_id": rt.get("task_id") or None,
+        "runtime_task_state": rt.get("task_state") or None,
+        "runtime_client_active": rt.get("client_active"),
+        # Runtime health diagnosis
+        "fatal": runtime_status.get("fatal"),
+        "degraded": runtime_status.get("degraded", []),
+        "transport_state": transport.get("state"),
+        "transport_last_error": transport.get("last_error"),
+        # Build provenance
+        "build_image_ref": build.get("image_ref") or None,
+        "build_git_commit": build.get("git_commit") or None,
+        # Task timing (for watchdog classification)
+        "task_started_at": getattr(agent, "task_started_at", None),
+        "last_execution_event_at": getattr(agent, "last_execution_event_at", None),
         "source": "agent_model+runtime_projection",
+    }
+
+
+_TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cleared"})
+
+
+def _compute_task_state_discrepancy(
+    runtime_status: dict, stream_events: list[dict],
+) -> dict | None:
+    """Compare runtime-projected task state vs latest persisted task_update.
+
+    Returns None if no runtime task_id. Otherwise returns a diagnostic dict
+    with discrepancy_kind:
+      - none: states match
+      - missing_terminal_update: runtime is terminal but persisted is missing or non-terminal
+      - state_mismatch: persisted and runtime are both terminal but disagree
+      - in_progress: runtime is non-terminal, no discrepancy to flag
+    """
+    rt = runtime_status.get("runtime", {}) if isinstance(runtime_status.get("runtime"), dict) else {}
+    runtime_task_id = rt.get("task_id") or None
+    runtime_task_state = rt.get("task_state") or None
+
+    if not runtime_task_id:
+        return None
+
+    # Find latest persisted task_update for this specific task_id
+    persisted_state = None
+    for evt in reversed(stream_events):
+        if evt.get("event_type") == "task_update":
+            data = evt.get("data", {})
+            if isinstance(data, dict) and data.get("task_id") == runtime_task_id:
+                persisted_state = data.get("state")
+                break
+
+    if persisted_state == runtime_task_state:
+        kind = "none"
+    elif runtime_task_state not in _TERMINAL_TASK_STATES:
+        # Runtime is non-terminal (queued, running, idle) — no discrepancy to flag
+        kind = "in_progress"
+    elif persisted_state is None or persisted_state not in _TERMINAL_TASK_STATES:
+        # Runtime is terminal but persisted is missing or still non-terminal —
+        # the terminal event never arrived (transport drop)
+        kind = "missing_terminal_update"
+    else:
+        # Both terminal but disagree (e.g. persisted=failed, runtime=completed)
+        kind = "state_mismatch"
+
+    return {
+        "runtime_task_id": runtime_task_id,
+        "runtime_task_state": runtime_task_state,
+        "persisted_task_state": persisted_state,
+        "discrepancy_kind": kind,
     }
 
 

@@ -101,19 +101,114 @@ async def test_receive_json_routes_execution_event_raw_message_to_stream_service
 
 
 @pytest.mark.asyncio
-async def test_receive_json_ignores_task_update():
+async def test_receive_json_persists_task_update():
     consumer = _relay_consumer()
     content = {
         "type": "task_update",
         "task_id": "task-1",
-        "state": "completed",
-        "output_text": "pong",
+        "state": "failed",
+        "session_id": "sess-abc",
+        "input_text": "hello",
+        "output_text": "partial output",
+        "error": "cwd does not exist",
     }
 
-    with patch("agents.services.stream.process_stream_event", new_callable=AsyncMock) as mock_process:
+    with (
+        patch("agents.services.stream.process_stream_event", new_callable=AsyncMock) as mock_process,
+        patch("agents.models.StreamEvent.objects") as mock_qs,
+    ):
+        mock_qs.acreate = AsyncMock()
         await consumer.receive_json(content)
 
+    # Should NOT go through process_stream_event (that's for execution_event)
     mock_process.assert_not_called()
+    # Should persist as a StreamEvent
+    mock_qs.acreate.assert_called_once()
+    call_kwargs = mock_qs.acreate.call_args[1]
+    assert call_kwargs["agent_id"] == "agent-123"
+    assert call_kwargs["event_type"] == "task_update"
+    assert call_kwargs["data"]["task_id"] == "task-1"
+    assert call_kwargs["data"]["state"] == "failed"
+    assert call_kwargs["data"]["input_text"] == "hello"
+    assert call_kwargs["data"]["output_text"] == "partial output"
+    assert call_kwargs["data"]["error"] == "cwd does not exist"
+    assert call_kwargs["session_id"] == "sess-abc"
+    assert call_kwargs["is_canonical"] is True
+
+
+@pytest.mark.asyncio
+async def test_task_update_running_sets_task_started_at():
+    consumer = _relay_consumer()
+    content = {
+        "type": "task_update",
+        "task_id": "task-2",
+        "state": "running",
+        "session_id": "sess-xyz",
+    }
+
+    with (
+        patch("agents.models.StreamEvent.objects") as mock_stream_qs,
+        patch("agents.models.Agent.objects") as mock_agent_qs,
+    ):
+        mock_stream_qs.acreate = AsyncMock()
+        mock_agent_qs.filter = MagicMock(return_value=mock_agent_qs)
+        mock_agent_qs.aupdate = AsyncMock()
+        await consumer.receive_json(content)
+
+    # Should update task_started_at
+    mock_agent_qs.filter.assert_called_once_with(id="agent-123")
+    mock_agent_qs.aupdate.assert_called_once()
+    assert "task_started_at" in mock_agent_qs.aupdate.call_args[1]
+
+
+@pytest.mark.asyncio
+async def test_execution_event_sets_last_execution_event_at():
+    consumer = _relay_consumer()
+    content = {
+        "type": "execution_event",
+        "event_type": "raw_message",
+        "session_id": "sess-xyz",
+        "payload": {"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}},
+    }
+
+    with (
+        patch("agents.services.stream.process_stream_event", new_callable=AsyncMock),
+        patch("agents.models.Agent.objects") as mock_agent_qs,
+    ):
+        mock_agent_qs.filter = MagicMock(return_value=mock_agent_qs)
+        mock_agent_qs.aupdate = AsyncMock()
+        await consumer.receive_json(content)
+
+    # Should update last_execution_event_at
+    mock_agent_qs.filter.assert_called_once_with(id="agent-123")
+    mock_agent_qs.aupdate.assert_called_once()
+    assert "last_execution_event_at" in mock_agent_qs.aupdate.call_args[1]
+
+
+@pytest.mark.asyncio
+async def test_non_raw_message_execution_event_still_updates_timestamp():
+    consumer = _relay_consumer()
+    content = {
+        "type": "execution_event",
+        "event_type": "tool_result",
+        "session_id": "sess-xyz",
+        "payload": {"type": "tool_result"},
+    }
+
+    with (
+        patch("agents.services.stream.process_stream_event", new_callable=AsyncMock) as mock_process,
+        patch("agents.models.Agent.objects") as mock_agent_qs,
+    ):
+        mock_agent_qs.filter = MagicMock(return_value=mock_agent_qs)
+        mock_agent_qs.aupdate = AsyncMock()
+        await consumer.receive_json(content)
+
+    # Should NOT go through process_stream_event (not raw_message)
+    mock_process.assert_not_called()
+    # Should still update last_execution_event_at
+    mock_agent_qs.filter.assert_called_once_with(id="agent-123")
+    mock_agent_qs.aupdate.assert_called_once()
+    assert "last_execution_event_at" in mock_agent_qs.aupdate.call_args[1]
 
 
 @pytest.mark.asyncio

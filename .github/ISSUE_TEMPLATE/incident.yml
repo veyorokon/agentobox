@@ -58,6 +58,14 @@ body:
       required: true
 
   - type: textarea
+    id: desired_state
+    attributes:
+      label: Desired restored state
+      description: What should be true again once this incident is resolved.
+    validations:
+      required: true
+
+  - type: textarea
     id: observed
     attributes:
       label: Observed reality

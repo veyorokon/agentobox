@@ -14,11 +14,12 @@ reads the file and reloads the relevant process.
           home/agent/                     # mirrors /home/agent/ in container
             .claude/
               settings.json               # CC settings (mode, model, api_key placeholder)
+              .credentials.json           # CC OAuth credential file
+              skills/                     # per-agent skill assignments
             .relay_env                    # relay process env vars
-            workspace/
-              CLAUDE.md                   # project-level instructions
-              .claude/.claude.json        # onboarding state
-              .mcp.json                   # MCP config
+            CLAUDE.md                     # agent-private instructions
+            .claude.json                  # onboarding state
+            .mcp.json                     # agent-private MCP config
           tmp/abox-theme/                 # mirrors /tmp/abox-theme/
             tokens.json                   # source: backend writes CSS tokens
             theme.css                     # derived: converter writes
@@ -28,8 +29,6 @@ reads the file and reloads the relevant process.
             secrets/
               proxy_key                   # API proxy key (0600)
               mcp-{name}/{KEY}            # per-MCP scoped secrets
-            mcp-gateway/
-              config.json                 # gateway server config
           mnt/abox-state/                 # mirrors /mnt/abox-state/
             secrets/env                   # shell-sourceable secrets export
           _abox/                          # control plane (NOT mirrored into container)
@@ -46,10 +45,8 @@ reads the file and reloads the relevant process.
 
         /home/agent/.claude       → /vol/agents/$AGENT_ID/home/agent/.claude
         /home/agent/.relay_env    → /vol/agents/$AGENT_ID/home/agent/.relay_env
-        /home/agent/workspace     → /vol/agents/$AGENT_ID/home/agent/workspace
         /tmp/abox-theme           → /vol/agents/$AGENT_ID/tmp/abox-theme
         /run/secrets              → /vol/agents/$AGENT_ID/run/secrets
-        /run/mcp-gateway          → /vol/agents/$AGENT_ID/run/mcp-gateway
         /mnt/abox-state           → /vol/agents/$AGENT_ID/mnt/abox-state
 
     The agent sees a normal filesystem. It doesn't know about the volume.
@@ -97,7 +94,6 @@ SYMLINKED_PREFIXES = (
     "opt/abox/",         # glob: ${AGENT_VOL}/opt/abox/*
     "tmp/abox-theme/",   # explicit: ln -sfn
     "run/secrets/",      # explicit: ln -sfn (under run/)
-    "run/mcp-gateway/",  # explicit: ln -sfn (under run/)
     "mnt/abox-state/",   # explicit: ln -sfn
     "_abox/",            # control plane — accessed directly via /vol/, not symlinked
 )
@@ -109,17 +105,16 @@ SYMLINKED_PREFIXES = (
 # files necessarily exist.
 PROVISIONING_SENTINEL = "_abox/provisioned.ready"
 
-# Config files the backend manages. Written during provisioning and
-# updated via Volume.mutate() + reload commands. The agent reads these
-# on boot and on reload notifications.
+# Config files the backend manages. Some are runtime-reloadable
+# (`_abox/state.json`, theme tokens); others are agent-private files that
+# Claude reads fresh on the next invocation (`CLAUDE.md`, `.mcp.json`).
 MANAGED_CONFIG_FILES = [
     "home/agent/.claude/settings.json",
-    "home/agent/workspace/CLAUDE.md",
-    "home/agent/workspace/.mcp.json",
-    "home/agent/workspace/.claude/.claude.json",
+    "home/agent/CLAUDE.md",
+    "home/agent/.mcp.json",
+    "home/agent/.claude.json",
     "home/agent/.relay_env",
     "tmp/abox-theme/tokens.json",
-    "run/mcp-gateway/config.json",
     "_abox/state.json",
 ]
 
@@ -144,9 +139,6 @@ RELOAD_REGISTRY: dict[str, set[str]] = {
     "_abox/state.json": {"mode", "allowed_tools", "model"},
     "_abox/inbox.jsonl": {"messages"},
     "tmp/abox-theme/tokens.json": {"theme_tokens"},
-    "home/agent/workspace/CLAUDE.md": {"instructions"},
-    "home/agent/workspace/.mcp.json": {"mcp_servers"},
-    "run/mcp-gateway/config.json": {"gateway_config"},
 }
 
 # Flattened set of all state fields owned by the volume.
@@ -313,15 +305,10 @@ class AgentMachine:
             "allowed_tools": allowed_tools,
         }))
 
-    def write_workspace_mcp_config(self, content: str | bytes) -> None:
-        """Write the canonical workspace MCP config document."""
+    def write_mcp_config(self, content: str | bytes) -> None:
+        """Write the canonical agent-private MCP config document."""
 
-        self.write("home/agent/workspace/.mcp.json", content)
-
-    def write_gateway_config(self, content: str | bytes) -> None:
-        """Write the canonical MCP gateway config document."""
-
-        self.write("run/mcp-gateway/config.json", content)
+        self.write("home/agent/.mcp.json", content)
 
     def write_secrets_env_document(self, content: str | bytes) -> None:
         """Write the shared shell-sourceable secrets export."""

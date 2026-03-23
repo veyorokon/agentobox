@@ -13,6 +13,7 @@ from agent.transports.agentobox.session import NullRelaySession, RelaySession
 
 
 WS_FATAL_CLOSE_CODES = {4001, 4003, 4004}
+RECONNECT_DELAY_S = 1.0
 
 
 class FatalTransportError(RuntimeError):
@@ -28,10 +29,12 @@ class AgentoboxTransportClient(ManagedTransport):
         config: AgentoboxTransportConfig,
         connector: TransportConnector | None = None,
         session: RelaySession | None = None,
+        reconnect_delay_s: float = RECONNECT_DELAY_S,
     ):
         self._config = config
         self._connector = connector or self._default_connector
         self._session = session or NullRelaySession()
+        self._reconnect_delay_s = max(0.0, reconnect_delay_s)
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._snapshot = TransportSnapshot(
@@ -106,20 +109,24 @@ class AgentoboxTransportClient(ManagedTransport):
         emit_event(RuntimeEvent.TRANSPORT_FATAL.value, error=error)
 
     def _run_connector(self) -> None:
-        try:
-            self._connector(self._config, self, self._session)
-        except FatalTransportError as exc:
-            self.mark_fatal(str(exc))
-            return
-        except Exception as exc:  # intentional: transport startup failure should degrade the runtime instead of crashing the process
-            self.mark_degraded(str(exc))
-            return
-
-        if self._stop_event.is_set():
-            return
-        snapshot = self.snapshot()
-        if snapshot.state is TransportState.CONNECTING:
-            self.mark_degraded("transport connector exited unexpectedly")
+        while not self._stop_event.is_set():
+            try:
+                self._connector(self._config, self, self._session)
+            except FatalTransportError as exc:
+                self.mark_fatal(str(exc))
+                return
+            except Exception as exc:  # intentional: transport failure should degrade the runtime instead of crashing the process
+                if self._stop_event.is_set():
+                    return
+                self.mark_degraded(str(exc))
+            else:
+                if self._stop_event.is_set():
+                    return
+                snapshot = self.snapshot()
+                if snapshot.state is TransportState.CONNECTING:
+                    self.mark_degraded("transport connector exited unexpectedly")
+            if self._stop_event.wait(self._reconnect_delay_s):
+                return
 
     def _default_connector(
         self,

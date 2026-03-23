@@ -88,3 +88,39 @@ def test_modal_project_volume_store_treats_missing_invalid_error_as_absent(monke
 
     assert store.exists(machine, "_abox/provisioned.ready") is False
     store.unlink(machine, "_abox/provisioned.ready")
+
+
+def test_modal_project_volume_store_mkdir_materializes_directory_marker(monkeypatch):
+    captured = {}
+
+    class FakeBatch:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def put_file(self, fileobj, remote_path, mode=None):
+            captured["remote_path"] = remote_path
+            captured["content"] = fileobj.read()
+            captured["mode"] = mode
+
+    class FakeVolume:
+        def batch_upload(self, force=True):
+            captured["force"] = force
+            return FakeBatch()
+
+    monkeypatch.setattr(
+        "agents.services.project_volume.modal.Volume.from_name",
+        lambda *args, **kwargs: FakeVolume(),
+    )
+
+    store = ModalProjectVolumeStore("agentobox_agent-volumes", environment_name="dev")
+    machine = AgentMachinePaths(project_id="proj-1", agent_id="agent-1")
+
+    store.mkdir(machine, "home/agent/workspace")
+
+    assert captured["force"] is True
+    assert captured["remote_path"] == "/agents/agent-1/home/agent/workspace/.agentobox.keep"
+    assert captured["content"] == b""
+    assert captured["mode"] is None

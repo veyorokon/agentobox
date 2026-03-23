@@ -130,7 +130,6 @@ MCP_REGISTRY = {
     "playwright": {
         "command": "npx",
         "args": ["@playwright/mcp@latest"],
-        "port": 7001,
         "secrets": [],
         "compat": ["debian"],
         "instructions": """
@@ -154,63 +153,11 @@ MCP_REGISTRY = {
             - Close the browser when done with `browser_close`
         """,
     },
-    "computer-use": {
-        "command": "node",
-        "args": ["/opt/mcp-servers/computer-use/dist/main.js"],
-        "port": 7002,
-        "secrets": [],
-        "compat": ["debian"],
-        "instructions": """
-            ## Computer Use
-
-            You have a desktop environment with a display, mouse, and keyboard
-            accessible through the `computer` MCP tool. **Use the computer
-            tool for GUI interactions** — clicking, typing, scrolling, and
-            taking screenshots.
-
-            ### Desktop
-
-            There is a dock bar at the bottom of the screen with app launchers
-            (Chromium, Terminal). To open an app, click its icon in the dock.
-            If the app you need is not in the dock, you may launch it from
-            bash — this is the only acceptable reason to use bash for GUI apps.
-
-            ### How to interact
-
-            1. **Screenshot first** — before every action, take a screenshot
-               to see the current screen state.
-            2. **Click, type, scroll** — interact with what you see, like a
-               human sitting at the computer. Click buttons, type into fields,
-               scroll to find content.
-            3. **Screenshot after** — verify your action had the expected
-               effect before proceeding.
-
-            ### Browser
-
-            - Chromium is in the dock. Click its icon to open it.
-            - To navigate: click the address bar, type the URL, press Enter.
-            - To follow a link: click it. To go back: click the back button.
-            - To search: click the search/address bar, type your query, press
-              Enter.
-
-            ### Rules
-
-            - **Use the dock to launch apps.** Click the app icon in the
-              bottom dock bar. Only use bash to launch apps not in the dock.
-            - **Never use bash to type into GUI apps.** Use the computer tool's
-              `type` and `key` actions instead.
-            - **Always verify with screenshots.** After clicking or typing,
-              take a screenshot to confirm the result before your next action.
-            - **Be patient.** Pages and apps take time to load. If a click
-              doesn't seem to work, take another screenshot after a moment —
-              don't immediately retry.
-        """,
-    },
 }
 
 # MCPs included on every agent by default (unless explicitly overridden).
-# Empty — bundled MCPs (computer-use) only exist in the legacy agent-claude
-# image. New runtime images don't ship MCP servers; they're added explicitly.
+# Empty by default. Managed runtimes only expose bundled MCPs that are
+# explicitly present in the current image/profile contract.
 DEFAULT_MCPS: list[str] = []
 
 # Team configuration templates

@@ -93,6 +93,7 @@ The issue body should answer:
 - what is broken
 - which seam is failing
 - what contract was expected
+- what desired state the incident is trying to restore
 - what was actually observed
 - what proof level exists now
 - what must be true to close the incident
@@ -112,9 +113,12 @@ Work threads are bounded lines of work.
 
 They should name:
 
+- the current state
+- the desired state / goal
 - the seams crossed
 - the target canonical shape
 - the current proof level
+- the planned proof strategy
 - the concrete implementation order
 - explicit non-goals
 
@@ -221,6 +225,7 @@ If the seam requires real remote state, coordination, or environment-specific ob
 - Do not broaden incidents into unrelated cleanup while the system is red.
 - Update labels when the thread changes shape.
 - Keep issue comments evidence-first: commands, logs, screenshots, IDs, and exact observed states.
+- Prefer issue bodies that make `current state -> desired state -> seams -> acceptance criteria` obvious at a glance.
 
 ## Pull Requests
 

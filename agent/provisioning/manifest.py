@@ -10,8 +10,9 @@ from agent.contracts.provisioning import FileValidator, ProvisioningManifest
 CANONICAL_PATHS = {
     "relay_env": "home/agent/.relay_env",
     "claude_settings": "home/agent/.claude/settings.json",
-    "workspace_instructions": "home/agent/workspace/CLAUDE.md",
-    "mcp_config": "home/agent/workspace/.mcp.json",
+    "agent_instructions": "home/agent/CLAUDE.md",
+    "mcp_config": "home/agent/.mcp.json",
+    "claude_onboarding": "home/agent/.claude.json",
     "theme_tokens": "tmp/abox-theme/tokens.json",
     "theme_json": "tmp/abox-theme/theme.json",
     "theme_css": "tmp/abox-theme/theme.css",
@@ -39,7 +40,7 @@ def standalone_manifest() -> ProvisioningManifest:
         optional_files=(
             CANONICAL_PATHS["theme_tokens"],
             CANONICAL_PATHS["secret_env"],
-            CANONICAL_PATHS["workspace_instructions"],
+            CANONICAL_PATHS["agent_instructions"],
             CANONICAL_PATHS["task_inbox"],
         ),
         derived_files=(
@@ -71,7 +72,7 @@ def managed_manifest() -> ProvisioningManifest:
             CANONICAL_PATHS["runtime_status"],
             CANONICAL_PATHS["theme_tokens"],
             CANONICAL_PATHS["secret_env"],
-            CANONICAL_PATHS["workspace_instructions"],
+            CANONICAL_PATHS["agent_instructions"],
             CANONICAL_PATHS["task_inbox"],
         ),
         derived_files=(

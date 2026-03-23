@@ -186,24 +186,26 @@ containers, and verify actual state transitions. Test what you ship.
 
 ## Dev Canary Plan
 
-Canaries are smoke scenarios run as post-deploy verification against the
-real `dev.agentobox.com` environment. They execute automatically in the
-deploy pipeline after `agent-bootstrap` and `agent-smoke` gates.
+Canaries are smoke scenarios run as post-deploy verification against
+real environments. They execute automatically after deploy in both
+`deploy-dev.yml` (against `dev.agentobox.com`) and `promote-prod.yml`
+(against `agentobox.com`).
 
 ### Scenario Set
 
 | Scenario | Smoke test | Canary gate | What it proves | Proof level |
 |----------|-----------|-------------|----------------|-------------|
-| Fresh agent boot | `test_agent_boot.py` | `agent-bootstrap` in deploy.yml | provisioning → relay → idle | live |
-| Message round-trip | `test_agent_smoke.py` | `agent-smoke` in deploy.yml | send → LLM → feed response | live |
+| Fresh agent boot | `test_agent_boot.py` | `agent-bootstrap` in deploy-dev / promote-prod | provisioning → relay → idle | live |
+| Message round-trip | `test_agent_smoke.py` | `agent-smoke` in deploy-dev / promote-prod | send → LLM → feed response | live |
 | Theme convergence | — | not yet wired | canonical theme → runtime derived files match | — |
 | Browser dock launch | — | not yet wired | Chromium launches from desktop dock | — |
-| Incident capture | `test_agent_smoke.py` | `agent-smoke` in deploy.yml | captureIncident → stored bundle with expected structure | live |
+| Incident capture | `test_agent_smoke.py` | `agent-smoke` in deploy-dev / promote-prod | captureIncident → stored bundle with expected structure | live |
 
 ### What runs today
 
 ```
-deploy → agent-bootstrap → agent-smoke
+deploy-dev:    deploy → agent-bootstrap → agent-smoke
+promote-prod:  deploy → agent-bootstrap → agent-smoke
 ```
 
 `agent-bootstrap` runs `test_agent_boot.py::TestAgentBoot` against the
@@ -228,8 +230,8 @@ A canary does NOT prove:
 
 1. Write the scenario as a smoke test in `tests/smoke/` or `tests/e2e/`.
 2. Gate it behind appropriate markers.
-3. Wire it into `deploy.yml` as a post-deploy job if it should run on
-   every deploy.
+3. Wire it into `deploy-dev.yml` and `promote-prod.yml` as a post-deploy
+   job if it should run on every deploy.
 4. Add it to the scenario table above.
 5. Ensure it emits a diagnosis artifact on failure.
 

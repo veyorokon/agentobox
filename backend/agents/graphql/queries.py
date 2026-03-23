@@ -15,6 +15,7 @@ from agents.models import Agent
 from agents.graphql.types import (
     AccountSecretType,
     AgentType,
+    IncidentCaptureSummaryType,
     IncidentCaptureType,
     McpPackageType,
     McpRegistryEntryType,
@@ -187,8 +188,8 @@ class AgentQuery:
     ) -> McpRegistrySearchResult:
         """Search official MCP registry + bundled servers.
 
-        Uses separator-normalized matching so "computer use" matches
-        "computer-use". Bundled matches appear first.
+        Uses separator-normalized matching so "play wright" matches
+        "playwright". Bundled matches appear first.
         """
         import re
         from agents.adapters import get_adapter
@@ -328,6 +329,32 @@ class AgentQuery:
                 configured=key_name in effective_keys,
             ))
         return result
+
+    @strawberry.field
+    async def agent_incidents(
+        self, agent_id: ID, info: strawberry.types.Info, limit: int = 20,
+    ) -> list[IncidentCaptureSummaryType]:
+        """Recent incidents for one agent, newest first. Lightweight — no bundle."""
+        from agents.models import IncidentCapture
+
+        agent = await authorize_agent(info, agent_id)
+        limit = min(limit, 50)
+
+        return [
+            IncidentCaptureSummaryType(
+                id=strawberry.ID(str(inc.id)),
+                agent_id=strawberry.ID(str(inc.agent_id)),
+                project_id=strawberry.ID(str(inc.project_id)),
+                note=inc.note,
+                window_minutes=inc.window_minutes,
+                created_at=inc.created_at.isoformat(),
+            )
+            async for inc in IncidentCapture.objects.filter(
+                agent_id=agent.id,
+            ).only(
+                "id", "agent_id", "project_id", "note", "window_minutes", "created_at",
+            ).order_by("-created_at")[:limit]
+        ]
 
     @strawberry.field
     async def incident(

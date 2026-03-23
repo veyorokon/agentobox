@@ -397,15 +397,15 @@ async def test_runtime_backed_writer_write_syncs_to_modal_sandbox():
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         writer = get_machine_writer(fake_agent)
-        await writer.write("home/agent/workspace/.claude/skills/test/SKILL.md", "content")
+        await writer.write("home/agent/.claude/skills/test/SKILL.md", "content")
 
     fake_agent.volume.write.assert_called_once_with(
-        "home/agent/workspace/.claude/skills/test/SKILL.md",
+        "home/agent/.claude/skills/test/SKILL.md",
         "content",
     )
     mock_runtime.mirror_machine_write.assert_awaited_once_with(
         "sb-write123",
-        "/vol/agents/agent-modal-write/home/agent/workspace/.claude/skills/test/SKILL.md",
+        "/vol/agents/agent-modal-write/home/agent/.claude/skills/test/SKILL.md",
         "content",
     )
     mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-write123", "/vol/agents/agent-modal-write")
@@ -456,9 +456,9 @@ async def test_runtime_backed_writer_remove_tree_syncs_to_modal_sandbox():
         mock_runtime.sync_machine_volume = AsyncMock(return_value=None)
         mock_get_runtime.return_value = mock_runtime
         writer = get_machine_writer(fake_agent)
-        await writer.remove_tree("home/agent/workspace/.claude/skills/test")
+        await writer.remove_tree("home/agent/.claude/skills/test")
 
-    fake_agent.volume.remove_tree.assert_called_once_with("home/agent/workspace/.claude/skills/test")
+    fake_agent.volume.remove_tree.assert_called_once_with("home/agent/.claude/skills/test")
     mock_runtime.sync_machine_volume.assert_awaited_once_with("sb-delete123", "/vol/agents/agent-modal-delete")
 
 

@@ -35,9 +35,11 @@ Use the repo-facing docs for process and project context:
 - Prefer one canonical source of truth per concern.
 - Treat projections and caches as disposable read models, not authority.
 - Preserve boring operations over cleverness.
+  Boring means fewer moving parts, explicit data flow, and no hidden inference from ambient state.
 - Minimize abstraction bleed.
 - Remove duplicate overlapping code paths once the replacement is proven.
 - Fail loudly when contracts are violated.
+  Prefer structured diagnosis, explicit error surfaces, and named contract breaches over silent degradation or raw stack traces alone.
 
 ## Key Concepts
 
@@ -60,6 +62,76 @@ Questions:
 - Which side owns truth?
 - What behavior is contractually required vs incidental?
 
+### Contracts
+
+A contract is the explicit agreement at a seam about what each side provides and requires. If a seam is the boundary, a contract is the stitch that holds the two sides together. Without the contract, the seam is just a gap where things drift apart.
+
+A contract is expressed through code, tests, and docs, but is not reducible to any one of them. It is the invariant that all three must honor. Code implements the contract. Tests enforce it. Docs state it. If any of the three contradict the contract, the contract wins.
+
+A good contract:
+- names the seam it governs
+- states who owns truth (who writes, who reads)
+- lists the inputs each side must provide
+- lists the outputs each side must produce
+- defines the invariants that must hold across all valid states
+
+An invariant is a specific rule within a contract that must never be violated regardless of how the system evolves. "Prod artifact identity comes from an explicit manifest ref" is an invariant of the release contract. It does not describe what happens. It describes what must never stop being true.
+
+Contracts separate what must be true from how it is achieved. Implementations behind the contract can change freely. If the contract stays the same, downstream consumers do not need to change.
+
+When a bug happens at a seam, the contract tells you which side broke its promise.
+
+Examples:
+- release contract: dev writes the manifest, prod reads it, images are never rebuilt for promotion
+- machine contract: runtime owns observed state, backend owns desired state
+- image contract: built image must satisfy boot, healthcheck, and filesystem expectations
+
+Questions:
+- What is the contract at this seam?
+- Which side owns writing truth?
+- What invariants must hold?
+- Is the current implementation honoring the contract, or working around it?
+- If the implementation changed, would the contract still be satisfied?
+
+### Goals
+
+A goal is the desired state of the world a thread is trying to make true.
+
+If a seam tells you where responsibility changes hands, and a contract tells you
+what must hold at that handoff, the goal tells you why the thread exists and
+what world should exist when the thread is done.
+
+Goals should be stated explicitly instead of being inferred from implementation
+ideas.
+
+A good goal:
+- describes the desired state, not the patch
+- distinguishes current state from desired state
+- is testable at the right proof level
+- makes the stopping condition obvious
+
+Examples:
+- release goal: prod promotes the exact tested dev artifact set by explicit manifest ref
+- runtime goal: executor readiness is explicit and independent from optional desktop services
+- state goal: one canonical writer owns live mutable machine state
+
+Questions:
+- What is true today?
+- What should be true instead?
+- Is this thread changing the world in the intended way, or only changing code shape?
+- Would we still want this outcome if the implementation path changed completely?
+
+Agents should assume that users will often describe goals colloquially,
+implicitly, or in solution-shaped language. The agent's job is to translate
+that into an explicit desired-state statement and keep the thread grounded in
+that statement.
+
+Preferred pattern:
+1. listen for the user's intended outcome
+2. restate it as a desired state of the world
+3. distinguish that goal from any proposed implementation
+4. use the desired state as the reference point for tradeoffs and completion
+
 ### Threads
 
 A thread is a coherent line of work across one or more seams.
@@ -74,6 +146,7 @@ Threads are not the same as components, files, or tickets.
 
 A good thread:
 - has one main question or failure mode
+- states the current state and the desired state
 - names the seams it crosses
 - has a clear stopping condition
 - can be tested at the earliest honest level
@@ -96,9 +169,10 @@ Use threads to organize the work.
 
 Preferred pattern:
 1. identify the thread
-2. locate the failing seam inside it
-3. fix the seam
-4. close the thread only when the end-to-end question is resolved
+2. state the current state and desired state explicitly
+3. locate the failing seam inside it
+4. fix the seam
+5. close the thread only when the end-to-end question is resolved
 
 When a thread starts crossing too many unrelated seams, split it.
 When two threads are really symptoms of one broken seam, merge them.
@@ -240,6 +314,9 @@ Preferred pattern:
 2. surface the key fields in summaries/output
 3. keep raw logs as secondary evidence
 
+“Fail loudly” should mean the broken seam is easier to identify after the
+failure than before it.
+
 ### Duplicate Overlapping Code Paths
 
 Duplicate paths are especially dangerous when they both “mostly work.”
@@ -307,6 +384,19 @@ Agents should move up and down this scale deliberately. Do not stay too low too 
 
 ## Execution Model
 
+### Entering A Codebase
+
+When entering a repo or thread cold:
+
+1. read the operating docs first
+2. identify the active thread
+3. state the current state before proposing the desired state
+4. identify the seams the thread crosses
+5. read the files, tests, and contract docs for those seams before editing
+
+Do not jump from a request directly into code changes without first orienting
+on the active thread and seam.
+
 ### The Default Loop
 
 1. Observe reality.
@@ -320,6 +410,32 @@ Agents should move up and down this scale deliberately. Do not stay too low too 
 
 This is the normal path for both debugging and refactoring.
 
+### Scope Discipline
+
+Do the thread that was asked for.
+
+When adjacent breakage or cleanup appears:
+- identify it explicitly
+- decide whether it belongs to the same thread or a new one
+- do not silently widen scope just because the code is nearby
+
+If the seam changes, the thread probably changed too.
+
+### Shared-State Actions
+
+Before taking a shared-state action, be explicit about it.
+
+Shared-state actions include:
+- commits
+- pushes
+- merges
+- deploys
+- secret or environment mutations
+- live host or cloud resource mutations
+
+If the user already asked for that exact action, proceed.
+If not, surface the action before doing it.
+
 ### Trace The Actual Chain
 
 Before theorizing, trace the real path end to end.
@@ -330,6 +446,16 @@ Examples:
 - write -> projection -> read model -> rendered state
 
 When possible, identify the first point where reality diverges from the expected chain.
+
+### Blast Radius
+
+Before changing a shared contract, output, schema, workflow interface, or
+other widely consumed surface:
+- identify downstream consumers
+- identify what else must change with it
+- prefer one coherent migration over partial drift
+
+Do not change a shared seam in isolation when multiple consumers depend on it.
 
 ### Fix, Describe, Regress
 
@@ -437,6 +563,22 @@ When modeling or debugging a system, inspect the concrete artifacts first:
 
 Do not design from imagined shapes when the real shape is available.
 
+### Search Heuristics For Large Codebases
+
+When the repo is too large to hold in working memory, search for the seam, not
+just the topic.
+
+Heuristics that generally work well:
+- start from the user-visible surface or external entrypoint, then trace inward
+- search for canonical write or resolve points, not just every read site
+- search for exact literals that define the contract: env vars, file paths, GraphQL fields, status values, workflow outputs
+- use tests as contract documentation, especially when test names already encode the intended behavior
+- look for local contradictions: comments, config, and code paths that describe incompatible truths
+- treat absence as evidence too; if a path or artifact is referenced in config but never appears in image/build/runtime setup, that gap matters
+
+These are search heuristics, not rigid steps. Use them to find the canonical
+path faster, not to create ceremony.
+
 ### Remote-First Debugging
 
 When the bug is environment-specific, it is acceptable and often correct to:
@@ -501,6 +643,24 @@ Agents should know whether a step is easy to undo.
 Use that awareness to sequence work safely:
 - learn with reversible steps
 - codify only after the seam is clear
+
+### Multi-Agent Collaboration
+
+When other agents are involved:
+- treat their output as evidence, not automatic truth
+- avoid duplicating work that has already been proven
+- reuse their findings when the proof level is sufficient
+- surface disagreements explicitly in terms of seam, contract, and evidence
+
+Parallel work should reduce uncertainty, not create multiple competing stories.
+
+### Handling Corrections
+
+When the user or another agent corrects the direction:
+1. restate the corrected desired state
+2. drop the superseded frame
+3. adjust the plan immediately
+4. do not defend the old path out of inertia
 
 ## Testing Canon
 
@@ -621,6 +781,21 @@ Good names:
 - distinguish canonical state from projections
 - distinguish runtime concepts from UI concepts
 
+Normalize names across equivalent concepts whenever possible.
+
+Examples:
+- prefer `Agentobox Dev`, `Agentobox Prod`, and `Agentobox Local` over one-off variants
+- prefer one stable noun for the same resource across docs, dashboards, provider consoles, and runbooks
+- prefer explicit environment qualifiers over implicit or historical names
+
+Naming normalization is not cosmetic. It is part of ambiguity reduction and seam hygiene.
+
+A good normalization pass:
+- keeps the same concept named the same way across environments
+- makes environment scope explicit when it matters
+- removes stale aliases once the new name is proven
+- treats naming drift as a contract bug, not just a style issue
+
 When naming drifts:
 - consolidate toward the canonical noun
 - leave compatibility shims temporarily
@@ -646,6 +821,7 @@ Work is done when:
 - the old ambiguous path is removed or explicitly deprecated
 - the system is more legible than before
 - future failures at the same seam should be faster to diagnose
+- the change stayed inside the motivating thread instead of quietly absorbing adjacent work
 
 ## Repo Docs
 

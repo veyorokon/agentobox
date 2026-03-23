@@ -26,6 +26,7 @@ from agents.models import (
 from agents.services.incident import (
     BUNDLE_SCHEMA_VERSION,
     REDACTED,
+    _compute_task_state_discrepancy,
     _redact,
     capture_incident_bundle,
 )
@@ -177,6 +178,9 @@ async def test_bundle_has_required_fields(setup_project_with_agents):
         "feed_items",
         "runtime_logs",
         "runtime_status",
+        "platform_crash_info",
+        "platform_events",
+        "task_state_discrepancy",
         "collection_errors",
     }
     assert required.issubset(set(bundle.keys())), (
@@ -479,3 +483,314 @@ async def test_raw_support_bundle_truncates_at_read_time(setup_project_with_agen
         if artifact["content"] is not None:
             assert len(artifact["content"].encode()) <= MAX_RAW_FILE_BYTES
             assert artifact["truncated"] is True
+
+
+@pytest.fixture
+def setup_agent_empty_session():
+    """Agent with empty session_id but populated runtime_status_projection."""
+    owner = User.objects.create_user(
+        username=f"incident-sessid-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid Session Test", owner=owner)
+    agent = Agent.objects.create(
+        name="sessid-fallback-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        session_id="",
+        runtime_status_projection={
+            "startup_stage": "managed_ready",
+            "runtime": {"session_id": "live-sess-456", "client_active": True},
+        },
+    )
+    return agent
+
+
+async def test_session_id_falls_back_to_runtime_status(setup_agent_empty_session):
+    """ids.session_id uses runtime projection when agent model field is empty."""
+    agent = setup_agent_empty_session
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(agent)
+
+    # Fallback: runtime projection session_id used when model field empty
+    assert bundle["ids"]["session_id"] == "live-sess-456"
+
+    # Now verify model field takes precedence when populated
+    agent.session_id = "model-sess-789"
+    await agent.asave(update_fields=["session_id"])
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle2, _ = await capture_incident_bundle(agent)
+
+    assert bundle2["ids"]["session_id"] == "model-sess-789"
+
+
+async def test_platform_crash_info_captured_in_bundle(setup_project_with_agents):
+    """Platform crash info is included when sandbox has exited."""
+    _, target, _, _ = setup_project_with_agents
+
+    mock_runtime = MagicMock()
+    mock_runtime.get_crash_info = AsyncMock(return_value={
+        "exit_code": 1,
+        "oom_killed": False,
+        "logs": "PermissionError: [Errno 13] Permission denied: '/vol/agents'",
+    })
+    mock_runtime.get_event_tail = AsyncMock(return_value=[])
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, errors = await capture_incident_bundle(target)
+
+    assert bundle["platform_crash_info"] is not None
+    assert bundle["platform_crash_info"]["exit_code"] == 1
+    assert "PermissionError" in bundle["platform_crash_info"]["logs"]
+    assert isinstance(bundle["platform_events"], list)
+
+
+async def test_platform_logs_unavailable_does_not_break_capture(setup_project_with_agents):
+    """Platform API failure goes to collection_errors, not total failure."""
+    _, target, _, _ = setup_project_with_agents
+
+    mock_runtime = MagicMock()
+    mock_runtime.get_crash_info = AsyncMock(side_effect=Exception("Modal API down"))
+    mock_runtime.get_event_tail = AsyncMock(side_effect=Exception("Modal API down"))
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, errors = await capture_incident_bundle(target)
+
+    # Bundle still assembled
+    assert bundle["platform_crash_info"] is None
+    assert isinstance(bundle["platform_events"], list)
+    # Errors captured
+    assert any("platform_crash_info" in e for e in errors)
+    assert any("platform_events" in e for e in errors)
+
+
+@pytest.fixture
+def setup_agent_no_sandbox():
+    """Agent with no sandbox_id — platform APIs should be skipped."""
+    owner = User.objects.create_user(
+        username=f"no-sandbox-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid No Sandbox Test", owner=owner)
+    agent = Agent.objects.create(
+        name="no-sandbox-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        sandbox_id="",
+    )
+    return agent
+
+
+async def test_platform_crash_info_skipped_without_sandbox(setup_agent_no_sandbox):
+    """No platform API calls when agent has no sandbox_id."""
+    agent = setup_agent_no_sandbox
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, errors = await capture_incident_bundle(agent)
+
+    assert bundle["platform_crash_info"] is None
+    assert bundle["platform_events"] == []
+    assert not any("platform_crash_info" in e for e in errors)
+    assert not any("platform_events" in e for e in errors)
+
+
+@pytest.fixture
+def setup_agent_with_task_failure():
+    """Agent with runtime_status_projection showing a failed executor task."""
+    owner = User.objects.create_user(
+        username=f"task-fail-{uuid.uuid4().hex[:6]}", password="pw"
+    )
+    project = _create_project_without_signals(name="Vahid Task Failure Test", owner=owner)
+    agent = Agent.objects.create(
+        name="task-fail-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        sandbox_id="sandbox-task-fail",
+        runtime_status_projection={
+            "startup_stage": "managed_ready",
+            "runtime_state": "running",
+            "profile": "desktop",
+            "runtime": {
+                "session_id": "sess-task-abc",
+                "client_active": False,
+                "task_id": "task-abc",
+                "task_state": "failed",
+            },
+            "fatal": "executor crashed",
+            "degraded": ["api-proxy"],
+            "transport": {
+                "enabled": True,
+                "state": "connected",
+                "connected": True,
+                "last_error": "",
+            },
+            "build": {
+                "image_ref": "ghcr.io/veyorokon/agentobox:sha-abc123",
+                "image_digest": "sha256:deadbeef",
+                "git_commit": "abc123",
+            },
+        },
+    )
+    return agent
+
+
+async def test_observed_includes_runtime_task_and_diagnosis_fields(setup_agent_with_task_failure):
+    """Observed layer surfaces executor task state and runtime diagnosis fields."""
+    agent = setup_agent_with_task_failure
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(agent)
+
+    observed = bundle["observed"]
+    # Executor task fields
+    assert observed["runtime_task_id"] == "task-abc"
+    assert observed["runtime_task_state"] == "failed"
+    assert observed["runtime_client_active"] is False
+    # Runtime health diagnosis
+    assert observed["fatal"] == "executor crashed"
+    assert observed["degraded"] == ["api-proxy"]
+    assert observed["transport_state"] == "connected"
+    assert observed["transport_last_error"] == ""
+    # Build provenance
+    assert observed["build_image_ref"] == "ghcr.io/veyorokon/agentobox:sha-abc123"
+    assert observed["build_git_commit"] == "abc123"
+
+
+async def test_observed_task_fields_null_without_projection(setup_agent_no_sandbox):
+    """Observed task/diagnosis fields degrade to None/empty without projection."""
+    agent = setup_agent_no_sandbox
+
+    with patch("agents.services.incident._read_runtime_logs", return_value=[]):
+        bundle, _ = await capture_incident_bundle(agent)
+
+    observed = bundle["observed"]
+    assert observed["runtime_task_id"] is None
+    assert observed["runtime_task_state"] is None
+    assert observed["runtime_client_active"] is None
+    assert observed["fatal"] is None
+    assert observed["degraded"] == []
+    assert observed["transport_state"] is None
+    assert observed["build_image_ref"] is None
+    assert observed["build_git_commit"] is None
+
+
+async def test_inbox_in_raw_support(setup_project_with_agents):
+    """inbox.jsonl is captured in raw support bundle."""
+    _, target, _, _ = setup_project_with_agents
+
+    inbox_content = b'{"type":"task","task_id":"task-1","input":{"role":"user","content":[{"type":"text","text":"hello"}]}}\n'
+
+    def mock_bounded_read(machine, path, max_bytes):
+        if "inbox.jsonl" in path:
+            return inbox_content, False
+        return b"", False
+
+    mock_runtime = MagicMock()
+    mock_runtime.exec = AsyncMock(return_value="")
+
+    with (
+        patch("agents.services.incident._read_runtime_logs", return_value=[]),
+        patch("agents.services.incident._bounded_read_sync", side_effect=mock_bounded_read),
+        patch("agents.runtimes.get_runtime", return_value=mock_runtime),
+    ):
+        bundle, _ = await capture_incident_bundle(target)
+
+    files = {f["path"]: f for f in bundle["raw_support"]["files"]}
+    assert "_abox/inbox.jsonl" in files
+    inbox = files["_abox/inbox.jsonl"]
+    assert inbox["content"] is not None
+    assert "task-1" in inbox["content"]
+
+
+# ---------------------------------------------------------------------------
+# Task state discrepancy detection
+# ---------------------------------------------------------------------------
+
+
+def test_task_state_discrepancy_none_when_states_match():
+    """No discrepancy when runtime and persisted states agree."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "completed"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "none"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] == "completed"
+
+
+def test_task_state_discrepancy_missing_terminal_update_no_persisted():
+    """Missing terminal update when runtime is terminal but no persisted task_update exists."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "assistant", "data": {"type": "assistant"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "missing_terminal_update"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] is None
+
+
+def test_task_state_discrepancy_missing_terminal_update_persisted_non_terminal():
+    """Missing terminal update when runtime is terminal but persisted is still non-terminal.
+
+    This is the transport-drop case: runtime completed but the terminal event never arrived.
+    """
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "running"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "missing_terminal_update"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] == "running"
+
+
+def test_task_state_discrepancy_state_mismatch_both_terminal():
+    """State mismatch when both are terminal but disagree."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "failed"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "state_mismatch"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] == "failed"
+
+
+def test_task_state_discrepancy_in_progress_when_non_terminal():
+    """Non-terminal runtime state — no discrepancy to flag."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "running"}}
+    stream_events = []
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "in_progress"
+
+
+def test_task_state_discrepancy_none_without_task_id():
+    """Returns None when no runtime task_id — nothing to compare."""
+    runtime_status = {"runtime": {"task_id": "", "task_state": "idle"}}
+    result = _compute_task_state_discrepancy(runtime_status, [])
+    assert result is None
+
+
+def test_task_state_discrepancy_matches_specific_task_id():
+    """Only compares against task_updates for the same runtime_task_id."""
+    runtime_status = {"runtime": {"task_id": "task-2", "task_state": "failed"}}
+    stream_events = [
+        # task-1 completed — should be ignored
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "completed"}},
+        # task-2 has no persisted update
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "missing_terminal_update"
+    assert result["runtime_task_id"] == "task-2"
+    assert result["persisted_task_state"] is None

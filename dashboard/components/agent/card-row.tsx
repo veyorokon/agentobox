@@ -451,8 +451,7 @@ export function AgentCardRow({
           items={actionItems}
           onResolvePermission={resolvePermission}
           onResolvePlan={resolvePlan}
-          onRestart={() => settingsRef.current?.restart()}
-          onRedeploy={() => settingsRef.current?.redeploy()}
+          onApply={() => settingsRef.current?.applyChanges()}
           onDismissSkill={handleDismissSkill}
           onViewSkill={handleViewSkill}
         />

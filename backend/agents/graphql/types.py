@@ -456,6 +456,17 @@ class IncidentCaptureResult:
 
 
 @strawberry.type
+class IncidentCaptureSummaryType:
+    """Lightweight incident row for list queries — no bundle payload."""
+    id: strawberry.ID
+    agent_id: strawberry.ID
+    project_id: strawberry.ID
+    note: str
+    window_minutes: int
+    created_at: str
+
+
+@strawberry.type
 class IncidentCaptureType:
     id: strawberry.ID
     agent_id: strawberry.ID
