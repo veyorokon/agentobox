@@ -101,19 +101,33 @@ async def test_receive_json_routes_execution_event_raw_message_to_stream_service
 
 
 @pytest.mark.asyncio
-async def test_receive_json_ignores_task_update():
+async def test_receive_json_persists_task_update():
     consumer = _relay_consumer()
     content = {
         "type": "task_update",
         "task_id": "task-1",
-        "state": "completed",
-        "output_text": "pong",
+        "state": "failed",
+        "session_id": "sess-abc",
     }
 
-    with patch("agents.services.stream.process_stream_event", new_callable=AsyncMock) as mock_process:
+    with (
+        patch("agents.services.stream.process_stream_event", new_callable=AsyncMock) as mock_process,
+        patch("agents.models.StreamEvent.objects") as mock_qs,
+    ):
+        mock_qs.acreate = AsyncMock()
         await consumer.receive_json(content)
 
+    # Should NOT go through process_stream_event (that's for execution_event)
     mock_process.assert_not_called()
+    # Should persist as a StreamEvent
+    mock_qs.acreate.assert_called_once()
+    call_kwargs = mock_qs.acreate.call_args[1]
+    assert call_kwargs["agent_id"] == "agent-123"
+    assert call_kwargs["event_type"] == "task_update"
+    assert call_kwargs["data"]["task_id"] == "task-1"
+    assert call_kwargs["data"]["state"] == "failed"
+    assert call_kwargs["session_id"] == "sess-abc"
+    assert call_kwargs["is_canonical"] is True
 
 
 @pytest.mark.asyncio

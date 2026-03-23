@@ -269,12 +269,31 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             return
 
         if event_type == "task_update":
+            task_id = content.get("task_id", "")
+            task_state = content.get("state", "")
             log.info(
                 "relay.task_update",
                 agent_id=self.agent_id,
-                task_id=content.get("task_id", ""),
-                state=content.get("state", ""),
+                task_id=task_id,
+                state=task_state,
             )
+            # Persist as StreamEvent so task failure evidence is durable
+            # and appears in incident bundles via time-windowed event queries.
+            try:
+                from agents.models import StreamEvent
+                await StreamEvent.objects.acreate(
+                    agent_id=self.agent_id,
+                    session_id=content.get("session_id", ""),
+                    event_type="task_update",
+                    data={"task_id": task_id, "state": task_state},
+                    is_canonical=True,
+                )
+            except Exception as exc:  # intentional: persistence is secondary — don't crash relay
+                log.warning(
+                    "relay.task_update_persist_failed",
+                    agent_id=self.agent_id,
+                    error_class=type(exc).__name__,
+                )
             return
 
         if event_type == "execution_event":
