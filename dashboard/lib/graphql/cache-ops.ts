@@ -76,7 +76,13 @@ export function upsertAgent(
     data: { agents: updatedAgents },
   })
 
-  client.refetchQueries({ include: [GET_AGENT_FEED] })
+  // Refetch active agent feed queries if any component is watching.
+  // onQueryUpdated returns the observable result only for active queries,
+  // so this is a silent no-op when no GetAgentFeed is mounted.
+  client.refetchQueries({
+    include: [GET_AGENT_FEED],
+    onQueryUpdated(query) { return query.refetch() },
+  })
 }
 
 /** Upsert single feed item from WS incremental update */
