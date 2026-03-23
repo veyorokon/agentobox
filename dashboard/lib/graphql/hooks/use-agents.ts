@@ -168,18 +168,19 @@ export function useInterruptAgent() {
 }
 
 export function useUpdateAgentInstructions() {
-  const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS, {
-    refetchQueries: ["GetAgents"],
-  })
+  const { projectId } = useParams<{ projectId: string }>()
+  const [mutate] = useMutation(UPDATE_AGENT_INSTRUCTIONS)
   return useCallback(async (agentId: string, instructions: string) => {
-    await mutate({ variables: { input: { agentId, instructions } } })
-  }, [mutate])
+    await mutate({
+      variables: { input: { agentId, instructions } },
+      refetchQueries: [{ query: GET_AGENTS, variables: { projectId } }],
+    })
+  }, [mutate, projectId])
 }
 
 export function useUpdateAgentConfig() {
-  const [mutate] = useMutation(UPDATE_AGENT_CONFIG, {
-    refetchQueries: ["GetAgents"],
-  })
+  const { projectId } = useParams<{ projectId: string }>()
+  const [mutate] = useMutation(UPDATE_AGENT_CONFIG)
   return useCallback(async (agentId: string, config: {
     model?: string
     role?: string
@@ -187,8 +188,11 @@ export function useUpdateAgentConfig() {
     mcpRegistryNames?: string[]
     mcpCustomServers?: Record<string, { command: string; args: string[] }>
   }) => {
-    await mutate({ variables: { input: { agentId, ...config } } })
-  }, [mutate])
+    await mutate({
+      variables: { input: { agentId, ...config } },
+      refetchQueries: [{ query: GET_AGENTS, variables: { projectId } }],
+    })
+  }, [mutate, projectId])
 }
 
 /* ================================================================== */
