@@ -10,6 +10,8 @@ from __future__ import annotations
 import time
 from typing import Callable, TypeVar
 
+import httpx
+
 T = TypeVar("T")
 
 
@@ -32,6 +34,7 @@ def poll_until(
     timeout_s: float = 60.0,
     interval_s: float = 2.0,
     description: str = "condition",
+    transient_exceptions: tuple[type[Exception], ...] = (),
 ) -> T:
     """Poll fn() until predicate(result) is truthy. Returns the matching result.
 
@@ -40,7 +43,12 @@ def poll_until(
     deadline = time.monotonic() + timeout_s
     last_value = None
     while time.monotonic() < deadline:
-        last_value = fn()
+        try:
+            last_value = fn()
+        except transient_exceptions as exc:
+            last_value = {"transient_error": f"{type(exc).__name__}: {exc}"}
+            time.sleep(interval_s)
+            continue
         if predicate(last_value):
             return last_value
         time.sleep(interval_s)
@@ -92,6 +100,7 @@ def poll_agent_status(
         timeout_s=timeout_s,
         interval_s=interval_s,
         description=f"agent {agent_id} status in {target_statuses}",
+        transient_exceptions=(httpx.TimeoutException, httpx.NetworkError),
     )
 
 
