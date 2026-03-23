@@ -562,6 +562,49 @@ async def test_atomic_reset_for_restart_clears_stale_runtime_projection():
     assert reset_agent.runtime_status_projection == {}
 
 
+@pytest.mark.django_db(transaction=True)
+async def test_atomic_reset_for_restart_clears_task_timestamps():
+    def _setup():
+        owner = User.objects.create_user(username="owner6c", password="pw")
+        project = _create_project_without_signals(name="Test Project 6c", owner=owner)
+        return Agent.objects.create(
+            name="timestamp-reset-agent",
+            project=project,
+            runtime="docker",
+            status=AgentStatus.IDLE,
+            desired_status=DesiredStatus.DEPLOYED,
+            task_started_at=timezone.now(),
+            last_execution_event_at=timezone.now(),
+            config_snapshot={
+                "runtime": "docker",
+                "model": "claude-sonnet-4-5-20250929",
+                "agent_type": "claude-code",
+                "mcp_servers": {},
+                "workspace_path": "",
+                "instructions": "",
+                "role": "worker",
+                "volume_mounts": [],
+            },
+        )
+
+    agent = await sync_to_async(_setup, thread_sensitive=True)()
+
+    # Verify timestamps are set before restart
+    assert agent.task_started_at is not None
+    assert agent.last_execution_event_at is not None
+
+    result = await _atomic_reset_for_restart(str(agent.id))
+    assert result is not None
+    reset_agent = result[0]
+    assert reset_agent.task_started_at is None
+    assert reset_agent.last_execution_event_at is None
+
+    # Verify persisted to DB, not just in-memory
+    refreshed = await Agent.objects.aget(id=agent.id)
+    assert refreshed.task_started_at is None
+    assert refreshed.last_execution_event_at is None
+
+
 # ── Lifecycle state machine tests ──
 
 
