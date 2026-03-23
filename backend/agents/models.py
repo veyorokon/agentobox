@@ -498,6 +498,7 @@ class StreamEvent(models.Model):
     """
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="stream_events")
     session_id = models.CharField(max_length=100, db_index=True)
+    task_id = models.CharField(max_length=64, blank=True, db_index=True)
     event_type = models.CharField(max_length=50)
     message_id = models.CharField(max_length=100, blank=True, db_index=True)
     data = models.JSONField(default=dict)

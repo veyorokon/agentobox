@@ -150,6 +150,7 @@ async def process_stream_event(agent: Agent, event: dict) -> None:
         await StreamEvent.objects.acreate(
             agent=agent,
             session_id=event.get("session_id", ""),
+            task_id=event.get("task_id", ""),
             event_type=event.get("type", ""),
             message_id=_extract_message_id(event),
             data=event,
@@ -186,6 +187,7 @@ async def _process_cc_event(agent: Agent, event: dict) -> None:
     stream_event = await StreamEvent.objects.acreate(
         agent=agent,
         session_id=session_id,
+        task_id=event.get("task_id", ""),
         event_type=event_type,
         message_id=_extract_message_id(event),
         data=event,

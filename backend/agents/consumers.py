@@ -297,6 +297,7 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 await StreamEvent.objects.acreate(
                     agent_id=self.agent_id,
                     session_id=content.get("session_id", ""),
+                    task_id=task_id,
                     event_type="task_update",
                     data=task_data,
                     is_canonical=True,
@@ -324,6 +325,8 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
             if execution_type == "raw_message" and isinstance(payload, dict):
                 if content.get("session_id") and "session_id" not in payload:
                     payload = {**payload, "session_id": content["session_id"]}
+                if content.get("task_id") and "task_id" not in payload:
+                    payload = {**payload, "task_id": content["task_id"]}
                 from agents.services.stream import process_stream_event
 
                 try:

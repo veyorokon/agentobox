@@ -16,6 +16,7 @@ import structlog
 
 from agents.errors import ERR_INCIDENT_SOURCE_FAILED
 from agents.models import Agent, StreamEvent, TeamFeedItem
+from agents.services.task_health import classify_task_health
 
 log = structlog.get_logger("abox.incident")
 
@@ -172,6 +173,7 @@ async def capture_incident_bundle(
                 "id": e.id,
                 "event_type": e.event_type,
                 "session_id": e.session_id,
+                "task_id": e.task_id,
                 "data": e.data,
                 "created_at": e.created_at.isoformat(),
             }
@@ -341,6 +343,11 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
     rt = runtime_status.get("runtime", {}) if isinstance(runtime_status.get("runtime"), dict) else {}
     transport = runtime_status.get("transport", {}) if isinstance(runtime_status.get("transport"), dict) else {}
     build = runtime_status.get("build", {}) if isinstance(runtime_status.get("build"), dict) else {}
+    task_health = classify_task_health(
+        runtime_task_state=rt.get("task_state") or None,
+        task_started_at=getattr(agent, "task_started_at", None),
+        last_execution_event_at=getattr(agent, "last_execution_event_at", None),
+    )
 
     return {
         "lifecycle_status": agent.status,
@@ -364,6 +371,7 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
         # Task timing (for watchdog classification)
         "task_started_at": getattr(agent, "task_started_at", None),
         "last_execution_event_at": getattr(agent, "last_execution_event_at", None),
+        "task_health": task_health,
         "source": "agent_model+runtime_projection",
     }
 
