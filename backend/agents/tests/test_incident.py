@@ -26,6 +26,7 @@ from agents.models import (
 from agents.services.incident import (
     BUNDLE_SCHEMA_VERSION,
     REDACTED,
+    _compute_task_state_discrepancy,
     _redact,
     capture_incident_bundle,
 )
@@ -179,6 +180,7 @@ async def test_bundle_has_required_fields(setup_project_with_agents):
         "runtime_status",
         "platform_crash_info",
         "platform_events",
+        "task_state_discrepancy",
         "collection_errors",
     }
     assert required.issubset(set(bundle.keys())), (
@@ -707,3 +709,88 @@ async def test_inbox_in_raw_support(setup_project_with_agents):
     inbox = files["_abox/inbox.jsonl"]
     assert inbox["content"] is not None
     assert "task-1" in inbox["content"]
+
+
+# ---------------------------------------------------------------------------
+# Task state discrepancy detection
+# ---------------------------------------------------------------------------
+
+
+def test_task_state_discrepancy_none_when_states_match():
+    """No discrepancy when runtime and persisted states agree."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "completed"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "none"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] == "completed"
+
+
+def test_task_state_discrepancy_missing_terminal_update_no_persisted():
+    """Missing terminal update when runtime is terminal but no persisted task_update exists."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "assistant", "data": {"type": "assistant"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "missing_terminal_update"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] is None
+
+
+def test_task_state_discrepancy_missing_terminal_update_persisted_non_terminal():
+    """Missing terminal update when runtime is terminal but persisted is still non-terminal.
+
+    This is the transport-drop case: runtime completed but the terminal event never arrived.
+    """
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "running"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "missing_terminal_update"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] == "running"
+
+
+def test_task_state_discrepancy_state_mismatch_both_terminal():
+    """State mismatch when both are terminal but disagree."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "completed"}}
+    stream_events = [
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "failed"}},
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "state_mismatch"
+    assert result["runtime_task_state"] == "completed"
+    assert result["persisted_task_state"] == "failed"
+
+
+def test_task_state_discrepancy_in_progress_when_non_terminal():
+    """Non-terminal runtime state — no discrepancy to flag."""
+    runtime_status = {"runtime": {"task_id": "task-1", "task_state": "running"}}
+    stream_events = []
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "in_progress"
+
+
+def test_task_state_discrepancy_none_without_task_id():
+    """Returns None when no runtime task_id — nothing to compare."""
+    runtime_status = {"runtime": {"task_id": "", "task_state": "idle"}}
+    result = _compute_task_state_discrepancy(runtime_status, [])
+    assert result is None
+
+
+def test_task_state_discrepancy_matches_specific_task_id():
+    """Only compares against task_updates for the same runtime_task_id."""
+    runtime_status = {"runtime": {"task_id": "task-2", "task_state": "failed"}}
+    stream_events = [
+        # task-1 completed — should be ignored
+        {"event_type": "task_update", "data": {"task_id": "task-1", "state": "completed"}},
+        # task-2 has no persisted update
+    ]
+    result = _compute_task_state_discrepancy(runtime_status, stream_events)
+    assert result["discrepancy_kind"] == "missing_terminal_update"
+    assert result["runtime_task_id"] == "task-2"
+    assert result["persisted_task_state"] is None

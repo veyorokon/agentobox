@@ -278,6 +278,11 @@ async def capture_incident_bundle(
         log.warning("incident.source_failed", source="raw_support", error_code=ERR_INCIDENT_SOURCE_FAILED, error_class=type(exc).__name__)
         errors.append(f"raw_support: {type(exc).__name__}: {exc}")
 
+    # -- Task state discrepancy detection --
+    task_state_discrepancy = _compute_task_state_discrepancy(
+        runtime_status, stream_events,
+    )
+
     bundle = {
         "schema_version": BUNDLE_SCHEMA_VERSION,
         "captured_at": now.isoformat(),
@@ -302,6 +307,7 @@ async def capture_incident_bundle(
         "runtime_status": runtime_status,
         "platform_crash_info": platform_crash_info,
         "platform_events": platform_events,
+        "task_state_discrepancy": task_state_discrepancy,
         "collection_errors": errors,
     }
 
@@ -359,6 +365,58 @@ def _extract_observed(agent: Agent, runtime_status: dict) -> dict:
         "task_started_at": getattr(agent, "task_started_at", None),
         "last_execution_event_at": getattr(agent, "last_execution_event_at", None),
         "source": "agent_model+runtime_projection",
+    }
+
+
+_TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cleared"})
+
+
+def _compute_task_state_discrepancy(
+    runtime_status: dict, stream_events: list[dict],
+) -> dict | None:
+    """Compare runtime-projected task state vs latest persisted task_update.
+
+    Returns None if no runtime task_id. Otherwise returns a diagnostic dict
+    with discrepancy_kind:
+      - none: states match
+      - missing_terminal_update: runtime is terminal but persisted is missing or non-terminal
+      - state_mismatch: persisted and runtime are both terminal but disagree
+      - in_progress: runtime is non-terminal, no discrepancy to flag
+    """
+    rt = runtime_status.get("runtime", {}) if isinstance(runtime_status.get("runtime"), dict) else {}
+    runtime_task_id = rt.get("task_id") or None
+    runtime_task_state = rt.get("task_state") or None
+
+    if not runtime_task_id:
+        return None
+
+    # Find latest persisted task_update for this specific task_id
+    persisted_state = None
+    for evt in reversed(stream_events):
+        if evt.get("event_type") == "task_update":
+            data = evt.get("data", {})
+            if isinstance(data, dict) and data.get("task_id") == runtime_task_id:
+                persisted_state = data.get("state")
+                break
+
+    if persisted_state == runtime_task_state:
+        kind = "none"
+    elif runtime_task_state not in _TERMINAL_TASK_STATES:
+        # Runtime is non-terminal (queued, running, idle) — no discrepancy to flag
+        kind = "in_progress"
+    elif persisted_state is None or persisted_state not in _TERMINAL_TASK_STATES:
+        # Runtime is terminal but persisted is missing or still non-terminal —
+        # the terminal event never arrived (transport drop)
+        kind = "missing_terminal_update"
+    else:
+        # Both terminal but disagree (e.g. persisted=failed, runtime=completed)
+        kind = "state_mismatch"
+
+    return {
+        "runtime_task_id": runtime_task_id,
+        "runtime_task_state": runtime_task_state,
+        "persisted_task_state": persisted_state,
+        "discrepancy_kind": kind,
     }
 
 
