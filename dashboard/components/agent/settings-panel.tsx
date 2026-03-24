@@ -112,6 +112,7 @@ function fieldsEqual(a: ConfigFields, b: ConfigFields): boolean {
 export function deriveConfigSyncStatus(
   local: ConfigFields,
   lastSubmittedConfig: ConfigFields | null,
+  lastErroredConfig: ConfigFields | null,
   server: ConfigFields,
   current: ConfigSyncState["status"],
 ): ConfigSyncState["status"] {
@@ -121,6 +122,11 @@ export function deriveConfigSyncStatus(
     // Refetch hasnt landed until server matches what we submitted
     if (!lastSubmittedConfig || !fieldsEqual(server, lastSubmittedConfig)) return "saving"
     // Refetch landed — check if user edited during save
+    return localMatchesServer ? "in-sync" : "unsaved"
+  }
+
+  if (current === "save-error") {
+    if (lastErroredConfig && fieldsEqual(local, lastErroredConfig)) return "save-error"
     return localMatchesServer ? "in-sync" : "unsaved"
   }
 
@@ -188,6 +194,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
   // --- Config sync state machine ---
   const [syncState, setSyncState] = useState<ConfigSyncState>({ status: "in-sync" })
   const lastSubmittedConfigRef = useRef<ConfigFields | null>(null)
+  const lastErroredConfigRef = useRef<ConfigFields | null>(null)
 
   const localFields: ConfigFields = {
     model,
@@ -202,6 +209,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
     const next = deriveConfigSyncStatus(
       localFields,
       lastSubmittedConfigRef.current,
+      lastErroredConfigRef.current,
       serverFields,
       syncState.status,
     )
@@ -212,6 +220,9 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
       // Clear submitted snapshot when leaving saving state
       if (syncState.status === "saving" && next !== "saving") {
         lastSubmittedConfigRef.current = null
+      }
+      if (syncState.status === "save-error" && next !== "save-error") {
+        lastErroredConfigRef.current = null
       }
       setSyncState(nextState)
     }
@@ -261,10 +272,11 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
       toast.success("Changes saved")
     } catch (err: any) {
       lastSubmittedConfigRef.current = null
+      lastErroredConfigRef.current = localFields
       setSyncState({ status: "save-error", message: err.message || "Failed to save" })
       toast.error(err.message || "Failed to save")
     }
-  }, [syncState.status, agent.id, agent.instructions, agent.model, agent.tags, agent.mcpServers, agent.mcpConfig, instructions, model, agentTags, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
+  }, [syncState.status, agent.id, agent.instructions, agent.model, agent.tags, agent.mcpServers, agent.mcpConfig, instructions, model, agentTags, mcpRegistryNames, mcpCustomServers, localFields, updateInstructions, updateConfig])
 
   useImperativeHandle(ref, () => ({
     saveChanges: handleSaveChanges,

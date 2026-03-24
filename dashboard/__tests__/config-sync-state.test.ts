@@ -37,26 +37,26 @@ function withOverrides(overrides: Partial<ConfigFields>): ConfigFields {
 
 describe("deriveConfigSyncStatus", () => {
   it("returns in-sync when local matches server and current is in-sync", () => {
-    expect(deriveConfigSyncStatus(base, null, base, "in-sync")).toBe("in-sync")
+    expect(deriveConfigSyncStatus(base, null, null, base, "in-sync")).toBe("in-sync")
   })
 
   it("returns unsaved when local differs from server and current is in-sync", () => {
     const local = withOverrides({ model: "claude-opus-4-6" })
-    expect(deriveConfigSyncStatus(local, null, base, "in-sync")).toBe("unsaved")
+    expect(deriveConfigSyncStatus(local, null, null, base, "in-sync")).toBe("unsaved")
   })
 
   it("stays saving when server has not updated to lastSubmittedConfig yet", () => {
     const local = withOverrides({ model: "claude-opus-4-6" })
     const submitted = withOverrides({ model: "claude-opus-4-6" })
     // Server still has old value — refetch has not landed
-    expect(deriveConfigSyncStatus(local, submitted, base, "saving")).toBe("saving")
+    expect(deriveConfigSyncStatus(local, submitted, null, base, "saving")).toBe("saving")
   })
 
   it("returns in-sync when server matches lastSubmittedConfig and local matches server", () => {
     const submitted = withOverrides({ model: "claude-opus-4-6" })
     const server = withOverrides({ model: "claude-opus-4-6" })
     const local = withOverrides({ model: "claude-opus-4-6" })
-    expect(deriveConfigSyncStatus(local, submitted, server, "saving")).toBe("in-sync")
+    expect(deriveConfigSyncStatus(local, submitted, null, server, "saving")).toBe("in-sync")
   })
 
   it("returns unsaved when server matches lastSubmittedConfig but local differs (user edited during save)", () => {
@@ -64,26 +64,33 @@ describe("deriveConfigSyncStatus", () => {
     const server = withOverrides({ model: "claude-opus-4-6" })
     // User changed model again while save was in flight
     const local = withOverrides({ model: "claude-haiku-4-5" })
-    expect(deriveConfigSyncStatus(local, submitted, server, "saving")).toBe("unsaved")
+    expect(deriveConfigSyncStatus(local, submitted, null, server, "saving")).toBe("unsaved")
+  })
+
+  it("stays save-error when local still matches the errored draft", () => {
+    const errored = withOverrides({ mcpNames: ["agency.lona/trading"] })
+    expect(deriveConfigSyncStatus(errored, null, errored, base, "save-error")).toBe("save-error")
   })
 
   it("returns in-sync when local matches server and current is save-error (user reverted)", () => {
-    expect(deriveConfigSyncStatus(base, null, base, "save-error")).toBe("in-sync")
+    const errored = withOverrides({ instructions: "bad instructions" })
+    expect(deriveConfigSyncStatus(base, null, errored, base, "save-error")).toBe("in-sync")
   })
 
-  it("returns unsaved when local differs from server and current is save-error", () => {
+  it("returns unsaved when local differs from server and current is save-error after user edits again", () => {
+    const errored = withOverrides({ instructions: "bad instructions" })
     const local = withOverrides({ instructions: "new instructions" })
-    expect(deriveConfigSyncStatus(local, null, base, "save-error")).toBe("unsaved")
+    expect(deriveConfigSyncStatus(local, null, errored, base, "save-error")).toBe("unsaved")
   })
 
   it("detects tag differences", () => {
     const local = withOverrides({ tags: ["alpha", "beta"] })
-    expect(deriveConfigSyncStatus(local, null, base, "in-sync")).toBe("unsaved")
+    expect(deriveConfigSyncStatus(local, null, null, base, "in-sync")).toBe("unsaved")
   })
 
   it("detects mcpNames differences", () => {
     const local = withOverrides({ mcpNames: ["playwright", "github"] })
-    expect(deriveConfigSyncStatus(local, null, base, "in-sync")).toBe("unsaved")
+    expect(deriveConfigSyncStatus(local, null, null, base, "in-sync")).toBe("unsaved")
   })
 })
 
