@@ -3,7 +3,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Bell, Minus, X } from "lucide-react"
 import { Terminal } from "@xterm/xterm"
-import { FitAddon } from "@xterm/addon-fit"
 import { cn } from "@/lib/utils"
 
 type AgentSeed = {
@@ -100,7 +99,6 @@ function TerminalViewport({
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
@@ -140,8 +138,6 @@ function TerminalViewport({
         brightWhite: "#f5f7fa",
       },
     })
-    const fitAddon = new FitAddon()
-    terminal.loadAddon(fitAddon)
     terminal.open(host)
 
     agent.lines.forEach(line => terminal.writeln(line))
@@ -149,26 +145,30 @@ function TerminalViewport({
     terminal.write(`${agent.prompt} \u2588`)
 
     terminalRef.current = terminal
-    fitRef.current = fitAddon
 
+    const resizeTerminal = () => {
+      const width = host.clientWidth
+      const height = host.clientHeight
+      const cols = Math.max(24, Math.floor((width - 24) / 9.2))
+      const rows = Math.max(8, Math.floor((height - 18) / 22))
+      terminal.resize(cols, rows)
+    }
     const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => fitAddon.fit())
+      requestAnimationFrame(resizeTerminal)
     })
     resizeObserver.observe(host)
-    requestAnimationFrame(() => fitAddon.fit())
+    requestAnimationFrame(resizeTerminal)
 
     return () => {
       resizeObserver.disconnect()
       terminal.dispose()
       terminalRef.current = null
-      fitRef.current = null
     }
   }, [agent])
 
   useEffect(() => {
     if (active) {
       requestAnimationFrame(() => {
-        fitRef.current?.fit()
         terminalRef.current?.focus()
       })
     }
