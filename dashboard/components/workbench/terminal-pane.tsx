@@ -160,9 +160,10 @@ export function TerminalPane({
       }
 
       // Auth sends real fitted dimensions, not defaults.
+      // Only sends if fitLocal() succeeds — avoids stale 120x34 default.
       const sendAuth = () => {
         if (!ws || ws.readyState !== WebSocket.OPEN || authSentRef.current) return
-        fitLocal()
+        if (!fitLocal()) return  // host not measurable yet — retry on next rAF
         ws.send(JSON.stringify({
           type: "auth",
           token,
