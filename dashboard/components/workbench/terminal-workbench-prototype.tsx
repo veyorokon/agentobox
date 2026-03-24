@@ -77,6 +77,7 @@ export function TerminalWorkbenchPrototype({
   const canvasRef = useRef<HTMLDivElement>(null)
   const windowsRef = useRef<TerminalWindow[]>([])
   const nextZRef = useRef(1)
+  const [resizingWindowId, setResizingWindowId] = useState<string | null>(null)
 
   const agentsById = useMemo(
     () => new Map(agents.map(agent => [agent.id, agent])),
@@ -232,6 +233,7 @@ export function TerminalWorkbenchPrototype({
 
     document.documentElement.classList.add("dragging-resize")
     window.getSelection()?.removeAllRanges()
+    if (mode === "resize") setResizingWindowId(windowId)
 
     const onMove = (event: PointerEvent) => {
       event.preventDefault()
@@ -284,6 +286,7 @@ export function TerminalWorkbenchPrototype({
 
     const onUp = () => {
       document.documentElement.classList.remove("dragging-resize")
+      if (mode === "resize") setResizingWindowId(null)
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
       window.removeEventListener("pointercancel", onUp)
@@ -403,6 +406,7 @@ export function TerminalWorkbenchPrototype({
                         active={active}
                         onActivate={() => focusWindow(window.id)}
                         showHeader={false}
+                        frozen={resizingWindowId === window.id}
                       />
                     </div>
 

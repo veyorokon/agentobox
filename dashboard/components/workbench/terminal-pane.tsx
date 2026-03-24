@@ -52,14 +52,19 @@ export function TerminalPane({
   active,
   onActivate,
   showHeader = true,
+  frozen = false,
 }: {
   agent: PaneAgent
   active: boolean
   onActivate: () => void
   /** Show the built-in header. Set false when the parent provides its own chrome. */
   showHeader?: boolean
+  /** Freeze terminal rendering during drag/resize. Suppresses fit + resize sends.
+   *  On transition from frozen→unfrozen, one resize fires to sync final size. */
+  frozen?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const frozenRef = useRef(frozen)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -69,6 +74,15 @@ export function TerminalPane({
   const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null)
   const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sizeRef = useRef({ cols: 120, rows: 34 })
+  const scheduleResizeRef = useRef<(() => void) | null>(null)
+
+  // Keep frozen ref in sync with prop
+  useEffect(() => { frozenRef.current = frozen }, [frozen])
+
+  // On unfreeze: fire one resize to sync to final container size
+  useEffect(() => {
+    if (!frozen) scheduleResizeRef.current?.()
+  }, [frozen])
 
   // Main effect: create terminal, connect WS, observe resize
   useEffect(() => {
@@ -103,8 +117,10 @@ export function TerminalPane({
       wsRef.current.send(JSON.stringify({ type: "resize", terminal_id: "main", cols, rows }))
     }
 
-    // Schedule: fit locally in rAF, debounce WS send by 100ms
+    // Schedule: fit locally in rAF, debounce WS send by 100ms.
+    // Suppressed while frozen — the unfreeze effect fires one resize on release.
     const scheduleResize = () => {
+      if (frozenRef.current) return
       requestAnimationFrame(() => { fitLocal() })
       if (resizeDebounceRef.current !== null) clearTimeout(resizeDebounceRef.current)
       resizeDebounceRef.current = setTimeout(() => {
@@ -113,6 +129,7 @@ export function TerminalPane({
         sendResizeToServer()
       }, 100)
     }
+    scheduleResizeRef.current = scheduleResize
 
     void ensureGhosttyInit().then(() => {
       if (disposed) return
