@@ -40,6 +40,11 @@ class TerminalAction(StrEnum):
     CLOSE = "close"
 
 
+class TerminalProgram(StrEnum):
+    SHELL = "shell"
+    CLAUDE = "claude"
+
+
 @dataclass(frozen=True)
 class ReloadCommand:
     """Notify relay that a volume file changed and should be re-read."""
@@ -88,6 +93,7 @@ class CallbackResponseCommand:
 class TerminalCommand:
     terminal_id: str
     action: TerminalAction
+    program: TerminalProgram | None = None
     data: str = ""
     cols: int = 0
     rows: int = 0
@@ -98,6 +104,8 @@ class TerminalCommand:
             "terminal_id": self.terminal_id,
             "action": self.action,
         }
+        if self.program is not None:
+            d["program"] = self.program
         if self.data:
             d["data"] = self.data
         if self.cols > 0:

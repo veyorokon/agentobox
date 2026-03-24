@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from agent.transports.agentobox.commands import TerminalProgram
 
 TerminalPublisher = Callable[[str, str, dict], None]
 
@@ -23,6 +24,7 @@ class PtySession:
     cols: int = 120
     rows: int = 34
     shell: str = ""
+    program: TerminalProgram = TerminalProgram.SHELL
     process: subprocess.Popen[bytes] | None = None
     master_fd: int | None = None
     slave_fd: int | None = None
@@ -38,6 +40,7 @@ class PtySession:
                     "terminal_id": self.terminal_id,
                     "cols": self.cols,
                     "rows": self.rows,
+                    "program": self.program.value,
                 },
             )
             snapshot = "".join(self.buffer)
@@ -49,16 +52,39 @@ class PtySession:
         shell = self.shell or os.environ.get("SHELL", "/bin/bash")
         env = os.environ.copy()
         env.setdefault("TERM", "xterm-256color")
-        proc = subprocess.Popen(
-            [shell, "-l"],
-            cwd=str(self.cwd),
-            env=env,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            start_new_session=True,
-            close_fds=True,
-        )
+        argv = [shell, "-l"] if self.program is TerminalProgram.SHELL else ["claude"]
+        actual_program = self.program
+        try:
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(self.cwd),
+                env=env,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except FileNotFoundError:
+            if self.program is not TerminalProgram.CLAUDE:
+                raise
+            self.publisher(
+                self.terminal_id,
+                "error",
+                {"error": "claude executable not found; falling back to shell"},
+            )
+            actual_program = TerminalProgram.SHELL
+            proc = subprocess.Popen(
+                [shell, "-l"],
+                cwd=str(self.cwd),
+                env=env,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                close_fds=True,
+            )
+        self.program = actual_program
         self.master_fd = master_fd
         self.slave_fd = slave_fd
         self.process = proc
@@ -82,6 +108,7 @@ class PtySession:
                 "terminal_id": self.terminal_id,
                 "cols": self.cols,
                 "rows": self.rows,
+                "program": self.program.value,
                 "pid": proc.pid,
             },
         )
@@ -161,12 +188,20 @@ class PtySessionManager:
         self._lock = threading.Lock()
         self._sessions: dict[str, PtySession] = {}
 
-    def open(self, terminal_id: str, *, cols: int = 120, rows: int = 34) -> None:
+    def open(
+        self,
+        terminal_id: str,
+        *,
+        cols: int = 120,
+        rows: int = 34,
+        program: TerminalProgram = TerminalProgram.SHELL,
+    ) -> None:
         with self._lock:
             session = self._sessions.get(terminal_id)
             if session is None:
                 session = PtySession(terminal_id=terminal_id, cwd=self._cwd, publisher=self._publisher)
                 self._sessions[terminal_id] = session
+            session.program = program
             session.resize(cols, rows)
             session.open()
 

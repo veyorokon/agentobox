@@ -676,7 +676,7 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
         from accounts.auth import adecode_token
         from agents.models import Agent
         from agents.services.relay import push_to_relay
-        from agents.services.relay_commands import TerminalAction, TerminalCommand
+        from agents.services.relay_commands import TerminalAction, TerminalCommand, TerminalProgram
 
         async def _send_terminal_error(message: str) -> None:
             await self.send_json({
@@ -708,11 +708,17 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_add(self.group_name, self.channel_name)
             cols = int(content.get("cols", 120) or 120)
             rows = int(content.get("rows", 34) or 34)
+            try:
+                program = TerminalProgram(content.get("program", "claude"))
+            except ValueError:
+                await _send_terminal_error(f"unsupported terminal program: {content.get('program', '')}")
+                return
             accepted = await push_to_relay(
                 self.agent_id,
                 TerminalCommand(
                     action=TerminalAction.OPEN,
                     terminal_id=content.get("terminal_id", "main"),
+                    program=program,
                     cols=max(20, cols),
                     rows=max(6, rows),
                 ),

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Minus } from "lucide-react"
 import { Terminal } from "@/lib/vendor/xterm.mjs"
 import { getToken } from "@/lib/auth"
+import { buildInitialWorkbenchWindows } from "@/components/workbench/workbench-layout"
 
 export type WorkbenchAgent = {
   id: string
@@ -53,21 +54,6 @@ function statusDot(status?: string | null) {
     default:
       return "#8ea4c7"
   }
-}
-
-function initialWindowLayout(agents: WorkbenchAgent[]): TerminalWindow[] {
-  return agents.slice(0, 6).map((agent, index) => ({
-    id: `win-${agent.id}`,
-    agentId: agent.id,
-    x: 48 + (index % 3) * 118,
-    y: 40 + index * 54,
-    width: 720,
-    height: 430,
-    z: index + 1,
-    minimized: false,
-    maximized: false,
-    hidden: false,
-  }))
 }
 
 function TerminalViewport({
@@ -156,6 +142,7 @@ function TerminalViewport({
         type: "auth",
         token,
         terminal_id: "main",
+        program: "claude",
         cols: sizeRef.current.cols,
         rows: sizeRef.current.rows,
       }))
@@ -229,7 +216,15 @@ function TerminalViewport({
   )
 }
 
-export function TerminalWorkbenchPrototype({ agents }: { agents: WorkbenchAgent[] }) {
+export function TerminalWorkbenchPrototype({
+  agents,
+  initialAgentIds = [],
+  onCloseAgent,
+}: {
+  agents: WorkbenchAgent[]
+  initialAgentIds?: string[]
+  onCloseAgent?: (agentId: string) => void
+}) {
   const canvasRef = useRef<HTMLDivElement>(null)
   const windowsRef = useRef<TerminalWindow[]>([])
   const nextZRef = useRef(1)
@@ -249,13 +244,30 @@ export function TerminalWorkbenchPrototype({ agents }: { agents: WorkbenchAgent[
       return
     }
     setWindows(prev => {
-      if (prev.length > 0) return prev.filter(window => agentsById.has(window.agentId))
-      const seeded = initialWindowLayout(agents)
-      nextZRef.current = seeded.length + 1
-      if (seeded[0]) setActiveWindowId(seeded[0].id)
-      return seeded
+      const requested = buildInitialWorkbenchWindows(agents, initialAgentIds)
+      if (requested.length === 0) {
+        const remaining = prev.filter(window => agentsById.has(window.agentId) && !window.hidden)
+        nextZRef.current = remaining.reduce((max, window) => Math.max(max, window.z), 0) + 1
+        if (!remaining.some(window => window.id === activeWindowId)) {
+          setActiveWindowId([...remaining].sort((a, b) => b.z - a.z)[0]?.id ?? "")
+        }
+        return remaining
+      }
+
+      const prevByAgentId = new Map(
+        prev.filter(window => agentsById.has(window.agentId)).map(window => [window.agentId, window]),
+      )
+      const nextWindows = requested.map(window => {
+        const existing = prevByAgentId.get(window.agentId)
+        return existing ? { ...existing, hidden: false } : window
+      })
+      nextZRef.current = nextWindows.reduce((max, window) => Math.max(max, window.z), 0) + 1
+      if (!nextWindows.some(window => window.id === activeWindowId)) {
+        setActiveWindowId(nextWindows[0]?.id ?? "")
+      }
+      return nextWindows
     })
-  }, [agents, agentsById])
+  }, [activeWindowId, agents, agentsById, initialAgentIds])
 
   useEffect(() => {
     windowsRef.current = windows
@@ -270,6 +282,8 @@ export function TerminalWorkbenchPrototype({ agents }: { agents: WorkbenchAgent[
   }
 
   const closeWindow = (windowId: string) => {
+    const closing = windowsRef.current.find(window => window.id === windowId)
+    if (closing && onCloseAgent) onCloseAgent(closing.agentId)
     setWindows(prev => prev.map(window => (
       window.id === windowId ? { ...window, hidden: true } : window
     )))

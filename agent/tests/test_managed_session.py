@@ -26,6 +26,7 @@ from agent.transports.agentobox.commands import (
     SignalCommand,
     TerminalAction,
     TerminalCommand,
+    TerminalProgram,
 )
 
 
@@ -70,8 +71,15 @@ class _FakePtyManager:
     def __init__(self):
         self.calls: list[tuple[str, tuple, dict]] = []
 
-    def open(self, terminal_id: str, *, cols: int = 120, rows: int = 34) -> None:
-        self.calls.append(("open", (terminal_id,), {"cols": cols, "rows": rows}))
+    def open(
+        self,
+        terminal_id: str,
+        *,
+        cols: int = 120,
+        rows: int = 34,
+        program: TerminalProgram = TerminalProgram.SHELL,
+    ) -> None:
+        self.calls.append(("open", (terminal_id,), {"cols": cols, "rows": rows, "program": program}))
 
     def input(self, terminal_id: str, data: str) -> None:
         self.calls.append(("input", (terminal_id, data), {}))
@@ -126,13 +134,21 @@ def test_managed_session_applies_terminal_commands(tmp_path):
         pty_manager=fake_pty,
     )
 
-    session.on_command(TerminalCommand(action=TerminalAction.OPEN, terminal_id="main", cols=132, rows=41))
+    session.on_command(
+        TerminalCommand(
+            action=TerminalAction.OPEN,
+            terminal_id="main",
+            program=TerminalProgram.CLAUDE,
+            cols=132,
+            rows=41,
+        )
+    )
     session.on_command(TerminalCommand(action=TerminalAction.INPUT, terminal_id="main", data="ls -la\r"))
     session.on_command(TerminalCommand(action=TerminalAction.RESIZE, terminal_id="main", cols=144, rows=48))
     session.on_command(TerminalCommand(action=TerminalAction.CLOSE, terminal_id="main"))
 
     assert fake_pty.calls == [
-        ("open", ("main",), {"cols": 132, "rows": 41}),
+        ("open", ("main",), {"cols": 132, "rows": 41, "program": TerminalProgram.CLAUDE}),
         ("input", ("main", "ls -la\r"), {}),
         ("resize", ("main",), {"cols": 144, "rows": 48}),
         ("close", ("main",), {}),

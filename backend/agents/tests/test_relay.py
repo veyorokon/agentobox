@@ -22,6 +22,7 @@ from agents.services.relay_commands import (
     SignalCommand,
     TerminalAction,
     TerminalCommand,
+    TerminalProgram,
 )
 
 pytestmark = pytest.mark.unit
@@ -117,14 +118,16 @@ def test_callback_response_wire_format_with_message():
 def test_terminal_command_wire_format():
     cmd = TerminalCommand(
         terminal_id="main",
-        action=TerminalAction.RESIZE,
+        action=TerminalAction.OPEN,
+        program=TerminalProgram.CLAUDE,
         cols=132,
         rows=40,
     )
     assert cmd.to_wire() == {
         "type": "terminal",
         "terminal_id": "main",
-        "action": "resize",
+        "action": "open",
+        "program": "claude",
         "cols": 132,
         "rows": 40,
     }

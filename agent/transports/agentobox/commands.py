@@ -38,6 +38,11 @@ class TerminalAction(StrEnum):
     CLOSE = "close"
 
 
+class TerminalProgram(StrEnum):
+    SHELL = "shell"
+    CLAUDE = "claude"
+
+
 @dataclass(frozen=True)
 class ReloadCommand:
     path: str
@@ -78,6 +83,7 @@ class CallbackResponseCommand:
 class TerminalCommand:
     action: TerminalAction
     terminal_id: str = "main"
+    program: TerminalProgram | None = None
     data: str = ""
     cols: int = 0
     rows: int = 0
@@ -89,6 +95,8 @@ class TerminalCommand:
             "action": self.action.value,
             "terminal_id": self.terminal_id,
         }
+        if self.program is not None:
+            payload["program"] = self.program.value
         if self.data:
             payload["data"] = self.data
         if self.cols > 0:

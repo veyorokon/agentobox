@@ -14,6 +14,7 @@ from agent.transports.agentobox.commands import (
     SignalCommand,
     TerminalAction,
     TerminalCommand,
+    TerminalProgram,
 )
 from agent.transports.agentobox.upstream import ExecutionEventMessage
 from agent.transports.agentobox.upstream import RuntimeStatusMessage, TaskUpdateMessage, UpstreamMessageType
@@ -56,23 +57,26 @@ def test_parse_terminal_command():
     command = parse_downstream_command(
         {
             "type": "terminal",
-            "action": "resize",
+            "action": "open",
             "terminal_id": "main",
+            "program": "claude",
             "cols": 132,
             "rows": 40,
         }
     )
 
     assert command == TerminalCommand(
-        action=TerminalAction.RESIZE,
+        action=TerminalAction.OPEN,
         terminal_id="main",
+        program=TerminalProgram.CLAUDE,
         cols=132,
         rows=40,
     )
     assert encode_downstream_command(command) == {
         "type": "terminal",
-        "action": "resize",
+        "action": "open",
         "terminal_id": "main",
+        "program": "claude",
         "cols": 132,
         "rows": 40,
     }

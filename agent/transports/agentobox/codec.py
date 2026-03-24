@@ -12,6 +12,7 @@ from agent.transports.agentobox.commands import (
     SignalCommand,
     TerminalAction,
     TerminalCommand,
+    TerminalProgram,
 )
 from agent.transports.agentobox.upstream import UpstreamMessage
 
@@ -60,12 +61,19 @@ def parse_downstream_command(payload: dict) -> DownstreamCommand:
     if cmd_type == DownstreamCommandType.TERMINAL.value:
         action = payload.get("action", "")
         terminal_id = payload.get("terminal_id", "main")
+        program = payload.get("program", "")
         if not terminal_id:
             raise ValueError("terminal command requires terminal_id")
         try:
             parsed_action = TerminalAction(action)
         except ValueError as exc:
             raise ValueError(f"unsupported terminal action: {action}") from exc
+        parsed_program = None
+        if program:
+            try:
+                parsed_program = TerminalProgram(program)
+            except ValueError as exc:
+                raise ValueError(f"unsupported terminal program: {program}") from exc
         cols = int(payload.get("cols", 0) or 0)
         rows = int(payload.get("rows", 0) or 0)
         data = payload.get("data", "")
@@ -74,6 +82,7 @@ def parse_downstream_command(payload: dict) -> DownstreamCommand:
         return TerminalCommand(
             action=parsed_action,
             terminal_id=terminal_id,
+            program=parsed_program,
             data=data if isinstance(data, str) else "",
             cols=max(0, cols),
             rows=max(0, rows),

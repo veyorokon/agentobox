@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { useParams, useRouter } from "next/navigation"
 import {
   ArrowUp,
   ChevronRight,
@@ -67,6 +68,8 @@ export function AgentCardRow({
   onSelect,
 }: AgentCardRowProps) {
   const config = LIFECYCLE_CONFIG[agent.lifecycleStatus]
+  const router = useRouter()
+  const { projectId } = useParams<{ projectId: string }>()
   const isRunning = agent.lifecycleStatus === "running"
   const isError = agent.lifecycleStatus === "error"
   const isStopped = agent.lifecycleStatus === "stopped"
@@ -371,6 +374,18 @@ export function AgentCardRow({
                     Clear Session
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    router.push(`/p/${projectId}/workbench?agentId=${encodeURIComponent(agent.id)}`)
+                    setKebabOpen(false)
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-[11px] text-default hover:bg-surface-sunken/40 flex items-center gap-2"
+                >
+                  <Monitor className="h-3 w-3 text-muted" />
+                  Open In Workbench
+                </button>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); hardRestartAgent(agent.id); setKebabOpen(false) }}

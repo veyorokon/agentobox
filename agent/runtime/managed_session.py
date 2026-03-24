@@ -43,6 +43,7 @@ from agent.transports.agentobox.commands import (
     SignalCommand,
     TerminalAction,
     TerminalCommand,
+    TerminalProgram,
 )
 from agent.transports.agentobox.session import RelaySession
 from agent.transports.agentobox.upstream import (
@@ -270,7 +271,12 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
 
     def _apply_terminal(self, command: TerminalCommand) -> None:
         if command.action is TerminalAction.OPEN:
-            self._pty_manager.open(command.terminal_id, cols=command.cols or 120, rows=command.rows or 34)
+            self._pty_manager.open(
+                command.terminal_id,
+                cols=command.cols or 120,
+                rows=command.rows or 34,
+                program=command.program or TerminalProgram.SHELL,
+            )
             return
         if command.action is TerminalAction.INPUT:
             self._pty_manager.input(command.terminal_id, command.data)
