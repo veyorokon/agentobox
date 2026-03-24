@@ -227,6 +227,57 @@ It means:
 
 The goal is not to erase seams. The goal is to make them clean.
 
+### Formalization
+
+Formalization is the act of turning discovered truth into explicit system shape.
+
+Examples:
+- moving from an operator-discovered fix to code
+- replacing implied behavior with an explicit contract
+- encoding a handoff in tests, types, names, and ownership
+- collapsing multiple half-working paths into one canonical path
+
+Formalization should result in:
+- clearer ownership
+- fewer hidden assumptions
+- stronger invariants
+- more legible failures
+
+Formalization is what moves a system from:
+- “we think this is how it works”
+
+to:
+- “this is how it works, and the system now enforces it”
+
+Discovery finds the answer.
+Formalization makes the answer durable.
+
+### Extensibility
+
+Extensibility is the property that a formalized system can admit adjacent growth cleanly.
+
+It does not mean:
+- vague flexibility
+- many hooks
+- many optional paths
+- easy layering by accumulation
+
+It means:
+- the core seams are explicit
+- the core contracts are stable
+- new behavior has an obvious place to live
+- adjacent features can be added without bending ownership boundaries
+
+A system with good extensibility has:
+- rigid bones in the right places
+- flexibility at explicit extension points
+- low pressure to leak implementation details across seams
+
+Questions:
+- Is this seam formalized yet?
+- Is the formalization extensible?
+- Are we adding an adjacent feature cleanly, or exposing that the underlying shape is not extensible?
+
 ### Abstraction Bleed
 
 Abstraction bleed is when implementation details leak across a boundary and start shaping code that should not know about them.
