@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""extract-test-incident — extract diagnosis fields from test failure artifacts.
+
+Used by: .github/workflows/deploy-dev.yml, promote-prod.yml
+Contract: reads JSON files from a diagnosis directory, outputs key=value pairs
+          suitable for GITHUB_OUTPUT.
+
+Usage:
+    extract-test-incident <diagnosis_dir> >> "$GITHUB_OUTPUT"
+"""
+
+import json
+import sys
+from pathlib import Path
+
+EMPTY = "—"
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <diagnosis_dir>", file=sys.stderr)
+        sys.exit(1)
+
+    diagnosis_dir = Path(sys.argv[1])
+    files = sorted(diagnosis_dir.glob("*.json")) if diagnosis_dir.is_dir() else []
+
+    if not files:
+        print(f"seam={EMPTY}")
+        print(f"contract={EMPTY}")
+        print(f"first_broken_step={EMPTY}")
+        print(f"incident_id={EMPTY}")
+        print(f"ids={EMPTY}")
+        return
+
+    data = json.loads(files[0].read_text())
+    refs = data.get("refs", {}) or {}
+    ids = data.get("ids", {}) or {}
+    id_summary = ", ".join(f"{k}={v}" for k, v in ids.items() if v) or EMPTY
+
+    print(f"seam={data.get('seam', EMPTY)}")
+    print(f"contract={data.get('contract', EMPTY)}")
+    print(f"first_broken_step={data.get('first_broken_step', EMPTY)}")
+    print(f"incident_id={refs.get('incident_id', EMPTY)}")
+    print(f"ids={id_summary}")
+
+
+if __name__ == "__main__":
+    main()

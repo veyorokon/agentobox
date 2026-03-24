@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""validate-app-config — validate and export APP_CONFIG + APP_SECRETS.
+
+Used by: .github/workflows/deploy-dev.yml, promote-prod.yml
+Contract: accepts config + secrets as JSON strings, validates required keys,
+          prints shell export statements to stdout.
+
+Usage:
+    eval "$(validate-app-config --config '{"DOMAIN":"..."}' --secrets '{"SECRET_KEY":"..."}')"
+"""
+
+import argparse
+import json
+import sys
+
+REQUIRED_KEYS = ["DOMAIN"]
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Validate and export APP_CONFIG + APP_SECRETS")
+    parser.add_argument("--config", default="", help="APP_CONFIG JSON string")
+    parser.add_argument("--secrets", default="", help="APP_SECRETS JSON string")
+    args = parser.parse_args()
+
+    merged = {}
+
+    for label, raw in [("APP_CONFIG", args.config), ("APP_SECRETS", args.secrets)]:
+        raw = raw.strip()
+        if raw:
+            try:
+                merged.update(json.loads(raw))
+            except json.JSONDecodeError:
+                print(f"echo 'ERROR: {label} is not valid JSON'; exit 1")
+                sys.exit(0)
+
+    for key in REQUIRED_KEYS:
+        if key not in merged:
+            print(f"echo 'ERROR: {key} missing from APP_CONFIG'; exit 1")
+            sys.exit(0)
+
+    for k, v in merged.items():
+        safe = v.replace("'", "'\\''")
+        print(f"export {k}='{safe}'")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""render-deploy-env — merge config/secrets JSON and write a quoted .env file.
+
+Used by: .github/workflows/deploy-dev.yml, promote-prod.yml
+Contract: accepts config + secrets as JSON strings, plus dynamic image refs.
+          Writes a shell-safe .env file to the given output path.
+
+Usage:
+    render-deploy-env --config '{"DOMAIN":"..."}' --secrets '{"SECRET_KEY":"..."}' \
+        --backend-image ghcr.io/... --dashboard-image ghcr.io/... \
+        --agent-image ghcr.io/... -o .deploy.env
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Render a deploy .env from config + secrets JSON")
+    parser.add_argument("--config", required=True, help="APP_CONFIG JSON string")
+    parser.add_argument("--secrets", required=True, help="APP_SECRETS JSON string")
+    parser.add_argument("--backend-image", default="", help="Backend image ref")
+    parser.add_argument("--dashboard-image", default="", help="Dashboard image ref")
+    parser.add_argument("--agent-image", default="", help="Modal agent image ref")
+    parser.add_argument("-o", "--output", default=".deploy.env", help="Output file path (default: .deploy.env)")
+    args = parser.parse_args()
+
+    merged = {}
+
+    for label, raw in [("config", args.config), ("secrets", args.secrets)]:
+        raw = raw.strip()
+        if raw:
+            try:
+                merged.update(json.loads(raw))
+            except json.JSONDecodeError:
+                print(f"ERROR: {label} is not valid JSON", file=sys.stderr)
+                sys.exit(1)
+
+    dynamic_refs = {
+        "BACKEND_IMAGE": args.backend_image.strip(),
+        "DASHBOARD_IMAGE": args.dashboard_image.strip(),
+        "MODAL_AGENT_IMAGE": args.agent_image.strip(),
+    }
+    for key, value in dynamic_refs.items():
+        if value:
+            merged[key] = value
+
+    lines = []
+    for key, value in sorted(merged.items()):
+        safe = value.replace("'", "'\\''")
+        lines.append(f"{key}='{safe}'")
+
+    Path(args.output).write_text("\n".join(lines) + "\n")
+    print(f"Wrote {len(merged)} vars to {args.output}")
+
+
+if __name__ == "__main__":
+    main()

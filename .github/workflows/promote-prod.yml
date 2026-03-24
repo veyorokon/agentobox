@@ -50,30 +50,8 @@ jobs:
       - name: Install backend deps
         run: uv --directory backend sync --no-dev
       - name: Validate APP_SECRETS + APP_CONFIG against AppConfig schema
-        env:
-          _APP_CONFIG: ${{ vars.APP_CONFIG }}
-          _APP_SECRETS: ${{ secrets.APP_SECRETS }}
         run: |
-          eval "$(python3 -c "
-          import json, os, sys
-
-          merged = {}
-          for name, env_key in [('APP_CONFIG', '_APP_CONFIG'), ('APP_SECRETS', '_APP_SECRETS')]:
-              raw = os.environ.get(env_key, '')
-              if raw.strip():
-                  try:
-                      merged.update(json.loads(raw))
-                  except json.JSONDecodeError:
-                      print(f'echo ERROR: {name} is not valid JSON; exit 1')
-                      sys.exit(0)
-
-          if 'DOMAIN' not in merged:
-              print('echo ERROR: DOMAIN missing from APP_CONFIG; exit 1')
-
-          for k, v in merged.items():
-              safe = v.replace(\"'\", \"'\\\\''\" )
-              print(f\"export {k}='{safe}'\")
-          ")"
+          eval "$(python3 bin/validate-app-config --config '${{ vars.APP_CONFIG }}' --secrets '${{ secrets.APP_SECRETS }}')"
           uv --directory backend run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
       - name: Validate dedicated workflow secrets
         env:
@@ -202,55 +180,15 @@ jobs:
             -i ~/.ssh/deploy_key
           )
 
-          ssh_retry() {
-            local attempt
-            local delay
-            for attempt in 1 2 3 4 5; do
-              if ssh "${ssh_opts[@]}" "$remote" "$1"; then
-                return 0
-              fi
-              delay=$((attempt * 10))
-              echo "SSH attempt ${attempt} failed; retrying in ${delay}s..."
-              sleep "${delay}"
-            done
-            echo "::error::SSH command failed after retries."
-            return 1
-          }
+          source bin/lib-deploy.sh
 
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          merged = {}
-          for env_key in ("APP_CONFIG_JSON", "APP_SECRETS_JSON"):
-              raw = os.environ.get(env_key, "").strip()
-              if raw:
-                  merged.update(json.loads(raw))
-
-          dynamic_refs = {
-              "BACKEND_IMAGE": os.environ["BACKEND_IMAGE_REF"].strip(),
-              "DASHBOARD_IMAGE": os.environ["DASHBOARD_IMAGE_REF"].strip(),
-              "MODAL_AGENT_IMAGE": os.environ["MODAL_AGENT_IMAGE_REF"].strip(),
-          }
-          for key, value in dynamic_refs.items():
-              if value:
-                  merged[key] = value
-
-          lines = []
-          for key, value in sorted(merged.items()):
-              safe = value.replace("'", "'\\''")
-              lines.append(f"{key}='{safe}'")
-          Path(".deploy.env").write_text("\n".join(lines) + "\n")
-          PY
-
-          upload_text_file() {
-            local local_path="$1"
-            local remote_path="$2"
-            local payload
-            payload="$(base64 < "$local_path" | tr -d '\n')"
-            ssh_retry "mkdir -p \"$(dirname "$remote_path")\" && printf '%s' '$payload' | base64 -d > \"$remote_path\""
-          }
+          python3 bin/render-deploy-env \
+            --config "$APP_CONFIG_JSON" \
+            --secrets "$APP_SECRETS_JSON" \
+            --backend-image "$BACKEND_IMAGE_REF" \
+            --dashboard-image "$DASHBOARD_IMAGE_REF" \
+            --agent-image "$MODAL_AGENT_IMAGE_REF" \
+            -o .deploy.env
 
           upload_text_file docker-compose.prod.yml /opt/agentobox/docker-compose.prod.yml
           upload_text_file Caddyfile /opt/agentobox/Caddyfile
@@ -283,11 +221,7 @@ jobs:
       - name: Wait for backend startup
         run: |
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
-          for i in $(seq 1 30); do
-            curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' -d '{"query":"{ __typename }"}' && break
-            echo "  Waiting for backend... attempt $i/30"
-            sleep 5
-          done
+          bash bin/wait-for-graphql "$DOMAIN"
       - name: Smoke test (HTTP surface)
         env:
           SMOKE_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
@@ -538,31 +472,7 @@ jobs:
         if: ${{ steps.status.outputs.overall != 'success' && (steps.status.outputs.blocked_at == 'bootstrap' || steps.status.outputs.blocked_at == 'smoke') }}
         id: diag
         shell: bash
-        run: |
-          python3 <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          from pathlib import Path
-
-          files = sorted(Path("summary-diagnosis").glob("*.json"))
-          if not files:
-              print("seam=—")
-              print("contract=—")
-              print("first_broken_step=—")
-              print("incident_id=—")
-              print("ids=—")
-              raise SystemExit(0)
-
-          data = json.loads(files[0].read_text())
-          refs = data.get("refs", {}) or {}
-          ids = data.get("ids", {}) or {}
-          id_summary = ", ".join(f"{k}={v}" for k, v in ids.items() if v) or "—"
-
-          print(f"seam={data.get('seam', '—')}")
-          print(f"contract={data.get('contract', '—')}")
-          print(f"first_broken_step={data.get('first_broken_step', '—')}")
-          print(f"incident_id={refs.get('incident_id', '—')}")
-          print(f"ids={id_summary}")
-          PY
+        run: python3 bin/extract-test-incident summary-diagnosis >> "$GITHUB_OUTPUT"
 
       - name: Write body
         run: |
