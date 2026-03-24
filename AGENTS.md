@@ -252,6 +252,19 @@ to:
 Discovery finds the answer.
 Formalization makes the answer durable.
 
+Naming is part of formalization.
+
+Good naming helps turn an abstract or half-understood thing into a concrete system object.
+It makes the shape easier to:
+- track
+- compare against reality
+- assign ownership to
+- test
+- evolve
+
+Weak naming preserves ambiguity.
+Strong naming is one of the ways a system becomes more real and more legible.
+
 ### Extensibility
 
 Extensibility is the property that a formalized system can admit adjacent growth cleanly.
@@ -391,6 +404,33 @@ This matters because:
 - without discipline, every mismatch becomes noise
 
 Good gap detection turns discrepancies into diagnosis signal.
+
+### Thread Updates
+
+Thread updates are periodic structured progress comments posted to the relevant GitHub thread.
+
+Their purpose is to:
+- preserve state outside transient chat
+- make the current shape of the work legible
+- record which gaps have been resolved
+- record which gaps remain open
+- improve handoff between agents and future operators
+
+Thread updates should be posted when:
+- the shape of the thread materially changes
+- a meaningful seam is fixed
+- a diagnosis becomes clearer
+- the remaining work meaningfully narrows
+
+Preferred shape:
+- current shape:
+- what changed:
+- resolved gaps:
+- remaining gaps:
+- next seam / next decision:
+
+Thread updates are not meant to restate everything.
+They are meant to make the thread durable, navigable, and concrete.
 
 ### Proof Levels
 
