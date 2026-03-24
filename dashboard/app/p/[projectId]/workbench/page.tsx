@@ -34,5 +34,5 @@ export default function ProjectWorkbenchPage() {
     }
   }, [data?.project?.themeDocument, data?.project?.themeTokens, syncTheme])
 
-  return <TerminalWorkbenchPrototype projectName={data?.project?.name ?? "Workbench Prototype"} />
+  return <TerminalWorkbenchPrototype />
 }
