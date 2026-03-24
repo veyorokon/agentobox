@@ -1,17 +1,15 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { Bell, Minus, X } from "lucide-react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { Minus } from "lucide-react"
 import { Terminal } from "@/lib/vendor/xterm.mjs"
-import { cn } from "@/lib/utils"
+import { getToken } from "@/lib/auth"
 
-type AgentSeed = {
+export type WorkbenchAgent = {
   id: string
   name: string
-  status: "active" | "running" | "blocked" | "idle"
-  badge?: string
-  lines: string[]
-  prompt: string
+  lifecycleStatus?: string | null
+  relayConnected?: boolean | null
 }
 
 type WindowRect = {
@@ -31,61 +29,45 @@ type TerminalWindow = WindowRect & {
   lastRect?: WindowRect
 }
 
-const AGENTS: AgentSeed[] = [
-  {
-    id: "team-lead",
-    name: "@team-lead",
-    status: "active",
-    badge: "desktop ready",
-    lines: [
-      "[supervisor] coordinating 4 active agents",
-      "[task] break #154 into runtime and UX follow-ups",
-      "> ask @builder-1 to validate MCP launch contract",
-      "> ask @qa-1 to probe continuity after redeploy",
-      "[note] waiting on remote proof before closing #150",
-    ],
-    prompt: "\u001b[38;2;147;197;114m[lead]\u001b[0m",
-  },
-  {
-    id: "builder-1",
-    name: "@builder-1",
-    status: "running",
-    badge: "browser active",
-    lines: [
-      "[build] compiling dashboard prototype",
-      "[artifact] terminal workbench route ready",
-      "> pnpm --dir dashboard typecheck",
-      "[ok] current branch is clean",
-    ],
-    prompt: "\u001b[38;2;147;197;114m[run]\u001b[0m",
-  },
-  {
-    id: "qa-1",
-    name: "@qa-1",
-    status: "blocked",
-    badge: "approval needed",
-    lines: [
-      "[qa] waiting on fresh dev deploy",
-      "[gap] remote continuity proof not rerun yet",
-      "> capture incident if post-redeploy memory fails again",
-    ],
-    prompt: "\u001b[38;2;147;197;114m[wait]\u001b[0m",
-  },
-]
-
-const STATUS_TONE: Record<AgentSeed["status"], string> = {
-  active: "text-success",
-  running: "text-info",
-  blocked: "text-warning",
-  idle: "text-muted",
-}
-
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
 
-function getAgent(agentId: string) {
-  return AGENTS.find(agent => agent.id === agentId) ?? AGENTS[0]!
+function buildTerminalWsUrl(agentId: string) {
+  const { protocol, hostname, port } = window.location
+  const wsProto = protocol === "https:" ? "wss:" : "ws:"
+  const host = !port || port === "80" || port === "443"
+    ? hostname
+    : `${hostname}:8000`
+  return `${wsProto}//${host}/ws/terminal/${agentId}/`
+}
+
+function statusDot(status?: string | null) {
+  switch ((status ?? "").toLowerCase()) {
+    case "running":
+      return "#8ec07c"
+    case "deploying":
+      return "#d8b56a"
+    case "error":
+      return "#d86c6c"
+    default:
+      return "#8ea4c7"
+  }
+}
+
+function initialWindowLayout(agents: WorkbenchAgent[]): TerminalWindow[] {
+  return agents.slice(0, 6).map((agent, index) => ({
+    id: `win-${agent.id}`,
+    agentId: agent.id,
+    x: 48 + (index % 3) * 118,
+    y: 40 + index * 54,
+    width: 720,
+    height: 430,
+    z: index + 1,
+    minimized: false,
+    maximized: false,
+    hidden: false,
+  }))
 }
 
 function TerminalViewport({
@@ -93,153 +75,195 @@ function TerminalViewport({
   active,
   onActivate,
 }: {
-  agent: AgentSeed
+  agent: WorkbenchAgent
   active: boolean
   onActivate: () => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const authSentRef = useRef(false)
+  const sizeRef = useRef({ cols: 120, rows: 34 })
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
 
     const terminal = new Terminal({
-      disableStdin: true,
       convertEol: true,
       cursorBlink: true,
       cursorStyle: "block",
-      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace',
+      fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace',
       fontSize: 15,
-      fontWeight: 500,
-      lineHeight: 1.45,
-      letterSpacing: 0.1,
+      fontWeight: 400,
+      lineHeight: 1.5,
+      letterSpacing: 0,
       theme: {
-        background: "#1f2430",
-        foreground: "#d7dce4",
-        cursor: "#d7dce4",
-        cursorAccent: "#1f2430",
-        selectionBackground: "rgba(124, 156, 201, 0.45)",
-        black: "#1f2430",
-        brightBlack: "#7f8796",
-        red: "#ff7b72",
-        brightRed: "#ff9b93",
-        green: "#93c572",
-        brightGreen: "#b7dd8f",
-        yellow: "#e3b341",
-        brightYellow: "#f2cc60",
-        blue: "#7ca3d6",
-        brightBlue: "#99b7df",
-        magenta: "#c678dd",
-        brightMagenta: "#d79bf0",
-        cyan: "#7bdff2",
-        brightCyan: "#9af0ff",
-        white: "#d7dce4",
-        brightWhite: "#f5f7fa",
+        background: "#303640",
+        foreground: "#c5cdd8",
+        cursor: "#f5f7fb",
+        cursorAccent: "#303640",
+        selectionBackground: "rgba(125, 145, 184, 0.34)",
+        black: "#303640",
+        brightBlack: "#7d8796",
+        red: "#d88d87",
+        brightRed: "#e2a19a",
+        green: "#b2c28d",
+        brightGreen: "#c2d29b",
+        yellow: "#d5c08f",
+        brightYellow: "#e3d09b",
+        blue: "#8ea4c7",
+        brightBlue: "#a2b8db",
+        magenta: "#b39fce",
+        brightMagenta: "#c4b0de",
+        cyan: "#95bdc8",
+        brightCyan: "#a5d0dc",
+        white: "#cbd4df",
+        brightWhite: "#eef2f8",
       },
     })
     terminal.open(host)
+    terminal.writeln(`connecting ${agent.name}...`)
 
-    agent.lines.forEach(line => terminal.writeln(line))
-    terminal.writeln("")
-    terminal.write(`${agent.prompt} \u2588`)
+    const sendResize = () => {
+      const width = host.clientWidth
+      const height = host.clientHeight
+      const cols = Math.max(24, Math.floor((width - 28) / 9.2))
+      const rows = Math.max(8, Math.floor((height - 20) / 22))
+      sizeRef.current = { cols, rows }
+      terminal.resize(cols, rows)
+      if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "resize",
+          terminal_id: "main",
+          cols,
+          rows,
+        }))
+      }
+    }
+
+    const token = getToken()
+    const ws = new WebSocket(buildTerminalWsUrl(agent.id))
+    wsRef.current = ws
+
+    ws.addEventListener("open", () => {
+      if (!token) {
+        terminal.writeln("[auth missing]")
+        return
+      }
+      sendResize()
+      ws.send(JSON.stringify({
+        type: "auth",
+        token,
+        terminal_id: "main",
+        cols: sizeRef.current.cols,
+        rows: sizeRef.current.rows,
+      }))
+      authSentRef.current = true
+    })
+
+    ws.addEventListener("message", (event) => {
+      const message = JSON.parse(String(event.data))
+      if (message.type !== "terminal_event") return
+      if (message.event_type === "frame" && typeof message.payload?.data === "string") {
+        terminal.write(message.payload.data)
+        return
+      }
+      if (message.event_type === "error") {
+        terminal.writeln(`\r\n[terminal error] ${message.payload?.error ?? "unknown"}`)
+        return
+      }
+      if (message.event_type === "exited") {
+        terminal.writeln(`\r\n[process exited ${message.payload?.exit_code ?? 0}]`)
+      }
+    })
+
+    ws.addEventListener("close", () => {
+      authSentRef.current = false
+      terminal.writeln("\r\n[terminal disconnected]")
+    })
+
+    const dataDisposable = terminal.onData((data) => {
+      if (ws.readyState !== WebSocket.OPEN || !authSentRef.current) return
+      ws.send(JSON.stringify({
+        type: "input",
+        terminal_id: "main",
+        data,
+      }))
+    })
+
+    const resizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(sendResize)
+    })
+    resizeObserver.observe(host)
+    requestAnimationFrame(sendResize)
 
     terminalRef.current = terminal
 
-    const resizeTerminal = () => {
-      const width = host.clientWidth
-      const height = host.clientHeight
-      const cols = Math.max(24, Math.floor((width - 24) / 9.2))
-      const rows = Math.max(8, Math.floor((height - 18) / 22))
-      terminal.resize(cols, rows)
-    }
-    const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(resizeTerminal)
-    })
-    resizeObserver.observe(host)
-    requestAnimationFrame(resizeTerminal)
-
     return () => {
+      const wasAuthenticated = authSentRef.current
+      authSentRef.current = false
+      dataDisposable.dispose()
       resizeObserver.disconnect()
+      if (wasAuthenticated && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "close", terminal_id: "main" }))
+      }
+      ws.close()
+      wsRef.current = null
       terminal.dispose()
       terminalRef.current = null
     }
-  }, [agent])
+  }, [agent.id, agent.name])
 
   useEffect(() => {
-    if (active) {
-      requestAnimationFrame(() => {
-        terminalRef.current?.focus()
-      })
-    }
+    if (!active) return
+    requestAnimationFrame(() => {
+      terminalRef.current?.focus()
+    })
   }, [active])
 
   return (
-    <div className="relative h-full w-full" onMouseDown={onActivate}>
-      <div ref={hostRef} className="h-full w-full px-4 py-3" />
-      {!active && (
-        <button
-          type="button"
-          onClick={onActivate}
-          className="absolute inset-0 cursor-default bg-transparent"
-          aria-label={`Focus ${agent.name}`}
-        />
-      )}
+    <div className="h-full w-full" onMouseDown={onActivate}>
+      <div ref={hostRef} className="h-full w-full px-5 py-4" />
     </div>
   )
 }
 
-export function TerminalWorkbenchPrototype() {
+export function TerminalWorkbenchPrototype({ agents }: { agents: WorkbenchAgent[] }) {
   const canvasRef = useRef<HTMLDivElement>(null)
   const windowsRef = useRef<TerminalWindow[]>([])
-  const nextZRef = useRef(4)
+  const nextZRef = useRef(1)
 
-  const [activeWindowId, setActiveWindowId] = useState("win-builder-1")
-  const [windows, setWindows] = useState<TerminalWindow[]>([
-    {
-      id: "win-team-lead",
-      agentId: "team-lead",
-      x: 210,
-      y: 58,
-      width: 632,
-      height: 356,
-      z: 1,
-      minimized: false,
-      maximized: false,
-      hidden: false,
-    },
-    {
-      id: "win-builder-1",
-      agentId: "builder-1",
-      x: 72,
-      y: 282,
-      width: 554,
-      height: 354,
-      z: 2,
-      minimized: false,
-      maximized: false,
-      hidden: false,
-    },
-    {
-      id: "win-qa-1",
-      agentId: "qa-1",
-      x: 730,
-      y: 222,
-      width: 470,
-      height: 296,
-      z: 3,
-      minimized: false,
-      maximized: false,
-      hidden: false,
-    },
-  ])
+  const agentsById = useMemo(
+    () => new Map(agents.map(agent => [agent.id, agent])),
+    [agents],
+  )
+  const [activeWindowId, setActiveWindowId] = useState("")
+  const [windows, setWindows] = useState<TerminalWindow[]>([])
+
+  useEffect(() => {
+    if (agents.length === 0) {
+      setWindows([])
+      setActiveWindowId("")
+      nextZRef.current = 1
+      return
+    }
+    setWindows(prev => {
+      if (prev.length > 0) return prev.filter(window => agentsById.has(window.agentId))
+      const seeded = initialWindowLayout(agents)
+      nextZRef.current = seeded.length + 1
+      if (seeded[0]) setActiveWindowId(seeded[0].id)
+      return seeded
+    })
+  }, [agents, agentsById])
 
   useEffect(() => {
     windowsRef.current = windows
   }, [windows])
 
-  const focusWindow = (windowId: string) => {
+  const focusWindow = (windowId: string, raise = false) => {
     setActiveWindowId(windowId)
+    if (!raise) return
     setWindows(prev => prev.map(window => (
       window.id === windowId ? { ...window, z: nextZRef.current++ } : window
     )))
@@ -322,26 +346,23 @@ export function TerminalWorkbenchPrototype() {
       event.preventDefault()
       const dx = event.clientX - startX
       const dy = event.clientY - startY
-      setWindows(prev => prev.map(window => {
-        if (window.id !== windowId) return window
+      setWindows(prev => prev.map(current => {
+        if (current.id !== windowId) return current
         if (mode === "drag") {
-          const minX = -window.width + 140
-          const maxX = canvasRect.width - 120
+          const minX = -current.width + 180
+          const maxX = canvasRect.width - 80
           const minY = 0
           const maxY = canvasRect.height - 44
           return {
-            ...window,
+            ...current,
             x: clamp(origin.x + dx, minX, maxX),
             y: clamp(origin.y + dy, minY, maxY),
           }
         }
-
-        const nextWidth = clamp(origin.width + dx, 360, canvasRect.width - window.x + window.width - 120)
-        const nextHeight = clamp(origin.height + dy, 220, canvasRect.height - window.y + window.height - 60)
         return {
-          ...window,
-          width: nextWidth,
-          height: nextHeight,
+          ...current,
+          width: clamp(origin.width + dx, 420, canvasRect.width - current.x + current.width - 80),
+          height: clamp(origin.height + dy, 260, canvasRect.height - current.y + current.height - 48),
         }
       }))
     }
@@ -367,7 +388,7 @@ export function TerminalWorkbenchPrototype() {
         if (window.maximized || window.hidden) return window
         return {
           ...window,
-          x: clamp(window.x, -window.width + 140, rect.width - 120),
+          x: clamp(window.x, -window.width + 180, rect.width - 80),
           y: clamp(window.y, 0, rect.height - 44),
         }
       }))
@@ -378,22 +399,22 @@ export function TerminalWorkbenchPrototype() {
   }, [])
 
   return (
-    <div className="h-screen overflow-hidden bg-[#17181c] text-default">
-      <main ref={canvasRef} className="dotted-grid relative h-full w-full overflow-hidden bg-[#17181c]">
+    <div className="h-screen overflow-hidden bg-[#1b1f26] text-default">
+      <main ref={canvasRef} className="relative h-full w-full overflow-hidden bg-[#1b1f26]">
         {windows
           .filter(window => !window.hidden)
           .sort((a, b) => a.z - b.z)
           .map(window => {
-            const agent = getAgent(window.agentId)
+            const agent = agentsById.get(window.agentId)
+            if (!agent) return null
             const active = activeWindowId === window.id
 
             return (
               <section
                 key={window.id}
-                className={cn(
-                  "absolute overflow-hidden rounded-[24px] border bg-[#1f2430] shadow-2xl shadow-black/35 transition-shadow",
-                  active ? "border-white/28" : "border-white/14",
-                )}
+                className={`absolute overflow-hidden rounded-[28px] border bg-[#303640] shadow-[0_22px_60px_rgba(0,0,0,0.30)] transition-shadow ${
+                  active ? "border-[#717887]" : "border-[#5e6572]"
+                }`}
                 style={{
                   left: window.x,
                   top: window.y,
@@ -404,10 +425,10 @@ export function TerminalWorkbenchPrototype() {
                 onMouseDown={() => focusWindow(window.id)}
               >
                 <div
-                  className="flex h-[42px] items-center gap-2 border-b border-white/8 bg-white/[0.035] px-4"
+                  className="flex h-[46px] items-center gap-2 bg-[#303640] px-5"
                   onPointerDown={(event) => {
                     event.preventDefault()
-                    focusWindow(window.id)
+                    focusWindow(window.id, true)
                     beginWindowPointerSession("drag", window.id, event.clientX, event.clientY)
                   }}
                 >
@@ -444,19 +465,15 @@ export function TerminalWorkbenchPrototype() {
                     title={window.maximized ? "Restore" : "Maximize"}
                   />
 
-                  <div className="ml-2 flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate font-mono text-[12px] font-medium text-white/92">{agent.name}</span>
-                    <span className={cn("text-[10px] font-semibold uppercase tracking-[0.18em]", STATUS_TONE[agent.status])}>
-                      {agent.status}
+                  <div className="ml-2 flex min-w-0 items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: statusDot(agent.lifecycleStatus) }}
+                    />
+                    <span className="truncate font-mono text-[12px] font-medium tracking-[0.01em] text-[#d0d7e2]">
+                      {agent.name}
                     </span>
                   </div>
-
-                  {agent.badge && (
-                    <div className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/60">
-                      {agent.badge}
-                    </div>
-                  )}
-                  <Bell className="h-3.5 w-3.5 text-white/30" />
                 </div>
 
                 {!window.minimized && (
@@ -472,10 +489,10 @@ export function TerminalWorkbenchPrototype() {
                     {!window.maximized && (
                       <button
                         type="button"
-                        className="absolute bottom-0 right-0 h-7 w-7 cursor-se-resize bg-gradient-to-br from-transparent to-white/[0.08]"
+                        className="absolute bottom-0 right-0 h-7 w-7 cursor-se-resize bg-gradient-to-br from-transparent to-white/[0.06] opacity-0 transition-opacity hover:opacity-100"
                         onPointerDown={(event) => {
                           event.stopPropagation()
-                          focusWindow(window.id)
+                          focusWindow(window.id, true)
                           beginWindowPointerSession("resize", window.id, event.clientX, event.clientY)
                         }}
                         aria-label="Resize terminal"

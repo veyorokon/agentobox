@@ -24,6 +24,8 @@ from agent.transports.agentobox.commands import (
     RelayAction,
     ReloadCommand,
     SignalCommand,
+    TerminalAction,
+    TerminalCommand,
 )
 
 
@@ -64,6 +66,23 @@ def _managed_claude_runtime_config(tmp_path):
     )
 
 
+class _FakePtyManager:
+    def __init__(self):
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    def open(self, terminal_id: str, *, cols: int = 120, rows: int = 34) -> None:
+        self.calls.append(("open", (terminal_id,), {"cols": cols, "rows": rows}))
+
+    def input(self, terminal_id: str, data: str) -> None:
+        self.calls.append(("input", (terminal_id, data), {}))
+
+    def resize(self, terminal_id: str, *, cols: int, rows: int) -> None:
+        self.calls.append(("resize", (terminal_id,), {"cols": cols, "rows": rows}))
+
+    def close(self, terminal_id: str) -> None:
+        self.calls.append(("close", (terminal_id,), {}))
+
+
 def test_managed_session_reloads_task_inbox(tmp_path):
     inbox_path = tmp_path / CANONICAL_PATHS["task_inbox"]
     inbox_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,6 +114,29 @@ def test_managed_session_reloads_task_inbox(tmp_path):
         }
     ]
     assert load_inbox_cursor(tmp_path / CANONICAL_PATHS["task_inbox_cursor"]).offset > 0
+
+
+def test_managed_session_applies_terminal_commands(tmp_path):
+    runner = _build_runner()
+    fake_pty = _FakePtyManager()
+    session = ManagedRelaySession(
+        _managed_runtime_config(tmp_path),
+        runner,
+        runner._state,
+        pty_manager=fake_pty,
+    )
+
+    session.on_command(TerminalCommand(action=TerminalAction.OPEN, terminal_id="main", cols=132, rows=41))
+    session.on_command(TerminalCommand(action=TerminalAction.INPUT, terminal_id="main", data="ls -la\r"))
+    session.on_command(TerminalCommand(action=TerminalAction.RESIZE, terminal_id="main", cols=144, rows=48))
+    session.on_command(TerminalCommand(action=TerminalAction.CLOSE, terminal_id="main"))
+
+    assert fake_pty.calls == [
+        ("open", ("main",), {"cols": 132, "rows": 41}),
+        ("input", ("main", "ls -la\r"), {}),
+        ("resize", ("main",), {"cols": 144, "rows": 48}),
+        ("close", ("main",), {}),
+    ]
 
 
 def test_managed_session_reconciles_inbox_on_connect(tmp_path):

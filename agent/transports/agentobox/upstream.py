@@ -21,6 +21,7 @@ class UpstreamMessageType(StrEnum):
     TASK_UPDATE = "task_update"
     EXECUTION_EVENT = "execution_event"
     CALLBACK_REQUEST = "callback_request"
+    TERMINAL_EVENT = "terminal_event"
 
 
 @dataclass(frozen=True)
@@ -116,10 +117,27 @@ class CallbackRequestMessage:
         }
 
 
+@dataclass(frozen=True)
+class TerminalEventMessage:
+    terminal_id: str
+    event_type: str
+    payload: dict[str, Any]
+    type: UpstreamMessageType = UpstreamMessageType.TERMINAL_EVENT
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type.value,
+            "terminal_id": self.terminal_id,
+            "event_type": self.event_type,
+            "payload": self.payload,
+        }
+
+
 UpstreamMessage = (
     RuntimeHelloMessage
     | RuntimeStatusMessage
     | TaskUpdateMessage
     | ExecutionEventMessage
     | CallbackRequestMessage
+    | TerminalEventMessage
 )

@@ -6,15 +6,18 @@ from agent.transports.agentobox.codec import (
     parse_downstream_command,
 )
 from agent.transports.agentobox.commands import (
-    RelayAction,
     CallbackBehavior,
     CallbackResponseCommand,
     DownstreamCommandType,
+    RelayAction,
     ReloadCommand,
     SignalCommand,
+    TerminalAction,
+    TerminalCommand,
 )
 from agent.transports.agentobox.upstream import ExecutionEventMessage
 from agent.transports.agentobox.upstream import RuntimeStatusMessage, TaskUpdateMessage, UpstreamMessageType
+from agent.transports.agentobox.upstream import TerminalEventMessage
 
 
 def test_parse_reload_command():
@@ -47,6 +50,32 @@ def test_parse_callback_response_command():
         message="Approved",
     )
     assert command.type is DownstreamCommandType.CALLBACK_RESPONSE
+
+
+def test_parse_terminal_command():
+    command = parse_downstream_command(
+        {
+            "type": "terminal",
+            "action": "resize",
+            "terminal_id": "main",
+            "cols": 132,
+            "rows": 40,
+        }
+    )
+
+    assert command == TerminalCommand(
+        action=TerminalAction.RESIZE,
+        terminal_id="main",
+        cols=132,
+        rows=40,
+    )
+    assert encode_downstream_command(command) == {
+        "type": "terminal",
+        "action": "resize",
+        "terminal_id": "main",
+        "cols": 132,
+        "rows": 40,
+    }
 
 
 def test_parse_downstream_command_rejects_unknown_shapes():
@@ -108,4 +137,19 @@ def test_encode_upstream_runtime_status_message():
             "startup_stage": "managed_ready",
             "runtime_state": "ready",
         },
+    }
+
+
+def test_encode_upstream_terminal_event_message():
+    message = TerminalEventMessage(
+        terminal_id="main",
+        event_type="frame",
+        payload={"data": "hello"},
+    )
+
+    assert encode_upstream_message(message) == {
+        "type": "terminal_event",
+        "terminal_id": "main",
+        "event_type": "frame",
+        "payload": {"data": "hello"},
     }

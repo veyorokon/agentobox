@@ -17,6 +17,7 @@ class DownstreamCommandType(StrEnum):
     RELOAD = "reload"
     SIGNAL = "signal"
     CALLBACK_RESPONSE = "callback_response"
+    TERMINAL = "terminal"
 
 
 class RelayAction(StrEnum):
@@ -28,6 +29,13 @@ class RelayAction(StrEnum):
 class CallbackBehavior(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
+
+
+class TerminalAction(StrEnum):
+    OPEN = "open"
+    INPUT = "input"
+    RESIZE = "resize"
+    CLOSE = "close"
 
 
 @dataclass(frozen=True)
@@ -66,4 +74,28 @@ class CallbackResponseCommand:
         return payload
 
 
-DownstreamCommand = ReloadCommand | SignalCommand | CallbackResponseCommand
+@dataclass(frozen=True)
+class TerminalCommand:
+    action: TerminalAction
+    terminal_id: str = "main"
+    data: str = ""
+    cols: int = 0
+    rows: int = 0
+    type: DownstreamCommandType = DownstreamCommandType.TERMINAL
+
+    def to_dict(self) -> dict[str, str | int]:
+        payload: dict[str, str | int] = {
+            "type": self.type.value,
+            "action": self.action.value,
+            "terminal_id": self.terminal_id,
+        }
+        if self.data:
+            payload["data"] = self.data
+        if self.cols > 0:
+            payload["cols"] = self.cols
+        if self.rows > 0:
+            payload["rows"] = self.rows
+        return payload
+
+
+DownstreamCommand = ReloadCommand | SignalCommand | CallbackResponseCommand | TerminalCommand

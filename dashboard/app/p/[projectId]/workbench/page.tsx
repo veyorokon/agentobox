@@ -4,8 +4,9 @@ import { useEffect } from "react"
 import { useParams } from "next/navigation"
 import { useQuery } from "@apollo/client/react"
 import { GET_PROJECT } from "@/lib/graphql/queries/projects"
+import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { useThemeStore } from "@/lib/stores/theme"
-import { TerminalWorkbenchPrototype } from "@/components/workbench/terminal-workbench-prototype"
+import { TerminalWorkbenchPrototype, WorkbenchAgent } from "@/components/workbench/terminal-workbench-prototype"
 
 export default function ProjectWorkbenchPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -21,6 +22,10 @@ export default function ProjectWorkbenchPage() {
     variables: { id: projectId },
     skip: !projectId,
   })
+  const { data: agentsData } = useQuery<{ agents: WorkbenchAgent[] }>(GET_AGENTS, {
+    variables: { projectId },
+    skip: !projectId,
+  })
 
   useEffect(() => {
     const tokens = data?.project?.themeTokens
@@ -34,5 +39,5 @@ export default function ProjectWorkbenchPage() {
     }
   }, [data?.project?.themeDocument, data?.project?.themeTokens, syncTheme])
 
-  return <TerminalWorkbenchPrototype />
+  return <TerminalWorkbenchPrototype agents={agentsData?.agents ?? []} />
 }

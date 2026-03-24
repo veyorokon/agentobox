@@ -350,6 +350,16 @@ class RelayConsumer(AsyncJsonWebsocketConsumer):
                 pass
             return
 
+        if event_type == "terminal_event":
+            await self.channel_layer.group_send(
+                f"terminal_{self.agent_id}",
+                {
+                    "type": "terminal.forward",
+                    "payload": content,
+                },
+            )
+            return
+
         from agents.services.stream import process_stream_event
 
         try:
@@ -547,6 +557,7 @@ class VncProxyConsumer(AsyncWebsocketConsumer):
 # ── Dashboard WebSocket ──────────────────────────────────────────────────
 
 dashboard_log = structlog.get_logger("abox.dashboard")
+terminal_log = structlog.get_logger("abox.terminal")
 
 
 class DashboardConsumer(AsyncJsonWebsocketConsumer):
@@ -650,3 +661,110 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
         if self.authenticated:
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
         dashboard_log.info("dashboard.disconnected", project_id=self.project_id, code=code)
+
+
+class TerminalConsumer(AsyncJsonWebsocketConsumer):
+    """Authenticated browser terminal client for one agent PTY session."""
+
+    async def connect(self):
+        self.agent_id = str(self.scope["url_route"]["kwargs"]["agent_id"])
+        self.group_name = f"terminal_{self.agent_id}"
+        self.authenticated = False
+        await self.accept()
+
+    async def receive_json(self, content):
+        from accounts.auth import adecode_token
+        from agents.models import Agent
+        from agents.services.relay import push_to_relay
+        from agents.services.relay_commands import TerminalAction, TerminalCommand
+
+        async def _send_terminal_error(message: str) -> None:
+            await self.send_json({
+                "type": "terminal_event",
+                "terminal_id": content.get("terminal_id", "main"),
+                "event_type": "error",
+                "payload": {"error": message},
+            })
+
+        if not self.authenticated:
+            if content.get("type") != "auth":
+                await self.close(code=4001)
+                return
+            token = content.get("token", "")
+            user = await adecode_token(token)
+            if not user:
+                await self.close(code=4001)
+                return
+            try:
+                await Agent.objects.select_related("project").aget(
+                    id=self.agent_id,
+                    project__owner=user,
+                    project__deleted_at__isnull=True,
+                )
+            except Agent.DoesNotExist:
+                await self.close(code=4001)
+                return
+            self.authenticated = True
+            await self.channel_layer.group_add(self.group_name, self.channel_name)
+            cols = int(content.get("cols", 120) or 120)
+            rows = int(content.get("rows", 34) or 34)
+            accepted = await push_to_relay(
+                self.agent_id,
+                TerminalCommand(
+                    action=TerminalAction.OPEN,
+                    terminal_id=content.get("terminal_id", "main"),
+                    cols=max(20, cols),
+                    rows=max(6, rows),
+                ),
+            )
+            if not accepted:
+                await _send_terminal_error("agent relay is not connected")
+            terminal_log.info("terminal.connected", agent_id=self.agent_id)
+            return
+
+        event_type = content.get("type", "")
+        terminal_id = content.get("terminal_id", "main")
+        if event_type == "input":
+            accepted = await push_to_relay(
+                self.agent_id,
+                TerminalCommand(
+                    action=TerminalAction.INPUT,
+                    terminal_id=terminal_id,
+                    data=content.get("data", ""),
+                ),
+            )
+            if not accepted:
+                await _send_terminal_error("agent relay is not connected")
+            return
+        if event_type == "resize":
+            accepted = await push_to_relay(
+                self.agent_id,
+                TerminalCommand(
+                    action=TerminalAction.RESIZE,
+                    terminal_id=terminal_id,
+                    cols=max(20, int(content.get("cols", 120) or 120)),
+                    rows=max(6, int(content.get("rows", 34) or 34)),
+                ),
+            )
+            if not accepted:
+                await _send_terminal_error("agent relay is not connected")
+            return
+        if event_type == "close":
+            accepted = await push_to_relay(
+                self.agent_id,
+                TerminalCommand(
+                    action=TerminalAction.CLOSE,
+                    terminal_id=terminal_id,
+                ),
+            )
+            if not accepted:
+                await _send_terminal_error("agent relay is not connected")
+            return
+
+    async def terminal_forward(self, event):
+        await self.send_json(event["payload"])
+
+    async def disconnect(self, code):
+        if self.authenticated:
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        terminal_log.info("terminal.disconnected", agent_id=self.agent_id, code=code)

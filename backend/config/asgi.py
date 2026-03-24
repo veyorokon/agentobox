@@ -11,7 +11,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django_asgi_app = get_asgi_application()
 
 from agents.services.mcp_coord import mcp  # noqa: E402
-from agents.consumers import DashboardConsumer, RelayConsumer, VncProxyConsumer  # noqa: E402
+from agents.consumers import DashboardConsumer, RelayConsumer, TerminalConsumer, VncProxyConsumer  # noqa: E402
 from agents.services.reconcile import ensure_running as ensure_reconciler_running  # noqa: E402
 
 log = structlog.get_logger("abox.graphql")
@@ -120,6 +120,10 @@ application = ProtocolTypeRouter(
                     re_path(
                         r"^ws/dashboard/(?P<project_id>[0-9a-f-]+)/$",
                         DashboardConsumer.as_asgi(),
+                    ),
+                    re_path(
+                        r"^ws/terminal/(?P<agent_id>[0-9a-f-]+)/$",
+                        TerminalConsumer.as_asgi(),
                     ),
                 ]
             )

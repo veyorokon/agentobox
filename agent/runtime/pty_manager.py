@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+import os
+import signal
+import struct
+import subprocess
+import termios
+import threading
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+
+
+TerminalPublisher = Callable[[str, str, dict], None]
+
+
+@dataclass
+class PtySession:
+    terminal_id: str
+    cwd: Path
+    publisher: TerminalPublisher
+    cols: int = 120
+    rows: int = 34
+    shell: str = ""
+    process: subprocess.Popen[bytes] | None = None
+    master_fd: int | None = None
+    slave_fd: int | None = None
+    reader_thread: threading.Thread | None = None
+    buffer: deque[str] = field(default_factory=lambda: deque(maxlen=256))
+
+    def open(self) -> None:
+        if self.process and self.process.poll() is None:
+            self.publisher(
+                self.terminal_id,
+                "opened",
+                {
+                    "terminal_id": self.terminal_id,
+                    "cols": self.cols,
+                    "rows": self.rows,
+                },
+            )
+            snapshot = "".join(self.buffer)
+            if snapshot:
+                self.publisher(self.terminal_id, "frame", {"data": snapshot})
+            return
+
+        master_fd, slave_fd = os.openpty()
+        shell = self.shell or os.environ.get("SHELL", "/bin/bash")
+        env = os.environ.copy()
+        env.setdefault("TERM", "xterm-256color")
+        proc = subprocess.Popen(
+            [shell, "-l"],
+            cwd=str(self.cwd),
+            env=env,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            start_new_session=True,
+            close_fds=True,
+        )
+        self.master_fd = master_fd
+        self.slave_fd = slave_fd
+        self.process = proc
+        self._apply_winsize()
+        try:
+            os.close(slave_fd)
+        except OSError:
+            pass
+        self.slave_fd = None
+
+        self.reader_thread = threading.Thread(
+            target=self._read_loop,
+            name=f"agent-pty-{self.terminal_id}",
+            daemon=True,
+        )
+        self.reader_thread.start()
+        self.publisher(
+            self.terminal_id,
+            "opened",
+            {
+                "terminal_id": self.terminal_id,
+                "cols": self.cols,
+                "rows": self.rows,
+                "pid": proc.pid,
+            },
+        )
+
+    def input(self, data: str) -> None:
+        if not data or self.master_fd is None:
+            return
+        os.write(self.master_fd, data.encode("utf-8", errors="ignore"))
+
+    def resize(self, cols: int, rows: int) -> None:
+        if cols > 0:
+            self.cols = cols
+        if rows > 0:
+            self.rows = rows
+        self._apply_winsize()
+
+    def close(self) -> None:
+        proc = self.process
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except OSError:
+                pass
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+        if self.slave_fd is not None:
+            try:
+                os.close(self.slave_fd)
+            except OSError:
+                pass
+            self.slave_fd = None
+
+    def _apply_winsize(self) -> None:
+        if self.master_fd is None:
+            return
+        winsize = struct.pack("HHHH", self.rows, self.cols, 0, 0)
+        try:
+            termios.tcsetwinsize(self.master_fd, (self.rows, self.cols))
+        except AttributeError:
+            import fcntl
+
+            fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
+        except OSError:
+            return
+
+    def _read_loop(self) -> None:
+        assert self.master_fd is not None
+        try:
+            while True:
+                chunk = os.read(self.master_fd, 4096)
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", errors="replace")
+                self.buffer.append(text)
+                self.publisher(self.terminal_id, "frame", {"data": text})
+        except OSError as exc:
+            self.publisher(self.terminal_id, "error", {"error": str(exc), "error_type": type(exc).__name__})
+        finally:
+            exit_code = self.process.wait(timeout=1) if self.process else 0
+            self.publisher(self.terminal_id, "exited", {"exit_code": exit_code})
+            if self.master_fd is not None:
+                try:
+                    os.close(self.master_fd)
+                except OSError:
+                    pass
+                self.master_fd = None
+
+
+class PtySessionManager:
+    def __init__(self, cwd: Path, publisher: TerminalPublisher):
+        self._cwd = cwd
+        self._publisher = publisher
+        self._lock = threading.Lock()
+        self._sessions: dict[str, PtySession] = {}
+
+    def open(self, terminal_id: str, *, cols: int = 120, rows: int = 34) -> None:
+        with self._lock:
+            session = self._sessions.get(terminal_id)
+            if session is None:
+                session = PtySession(terminal_id=terminal_id, cwd=self._cwd, publisher=self._publisher)
+                self._sessions[terminal_id] = session
+            session.resize(cols, rows)
+            session.open()
+
+    def input(self, terminal_id: str, data: str) -> None:
+        with self._lock:
+            session = self._sessions.get(terminal_id)
+        if session is not None:
+            session.input(data)
+
+    def resize(self, terminal_id: str, *, cols: int, rows: int) -> None:
+        with self._lock:
+            session = self._sessions.get(terminal_id)
+        if session is not None:
+            session.resize(cols, rows)
+
+    def close(self, terminal_id: str) -> None:
+        with self._lock:
+            session = self._sessions.pop(terminal_id, None)
+        if session is not None:
+            session.close()
+
+    def close_all(self) -> None:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            session.close()

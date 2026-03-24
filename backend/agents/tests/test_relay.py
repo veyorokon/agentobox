@@ -20,6 +20,8 @@ from agents.services.relay_commands import (
     ReloadCommand,
     SignalAction,
     SignalCommand,
+    TerminalAction,
+    TerminalCommand,
 )
 
 pytestmark = pytest.mark.unit
@@ -35,6 +37,7 @@ def test_command_type_values_are_locked():
     assert CommandType.RELOAD.value == "reload"
     assert CommandType.SIGNAL.value == "signal"
     assert CommandType.CALLBACK_RESPONSE.value == "callback_response"
+    assert CommandType.TERMINAL.value == "terminal"
 
 
 def test_signal_action_values_are_locked():
@@ -109,6 +112,22 @@ def test_callback_response_wire_format_with_message():
         message=wire.get("message", ""),
     )
     assert reconstructed == cmd
+
+
+def test_terminal_command_wire_format():
+    cmd = TerminalCommand(
+        terminal_id="main",
+        action=TerminalAction.RESIZE,
+        cols=132,
+        rows=40,
+    )
+    assert cmd.to_wire() == {
+        "type": "terminal",
+        "terminal_id": "main",
+        "action": "resize",
+        "cols": 132,
+        "rows": 40,
+    }
 
 
 def _image_block(url, media_type=None):

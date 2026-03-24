@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from agent.transports.agentobox.commands import (
-    RelayAction,
     CallbackBehavior,
     CallbackResponseCommand,
     DownstreamCommand,
     DownstreamCommandType,
+    RelayAction,
     ReloadCommand,
     SignalCommand,
+    TerminalAction,
+    TerminalCommand,
 )
 from agent.transports.agentobox.upstream import UpstreamMessage
 
@@ -54,5 +56,26 @@ def parse_downstream_command(payload: dict) -> DownstreamCommand:
             request_id=request_id,
             behavior=parsed_behavior,
             message=payload.get("message", ""),
+        )
+    if cmd_type == DownstreamCommandType.TERMINAL.value:
+        action = payload.get("action", "")
+        terminal_id = payload.get("terminal_id", "main")
+        if not terminal_id:
+            raise ValueError("terminal command requires terminal_id")
+        try:
+            parsed_action = TerminalAction(action)
+        except ValueError as exc:
+            raise ValueError(f"unsupported terminal action: {action}") from exc
+        cols = int(payload.get("cols", 0) or 0)
+        rows = int(payload.get("rows", 0) or 0)
+        data = payload.get("data", "")
+        if parsed_action is TerminalAction.INPUT and not isinstance(data, str):
+            raise ValueError("terminal input requires string data")
+        return TerminalCommand(
+            action=parsed_action,
+            terminal_id=terminal_id,
+            data=data if isinstance(data, str) else "",
+            cols=max(0, cols),
+            rows=max(0, rows),
         )
     raise ValueError(f"unsupported downstream command type: {cmd_type}")

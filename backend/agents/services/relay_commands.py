@@ -19,6 +19,7 @@ class CommandType(StrEnum):
     RELOAD = "reload"
     SIGNAL = "signal"
     CALLBACK_RESPONSE = "callback_response"
+    TERMINAL = "terminal"
 
 
 class SignalAction(StrEnum):
@@ -30,6 +31,13 @@ class SignalAction(StrEnum):
 class CallbackBehavior(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
+
+
+class TerminalAction(StrEnum):
+    OPEN = "open"
+    INPUT = "input"
+    RESIZE = "resize"
+    CLOSE = "close"
 
 
 @dataclass(frozen=True)
@@ -76,5 +84,28 @@ class CallbackResponseCommand:
         return d
 
 
+@dataclass(frozen=True)
+class TerminalCommand:
+    terminal_id: str
+    action: TerminalAction
+    data: str = ""
+    cols: int = 0
+    rows: int = 0
+
+    def to_wire(self) -> dict:
+        d: dict = {
+            "type": CommandType.TERMINAL,
+            "terminal_id": self.terminal_id,
+            "action": self.action,
+        }
+        if self.data:
+            d["data"] = self.data
+        if self.cols > 0:
+            d["cols"] = self.cols
+        if self.rows > 0:
+            d["rows"] = self.rows
+        return d
+
+
 # Type union for push_to_relay signature
-RelayCommand = ReloadCommand | SignalCommand | CallbackResponseCommand
+RelayCommand = ReloadCommand | SignalCommand | CallbackResponseCommand | TerminalCommand

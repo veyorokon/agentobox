@@ -8,6 +8,7 @@ reforming into a single transport monolith.
 
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -30,6 +31,7 @@ from agent.runtime.inbox import (
 )
 from agent.runtime.logging import emit_event
 from agent.runtime.mailbox import DrainingMailbox
+from agent.runtime.pty_manager import PtySessionManager
 from agent.runtime.runner import TaskObserver, TaskRecord, TaskRunner
 from agent.runtime.state import RuntimeStateStore
 from agent.runtime.theme import ThemeManager, build_theme_manager
@@ -39,6 +41,8 @@ from agent.transports.agentobox.commands import (
     RelayAction,
     ReloadCommand,
     SignalCommand,
+    TerminalAction,
+    TerminalCommand,
 )
 from agent.transports.agentobox.session import RelaySession
 from agent.transports.agentobox.upstream import (
@@ -47,6 +51,7 @@ from agent.transports.agentobox.upstream import (
     RuntimeHelloMessage,
     RuntimeStatusMessage,
     TaskUpdateMessage,
+    TerminalEventMessage,
     UpstreamMessage,
 )
 
@@ -60,6 +65,7 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
         runner: TaskRunner,
         state: RuntimeStateStore,
         theme_manager: ThemeManager | None = None,
+        pty_manager: PtySessionManager | None = None,
     ):
         self._config = config
         self._root_dir = config.root_dir
@@ -78,6 +84,10 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
         self._callback_responses: dict[str, CallbackResponseCommand] = {}
         self._outbound_messages = DrainingMailbox[UpstreamMessage]()
         self._callback_condition = threading.Condition()
+        shell_cwd = Path(os.environ.get("HOME", str(config.root_dir))).resolve()
+        if not shell_cwd.exists():
+            shell_cwd = config.root_dir
+        self._pty_manager = pty_manager or PtySessionManager(shell_cwd, self._publish_terminal_event)
 
     def on_connected(self) -> None:
         assert self._config.managed is not None
@@ -106,6 +116,9 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
             return
         if isinstance(command, CallbackResponseCommand):
             self._apply_callback_response(command)
+            return
+        if isinstance(command, TerminalCommand):
+            self._apply_terminal(command)
             return
         raise TypeError(f"unsupported managed command: {type(command)!r}")
 
@@ -245,6 +258,34 @@ class ManagedRelaySession(RelaySession, TaskObserver, ExecutionObserver, Executi
                 error=record.error,
             )
         )
+
+    def _publish_terminal_event(self, terminal_id: str, event_type: str, payload: dict) -> None:
+        self._outbound_messages.publish(
+            TerminalEventMessage(
+                terminal_id=terminal_id,
+                event_type=event_type,
+                payload=payload,
+            )
+        )
+
+    def _apply_terminal(self, command: TerminalCommand) -> None:
+        if command.action is TerminalAction.OPEN:
+            self._pty_manager.open(command.terminal_id, cols=command.cols or 120, rows=command.rows or 34)
+            return
+        if command.action is TerminalAction.INPUT:
+            self._pty_manager.input(command.terminal_id, command.data)
+            return
+        if command.action is TerminalAction.RESIZE:
+            self._pty_manager.resize(
+                command.terminal_id,
+                cols=command.cols or 120,
+                rows=command.rows or 34,
+            )
+            return
+        if command.action is TerminalAction.CLOSE:
+            self._pty_manager.close(command.terminal_id)
+            return
+        raise ValueError(f"unsupported terminal action: {command.action.value}")
 
     def _apply_signal(self, command: SignalCommand) -> None:
         if command.action is RelayAction.CLEAR:
