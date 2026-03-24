@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Bell, Minus, X } from "lucide-react"
-import { Terminal } from "@xterm/xterm/lib/xterm.mjs"
+import { Terminal } from "@/lib/vendor/xterm.mjs"
 import { cn } from "@/lib/utils"
 
 type AgentSeed = {

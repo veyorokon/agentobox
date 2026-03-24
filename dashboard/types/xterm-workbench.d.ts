@@ -1,3 +1,3 @@
-declare module "@xterm/xterm/lib/xterm.mjs" {
+declare module "@/lib/vendor/xterm.mjs" {
   export * from "@xterm/xterm"
 }
