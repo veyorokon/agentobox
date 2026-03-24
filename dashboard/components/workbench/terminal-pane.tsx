@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { FitAddon, Terminal, init as initGhostty } from "ghostty-web"
 import { getToken } from "@/lib/auth"
 import {
@@ -75,13 +75,33 @@ export function TerminalPane({
   const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sizeRef = useRef({ cols: 120, rows: 34 })
   const scheduleResizeRef = useRef<(() => void) | null>(null)
+  const [reflowing, setReflowing] = useState(false)
+  const reflowingRef = useRef(false)
+  const onFrameDuringReflowRef = useRef<(() => void) | null>(null)
 
   // Keep frozen ref in sync with prop
   useEffect(() => { frozenRef.current = frozen }, [frozen])
 
-  // On unfreeze: fire one resize to sync to final container size
+  // On unfreeze: enter reflow state, send resize, wait for first frame back
   useEffect(() => {
-    if (!frozen) scheduleResizeRef.current?.()
+    if (frozen) return
+    if (!reflowingRef.current && scheduleResizeRef.current) {
+      reflowingRef.current = true
+      setReflowing(true)
+      scheduleResizeRef.current()
+      // Callback cleared when the next frame arrives (see WS message handler).
+      // Safety fallback: clear reflow after 500ms even if no frame arrives.
+      const fallback = setTimeout(() => {
+        reflowingRef.current = false
+        setReflowing(false)
+      }, 500)
+      onFrameDuringReflowRef.current = () => {
+        clearTimeout(fallback)
+        reflowingRef.current = false
+        setReflowing(false)
+        onFrameDuringReflowRef.current = null
+      }
+    }
   }, [frozen])
 
   // Main effect: create terminal, connect WS, observe resize
@@ -206,6 +226,8 @@ export function TerminalPane({
         if (message.type !== "terminal_event" || !terminal) return
         if (message.event_type === "frame" && typeof message.payload?.data === "string") {
           terminal.write(message.payload.data)
+          // Clear reflow overlay once the PTY has sent back redrawn content
+          onFrameDuringReflowRef.current?.()
           return
         }
         if (message.event_type === "error") {
@@ -330,6 +352,10 @@ export function TerminalPane({
           ref={hostRef}
           className="absolute inset-0"
         />
+        {/* Reflow overlay: hides distorted content while PTY redraws after resize */}
+        {(frozen || reflowing) && (
+          <div className="absolute inset-0 bg-[#1b1f26]" />
+        )}
       </div>
     </div>
   )
