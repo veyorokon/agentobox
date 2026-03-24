@@ -369,6 +369,12 @@ export function TerminalPane({
     })
   }, [active])
 
+  useEffect(() => {
+    const terminal = terminalRef.current
+    if (!terminal) return
+    terminal.options.cursorBlink = !(frozen || reflowing)
+  }, [frozen, reflowing])
+
   return (
     <div
       className="flex h-full flex-col"
@@ -393,10 +399,6 @@ export function TerminalPane({
           ref={hostRef}
           className="absolute inset-0"
         />
-        {/* Reflow overlay: hides distorted content while PTY redraws after resize */}
-        {(frozen || reflowing) && (
-          <div className="absolute inset-0 bg-[#1b1f26]" />
-        )}
       </div>
     </div>
   )
