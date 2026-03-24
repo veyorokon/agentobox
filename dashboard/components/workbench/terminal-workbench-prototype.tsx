@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Minus } from "lucide-react"
 import { TerminalPane } from "@/components/workbench/terminal-pane"
+import { useThemeStore } from "@/lib/stores/theme"
 import {
   buildInitialWorkbenchWindows,
   gridWindowHeight,
@@ -12,6 +13,7 @@ import {
   WORKBENCH_MIN_TERMINAL_ROWS,
   WORKBENCH_TITLEBAR_HEIGHT,
 } from "@/components/workbench/workbench-layout"
+import { resolveWorkbenchTheme } from "@/components/workbench/workbench-theme"
 
 export type WorkbenchAgent = {
   id: string
@@ -44,19 +46,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
 
-function statusDot(status?: string | null) {
-  switch ((status ?? "").toLowerCase()) {
-    case "running":
-      return "#8ec07c"
-    case "deploying":
-      return "#d8b56a"
-    case "error":
-      return "#d86c6c"
-    default:
-      return "#8ea4c7"
-  }
-}
-
 export function focusTerminalInput(root: ParentNode | null) {
   if (!root) return false
   const textarea = root.querySelector("textarea")
@@ -74,6 +63,8 @@ export function TerminalWorkbenchPrototype({
   initialAgentIds?: string[]
   onCloseAgent?: (agentId: string) => void
 }) {
+  const themeTokens = useThemeStore((s) => s.config.tokens)
+  const workbenchTheme = useMemo(() => resolveWorkbenchTheme(themeTokens), [themeTokens])
   const canvasRef = useRef<HTMLDivElement>(null)
   const windowsRef = useRef<TerminalWindow[]>([])
   const nextZRef = useRef(1)
@@ -317,8 +308,15 @@ export function TerminalWorkbenchPrototype({
   }, [])
 
   return (
-    <div className="h-screen overflow-hidden bg-[#1b1f26] text-default">
-      <main ref={canvasRef} className="relative h-full w-full overflow-hidden bg-[#1b1f26]">
+    <div
+      className="h-screen overflow-hidden text-default"
+      style={{ backgroundColor: workbenchTheme.canvasBg, color: workbenchTheme.bodyText }}
+    >
+      <main
+        ref={canvasRef}
+        className="relative h-full w-full overflow-hidden"
+        style={{ backgroundColor: workbenchTheme.canvasBg }}
+      >
         {windows
           .filter(window => !window.hidden)
           .sort((a, b) => a.z - b.z)
@@ -330,21 +328,26 @@ export function TerminalWorkbenchPrototype({
             return (
               <section
                 key={window.id}
-                className={`absolute overflow-hidden rounded-[28px] border bg-[#303640] shadow-[0_22px_60px_rgba(0,0,0,0.30)] transition-shadow ${
-                  active ? "border-[#717887]" : "border-[#5e6572]"
-                }`}
+                className="absolute overflow-hidden rounded-[28px] border transition-shadow"
                 style={{
                   left: window.x,
                   top: window.y,
                   width: window.width,
                   height: window.minimized ? WORKBENCH_MINIMIZED_HEIGHT : window.height,
                   zIndex: window.z,
+                  backgroundColor: workbenchTheme.windowBg,
+                  borderColor: active ? workbenchTheme.activeBorder : workbenchTheme.border,
+                  boxShadow: "var(--shadow-2xl)",
                 }}
                 onMouseDown={() => focusWindow(window.id)}
               >
                 <div
-                  className="flex items-center gap-2 bg-[#303640] px-5"
-                  style={{ height: WORKBENCH_TITLEBAR_HEIGHT }}
+                  className="flex items-center gap-2 px-5"
+                  style={{
+                    height: WORKBENCH_TITLEBAR_HEIGHT,
+                    backgroundColor: workbenchTheme.titlebarBg,
+                    color: workbenchTheme.titleText,
+                  }}
                   onPointerDown={(event) => {
                     event.preventDefault()
                     focusWindow(window.id, true)
@@ -387,9 +390,21 @@ export function TerminalWorkbenchPrototype({
                   <div className="ml-2 flex min-w-0 items-center gap-2">
                     <span
                       className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: statusDot(agent.lifecycleStatus) }}
+                      style={{
+                        backgroundColor:
+                          agent.lifecycleStatus?.toLowerCase() === "running"
+                            ? workbenchTheme.status.running
+                            : agent.lifecycleStatus?.toLowerCase() === "deploying"
+                              ? workbenchTheme.status.deploying
+                              : agent.lifecycleStatus?.toLowerCase() === "error"
+                                ? workbenchTheme.status.error
+                                : workbenchTheme.status.default,
+                      }}
                     />
-                    <span className="truncate font-mono text-[12px] font-medium tracking-[0.01em] text-[#d0d7e2]">
+                    <span
+                      className="truncate font-mono text-[12px] font-medium tracking-[0.01em]"
+                      style={{ color: workbenchTheme.titleText }}
+                    >
                       {agent.name}
                     </span>
                   </div>
@@ -413,7 +428,10 @@ export function TerminalWorkbenchPrototype({
                     {!window.maximized && (
                       <button
                         type="button"
-                        className="absolute bottom-0 right-0 h-7 w-7 cursor-se-resize bg-gradient-to-br from-transparent to-white/[0.06] opacity-0 transition-opacity hover:opacity-100"
+                        className="absolute bottom-0 right-0 h-7 w-7 cursor-se-resize opacity-0 transition-opacity hover:opacity-100"
+                        style={{
+                          backgroundImage: `linear-gradient(to bottom right, transparent, color-mix(in srgb, ${workbenchTheme.resizeHandleTint} 18%, transparent))`,
+                        }}
                         onPointerDown={(event) => {
                           event.stopPropagation()
                           focusWindow(window.id, true)

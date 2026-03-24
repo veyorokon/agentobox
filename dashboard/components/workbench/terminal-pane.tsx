@@ -1,12 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { FitAddon, Terminal, init as initGhostty } from "ghostty-web"
 import { getToken } from "@/lib/auth"
+import { useThemeStore } from "@/lib/stores/theme"
 import {
   WORKBENCH_MIN_TERMINAL_COLS,
   WORKBENCH_MIN_TERMINAL_ROWS,
 } from "@/components/workbench/workbench-layout"
+import { resolveWorkbenchTheme } from "@/components/workbench/workbench-theme"
 
 export type PaneAgent = {
   id: string
@@ -28,15 +30,6 @@ function buildTerminalWsUrl(agentId: string) {
     ? hostname
     : `${hostname}:8000`
   return `${wsProto}//${host}/ws/terminal/${agentId}/`
-}
-
-function statusDot(status?: string | null) {
-  switch ((status ?? "").toLowerCase()) {
-    case "running": return "#8ec07c"
-    case "deploying": return "#d8b56a"
-    case "error": return "#d86c6c"
-    default: return "#8ea4c7"
-  }
 }
 
 /**
@@ -63,6 +56,8 @@ export function TerminalPane({
    *  On transition from frozen→unfrozen, one resize fires to sync final size. */
   frozen?: boolean
 }) {
+  const themeTokens = useThemeStore((s) => s.config.tokens)
+  const workbenchTheme = useMemo(() => resolveWorkbenchTheme(themeTokens), [themeTokens])
   const hostRef = useRef<HTMLDivElement>(null)
   const frozenRef = useRef(frozen)
   const terminalRef = useRef<Terminal | null>(null)
@@ -201,29 +196,7 @@ export function TerminalPane({
         cursorStyle: "block",
         fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace',
         fontSize: 14,
-        theme: {
-          background: "#1b1f26",
-          foreground: "#c5cdd8",
-          cursor: "#f5f7fb",
-          cursorAccent: "#1b1f26",
-          selectionBackground: "rgba(125, 145, 184, 0.34)",
-          black: "#1b1f26",
-          brightBlack: "#7d8796",
-          red: "#d88d87",
-          brightRed: "#e2a19a",
-          green: "#b2c28d",
-          brightGreen: "#c2d29b",
-          yellow: "#d5c08f",
-          brightYellow: "#e3d09b",
-          blue: "#8ea4c7",
-          brightBlue: "#a2b8db",
-          magenta: "#b39fce",
-          brightMagenta: "#c4b0de",
-          cyan: "#95bdc8",
-          brightCyan: "#a5d0dc",
-          white: "#cbd4df",
-          brightWhite: "#eef2f8",
-        },
+        theme: workbenchTheme.terminal,
       })
       terminal.loadAddon(fitAddon)
       terminal.open(host)
@@ -352,7 +325,7 @@ export function TerminalPane({
       terminal?.dispose()
       terminalRef.current = null
     }
-  }, [agent.id])
+  }, [agent.id, workbenchTheme])
 
   // Focus management
   useEffect(() => {
@@ -382,12 +355,30 @@ export function TerminalPane({
     >
       {/* Header — outside terminal container. Hidden when parent provides its own chrome. */}
       {showHeader && (
-        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[#3a3f4b] bg-[#252830] px-3">
+        <div
+          className="flex h-7 shrink-0 items-center gap-2 border-b px-3"
+          style={{
+            backgroundColor: workbenchTheme.titlebarBg,
+            borderColor: workbenchTheme.border,
+          }}
+        >
           <span
             className="h-2 w-2 shrink-0 rounded-full"
-            style={{ backgroundColor: statusDot(agent.lifecycleStatus) }}
+            style={{
+              backgroundColor:
+                agent.lifecycleStatus?.toLowerCase() === "running"
+                  ? workbenchTheme.status.running
+                  : agent.lifecycleStatus?.toLowerCase() === "deploying"
+                    ? workbenchTheme.status.deploying
+                    : agent.lifecycleStatus?.toLowerCase() === "error"
+                      ? workbenchTheme.status.error
+                      : workbenchTheme.status.default,
+            }}
           />
-          <span className="truncate font-mono text-[11px] font-medium text-[#9aa3b0]">
+          <span
+            className="truncate font-mono text-[11px] font-medium"
+            style={{ color: workbenchTheme.mutedText }}
+          >
             {agent.name}
           </span>
         </div>
