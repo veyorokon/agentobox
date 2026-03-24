@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Minus } from "lucide-react"
 import { Terminal } from "@/lib/vendor/xterm.mjs"
+import { FitAddon } from "@/lib/vendor/xterm-fit.mjs"
 import { getToken } from "@/lib/auth"
 import { buildInitialWorkbenchWindows } from "@/components/workbench/workbench-layout"
 
@@ -23,6 +24,7 @@ type WindowRect = {
 type TerminalWindow = WindowRect & {
   id: string
   agentId: string
+  fontSize: number
   z: number
   minimized: boolean
   maximized: boolean
@@ -60,29 +62,46 @@ function TerminalViewport({
   agent,
   active,
   onActivate,
+  fontSize,
+  onFontSizeChange,
 }: {
   agent: WorkbenchAgent
   active: boolean
   onActivate: () => void
+  fontSize: number
+  onFontSizeChange: (nextFontSize: number) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const authSentRef = useRef(false)
+  const fontSizeRef = useRef(fontSize)
+  const onFontSizeChangeRef = useRef(onFontSizeChange)
   const sizeRef = useRef({ cols: 120, rows: 34 })
+
+  useEffect(() => {
+    fontSizeRef.current = fontSize
+  }, [fontSize])
+
+  useEffect(() => {
+    onFontSizeChangeRef.current = onFontSizeChange
+  }, [onFontSizeChange])
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
 
+    const fitAddon = new FitAddon()
+    fitAddonRef.current = fitAddon
     const terminal = new Terminal({
       convertEol: true,
       cursorBlink: true,
       cursorStyle: "block",
       fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace',
-      fontSize: 15,
-      fontWeight: 400,
-      lineHeight: 1.5,
+      fontSize,
+      fontWeight: 450,
+      lineHeight: 1.35,
       letterSpacing: 0,
       theme: {
         background: "#303640",
@@ -108,16 +127,15 @@ function TerminalViewport({
         brightWhite: "#eef2f8",
       },
     })
+    terminal.loadAddon(fitAddon)
     terminal.open(host)
     terminal.writeln(`connecting ${agent.name}...`)
 
     const sendResize = () => {
-      const width = host.clientWidth
-      const height = host.clientHeight
-      const cols = Math.max(24, Math.floor((width - 28) / 9.2))
-      const rows = Math.max(8, Math.floor((height - 20) / 22))
+      fitAddon.fit()
+      const cols = Math.max(40, terminal.cols)
+      const rows = Math.max(12, terminal.rows)
       sizeRef.current = { cols, rows }
-      terminal.resize(cols, rows)
       if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: "resize",
@@ -179,6 +197,29 @@ function TerminalViewport({
       }))
     })
 
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true
+      if (!(event.metaKey || event.ctrlKey)) return true
+      if (event.altKey) return true
+
+      if (event.key === "=" || event.key === "+") {
+        event.preventDefault()
+        onFontSizeChangeRef.current(fontSizeRef.current + 1)
+        return false
+      }
+      if (event.key === "-") {
+        event.preventDefault()
+        onFontSizeChangeRef.current(fontSizeRef.current - 1)
+        return false
+      }
+      if (event.key === "0") {
+        event.preventDefault()
+        onFontSizeChangeRef.current(17)
+        return false
+      }
+      return true
+    })
+
     const resizeObserver = new ResizeObserver(() => {
       requestAnimationFrame(sendResize)
     })
@@ -197,10 +238,36 @@ function TerminalViewport({
       }
       ws.close()
       wsRef.current = null
+      fitAddonRef.current = null
       terminal.dispose()
       terminalRef.current = null
     }
   }, [agent.id, agent.name])
+
+  useEffect(() => {
+    const terminal = terminalRef.current
+    const host = hostRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal || !host || !fitAddon) return
+    terminal.options.fontSize = fontSize
+    requestAnimationFrame(() => {
+      const width = host.clientWidth
+      const height = host.clientHeight
+      if (width === 0 || height === 0) return
+      fitAddon.fit()
+      const cols = Math.max(40, terminal.cols)
+      const rows = Math.max(12, terminal.rows)
+      sizeRef.current = { cols, rows }
+      if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "resize",
+          terminal_id: "main",
+          cols,
+          rows,
+        }))
+      }
+    })
+  }, [fontSize])
 
   useEffect(() => {
     if (!active) return
@@ -211,7 +278,7 @@ function TerminalViewport({
 
   return (
     <div className="h-full w-full" onMouseDown={onActivate}>
-      <div ref={hostRef} className="h-full w-full px-5 py-4" />
+      <div ref={hostRef} className="h-full w-full overflow-hidden" />
     </div>
   )
 }
@@ -278,6 +345,14 @@ export function TerminalWorkbenchPrototype({
     if (!raise) return
     setWindows(prev => prev.map(window => (
       window.id === windowId ? { ...window, z: nextZRef.current++ } : window
+    )))
+  }
+
+  const setWindowFontSize = (windowId: string, nextFontSize: number) => {
+    setWindows(prev => prev.map(window => (
+      window.id === windowId
+        ? { ...window, fontSize: clamp(nextFontSize, 13, 24) }
+        : window
     )))
   }
 
@@ -375,8 +450,8 @@ export function TerminalWorkbenchPrototype({
         }
         return {
           ...current,
-          width: clamp(origin.width + dx, 420, canvasRect.width - current.x + current.width - 80),
-          height: clamp(origin.height + dy, 260, canvasRect.height - current.y + current.height - 48),
+          width: clamp(origin.width + dx, 640, canvasRect.width - current.x + current.width - 80),
+          height: clamp(origin.height + dy, 360, canvasRect.height - current.y + current.height - 48),
         }
       }))
     }
@@ -497,6 +572,8 @@ export function TerminalWorkbenchPrototype({
                         agent={agent}
                         active={active}
                         onActivate={() => focusWindow(window.id)}
+                        fontSize={window.fontSize}
+                        onFontSizeChange={(nextFontSize) => setWindowFontSize(window.id, nextFontSize)}
                       />
                     </div>
 

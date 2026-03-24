@@ -7,6 +7,7 @@ export type WorkbenchWindowSeed = {
   y: number
   width: number
   height: number
+  fontSize: number
   z: number
   minimized: boolean
   maximized: boolean
@@ -43,6 +44,7 @@ export function buildInitialWorkbenchWindows(
       y: 40 + index * 54,
       width: 720,
       height: 430,
+      fontSize: 17,
       z: index + 1,
       minimized: false,
       maximized: false,
