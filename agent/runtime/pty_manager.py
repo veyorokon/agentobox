@@ -54,6 +54,17 @@ class PtySession:
         env.setdefault("TERM", "xterm-256color")
         argv = [shell, "-l"] if self.program is TerminalProgram.SHELL else ["claude"]
         actual_program = self.program
+
+        def _setup_ctty():
+            """Make the slave PTY the controlling terminal for this session.
+
+            start_new_session=True calls setsid(), but does not assign a
+            controlling terminal. Without TIOCSCTTY, the kernel will not
+            deliver SIGWINCH when the master winsize changes.
+            """
+            import fcntl
+            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
         try:
             proc = subprocess.Popen(
                 argv,
@@ -63,6 +74,7 @@ class PtySession:
                 stdout=slave_fd,
                 stderr=slave_fd,
                 start_new_session=True,
+                preexec_fn=_setup_ctty,
                 close_fds=True,
             )
         except FileNotFoundError:
@@ -82,6 +94,7 @@ class PtySession:
                 stdout=slave_fd,
                 stderr=slave_fd,
                 start_new_session=True,
+                preexec_fn=_setup_ctty,
                 close_fds=True,
             )
         self.program = actual_program
@@ -159,6 +172,17 @@ class PtySession:
             fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
         except OSError:
             return
+
+        # Belt+suspenders: explicitly send SIGWINCH to the process group.
+        # The ioctl should deliver SIGWINCH via the controlling terminal,
+        # but if TIOCSCTTY was not set (e.g. older image), this ensures
+        # the process still receives the signal.
+        proc = self.process
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGWINCH)
+            except (OSError, ProcessLookupError):
+                pass
 
     def _read_loop(self) -> None:
         assert self.master_fd is not None

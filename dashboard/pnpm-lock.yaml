@@ -41,6 +41,9 @@ importers:
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.14)(react@19.2.4)
+      react-resizable-panels:
+        specifier: ^4.7.5
+        version: 4.7.5(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       react-vnc:
         specifier: ^3.2.0
         version: 3.2.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -2406,6 +2409,12 @@ packages:
     peerDependencies:
       '@types/react': '>=18'
       react: '>=18'
+
+  react-resizable-panels@4.7.5:
+    resolution: {integrity: sha512-ma22FpbUolymMK6xIwZOzzNxszi59kZdJiw805byxuGBrjAs8HngpQrrgEp5dj1OOV2jVFBCJxhVult6G+2KaQ==}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   react-vnc@3.2.0:
     resolution: {integrity: sha512-PnlcleDjVI7gUKaSX5+94MMadxee8avAJP10vlHvT2JBLVd2vEGdyWcs3KQ/9STK7mj/Ht6gFQpwEc3BYh/4GQ==}
@@ -5409,6 +5418,11 @@ snapshots:
       vfile: 6.0.3
     transitivePeerDependencies:
       - supports-color
+
+  react-resizable-panels@4.7.5(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+    dependencies:
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
 
   react-vnc@3.2.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
     dependencies:
