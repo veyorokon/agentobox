@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
 
-import { buildInitialWorkbenchWindows, normalizeRequestedAgentIds } from "@/components/workbench/workbench-layout"
+import {
+  buildInitialWorkbenchWindows,
+  gridWindowHeight,
+  gridWindowWidth,
+  normalizeRequestedAgentIds,
+  WORKBENCH_MINIMIZED_HEIGHT,
+  WORKBENCH_TITLEBAR_HEIGHT,
+} from "@/components/workbench/workbench-layout"
 
 describe("workbench agent selection", () => {
   it("normalizes repeated and comma-separated agent ids", () => {
@@ -27,5 +34,14 @@ describe("workbench agent selection", () => {
     )
 
     expect(windows).toEqual([])
+  })
+
+  it("uses one shared titlebar height for minimized and grid window sizing", () => {
+    expect(WORKBENCH_MINIMIZED_HEIGHT).toBe(WORKBENCH_TITLEBAR_HEIGHT)
+    expect(gridWindowHeight(7, 20)).toBe(WORKBENCH_TITLEBAR_HEIGHT + 140)
+  })
+
+  it("computes snapped window width from terminal columns", () => {
+    expect(gridWindowWidth(80, 9)).toBe(720)
   })
 })

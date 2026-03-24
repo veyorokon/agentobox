@@ -1,11 +1,18 @@
 "use client"
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { FitAddon, Terminal, init as initGhostty } from "ghostty-web"
 import { Minus } from "lucide-react"
-import { Terminal } from "@/lib/vendor/xterm.mjs"
-import { FitAddon } from "@/lib/vendor/xterm-fit.mjs"
 import { getToken } from "@/lib/auth"
-import { buildInitialWorkbenchWindows } from "@/components/workbench/workbench-layout"
+import {
+  buildInitialWorkbenchWindows,
+  gridWindowHeight,
+  gridWindowWidth,
+  WORKBENCH_MINIMIZED_HEIGHT,
+  WORKBENCH_MIN_TERMINAL_COLS,
+  WORKBENCH_MIN_TERMINAL_ROWS,
+  WORKBENCH_TITLEBAR_HEIGHT,
+} from "@/components/workbench/workbench-layout"
 
 export type WorkbenchAgent = {
   id: string
@@ -34,9 +41,12 @@ type TerminalWindow = WindowRect & {
   lastRect?: WindowRect
 }
 
-const TITLEBAR_HEIGHT = 46
-const MIN_TERMINAL_COLS = 50
-const MIN_TERMINAL_ROWS = 7
+let ghosttyInitPromise: Promise<void> | null = null
+
+function ensureGhosttyInit() {
+  ghosttyInitPromise ??= initGhostty()
+  return ghosttyInitPromise
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
@@ -107,54 +117,24 @@ function TerminalViewport({
     const host = hostRef.current
     if (!host) return
 
-    const fitAddon = new FitAddon()
-    fitAddonRef.current = fitAddon
-    const terminal = new Terminal({
-      convertEol: true,
-      cursorBlink: true,
-      cursorStyle: "block",
-      fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace',
-      fontSize,
-      fontWeight: 450,
-      lineHeight: 1.35,
-      letterSpacing: 0,
-      theme: {
-        background: "#303640",
-        foreground: "#c5cdd8",
-        cursor: "#f5f7fb",
-        cursorAccent: "#303640",
-        selectionBackground: "rgba(125, 145, 184, 0.34)",
-        black: "#303640",
-        brightBlack: "#7d8796",
-        red: "#d88d87",
-        brightRed: "#e2a19a",
-        green: "#b2c28d",
-        brightGreen: "#c2d29b",
-        yellow: "#d5c08f",
-        brightYellow: "#e3d09b",
-        blue: "#8ea4c7",
-        brightBlue: "#a2b8db",
-        magenta: "#b39fce",
-        brightMagenta: "#c4b0de",
-        cyan: "#95bdc8",
-        brightCyan: "#a5d0dc",
-        white: "#cbd4df",
-        brightWhite: "#eef2f8",
-      },
-    })
-    terminal.loadAddon(fitAddon)
-    terminal.open(host)
-    terminal.writeln(`connecting ${agent.name}...`)
+    let terminal: Terminal | null = null
+    let fitAddon: FitAddon | null = null
+    let ws: WebSocket | null = null
+    let dataDisposable: { dispose(): void } | null = null
+    let renderDisposable: { dispose(): void } | null = null
+    let resizeObserver: ResizeObserver | null = null
+    let disposed = false
 
     const syncGeometry = () => {
+      if (!terminal || !fitAddon) return false
       if (!renderReadyRef.current) return false
       try {
         fitAddon.fit()
       } catch {
         return false
       }
-      const cols = Math.max(MIN_TERMINAL_COLS, terminal.cols || 0)
-      const rows = Math.max(MIN_TERMINAL_ROWS, terminal.rows || 0)
+      const cols = Math.max(WORKBENCH_MIN_TERMINAL_COLS, terminal.cols || 0)
+      const rows = Math.max(WORKBENCH_MIN_TERMINAL_ROWS, terminal.rows || 0)
       sizeRef.current = { cols, rows }
       const width = host.clientWidth
       const height = host.clientHeight
@@ -190,107 +170,137 @@ function TerminalViewport({
       })
     }
 
-    const token = getToken()
-    if (!token) {
-      terminal.writeln("[auth missing]")
+    void ensureGhosttyInit().then(() => {
+      if (disposed) return
+
+      fitAddon = new FitAddon()
+      fitAddonRef.current = fitAddon
+      terminal = new Terminal({
+        convertEol: true,
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace',
+        fontSize,
+        theme: {
+          background: "#303640",
+          foreground: "#c5cdd8",
+          cursor: "#f5f7fb",
+          cursorAccent: "#303640",
+          selectionBackground: "rgba(125, 145, 184, 0.34)",
+          black: "#303640",
+          brightBlack: "#7d8796",
+          red: "#d88d87",
+          brightRed: "#e2a19a",
+          green: "#b2c28d",
+          brightGreen: "#c2d29b",
+          yellow: "#d5c08f",
+          brightYellow: "#e3d09b",
+          blue: "#8ea4c7",
+          brightBlue: "#a2b8db",
+          magenta: "#b39fce",
+          brightMagenta: "#c4b0de",
+          cyan: "#95bdc8",
+          brightCyan: "#a5d0dc",
+          white: "#cbd4df",
+          brightWhite: "#eef2f8",
+        },
+      })
+      terminal.loadAddon(fitAddon)
+      terminal.open(host)
+      terminal.writeln(`connecting ${agent.name}...`)
       terminalRef.current = terminal
-      return () => {
-        renderReadyRef.current = false
-        if (pendingResizeFrameRef.current !== null) {
-          cancelAnimationFrame(pendingResizeFrameRef.current)
-          pendingResizeFrameRef.current = null
+
+      const token = getToken()
+      if (!token) {
+        terminal.writeln("[auth missing]")
+        return
+      }
+
+      ws = new WebSocket(buildTerminalWsUrl(agent.id))
+      wsRef.current = ws
+
+      ws.addEventListener("open", () => {
+        sendResize()
+        ws?.send(JSON.stringify({
+          type: "auth",
+          token,
+          terminal_id: "main",
+          program: "claude",
+          cols: sizeRef.current.cols,
+          rows: sizeRef.current.rows,
+        }))
+        authSentRef.current = true
+      })
+
+      ws.addEventListener("message", (event) => {
+        const message = JSON.parse(String(event.data))
+        if (message.type !== "terminal_event" || !terminal) return
+        if (message.event_type === "frame" && typeof message.payload?.data === "string") {
+          terminal.write(message.payload.data)
+          return
         }
-        fitAddonRef.current = null
-        terminal.dispose()
-        terminalRef.current = null
-      }
-    }
+        if (message.event_type === "error") {
+          terminal.writeln(`\r\n[terminal error] ${message.payload?.error ?? "unknown"}`)
+          return
+        }
+        if (message.event_type === "exited") {
+          terminal.writeln(`\r\n[process exited ${message.payload?.exit_code ?? 0}]`)
+        }
+      })
 
-    const ws = new WebSocket(buildTerminalWsUrl(agent.id))
-    wsRef.current = ws
+      ws.addEventListener("close", () => {
+        authSentRef.current = false
+        terminal?.writeln("\r\n[terminal disconnected]")
+      })
 
-    ws.addEventListener("open", () => {
-      sendResize()
-      ws.send(JSON.stringify({
-        type: "auth",
-        token,
-        terminal_id: "main",
-        program: "claude",
-        cols: sizeRef.current.cols,
-        rows: sizeRef.current.rows,
-      }))
-      authSentRef.current = true
-    })
+      dataDisposable = terminal.onData((data) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN || !authSentRef.current) return
+        ws.send(JSON.stringify({
+          type: "input",
+          terminal_id: "main",
+          data,
+        }))
+      })
 
-    ws.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data))
-      if (message.type !== "terminal_event") return
-      if (message.event_type === "frame" && typeof message.payload?.data === "string") {
-        terminal.write(message.payload.data)
-        return
-      }
-      if (message.event_type === "error") {
-        terminal.writeln(`\r\n[terminal error] ${message.payload?.error ?? "unknown"}`)
-        return
-      }
-      if (message.event_type === "exited") {
-        terminal.writeln(`\r\n[process exited ${message.payload?.exit_code ?? 0}]`)
-      }
-    })
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (event.type !== "keydown") return true
+        if (!(event.metaKey || event.ctrlKey)) return true
+        if (event.altKey) return true
 
-    ws.addEventListener("close", () => {
-      authSentRef.current = false
-      terminal.writeln("\r\n[terminal disconnected]")
-    })
+        if (event.key === "=" || event.key === "+") {
+          event.preventDefault()
+          onFontSizeChangeRef.current(fontSizeRef.current + 1)
+          return false
+        }
+        if (event.key === "-") {
+          event.preventDefault()
+          onFontSizeChangeRef.current(fontSizeRef.current - 1)
+          return false
+        }
+        if (event.key === "0") {
+          event.preventDefault()
+          onFontSizeChangeRef.current(17)
+          return false
+        }
+        return true
+      })
 
-    const dataDisposable = terminal.onData((data) => {
-      if (ws.readyState !== WebSocket.OPEN || !authSentRef.current) return
-      ws.send(JSON.stringify({
-        type: "input",
-        terminal_id: "main",
-        data,
-      }))
-    })
+      renderDisposable = terminal.onRender(() => {
+        if (renderReadyRef.current) return
+        renderReadyRef.current = true
+        scheduleResize()
+      })
 
-    terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown") return true
-      if (!(event.metaKey || event.ctrlKey)) return true
-      if (event.altKey) return true
-
-      if (event.key === "=" || event.key === "+") {
-        event.preventDefault()
-        onFontSizeChangeRef.current(fontSizeRef.current + 1)
-        return false
-      }
-      if (event.key === "-") {
-        event.preventDefault()
-        onFontSizeChangeRef.current(fontSizeRef.current - 1)
-        return false
-      }
-      if (event.key === "0") {
-        event.preventDefault()
-        onFontSizeChangeRef.current(17)
-        return false
-      }
-      return true
-    })
-
-    const renderDisposable = terminal.onRender(() => {
-      if (renderReadyRef.current) return
-      renderReadyRef.current = true
+      resizeObserver = new ResizeObserver(() => {
+        if (!renderReadyRef.current) return
+        scheduleResize()
+      })
+      resizeObserver.observe(host)
       scheduleResize()
     })
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (!renderReadyRef.current) return
-      scheduleResize()
-    })
-    resizeObserver.observe(host)
-    scheduleResize()
-
-    terminalRef.current = terminal
 
     return () => {
+      disposed = true
       const wasAuthenticated = authSentRef.current
       authSentRef.current = false
       renderReadyRef.current = false
@@ -298,16 +308,16 @@ function TerminalViewport({
         cancelAnimationFrame(pendingResizeFrameRef.current)
         pendingResizeFrameRef.current = null
       }
-      dataDisposable.dispose()
-      renderDisposable.dispose()
-      resizeObserver.disconnect()
-      if (wasAuthenticated && ws.readyState === WebSocket.OPEN) {
+      dataDisposable?.dispose()
+      renderDisposable?.dispose()
+      resizeObserver?.disconnect()
+      if (wasAuthenticated && ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "close", terminal_id: "main" }))
       }
-      ws.close()
+      ws?.close()
       wsRef.current = null
       fitAddonRef.current = null
-      terminal.dispose()
+      terminal?.dispose()
       terminalRef.current = null
     }
   }, [agent.id, agent.name])
@@ -328,8 +338,8 @@ function TerminalViewport({
       } catch {
         return
       }
-      const cols = Math.max(MIN_TERMINAL_COLS, terminal.cols || 0)
-      const rows = Math.max(MIN_TERMINAL_ROWS, terminal.rows || 0)
+      const cols = Math.max(WORKBENCH_MIN_TERMINAL_COLS, terminal.cols || 0)
+      const rows = Math.max(WORKBENCH_MIN_TERMINAL_ROWS, terminal.rows || 0)
       sizeRef.current = { cols, rows }
       onMetricsChangeRef.current({
         cols,
@@ -476,7 +486,7 @@ export function TerminalWorkbenchPrototype({
         ? {
             ...window,
             minimized: !window.minimized,
-            height: window.minimized ? (window.lastRect?.height ?? window.height) : 42,
+            height: window.minimized ? (window.lastRect?.height ?? window.height) : WORKBENCH_MINIMIZED_HEIGHT,
             lastRect: window.minimized
               ? undefined
               : { x: window.x, y: window.y, width: window.width, height: window.height },
@@ -555,18 +565,21 @@ export function TerminalWorkbenchPrototype({
           const maxHeight = canvasRect.height - current.y + current.height - 48
           const cols = clamp(
             Math.round(rawWidth / current.cellWidth),
-            MIN_TERMINAL_COLS,
-            Math.max(MIN_TERMINAL_COLS, Math.floor(maxWidth / current.cellWidth)),
+            WORKBENCH_MIN_TERMINAL_COLS,
+            Math.max(WORKBENCH_MIN_TERMINAL_COLS, Math.floor(maxWidth / current.cellWidth)),
           )
           const rows = clamp(
-            Math.round((rawHeight - TITLEBAR_HEIGHT) / current.cellHeight),
-            MIN_TERMINAL_ROWS,
-            Math.max(MIN_TERMINAL_ROWS, Math.floor((maxHeight - TITLEBAR_HEIGHT) / current.cellHeight)),
+            Math.round((rawHeight - WORKBENCH_TITLEBAR_HEIGHT) / current.cellHeight),
+            WORKBENCH_MIN_TERMINAL_ROWS,
+            Math.max(
+              WORKBENCH_MIN_TERMINAL_ROWS,
+              Math.floor((maxHeight - WORKBENCH_TITLEBAR_HEIGHT) / current.cellHeight),
+            ),
           )
           return {
             ...current,
-            width: Math.max(cols * current.cellWidth, MIN_TERMINAL_COLS * current.cellWidth),
-            height: Math.max(rows * current.cellHeight + TITLEBAR_HEIGHT, MIN_TERMINAL_ROWS * current.cellHeight + TITLEBAR_HEIGHT),
+            width: gridWindowWidth(cols, current.cellWidth),
+            height: gridWindowHeight(rows, current.cellHeight),
           }
         }
         return {
@@ -629,13 +642,14 @@ export function TerminalWorkbenchPrototype({
                   left: window.x,
                   top: window.y,
                   width: window.width,
-                  height: window.minimized ? 42 : window.height,
+                  height: window.minimized ? WORKBENCH_MINIMIZED_HEIGHT : window.height,
                   zIndex: window.z,
                 }}
                 onMouseDown={() => focusWindow(window.id)}
               >
                 <div
-                  className="flex h-[46px] items-center gap-2 bg-[#303640] px-5"
+                  className="flex items-center gap-2 bg-[#303640] px-5"
+                  style={{ height: WORKBENCH_TITLEBAR_HEIGHT }}
                   onPointerDown={(event) => {
                     event.preventDefault()
                     focusWindow(window.id, true)
@@ -688,7 +702,10 @@ export function TerminalWorkbenchPrototype({
 
                 {!window.minimized && (
                   <>
-                  <div className="relative h-[calc(100%-42px)]">
+                    <div
+                      className="relative"
+                      style={{ height: window.height - WORKBENCH_TITLEBAR_HEIGHT }}
+                    >
                       <TerminalViewport
                         agent={agent}
                         active={active}

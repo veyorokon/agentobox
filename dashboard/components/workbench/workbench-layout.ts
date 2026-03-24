@@ -1,5 +1,10 @@
 import type { WorkbenchAgent } from "@/components/workbench/terminal-workbench-prototype"
 
+export const WORKBENCH_TITLEBAR_HEIGHT = 46
+export const WORKBENCH_MIN_TERMINAL_COLS = 50
+export const WORKBENCH_MIN_TERMINAL_ROWS = 7
+export const WORKBENCH_MINIMIZED_HEIGHT = WORKBENCH_TITLEBAR_HEIGHT
+
 export type WorkbenchWindowSeed = {
   id: string
   agentId: string
@@ -51,4 +56,16 @@ export function buildInitialWorkbenchWindows(
       hidden: false,
     }]
   })
+}
+
+export function gridBodyHeight(rows: number, cellHeight: number) {
+  return rows * cellHeight
+}
+
+export function gridWindowHeight(rows: number, cellHeight: number) {
+  return WORKBENCH_TITLEBAR_HEIGHT + gridBodyHeight(rows, cellHeight)
+}
+
+export function gridWindowWidth(cols: number, cellWidth: number) {
+  return cols * cellWidth
 }
