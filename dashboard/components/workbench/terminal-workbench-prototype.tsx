@@ -74,11 +74,21 @@ function statusDot(status?: string | null) {
   }
 }
 
+export function focusTerminalInput(root: ParentNode | null) {
+  if (!root) return false
+  const textarea = root.querySelector("textarea")
+  if (!(textarea instanceof HTMLTextAreaElement)) return false
+  textarea.focus()
+  return document.activeElement === textarea
+}
+
 function TerminalViewport({
   agent,
   active,
   onActivate,
   fontSize,
+  viewportWidth,
+  viewportHeight,
   onFontSizeChange,
   onMetricsChange,
 }: {
@@ -86,6 +96,8 @@ function TerminalViewport({
   active: boolean
   onActivate: () => void
   fontSize: number
+  viewportWidth: number
+  viewportHeight: number
   onFontSizeChange: (nextFontSize: number) => void
   onMetricsChange: (metrics: { cols: number; rows: number; cellWidth: number; cellHeight: number }) => void
 }) {
@@ -100,6 +112,7 @@ function TerminalViewport({
   const onFontSizeChangeRef = useRef(onFontSizeChange)
   const onMetricsChangeRef = useRef(onMetricsChange)
   const sizeRef = useRef({ cols: 120, rows: 34 })
+  const scheduleResizeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     fontSizeRef.current = fontSize
@@ -121,7 +134,6 @@ function TerminalViewport({
     let fitAddon: FitAddon | null = null
     let ws: WebSocket | null = null
     let dataDisposable: { dispose(): void } | null = null
-    let renderDisposable: { dispose(): void } | null = null
     let resizeObserver: ResizeObserver | null = null
     let disposed = false
 
@@ -169,6 +181,7 @@ function TerminalViewport({
         })
       })
     }
+    scheduleResizeRef.current = scheduleResize
 
     void ensureGhosttyInit().then(() => {
       if (disposed) return
@@ -263,32 +276,34 @@ function TerminalViewport({
       })
 
       terminal.attachCustomKeyEventHandler((event) => {
-        if (event.type !== "keydown") return true
-        if (!(event.metaKey || event.ctrlKey)) return true
-        if (event.altKey) return true
+        if (event.type !== "keydown") return false
+        if (!(event.metaKey || event.ctrlKey)) return false
+        if (event.altKey) return false
 
         if (event.key === "=" || event.key === "+") {
           event.preventDefault()
           onFontSizeChangeRef.current(fontSizeRef.current + 1)
-          return false
+          return true
         }
         if (event.key === "-") {
           event.preventDefault()
           onFontSizeChangeRef.current(fontSizeRef.current - 1)
-          return false
+          return true
         }
         if (event.key === "0") {
           event.preventDefault()
           onFontSizeChangeRef.current(17)
-          return false
+          return true
         }
-        return true
+        return false
       })
 
-      renderDisposable = terminal.onRender(() => {
-        if (renderReadyRef.current) return
-        renderReadyRef.current = true
-        scheduleResize()
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (disposed) return
+          renderReadyRef.current = true
+          scheduleResize()
+        })
       })
 
       resizeObserver = new ResizeObserver(() => {
@@ -308,8 +323,8 @@ function TerminalViewport({
         cancelAnimationFrame(pendingResizeFrameRef.current)
         pendingResizeFrameRef.current = null
       }
+      scheduleResizeRef.current = null
       dataDisposable?.dispose()
-      renderDisposable?.dispose()
       resizeObserver?.disconnect()
       if (wasAuthenticated && ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "close", terminal_id: "main" }))
@@ -359,15 +374,33 @@ function TerminalViewport({
     })
   }, [fontSize])
 
+  useLayoutEffect(() => {
+    if (viewportWidth <= 0 || viewportHeight <= 0) return
+    scheduleResizeRef.current?.()
+  }, [viewportHeight, viewportWidth])
+
   useEffect(() => {
     if (!active) return
     requestAnimationFrame(() => {
-      terminalRef.current?.focus()
+      const focused = focusTerminalInput(hostRef.current)
+      if (!focused) {
+        terminalRef.current?.focus()
+        requestAnimationFrame(() => {
+          focusTerminalInput(hostRef.current)
+        })
+      }
     })
   }, [active])
 
   return (
-    <div className="h-full w-full" onMouseDown={onActivate}>
+    <div
+      className="h-full w-full"
+      style={{ width: viewportWidth, height: viewportHeight }}
+      onMouseDown={() => {
+        onActivate()
+        focusTerminalInput(hostRef.current)
+      }}
+    >
       <div ref={hostRef} className="h-full w-full overflow-hidden" />
     </div>
   )
@@ -711,6 +744,8 @@ export function TerminalWorkbenchPrototype({
                         active={active}
                         onActivate={() => focusWindow(window.id)}
                         fontSize={window.fontSize}
+                        viewportWidth={window.width}
+                        viewportHeight={window.height - WORKBENCH_TITLEBAR_HEIGHT}
                         onFontSizeChange={(nextFontSize) => setWindowFontSize(window.id, nextFontSize)}
                         onMetricsChange={(metrics) => setWindowMetrics(window.id, metrics)}
                       />

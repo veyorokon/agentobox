@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest"
 
+import { focusTerminalInput } from "@/components/workbench/terminal-workbench-prototype"
 import {
   buildInitialWorkbenchWindows,
   gridWindowHeight,
@@ -43,5 +46,17 @@ describe("workbench agent selection", () => {
 
   it("computes snapped window width from terminal columns", () => {
     expect(gridWindowWidth(80, 9)).toBe(720)
+  })
+
+  it("focuses the hidden terminal textarea when present", () => {
+    const root = document.createElement("div")
+    const textarea = document.createElement("textarea")
+    root.appendChild(textarea)
+    document.body.appendChild(root)
+
+    expect(focusTerminalInput(root)).toBe(true)
+    expect(document.activeElement).toBe(textarea)
+
+    root.remove()
   })
 })
