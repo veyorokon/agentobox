@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { render, screen, cleanup } from "@testing-library/react"
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react"
 import React from "react"
 
 import {
@@ -163,19 +163,62 @@ describe("CardActionStrip config-sync rendering", () => {
     renderStrip({ status: "save-error", message: "Network error" })
     expect(screen.getByText("Network error")).toBeTruthy()
     expect(screen.getByText("Retry")).toBeTruthy()
+    expect(screen.getByText("Dismiss")).toBeTruthy()
   })
 
   it("calls onSave when 'Save changes' button is clicked", () => {
     const onSave = vi.fn()
     renderStrip({ status: "unsaved" }, onSave)
-    screen.getByText("Save changes").click()
+    fireEvent.click(screen.getByText("Save changes"))
     expect(onSave).toHaveBeenCalledOnce()
   })
 
   it("calls onSave when 'Retry' button is clicked", () => {
     const onSave = vi.fn()
     renderStrip({ status: "save-error", message: "fail" }, onSave)
-    screen.getByText("Retry").click()
+    fireEvent.click(screen.getByText("Retry"))
     expect(onSave).toHaveBeenCalledOnce()
+  })
+
+  it("dismisses a save-error banner until the sync state changes", async () => {
+    const view = renderStrip({ status: "save-error", message: "fail" })
+    fireEvent.click(screen.getByText("Dismiss"))
+    await waitFor(() => expect(screen.queryByText("fail")).toBeNull())
+
+    view.rerender(
+      React.createElement(CardActionStrip, {
+        items: [{ kind: "config-sync", syncState: { status: "save-error", message: "fail" } }],
+        onResolvePermission: noop,
+        onResolvePlan: noop,
+        onSave: noop,
+        onDismissSkill: noop,
+        onViewSkill: noop,
+      }),
+    )
+    expect(screen.queryByText("fail")).toBeNull()
+
+    view.rerender(
+      React.createElement(CardActionStrip, {
+        items: [{ kind: "config-sync", syncState: { status: "unsaved" } }],
+        onResolvePermission: noop,
+        onResolvePlan: noop,
+        onSave: noop,
+        onDismissSkill: noop,
+        onViewSkill: noop,
+      }),
+    )
+    expect(screen.getByText("Unsaved changes")).toBeTruthy()
+
+    view.rerender(
+      React.createElement(CardActionStrip, {
+        items: [{ kind: "config-sync", syncState: { status: "save-error", message: "fail" } }],
+        onResolvePermission: noop,
+        onResolvePlan: noop,
+        onSave: noop,
+        onDismissSkill: noop,
+        onViewSkill: noop,
+      }),
+    )
+    expect(screen.getByText("fail")).toBeTruthy()
   })
 })

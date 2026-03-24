@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Shield, FileText, AlertTriangle, BookOpen, X, CheckCircle2, Loader2 } from "lucide-react"
 import type { CardActionItem } from "@/lib/types"
 import { ActionButtonPair } from "@/components/feed/action-button-pair"
@@ -24,11 +24,34 @@ export function CardActionStrip({
   onViewSkill,
 }: CardActionStripProps) {
   const [stepIdx, setStepIdx] = useState(0)
+  const [dismissedSaveErrorKey, setDismissedSaveErrorKey] = useState<string | null>(null)
 
   if (items.length === 0) return null
 
-  const clamped = Math.min(stepIdx, items.length - 1)
-  const current = items[clamped]
+  const getSaveErrorKey = (item: CardActionItem): string | null =>
+    item.kind === "config-sync" && item.syncState.status === "save-error"
+      ? item.syncState.message || "Save failed"
+      : null
+
+  const visibleItems = useMemo(
+    () =>
+      items.filter(item => {
+        const saveErrorKey = getSaveErrorKey(item)
+        return !saveErrorKey || saveErrorKey !== dismissedSaveErrorKey
+      }),
+    [items, dismissedSaveErrorKey],
+  )
+
+  useEffect(() => {
+    if (!dismissedSaveErrorKey) return
+    const hasDismissedError = items.some(item => getSaveErrorKey(item) === dismissedSaveErrorKey)
+    if (!hasDismissedError) setDismissedSaveErrorKey(null)
+  }, [items, dismissedSaveErrorKey])
+
+  if (visibleItems.length === 0) return null
+
+  const clamped = Math.min(stepIdx, visibleItems.length - 1)
+  const current = visibleItems[clamped]
 
   return (
     <div className="border-t border-warning/20 bg-warning-subtle/10 px-3 py-1.5">
@@ -108,13 +131,24 @@ export function CardActionStrip({
             {onSave && (
               <button
                 type="button"
-                onClick={onSave}
+                onClick={() => {
+                  setDismissedSaveErrorKey(null)
+                  onSave()
+                }}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-accent border border-accent/30 hover:bg-accent/10 transition-colors shrink-0"
               >
                 <CheckCircle2 className="h-2.5 w-2.5" />
                 Retry
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setDismissedSaveErrorKey(getSaveErrorKey(current))}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-muted border border-border-subtle hover:bg-surface-raised/40 transition-colors shrink-0"
+            >
+              <X className="h-2.5 w-2.5" />
+              Dismiss
+            </button>
           </>
         )}
 
@@ -151,7 +185,7 @@ export function CardActionStrip({
 
         <StepperNav
           current={clamped}
-          total={items.length}
+          total={visibleItems.length}
           onPrev={() => setStepIdx(clamped - 1)}
           onNext={() => setStepIdx(clamped + 1)}
         />
