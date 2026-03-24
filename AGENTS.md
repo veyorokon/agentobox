@@ -347,6 +347,51 @@ Prefer, in roughly this order:
 
 Intuition is useful for generating hypotheses. It is not the final authority.
 
+### Gap Detection
+
+Gap detection is the disciplined practice of comparing explicit expectations to concrete observations.
+
+A gap exists when:
+- the expected contract says one thing
+- the observed evidence shows another
+
+This is not the same as vague discomfort or style preference.
+A gap is worth tracking when the mismatch affects:
+- contract validity
+- proof level
+- ownership
+- lifecycle behavior
+- operator understanding
+- naming/taxonomy accuracy
+
+In practice:
+- expectation is the currently assumed contract
+- observation is the evidence from reality
+- gap is the divergence between the two
+
+Preferred pattern:
+1. state the expected contract
+2. record the observed evidence
+3. name the gap explicitly
+4. describe the consequence
+5. identify the fix target
+6. state what proof closes the gap
+
+Template:
+- expected contract:
+- observed evidence:
+- gap:
+- consequence:
+- fix target:
+- closing proof:
+
+This matters because:
+- without explicit expectations, discrepancies stay vague
+- without concrete observations, expectations stay theoretical
+- without discipline, every mismatch becomes noise
+
+Good gap detection turns discrepancies into diagnosis signal.
+
 ### Proof Levels
 
 Not all proof is equal.
