@@ -25,12 +25,18 @@ type TerminalWindow = WindowRect & {
   id: string
   agentId: string
   fontSize: number
+  cellWidth?: number
+  cellHeight?: number
   z: number
   minimized: boolean
   maximized: boolean
   hidden: boolean
   lastRect?: WindowRect
 }
+
+const TITLEBAR_HEIGHT = 46
+const MIN_TERMINAL_COLS = 50
+const MIN_TERMINAL_ROWS = 7
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
@@ -64,20 +70,25 @@ function TerminalViewport({
   onActivate,
   fontSize,
   onFontSizeChange,
+  onMetricsChange,
 }: {
   agent: WorkbenchAgent
   active: boolean
   onActivate: () => void
   fontSize: number
   onFontSizeChange: (nextFontSize: number) => void
+  onMetricsChange: (metrics: { cols: number; rows: number; cellWidth: number; cellHeight: number }) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const authSentRef = useRef(false)
+  const renderReadyRef = useRef(false)
+  const pendingResizeFrameRef = useRef<number | null>(null)
   const fontSizeRef = useRef(fontSize)
   const onFontSizeChangeRef = useRef(onFontSizeChange)
+  const onMetricsChangeRef = useRef(onMetricsChange)
   const sizeRef = useRef({ cols: 120, rows: 34 })
 
   useEffect(() => {
@@ -87,6 +98,10 @@ function TerminalViewport({
   useEffect(() => {
     onFontSizeChangeRef.current = onFontSizeChange
   }, [onFontSizeChange])
+
+  useEffect(() => {
+    onMetricsChangeRef.current = onMetricsChange
+  }, [onMetricsChange])
 
   useEffect(() => {
     const host = hostRef.current
@@ -131,11 +146,25 @@ function TerminalViewport({
     terminal.open(host)
     terminal.writeln(`connecting ${agent.name}...`)
 
-    const sendResize = () => {
-      fitAddon.fit()
-      const cols = Math.max(40, terminal.cols)
-      const rows = Math.max(12, terminal.rows)
+    const syncGeometry = () => {
+      if (!renderReadyRef.current) return false
+      try {
+        fitAddon.fit()
+      } catch {
+        return false
+      }
+      const cols = Math.max(MIN_TERMINAL_COLS, terminal.cols || 0)
+      const rows = Math.max(MIN_TERMINAL_ROWS, terminal.rows || 0)
       sizeRef.current = { cols, rows }
+      const width = host.clientWidth
+      const height = host.clientHeight
+      if (width <= 0 || height <= 0) return false
+      onMetricsChangeRef.current({
+        cols,
+        rows,
+        cellWidth: width / cols,
+        cellHeight: height / rows,
+      })
       if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: "resize",
@@ -144,17 +173,43 @@ function TerminalViewport({
           rows,
         }))
       }
+      return true
+    }
+
+    const sendResize = () => {
+      if (syncGeometry()) return
+    }
+
+    const scheduleResize = () => {
+      if (pendingResizeFrameRef.current !== null) return
+      pendingResizeFrameRef.current = requestAnimationFrame(() => {
+        pendingResizeFrameRef.current = requestAnimationFrame(() => {
+          pendingResizeFrameRef.current = null
+          sendResize()
+        })
+      })
     }
 
     const token = getToken()
+    if (!token) {
+      terminal.writeln("[auth missing]")
+      terminalRef.current = terminal
+      return () => {
+        renderReadyRef.current = false
+        if (pendingResizeFrameRef.current !== null) {
+          cancelAnimationFrame(pendingResizeFrameRef.current)
+          pendingResizeFrameRef.current = null
+        }
+        fitAddonRef.current = null
+        terminal.dispose()
+        terminalRef.current = null
+      }
+    }
+
     const ws = new WebSocket(buildTerminalWsUrl(agent.id))
     wsRef.current = ws
 
     ws.addEventListener("open", () => {
-      if (!token) {
-        terminal.writeln("[auth missing]")
-        return
-      }
       sendResize()
       ws.send(JSON.stringify({
         type: "auth",
@@ -220,18 +275,31 @@ function TerminalViewport({
       return true
     })
 
+    const renderDisposable = terminal.onRender(() => {
+      if (renderReadyRef.current) return
+      renderReadyRef.current = true
+      scheduleResize()
+    })
+
     const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(sendResize)
+      if (!renderReadyRef.current) return
+      scheduleResize()
     })
     resizeObserver.observe(host)
-    requestAnimationFrame(sendResize)
+    scheduleResize()
 
     terminalRef.current = terminal
 
     return () => {
       const wasAuthenticated = authSentRef.current
       authSentRef.current = false
+      renderReadyRef.current = false
+      if (pendingResizeFrameRef.current !== null) {
+        cancelAnimationFrame(pendingResizeFrameRef.current)
+        pendingResizeFrameRef.current = null
+      }
       dataDisposable.dispose()
+      renderDisposable.dispose()
       resizeObserver.disconnect()
       if (wasAuthenticated && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "close", terminal_id: "main" }))
@@ -248,24 +316,36 @@ function TerminalViewport({
     const terminal = terminalRef.current
     const host = hostRef.current
     const fitAddon = fitAddonRef.current
-    if (!terminal || !host || !fitAddon) return
+    if (!terminal || !host || !fitAddon || !renderReadyRef.current) return
     terminal.options.fontSize = fontSize
     requestAnimationFrame(() => {
-      const width = host.clientWidth
-      const height = host.clientHeight
-      if (width === 0 || height === 0) return
-      fitAddon.fit()
-      const cols = Math.max(40, terminal.cols)
-      const rows = Math.max(12, terminal.rows)
+      requestAnimationFrame(() => {
+        const width = host.clientWidth
+        const height = host.clientHeight
+        if (width === 0 || height === 0) return
+        try {
+          fitAddon.fit()
+      } catch {
+        return
+      }
+      const cols = Math.max(MIN_TERMINAL_COLS, terminal.cols || 0)
+      const rows = Math.max(MIN_TERMINAL_ROWS, terminal.rows || 0)
       sizeRef.current = { cols, rows }
+      onMetricsChangeRef.current({
+        cols,
+        rows,
+        cellWidth: width / cols,
+        cellHeight: height / rows,
+      })
       if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: "resize",
-          terminal_id: "main",
-          cols,
+            terminal_id: "main",
+            cols,
           rows,
         }))
       }
+      })
     })
   }, [fontSize])
 
@@ -354,6 +434,26 @@ export function TerminalWorkbenchPrototype({
         ? { ...window, fontSize: clamp(nextFontSize, 13, 24) }
         : window
     )))
+  }
+
+  const setWindowMetrics = (
+    windowId: string,
+    metrics: { cols: number; rows: number; cellWidth: number; cellHeight: number },
+  ) => {
+    setWindows(prev => prev.map(window => {
+      if (window.id !== windowId) return window
+      if (
+        window.cellWidth === metrics.cellWidth &&
+        window.cellHeight === metrics.cellHeight
+      ) {
+        return window
+      }
+      return {
+        ...window,
+        cellWidth: metrics.cellWidth,
+        cellHeight: metrics.cellHeight,
+      }
+    }))
   }
 
   const closeWindow = (windowId: string) => {
@@ -446,6 +546,27 @@ export function TerminalWorkbenchPrototype({
             ...current,
             x: clamp(origin.x + dx, minX, maxX),
             y: clamp(origin.y + dy, minY, maxY),
+          }
+        }
+        if (current.cellWidth && current.cellHeight) {
+          const rawWidth = origin.width + dx
+          const rawHeight = origin.height + dy
+          const maxWidth = canvasRect.width - current.x + current.width - 80
+          const maxHeight = canvasRect.height - current.y + current.height - 48
+          const cols = clamp(
+            Math.round(rawWidth / current.cellWidth),
+            MIN_TERMINAL_COLS,
+            Math.max(MIN_TERMINAL_COLS, Math.floor(maxWidth / current.cellWidth)),
+          )
+          const rows = clamp(
+            Math.round((rawHeight - TITLEBAR_HEIGHT) / current.cellHeight),
+            MIN_TERMINAL_ROWS,
+            Math.max(MIN_TERMINAL_ROWS, Math.floor((maxHeight - TITLEBAR_HEIGHT) / current.cellHeight)),
+          )
+          return {
+            ...current,
+            width: Math.max(cols * current.cellWidth, MIN_TERMINAL_COLS * current.cellWidth),
+            height: Math.max(rows * current.cellHeight + TITLEBAR_HEIGHT, MIN_TERMINAL_ROWS * current.cellHeight + TITLEBAR_HEIGHT),
           }
         }
         return {
@@ -567,13 +688,14 @@ export function TerminalWorkbenchPrototype({
 
                 {!window.minimized && (
                   <>
-                    <div className="relative h-[calc(100%-42px)]">
+                  <div className="relative h-[calc(100%-42px)]">
                       <TerminalViewport
                         agent={agent}
                         active={active}
                         onActivate={() => focusWindow(window.id)}
                         fontSize={window.fontSize}
                         onFontSizeChange={(nextFontSize) => setWindowFontSize(window.id, nextFontSize)}
+                        onMetricsChange={(metrics) => setWindowMetrics(window.id, metrics)}
                       />
                     </div>
 
