@@ -538,6 +538,7 @@ def test_claude_code_cli_executor_passes_resume_session_id_to_cli():
             model="claude-opus-4-6",
             permission_mode="bypassPermissions",
             resume_session_id="sess-resume-123",
+            mcp_config_path="/home/agent/.mcp.json",
             env={"PATH": ""},
         ),
         popen_factory=_popen,
@@ -559,6 +560,8 @@ def test_claude_code_cli_executor_passes_resume_session_id_to_cli():
         "bypassPermissions",
         "--setting-sources",
         "user",
+        "--mcp-config",
+        "/home/agent/.mcp.json",
         "--resume",
         "sess-resume-123",
     ]

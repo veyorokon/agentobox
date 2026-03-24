@@ -71,6 +71,7 @@ class ClaudeCodeExecutorConfig:
     permission_mode: str = "bypassPermissions"
     cwd: Path = Path.cwd()
     resume_session_id: str = ""
+    mcp_config_path: str = ""
     allowed_tools: tuple[str, ...] = ()
     mcp_servers: dict[str, object] = field(default_factory=dict)
     extra_args: dict[str, str | None] = field(default_factory=dict)
@@ -464,6 +465,8 @@ def _build_cli_args(config: ClaudeCodeExecutorConfig, prompt_text: str) -> list[
         "--setting-sources",
         ",".join(config.setting_sources),
     ]
+    if config.mcp_config_path:
+        args.extend(["--mcp-config", config.mcp_config_path])
     if config.resume_session_id:
         args.extend(["--resume", config.resume_session_id])
     if config.allowed_tools:

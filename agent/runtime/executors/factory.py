@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.contracts.execution import ExecutorKind
+from agent.provisioning.manifest import CANONICAL_PATHS
 from agent.runtime.config import RuntimeConfig
 from agent.runtime.executors.claude_code import ClaudeCodeCLIExecutor, ClaudeCodeExecutorConfig
 from agent.runtime.runner import EchoExecutor, TaskExecutor
@@ -14,12 +15,16 @@ def build_executor(config: RuntimeConfig, *, resume_session_id: str | None = Non
     if config.executor is ExecutorKind.ECHO:
         return EchoExecutor()
     if config.executor is ExecutorKind.CLAUDE_CODE:
+        mcp_config_path = ""
+        if (config.root_dir / CANONICAL_PATHS["mcp_config"]).exists():
+            mcp_config_path = f"/{CANONICAL_PATHS['mcp_config']}"
         return ClaudeCodeCLIExecutor(
             ClaudeCodeExecutorConfig(
                 model=_env("CLAUDE_MODEL"),
                 permission_mode=_translate_permission_mode(_env("AGENT_MODE")),
                 cwd=config.root_dir / "workspace",
                 resume_session_id=resume_session_id if resume_session_id is not None else _env("RESUME_SESSION_ID"),
+                mcp_config_path=mcp_config_path,
                 allowed_tools=_parse_allowed_tools(_env("ALLOWED_TOOLS")),
                 env=_executor_env(),
             ),
