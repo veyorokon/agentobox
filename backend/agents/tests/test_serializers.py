@@ -222,3 +222,49 @@ async def test_serialize_agent_derives_preview_contract():
     assert unavailable_payload["previewRuntimeId"] == ""
     assert errored_payload["previewState"] == "error"
     assert errored_payload["previewRuntimeId"] == ""
+
+
+@pytest.mark.django_db
+@pytest.mark.asyncio
+async def test_serialize_agent_preserves_canonical_mcp_config():
+    from django.contrib.auth import get_user_model
+
+    from agents.serializers import serialize_agent
+    from projects.models import Project
+
+    User = get_user_model()
+    user = await sync_to_async(User.objects.create_user, thread_sensitive=True)(
+        username="test_serializer_mcp_config", password="test"
+    )
+    project = await sync_to_async(Project.objects.create, thread_sensitive=True)(
+        name="Serializer MCP Config", owner=user
+    )
+    agent = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="serializer-mcp-agent",
+        project=project,
+        runtime="docker",
+        status=AgentStatus.IDLE,
+        agent_type="claude-code",
+        mcp_servers={
+            "io.github.domdomegg/computer-use-mcp": {
+                "command": "npx",
+                "args": ["-y", "computer-use-mcp@1.7.1"],
+                "env": {},
+                "source": "registry",
+                "registry_name": "io.github.domdomegg/computer-use-mcp",
+                "registry_type": "npm",
+            },
+            "custom-local": {
+                "command": "python",
+                "args": ["-m", "my_mcp"],
+            },
+        },
+    )
+
+    payload = await serialize_agent(agent)
+    assert set(payload["mcpServers"]) == {
+        "io.github.domdomegg/computer-use-mcp",
+        "custom-local",
+    }
+    assert payload["mcpConfig"]["io.github.domdomegg/computer-use-mcp"]["source"] == "registry"
+    assert payload["mcpConfig"]["custom-local"]["command"] == "python"

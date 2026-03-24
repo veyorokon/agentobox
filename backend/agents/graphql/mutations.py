@@ -30,16 +30,31 @@ from agents.graphql.types import AccountSecretType, AgentFeedbackType, AgentTask
 log = structlog.get_logger("abox.graphql")
 
 
-def _resolve_registry_mcp_names_or_error(adapter, names: list[str]) -> dict:
+async def _resolve_registry_mcp_names_or_error(adapter, names: list[str]) -> dict:
     """Resolve registry MCP names or fail loudly if any are unsupported.
 
-    The dashboard currently lets users search a broader MCP registry than the
-    bundled runtime actually supports. Silent dropping here creates a false
-    successful save and leaves the UI waiting forever for a state that can
-    never round-trip back from the backend.
+    Resolution order:
+    1. bundled adapter registry (fast path)
+    2. official public registry, deriving launch specs when possible
     """
-    resolved = adapter.resolve_mcp_servers(names)
+    from agents.services.mcp_registry import resolve_public_registry_mcp_servers
+
+    bundled = adapter.resolve_mcp_servers(names)
+    resolved = {}
+    for name, config in bundled.items():
+        resolved[name] = {
+            **config,
+            "source": "bundled",
+            "registry_name": name,
+            "registry_type": "bundled",
+            "transport_type": config.get("type", "stdio"),
+        }
+
     unresolved = [name for name in names if name not in resolved]
+    if unresolved:
+        public, unresolved = await resolve_public_registry_mcp_servers(unresolved)
+        resolved.update(public)
+
     if unresolved:
         names_text = ", ".join(sorted(unresolved))
         raise ValueError(f"Unsupported MCP server(s) for this runtime: {names_text}")
@@ -206,7 +221,7 @@ class AgentMutation:
         if input.mcp_servers:
             if isinstance(input.mcp_servers, list):
                 adapter = get_adapter(input.agent_type)
-                mcp_config = _resolve_registry_mcp_names_or_error(adapter, input.mcp_servers)
+                mcp_config = await _resolve_registry_mcp_names_or_error(adapter, input.mcp_servers)
             elif isinstance(input.mcp_servers, dict):
                 mcp_config = input.mcp_servers
 
@@ -516,7 +531,7 @@ class AgentMutation:
         if input.mcp_registry_names is not None or input.mcp_custom_servers is not None:
             resolved = {}
             if input.mcp_registry_names is not None:
-                resolved = _resolve_registry_mcp_names_or_error(adapter, input.mcp_registry_names)
+                resolved = await _resolve_registry_mcp_names_or_error(adapter, input.mcp_registry_names)
             if input.mcp_custom_servers and isinstance(input.mcp_custom_servers, dict):
                 resolved.update(input.mcp_custom_servers)
             mcp_servers = resolved

@@ -10,7 +10,7 @@ import {
   ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Agent, ConfigSyncState } from "@/lib/types"
+import type { Agent, ConfigSyncState, McpServerConfig } from "@/lib/types"
 import { TagInput } from "@/components/shared/tag-input"
 import { Collapsible } from "@/components/ui/collapsible"
 import {
@@ -33,6 +33,33 @@ export type ConfigFields = {
   instructions: string
   tags: string[]
   mcpNames: string[]
+  mcpCustomServers: Record<string, McpServerConfig>
+}
+
+function splitMcpConfig(
+  mcpConfig: Record<string, McpServerConfig> | undefined,
+  fallbackNames: string[] = [],
+): { registryNames: string[]; customServers: Record<string, McpServerConfig> } {
+  const registryNames: string[] = []
+  const customServers: Record<string, McpServerConfig> = {}
+  const seen = new Set<string>()
+
+  for (const [name, config] of Object.entries(mcpConfig ?? {})) {
+    seen.add(name)
+    if (config?.source === "registry" || config?.source === "bundled") {
+      registryNames.push(name)
+      continue
+    }
+    customServers[name] = config
+  }
+
+  for (const name of fallbackNames) {
+    if (seen.has(name)) continue
+    registryNames.push(name)
+  }
+
+  registryNames.sort()
+  return { registryNames, customServers }
 }
 
 /** Single extraction point for all three comparison surfaces. */
@@ -42,12 +69,25 @@ export function extractConfigFields(source: {
   tags: string[]
   mcpServers?: string[]
   mcpNames?: string[]
+  mcpConfig?: Record<string, McpServerConfig>
+  mcpCustomServers?: Record<string, McpServerConfig>
 }): ConfigFields {
+  if (source.mcpNames || source.mcpCustomServers) {
+    return {
+      model: source.model,
+      instructions: source.instructions,
+      tags: source.tags,
+      mcpNames: [...(source.mcpNames ?? [])].sort(),
+      mcpCustomServers: source.mcpCustomServers ?? {},
+    }
+  }
+  const { registryNames, customServers } = splitMcpConfig(source.mcpConfig, source.mcpServers ?? [])
   return {
     model: source.model,
     instructions: source.instructions,
     tags: source.tags,
-    mcpNames: source.mcpServers ?? source.mcpNames ?? [],
+    mcpNames: registryNames,
+    mcpCustomServers: customServers,
   }
 }
 
@@ -56,7 +96,8 @@ function fieldsEqual(a: ConfigFields, b: ConfigFields): boolean {
     a.model === b.model &&
     a.instructions === b.instructions &&
     JSON.stringify(a.tags) === JSON.stringify(b.tags) &&
-    JSON.stringify(a.mcpNames) === JSON.stringify(b.mcpNames)
+    JSON.stringify(a.mcpNames) === JSON.stringify(b.mcpNames) &&
+    JSON.stringify(a.mcpCustomServers) === JSON.stringify(b.mcpCustomServers)
   )
 }
 
@@ -118,8 +159,12 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
   const [instructions, setInstructions] = useState(agent.instructions)
   const [agentTags, setAgentTags] = useState(agent.tags)
   // MCP state — registry names (resolved by backend) + custom configs (command+args)
-  const [mcpRegistryNames, setMcpRegistryNames] = useState<string[]>(agent.mcpServers)
-  const [mcpCustomServers, setMcpCustomServers] = useState<Record<string, { command: string; args: string[] }>>({})
+  const initialMcpState = useMemo(
+    () => splitMcpConfig(agent.mcpConfig, agent.mcpServers),
+    [agent.id],
+  )
+  const [mcpRegistryNames, setMcpRegistryNames] = useState<string[]>(initialMcpState.registryNames)
+  const [mcpCustomServers, setMcpCustomServers] = useState<Record<string, McpServerConfig>>(initialMcpState.customServers)
 
   // MCP search state
   const [showMcpSearch, setShowMcpSearch] = useState(false)
@@ -134,11 +179,23 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
   // Combined display list: registry names + custom server names
   const allMcpNames = [...mcpRegistryNames, ...Object.keys(mcpCustomServers)]
 
+  useEffect(() => {
+    const next = splitMcpConfig(agent.mcpConfig, agent.mcpServers)
+    setMcpRegistryNames(next.registryNames)
+    setMcpCustomServers(next.customServers)
+  }, [agent.id])
+
   // --- Config sync state machine ---
   const [syncState, setSyncState] = useState<ConfigSyncState>({ status: "in-sync" })
   const lastSubmittedConfigRef = useRef<ConfigFields | null>(null)
 
-  const localFields: ConfigFields = { model, instructions, tags: agentTags, mcpNames: allMcpNames }
+  const localFields: ConfigFields = {
+    model,
+    instructions,
+    tags: agentTags,
+    mcpNames: [...mcpRegistryNames].sort(),
+    mcpCustomServers,
+  }
   const serverFields = extractConfigFields(agent)
 
   useEffect(() => {
@@ -175,7 +232,11 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
     if (syncState.status === "in-sync") return
 
     lastSubmittedConfigRef.current = extractConfigFields({
-      model, instructions, tags: agentTags, mcpServers: allMcpNames,
+      model,
+      instructions,
+      tags: agentTags,
+      mcpServers: [...mcpRegistryNames].sort(),
+      mcpConfig: mcpCustomServers,
     })
     setSyncState({ status: "saving" })
 
@@ -183,14 +244,16 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
       if (instructions !== agent.instructions) {
         await updateInstructions(agent.id, instructions)
       }
-      const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, { command: string; args: string[] }> } = {}
+      const configDelta: { model?: string; tags?: string[]; mcpRegistryNames?: string[]; mcpCustomServers?: Record<string, McpServerConfig> } = {}
       if (model !== agent.model) configDelta.model = model
       if (JSON.stringify(agentTags) !== JSON.stringify(agent.tags)) configDelta.tags = agentTags
-      if (JSON.stringify(allMcpNames) !== JSON.stringify(agent.mcpServers)) {
+      const currentServerFields = extractConfigFields(agent)
+      if (
+        JSON.stringify([...mcpRegistryNames].sort()) !== JSON.stringify(currentServerFields.mcpNames)
+        || JSON.stringify(mcpCustomServers) !== JSON.stringify(currentServerFields.mcpCustomServers)
+      ) {
         configDelta.mcpRegistryNames = mcpRegistryNames
-        if (Object.keys(mcpCustomServers).length > 0) {
-          configDelta.mcpCustomServers = mcpCustomServers
-        }
+        configDelta.mcpCustomServers = mcpCustomServers
       }
       if (Object.keys(configDelta).length > 0) {
         await updateConfig(agent.id, configDelta)
@@ -201,7 +264,7 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
       setSyncState({ status: "save-error", message: err.message || "Failed to save" })
       toast.error(err.message || "Failed to save")
     }
-  }, [syncState.status, agent.id, agent.instructions, agent.model, agent.tags, agent.mcpServers, instructions, model, agentTags, allMcpNames, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
+  }, [syncState.status, agent.id, agent.instructions, agent.model, agent.tags, agent.mcpServers, agent.mcpConfig, instructions, model, agentTags, mcpRegistryNames, mcpCustomServers, updateInstructions, updateConfig])
 
   useImperativeHandle(ref, () => ({
     saveChanges: handleSaveChanges,

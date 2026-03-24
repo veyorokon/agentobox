@@ -17,7 +17,7 @@ import {
 } from "@/lib/graphql/mutations/agents"
 import { optimisticAgentField } from "@/lib/graphql/cache-ops"
 import { createLogger } from "@/lib/logger"
-import type { Agent, AttentionLevel } from "@/lib/types"
+import type { Agent, AttentionLevel, McpServerConfig } from "@/lib/types"
 
 /* ================================================================== */
 /*  AGENT HOOKS                                                         */
@@ -197,7 +197,7 @@ export function useUpdateAgentConfig() {
     role?: string
     tags?: string[]
     mcpRegistryNames?: string[]
-    mcpCustomServers?: Record<string, { command: string; args: string[] }>
+    mcpCustomServers?: Record<string, McpServerConfig>
   }) => {
     await mutate({
       variables: { input: { agentId, ...config } },

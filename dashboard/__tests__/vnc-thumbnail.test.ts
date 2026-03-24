@@ -59,6 +59,7 @@ const baseAgent: Agent = {
   computeSeconds: 0,
   instructions: "",
   mcpServers: [],
+  mcpConfig: {},
   runtime: "docker",
   workspacePath: "/workspace",
   tags: [],

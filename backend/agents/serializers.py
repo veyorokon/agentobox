@@ -231,14 +231,17 @@ async def serialize_agent(agent) -> dict:
         for a in attempts_raw
     ]
 
-    # MCP servers: dict → list of keys
+    # MCP servers: dict → list of keys + canonical config payload
     mcp = agent.mcp_servers
     if isinstance(mcp, dict):
         mcp_list = list(mcp.keys())
+        mcp_config = mcp
     elif isinstance(mcp, list):
         mcp_list = mcp
+        mcp_config = {}
     else:
         mcp_list = []
+        mcp_config = {}
 
     if task_progress:
         task_progress["__typename"] = "TaskProgressType"
@@ -271,6 +274,7 @@ async def serialize_agent(agent) -> dict:
         "allowedTools": agent.allowed_tools if isinstance(agent.allowed_tools, list) else [],
         "workspacePath": agent.workspace_path,
         "mcpServers": mcp_list,
+        "mcpConfig": mcp_config,
         "triggers": agent.triggers if isinstance(agent.triggers, list) else [],
         "computeSeconds": agent.compute_seconds or 0,
         "taskProgress": task_progress,

@@ -5,6 +5,7 @@ not from stale model columns. Also verifies that config mutations write the
 expected agent-private files to the machine volume.
 """
 
+import json
 import pytest
 from unittest.mock import AsyncMock, patch, call
 from asgiref.sync import sync_to_async
@@ -320,7 +321,7 @@ class TestConfigMutationFileWrites:
                 variable_values={
                     "input": {
                         "agentId": str(agent.id),
-                        "mcpRegistryNames": ["io.github.domdomegg/computer-use-mcp"],
+                        "mcpRegistryNames": ["io.github.example/does-not-exist-mcp"],
                     },
                 },
                 context_value={"request": request},
@@ -329,5 +330,71 @@ class TestConfigMutationFileWrites:
         assert result.data is None or result.data["updateAgentConfig"] is None
         assert result.errors is not None
         assert "Unsupported MCP server(s) for this runtime" in str(result.errors[0])
-        assert "io.github.domdomegg/computer-use-mcp" in str(result.errors[0])
+        assert "io.github.example/does-not-exist-mcp" in str(result.errors[0])
         mock_writer.write.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_agent_config_derives_public_registry_stdio_package(self, agent_with_sandbox):
+        """Public registry MCPs should resolve into canonical launch config."""
+        from schema import schema
+
+        mock_writer = AsyncMock()
+        agent = agent_with_sandbox
+
+        request = RequestFactory().post("/graphql")
+        request.user = await sync_to_async(lambda: agent.project.owner)()
+
+        derived = {
+            "io.github.domdomegg/computer-use-mcp": {
+                "command": "npx",
+                "args": ["-y", "computer-use-mcp@1.7.1"],
+                "env": {},
+                "source": "registry",
+                "registry_name": "io.github.domdomegg/computer-use-mcp",
+                "registry_type": "npm",
+                "package_identifier": "computer-use-mcp",
+                "package_version": "1.7.1",
+                "runtime_hint": "npx",
+                "transport_type": "stdio",
+            },
+        }
+
+        with patch(
+            "agents.services.machine_write.get_machine_writer",
+            return_value=mock_writer,
+        ), patch(
+            "agents.services.mcp_registry.resolve_public_registry_mcp_servers",
+            new_callable=AsyncMock,
+            return_value=(derived, []),
+        ), patch(
+            "agents.services.relay.update_volume_and_reload",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "agents.services.broadcast.broadcast_agent_update",
+            new_callable=AsyncMock,
+        ):
+            result = await schema.execute(
+                """
+                mutation ($input: UpdateAgentConfigInput!) {
+                    updateAgentConfig(input: $input) {
+                        id
+                    }
+                }
+                """,
+                variable_values={
+                    "input": {
+                        "agentId": str(agent.id),
+                        "mcpRegistryNames": ["io.github.domdomegg/computer-use-mcp"],
+                    },
+                },
+                context_value={"request": request},
+            )
+
+        assert result.errors is None, f"Mutation errors: {result.errors}"
+        mcp_call = next(c for c in mock_writer.write.call_args_list if c[0][0] == "home/agent/.mcp.json")
+        mcp_config = json.loads(mcp_call[0][1])
+        entry = mcp_config["mcpServers"]["io.github.domdomegg/computer-use-mcp"]
+        assert entry["type"] == "stdio"
+        assert entry["command"] == "npx"
+        assert entry["args"] == ["-y", "computer-use-mcp@1.7.1"]

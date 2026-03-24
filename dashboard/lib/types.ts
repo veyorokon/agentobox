@@ -52,11 +52,30 @@ export type Agent = {
   computeSeconds: number
   instructions: string
   mcpServers: string[]
+  mcpConfig: Record<string, McpServerConfig>
   runtime: "docker" | "modal"
   workspacePath: string
   tags: string[]
   mode: "auto" | "plan" | "supervised"
   tasks: AgentTask[]
+}
+
+export type McpServerConfig = {
+  type?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  headers?: Record<string, string>
+  oauth?: unknown
+  url?: string
+  source?: string
+  registry_name?: string
+  registry_type?: string
+  package_identifier?: string
+  package_version?: string
+  runtime_hint?: string
+  transport_type?: string
+  secrets?: string[]
 }
 
 export type RecipientEntry =

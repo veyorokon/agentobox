@@ -28,6 +28,7 @@ const base: ConfigFields = {
   instructions: "do the thing",
   tags: ["alpha"],
   mcpNames: ["playwright"],
+  mcpCustomServers: {},
 }
 
 function withOverrides(overrides: Partial<ConfigFields>): ConfigFields {
@@ -94,19 +95,20 @@ describe("extractConfigFields", () => {
   it("extracts from agent-shaped object (mcpServers)", () => {
     const agent = { model: "m", instructions: "i", tags: ["t"], mcpServers: ["s"] }
     const result = extractConfigFields(agent)
-    expect(result).toEqual({ model: "m", instructions: "i", tags: ["t"], mcpNames: ["s"] })
+    expect(result).toEqual({ model: "m", instructions: "i", tags: ["t"], mcpNames: ["s"], mcpCustomServers: {} })
   })
 
   it("extracts from local-shaped object (mcpNames)", () => {
-    const local = { model: "m", instructions: "i", tags: ["t"], mcpNames: ["s"] }
+    const local = { model: "m", instructions: "i", tags: ["t"], mcpNames: ["s"], mcpCustomServers: {} }
     const result = extractConfigFields(local)
-    expect(result).toEqual({ model: "m", instructions: "i", tags: ["t"], mcpNames: ["s"] })
+    expect(result).toEqual({ model: "m", instructions: "i", tags: ["t"], mcpNames: ["s"], mcpCustomServers: {} })
   })
 
   it("defaults mcpNames to empty array when neither field exists", () => {
     const minimal = { model: "m", instructions: "i", tags: [] }
     const result = extractConfigFields(minimal)
     expect(result.mcpNames).toEqual([])
+    expect(result.mcpCustomServers).toEqual({})
   })
 })
 

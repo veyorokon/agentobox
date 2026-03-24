@@ -58,6 +58,7 @@ export const GET_AGENTS = gql`
       tags
       instructions
       mcpServers
+      mcpConfig
       runtime
       workspacePath
       triggers

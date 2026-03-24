@@ -330,6 +330,13 @@ class AgentType:
             return list(self.mcp_servers.keys())
         return self.mcp_servers if isinstance(self.mcp_servers, list) else []
 
+    @strawberry.field
+    def mcp_config(self) -> JSON:
+        """Canonical MCP config dict used by runtime provisioning."""
+        if isinstance(self.mcp_servers, dict):
+            return self.mcp_servers
+        return {}
+
     @strawberry_django.field
     async def task_progress(self) -> TaskProgressType | None:
         def _count():

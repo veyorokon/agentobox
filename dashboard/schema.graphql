@@ -55,6 +55,7 @@ type AgentType {
   allowedTools: [String!]!
   workspacePath: String!
   mcpServers: [String!]!
+  mcpConfig: JSON!
   taskProgress: TaskProgressType
   lifecycleAttempts: [LifecycleAttemptType!]!
   tasks: [AgentTaskType!]!
