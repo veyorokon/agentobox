@@ -4,6 +4,7 @@ import { GraphQLProvider } from "@/lib/graphql/provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ToastContainer } from "@/components/ui/toast-container"
 import { buildThemeInitScript, buildThemeStyleObject, DEFAULT_THEME } from "@/lib/theme-registry"
+import "@xterm/xterm/css/xterm.css"
 import "./globals.css"
 
 export const metadata: Metadata = {
