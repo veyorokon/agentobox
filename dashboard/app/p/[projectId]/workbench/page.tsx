@@ -1,17 +1,18 @@
 "use client"
 
 import { useEffect } from "react"
-import { useParams, useSearchParams } from "next/navigation"
+import { useParams, useSearchParams, useRouter } from "next/navigation"
 import { useQuery } from "@apollo/client/react"
 import { GET_PROJECT } from "@/lib/graphql/queries/projects"
 import { GET_AGENTS } from "@/lib/graphql/queries/agents"
 import { useThemeStore } from "@/lib/stores/theme"
-import { TerminalWorkbench, type WorkbenchAgent } from "@/components/workbench/terminal-workbench"
+import { TerminalWorkbenchPrototype, type WorkbenchAgent } from "@/components/workbench/terminal-workbench-prototype"
 import { normalizeRequestedAgentIds } from "@/components/workbench/workbench-layout"
 
 export default function ProjectWorkbenchPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const syncTheme = useThemeStore((s) => s.syncTheme)
   const { data } = useQuery<{
     project: {
@@ -44,9 +45,17 @@ export default function ProjectWorkbenchPage() {
   const initialAgentIds = normalizeRequestedAgentIds(searchParams.getAll("agentId"))
 
   return (
-    <TerminalWorkbench
+    <TerminalWorkbenchPrototype
       agents={agentsData?.agents ?? []}
       initialAgentIds={initialAgentIds}
+      onCloseAgent={(agentId) => {
+        const next = new URLSearchParams(searchParams.toString())
+        const remaining = normalizeRequestedAgentIds(next.getAll("agentId")).filter(value => value !== agentId)
+        next.delete("agentId")
+        for (const value of remaining) next.append("agentId", value)
+        const query = next.toString()
+        router.replace(query ? `/p/${projectId}/workbench?${query}` : `/p/${projectId}/workbench`)
+      }}
     />
   )
 }

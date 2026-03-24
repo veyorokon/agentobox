@@ -51,10 +51,13 @@ export function TerminalPane({
   agent,
   active,
   onActivate,
+  showHeader = true,
 }: {
   agent: PaneAgent
   active: boolean
   onActivate: () => void
+  /** Show the built-in header. Set false when the parent provides its own chrome. */
+  showHeader?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -290,16 +293,18 @@ export function TerminalPane({
       className="flex h-full flex-col"
       onMouseDown={onActivate}
     >
-      {/* Header — outside terminal container */}
-      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[#3a3f4b] bg-[#252830] px-3">
-        <span
-          className="h-2 w-2 shrink-0 rounded-full"
-          style={{ backgroundColor: statusDot(agent.lifecycleStatus) }}
-        />
-        <span className="truncate font-mono text-[11px] font-medium text-[#9aa3b0]">
-          {agent.name}
-        </span>
-      </div>
+      {/* Header — outside terminal container. Hidden when parent provides its own chrome. */}
+      {showHeader && (
+        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[#3a3f4b] bg-[#252830] px-3">
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: statusDot(agent.lifecycleStatus) }}
+          />
+          <span className="truncate font-mono text-[11px] font-medium text-[#9aa3b0]">
+            {agent.name}
+          </span>
+        </div>
+      )}
 
       {/* Terminal container — owns its rectangle completely */}
       <div className="relative flex-1 overflow-hidden">

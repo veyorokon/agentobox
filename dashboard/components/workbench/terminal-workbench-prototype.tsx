@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { FitAddon, Terminal, init as initGhostty } from "ghostty-web"
 import { Minus } from "lucide-react"
 import { getToken } from "@/lib/auth"
+import { TerminalPane } from "@/components/workbench/terminal-pane"
 import {
   buildInitialWorkbenchWindows,
   gridWindowHeight,
@@ -746,18 +747,14 @@ export function TerminalWorkbenchPrototype({
                 {!window.minimized && (
                   <>
                     <div
-                      className="relative"
+                      className="relative overflow-hidden"
                       style={{ height: window.height - WORKBENCH_TITLEBAR_HEIGHT }}
                     >
-                      <TerminalViewport
+                      <TerminalPane
                         agent={agent}
                         active={active}
                         onActivate={() => focusWindow(window.id)}
-                        fontSize={window.fontSize}
-                        viewportWidth={window.width}
-                        viewportHeight={window.height - WORKBENCH_TITLEBAR_HEIGHT}
-                        onFontSizeChange={(nextFontSize) => setWindowFontSize(window.id, nextFontSize)}
-                        onMetricsChange={(metrics) => setWindowMetrics(window.id, metrics)}
+                        showHeader={false}
                       />
                     </div>
 
