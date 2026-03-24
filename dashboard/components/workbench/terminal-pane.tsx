@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState } from "react"
 import { FitAddon, Terminal, init as initGhostty } from "ghostty-web"
 import { getToken } from "@/lib/auth"
 import {
@@ -75,31 +75,58 @@ export function TerminalPane({
   const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sizeRef = useRef({ cols: 120, rows: 34 })
   const scheduleResizeRef = useRef<(() => void) | null>(null)
+  const commitResizeRef = useRef<(() => boolean) | null>(null)
   const [reflowing, setReflowing] = useState(false)
   const reflowingRef = useRef(false)
   const onFrameDuringReflowRef = useRef<(() => void) | null>(null)
+  const reflowFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prevFrozenRef = useRef(frozen)
 
-  // Keep frozen ref in sync with prop
-  useEffect(() => { frozenRef.current = frozen }, [frozen])
+  const clearReflow = () => {
+    if (reflowFallbackRef.current !== null) {
+      clearTimeout(reflowFallbackRef.current)
+      reflowFallbackRef.current = null
+    }
+    onFrameDuringReflowRef.current = null
+    reflowingRef.current = false
+    setReflowing(false)
+  }
 
-  // On unfreeze: enter reflow state, send resize, wait for first frame back
   useEffect(() => {
-    if (frozen) return
-    if (!reflowingRef.current && scheduleResizeRef.current) {
-      reflowingRef.current = true
-      setReflowing(true)
-      scheduleResizeRef.current()
-      // Callback cleared when the next frame arrives (see WS message handler).
-      // Safety fallback: clear reflow after 500ms even if no frame arrives.
-      const fallback = setTimeout(() => {
-        reflowingRef.current = false
-        setReflowing(false)
+    const wasFrozen = prevFrozenRef.current
+    prevFrozenRef.current = frozen
+    frozenRef.current = frozen
+
+    if (frozen) {
+      if (resizeDebounceRef.current !== null) {
+        clearTimeout(resizeDebounceRef.current)
+        resizeDebounceRef.current = null
+      }
+      return
+    }
+
+    if (!wasFrozen || !commitResizeRef.current) return
+
+    reflowingRef.current = true
+    setReflowing(true)
+    requestAnimationFrame(() => {
+      const sent = commitResizeRef.current?.() ?? false
+      if (!sent) {
+        clearReflow()
+        return
+      }
+      reflowFallbackRef.current = setTimeout(() => {
+        clearReflow()
       }, 500)
       onFrameDuringReflowRef.current = () => {
-        clearTimeout(fallback)
-        reflowingRef.current = false
-        setReflowing(false)
-        onFrameDuringReflowRef.current = null
+        clearReflow()
+      }
+    })
+    return () => {
+      if (frozen) return
+      if (reflowFallbackRef.current !== null) {
+        clearTimeout(reflowFallbackRef.current)
+        reflowFallbackRef.current = null
       }
     }
   }, [frozen])
@@ -130,11 +157,22 @@ export function TerminalPane({
     // Send resize to PTY (debounced, only if changed)
     const sendResizeToServer = () => {
       const { cols, rows } = sizeRef.current
-      if (!authSentRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+      if (!authSentRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false
       const last = lastSentSizeRef.current
-      if (last && last.cols === cols && last.rows === rows) return
+      if (last && last.cols === cols && last.rows === rows) return false
       lastSentSizeRef.current = { cols, rows }
       wsRef.current.send(JSON.stringify({ type: "resize", terminal_id: "main", cols, rows }))
+      return true
+    }
+
+    const commitResizeNow = () => {
+      if (frozenRef.current) return false
+      if (resizeDebounceRef.current !== null) {
+        clearTimeout(resizeDebounceRef.current)
+        resizeDebounceRef.current = null
+      }
+      if (!fitLocal()) return false
+      return sendResizeToServer()
     }
 
     // Schedule: fit locally in rAF, debounce WS send by 100ms.
@@ -150,6 +188,7 @@ export function TerminalPane({
       }, 100)
     }
     scheduleResizeRef.current = scheduleResize
+    commitResizeRef.current = commitResizeNow
 
     void ensureGhosttyInit().then(() => {
       if (disposed) return
@@ -296,10 +335,12 @@ export function TerminalPane({
       renderReadyRef.current = false
       wsReadyRef.current = false
       lastSentSizeRef.current = null
+      commitResizeRef.current = null
       if (resizeDebounceRef.current !== null) {
         clearTimeout(resizeDebounceRef.current)
         resizeDebounceRef.current = null
       }
+      clearReflow()
       dataDisposable?.dispose()
       resizeObserver?.disconnect()
       if (wasAuth && ws?.readyState === WebSocket.OPEN) {
