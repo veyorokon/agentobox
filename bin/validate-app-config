@@ -2,30 +2,28 @@
 """validate-app-config — validate and export APP_CONFIG + APP_SECRETS.
 
 Used by: .github/workflows/deploy-dev.yml, promote-prod.yml
-Contract: accepts config + secrets as JSON strings, validates required keys,
-          prints shell export statements to stdout.
+Contract: reads _APP_CONFIG and _APP_SECRETS from environment variables,
+          validates required keys, prints shell export statements to stdout.
 
 Usage:
-    eval "$(validate-app-config --config '{"DOMAIN":"..."}' --secrets '{"SECRET_KEY":"..."}')"
+    eval "$(python3 bin/validate-app-config)"
+
+Callers must set _APP_CONFIG and _APP_SECRETS as env vars before invoking.
+This avoids shell-quoting fragility from passing raw JSON as CLI args.
 """
 
-import argparse
 import json
+import os
 import sys
 
 REQUIRED_KEYS = ["DOMAIN"]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate and export APP_CONFIG + APP_SECRETS")
-    parser.add_argument("--config", default="", help="APP_CONFIG JSON string")
-    parser.add_argument("--secrets", default="", help="APP_SECRETS JSON string")
-    args = parser.parse_args()
-
     merged = {}
 
-    for label, raw in [("APP_CONFIG", args.config), ("APP_SECRETS", args.secrets)]:
-        raw = raw.strip()
+    for label, env_key in [("APP_CONFIG", "_APP_CONFIG"), ("APP_SECRETS", "_APP_SECRETS")]:
+        raw = os.environ.get(env_key, "").strip()
         if raw:
             try:
                 merged.update(json.loads(raw))

@@ -44,8 +44,11 @@ jobs:
       - name: Install backend deps
         run: uv --directory backend sync --no-dev
       - name: Validate APP_SECRETS + APP_CONFIG against AppConfig schema
+        env:
+          _APP_CONFIG: ${{ vars.APP_CONFIG }}
+          _APP_SECRETS: ${{ secrets.APP_SECRETS }}
         run: |
-          eval "$(python3 bin/validate-app-config --config '${{ vars.APP_CONFIG }}' --secrets '${{ secrets.APP_SECRETS }}')"
+          eval "$(python3 bin/validate-app-config)"
           uv --directory backend run python -c "from config.app_config import app_config; print('AppConfig OK — all required vars present')"
       - name: Validate dedicated workflow secrets
         env:
@@ -330,7 +333,11 @@ jobs:
       - name: Wait for backend startup
         run: |
           DOMAIN=$(echo '${{ vars.APP_CONFIG }}' | python3 -c "import json,sys; print(json.load(sys.stdin)['DOMAIN'])")
-          bash bin/wait-for-graphql "$DOMAIN"
+          for i in $(seq 1 30); do
+            curl -sf "https://${DOMAIN}/graphql" -H 'Content-Type: application/json' -d '{"query":"{ __typename }"}' && break
+            echo "  Waiting for backend... attempt $i/30"
+            sleep 5
+          done
       - name: Smoke test (HTTP surface)
         env:
           SMOKE_TEST_USER: ${{ fromJson(vars.APP_CONFIG).SMOKE_TEST_USER || 'demo' }}
