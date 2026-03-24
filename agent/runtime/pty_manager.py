@@ -119,10 +119,12 @@ class PtySession:
         os.write(self.master_fd, data.encode("utf-8", errors="ignore"))
 
     def resize(self, cols: int, rows: int) -> None:
-        if cols > 0:
-            self.cols = cols
-        if rows > 0:
-            self.rows = rows
+        cols = max(1, cols)
+        rows = max(1, rows)
+        if cols == self.cols and rows == self.rows:
+            return
+        self.cols = cols
+        self.rows = rows
         self._apply_winsize()
 
     def close(self) -> None:

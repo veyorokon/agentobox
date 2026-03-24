@@ -719,8 +719,8 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
                     action=TerminalAction.OPEN,
                     terminal_id=content.get("terminal_id", "main"),
                     program=program,
-                    cols=max(20, cols),
-                    rows=max(6, rows),
+                    cols=max(50, cols),
+                    rows=max(7, rows),
                 ),
             )
             if not accepted:
@@ -748,8 +748,8 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
                 TerminalCommand(
                     action=TerminalAction.RESIZE,
                     terminal_id=terminal_id,
-                    cols=max(20, int(content.get("cols", 120) or 120)),
-                    rows=max(6, int(content.get("rows", 34) or 34)),
+                    cols=max(50, int(content.get("cols", 120) or 120)),
+                    rows=max(7, int(content.get("rows", 34) or 34)),
                 ),
             )
             if not accepted:

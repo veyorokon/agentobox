@@ -108,11 +108,14 @@ function TerminalViewport({
   const authSentRef = useRef(false)
   const renderReadyRef = useRef(false)
   const pendingResizeFrameRef = useRef<number | null>(null)
+  const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null)
   const fontSizeRef = useRef(fontSize)
   const onFontSizeChangeRef = useRef(onFontSizeChange)
   const onMetricsChangeRef = useRef(onMetricsChange)
   const sizeRef = useRef({ cols: 120, rows: 34 })
   const scheduleResizeRef = useRef<(() => void) | null>(null)
+  const wsReadyRef = useRef(false)
 
   useEffect(() => {
     fontSizeRef.current = fontSize
@@ -137,7 +140,8 @@ function TerminalViewport({
     let resizeObserver: ResizeObserver | null = null
     let disposed = false
 
-    const syncGeometry = () => {
+    // Fit the terminal grid to the container (immediate, local only).
+    const fitLocal = () => {
       if (!terminal || !fitAddon) return false
       if (!renderReadyRef.current) return false
       try {
@@ -157,29 +161,40 @@ function TerminalViewport({
         cellWidth: width / cols,
         cellHeight: height / rows,
       })
-      if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: "resize",
-          terminal_id: "main",
-          cols,
-          rows,
-        }))
-      }
       return true
     }
 
-    const sendResize = () => {
-      if (syncGeometry()) return
+    // Send resize to PTY over WS (debounced, only if changed).
+    const sendResizeToServer = () => {
+      const { cols, rows } = sizeRef.current
+      if (!authSentRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+      const last = lastSentSizeRef.current
+      if (last && last.cols === cols && last.rows === rows) return
+      lastSentSizeRef.current = { cols, rows }
+      wsRef.current.send(JSON.stringify({
+        type: "resize",
+        terminal_id: "main",
+        cols,
+        rows,
+      }))
     }
 
+    // Schedule: fit locally in rAF, then debounce the WS send by 100ms.
     const scheduleResize = () => {
-      if (pendingResizeFrameRef.current !== null) return
-      pendingResizeFrameRef.current = requestAnimationFrame(() => {
+      if (pendingResizeFrameRef.current === null) {
         pendingResizeFrameRef.current = requestAnimationFrame(() => {
           pendingResizeFrameRef.current = null
-          sendResize()
+          fitLocal()
         })
-      })
+      }
+      if (resizeDebounceRef.current !== null) {
+        clearTimeout(resizeDebounceRef.current)
+      }
+      resizeDebounceRef.current = setTimeout(() => {
+        resizeDebounceRef.current = null
+        fitLocal()
+        sendResizeToServer()
+      }, 100)
     }
     scheduleResizeRef.current = scheduleResize
 
@@ -232,9 +247,10 @@ function TerminalViewport({
       ws = new WebSocket(buildTerminalWsUrl(agent.id))
       wsRef.current = ws
 
-      ws.addEventListener("open", () => {
-        sendResize()
-        ws?.send(JSON.stringify({
+      const sendAuth = () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN || authSentRef.current) return
+        fitLocal()
+        ws.send(JSON.stringify({
           type: "auth",
           token,
           terminal_id: "main",
@@ -243,6 +259,17 @@ function TerminalViewport({
           rows: sizeRef.current.rows,
         }))
         authSentRef.current = true
+        lastSentSizeRef.current = { ...sizeRef.current }
+      }
+
+      ws.addEventListener("open", () => {
+        wsReadyRef.current = true
+        // Delay auth until terminal is render-ready so we send real
+        // fitted dimensions instead of the default 120x34.
+        if (renderReadyRef.current) {
+          sendAuth()
+        }
+        // Otherwise, sendAuth is called from the renderReady rAF below.
       })
 
       ws.addEventListener("message", (event) => {
@@ -302,6 +329,12 @@ function TerminalViewport({
         requestAnimationFrame(() => {
           if (disposed) return
           renderReadyRef.current = true
+          fitLocal()
+          // If WS connected before render was ready, send auth now
+          // with the real fitted dimensions.
+          if (wsReadyRef.current && !authSentRef.current) {
+            sendAuth()
+          }
           scheduleResize()
         })
       })
@@ -319,9 +352,15 @@ function TerminalViewport({
       const wasAuthenticated = authSentRef.current
       authSentRef.current = false
       renderReadyRef.current = false
+      wsReadyRef.current = false
+      lastSentSizeRef.current = null
       if (pendingResizeFrameRef.current !== null) {
         cancelAnimationFrame(pendingResizeFrameRef.current)
         pendingResizeFrameRef.current = null
+      }
+      if (resizeDebounceRef.current !== null) {
+        clearTimeout(resizeDebounceRef.current)
+        resizeDebounceRef.current = null
       }
       scheduleResizeRef.current = null
       dataDisposable?.dispose()
@@ -339,39 +378,10 @@ function TerminalViewport({
 
   useEffect(() => {
     const terminal = terminalRef.current
-    const host = hostRef.current
-    const fitAddon = fitAddonRef.current
-    if (!terminal || !host || !fitAddon || !renderReadyRef.current) return
+    if (!terminal || !renderReadyRef.current) return
     terminal.options.fontSize = fontSize
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const width = host.clientWidth
-        const height = host.clientHeight
-        if (width === 0 || height === 0) return
-        try {
-          fitAddon.fit()
-      } catch {
-        return
-      }
-      const cols = Math.max(WORKBENCH_MIN_TERMINAL_COLS, terminal.cols || 0)
-      const rows = Math.max(WORKBENCH_MIN_TERMINAL_ROWS, terminal.rows || 0)
-      sizeRef.current = { cols, rows }
-      onMetricsChangeRef.current({
-        cols,
-        rows,
-        cellWidth: width / cols,
-        cellHeight: height / rows,
-      })
-      if (authSentRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: "resize",
-            terminal_id: "main",
-            cols,
-          rows,
-        }))
-      }
-      })
-    })
+    // Font size change alters cell metrics — schedule a full resize cycle.
+    scheduleResizeRef.current?.()
   }, [fontSize])
 
   useLayoutEffect(() => {
