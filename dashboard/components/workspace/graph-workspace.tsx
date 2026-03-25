@@ -105,6 +105,33 @@ function TypedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
 }
 
 /* ================================================================== */
+/*  CUSTOM NODE: INPUT (left lane — raw signals entering the system)   */
+/* ================================================================== */
+
+type InputNodeData = { source: string; title: string; origin: string; timestamp: string }
+
+function InputNode({ data }: { data: InputNodeData }) {
+  const iconMap: Record<string, string> = { "github-issue": "\u2693", "human-request": "\u270e", observation: "\u25c9", alert: "\u26a0" }
+  const icon = iconMap[data.source] ?? "\u2192"
+  return (
+    <div className="rounded-md border font-mono" style={{ width: 160, backgroundColor: C.surfaceRaised, borderColor: C.border }}>
+      <Handle type="source" position={Position.Right} style={{ background: C.border, border: "none", width: 5, height: 5 }} />
+      <div className="px-2.5 py-2">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[10px]">{icon}</span>
+          <span className="text-[8px] uppercase tracking-widest font-bold" style={{ color: C.textDim }}>{data.source}</span>
+        </div>
+        <p className="text-[10px] font-medium leading-snug mb-1" style={{ color: C.textBright }}>{data.title}</p>
+        <div className="flex items-center gap-2">
+          <span className="text-[8px] truncate" style={{ color: C.blue }}>{data.origin}</span>
+          <span className="text-[8px]" style={{ color: C.textDim }}>{data.timestamp}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================== */
 /*  CUSTOM NODE: EXECUTION                                             */
 /* ================================================================== */
 
@@ -149,9 +176,25 @@ function ExecutionNode({ data }: { data: ExecNodeData }) {
         <span className="text-[11px] font-semibold" style={{ color: agentColor(item.agent) }}>
           @{item.agent}
         </span>
-        <span className="text-[9px] uppercase tracking-wider" style={{ color: C.textDim }}>
-          {item.executionType}
-        </span>
+        {/* Surface toggle */}
+        <div className="flex items-center gap-px rounded overflow-hidden border" style={{ borderColor: C.border }}>
+          {(["terminal", "browser", "desktop"] as const).map(mode => {
+            const label = mode === "terminal" ? "TRM" : mode === "browser" ? "BRW" : "DSK"
+            const active = item.executionType === mode
+            return (
+              <span
+                key={mode}
+                className="text-[7px] font-bold uppercase tracking-wider px-1.5 py-0.5"
+                style={{
+                  backgroundColor: active ? `${agentColor(item.agent)}18` : "transparent",
+                  color: active ? agentColor(item.agent) : C.textDim,
+                }}
+              >
+                {label}
+              </span>
+            )
+          })}
+        </div>
         <div className="flex-1" />
         <span className="text-[9px]" style={{ color: C.textDim }}>{done}/{total}</span>
         <span className="text-[9px]" style={{ color: C.text }}>{formatCost(item.cost)}</span>
@@ -249,22 +292,29 @@ type ArtifactNodeData = { path: string; action: string; lines?: number }
 
 function ArtifactNode({ data }: { data: ArtifactNodeData }) {
   const actionColor = data.action === "created" ? C.green : data.action === "deleted" ? C.red : C.amber
+  const actionLabel = data.action === "created" ? "new" : data.action === "deleted" ? "del" : "mod"
   const filename = data.path.split("/").pop() ?? data.path
+  const ext = filename.split(".").pop()?.toUpperCase() ?? ""
 
   return (
     <div
-      className="rounded border font-mono flex items-center gap-1.5 px-2 py-1"
-      style={{
-        backgroundColor: C.surfaceRaised,
-        borderColor: C.border,
-      }}
+      className="rounded-md border font-mono"
+      style={{ width: 140, backgroundColor: C.surfaceRaised, borderColor: C.border }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: C.border, border: "none", width: 4, height: 4 }} />
-      <span className="text-[9px] font-bold" style={{ color: actionColor }}>
-        {data.action === "created" ? "+" : data.action === "deleted" ? "-" : "~"}
-      </span>
-      <span className="text-[9px]" style={{ color: C.text }}>{filename}</span>
-      {data.lines && <span className="text-[8px]" style={{ color: C.textDim }}>{data.lines}L</span>}
+      <Handle type="target" position={Position.Left} style={{ background: C.border, border: "none", width: 5, height: 5 }} />
+      <div className="px-2 py-1.5">
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span className="text-[9px] font-bold" style={{ color: actionColor }}>
+            {data.action === "created" ? "+" : data.action === "deleted" ? "\u2212" : "~"}
+          </span>
+          <span className="text-[9px] font-semibold truncate flex-1" style={{ color: C.textBright }}>{filename}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {ext && <span className="text-[7px] font-bold uppercase rounded px-1 py-px" style={{ backgroundColor: C.border, color: C.textDim }}>{ext}</span>}
+          {data.lines && <span className="text-[8px]" style={{ color: C.textDim }}>{data.lines}L</span>}
+          <span className="text-[7px] font-bold uppercase" style={{ color: actionColor }}>{actionLabel}</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -299,6 +349,14 @@ function InboxNode({ data }: { data: InboxNodeData }) {
 /*  GRAPH DATA                                                         */
 /* ================================================================== */
 
+// Mock inputs — raw signals entering the system
+const MOCK_INPUTS = [
+  { id: "in-1", source: "github-issue", title: "Auth middleware is duplicated across routes", origin: "github.com/agentobox#42", timestamp: "12m ago" },
+  { id: "in-2", source: "github-issue", title: "Staging env needs reprovisioning", origin: "github.com/agentobox#41", timestamp: "34m ago" },
+  { id: "in-3", source: "human-request", title: "Fix VNC reconnect after redeploy", origin: "vahid", timestamp: "1h ago" },
+  { id: "in-4", source: "observation", title: "Feed API has zero test coverage", origin: "test-runner scan", timestamp: "2h ago" },
+]
+
 function buildGraph(items: WorkItem[]): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = []
   const edges: Edge[] = []
@@ -307,23 +365,35 @@ function buildGraph(items: WorkItem[]): { nodes: Node[]; edges: Edge[] } {
   const needsYou = items.filter(i => i.status === "needs-you")
   const completed = items.filter(i => i.status === "completed")
   const queued = items.filter(i => i.status === "queued")
+  const liveItems = [...active, ...needsYou]
 
-  // Layout constants
-  const taskX = 40
-  const execX = 340
-  const artifactX = 720
-  const startY = 40
-  const rowHeight = 200
+  // Lane positions (implicit left-to-right flow)
+  const inputX = 0
+  const taskX = 200
+  const execX = 440
+  const artifactX = 820
+  const startY = 20
+  const rowHeight = 220
 
-  // Active work: task node → execution node → artifact nodes
-  ;[...active, ...needsYou].forEach((item, i) => {
+  // Input nodes (left lane)
+  MOCK_INPUTS.forEach((inp, i) => {
+    nodes.push({
+      id: `input-${inp.id}`,
+      type: "inputNode",
+      position: { x: inputX, y: startY + i * 80 },
+      data: inp,
+    })
+  })
+
+  // Active work: input → task → execution → artifacts
+  liveItems.forEach((item, i) => {
     const y = startY + i * rowHeight
 
-    // Task node
+    // Task node (close to execution — "docked" feel)
     nodes.push({
       id: `task-${item.id}`,
       type: "taskNode",
-      position: { x: taskX, y },
+      position: { x: taskX, y: y + 10 },
       data: { item },
     })
 
@@ -331,11 +401,11 @@ function buildGraph(items: WorkItem[]): { nodes: Node[]; edges: Edge[] } {
     nodes.push({
       id: `exec-${item.id}`,
       type: "executionNode",
-      position: { x: execX, y: y - 20 },
+      position: { x: execX, y },
       data: { item },
     })
 
-    // Edge: task → execution
+    // Edge: task → execution (short, docking feel)
     edges.push({
       id: `e-task-exec-${item.id}`,
       source: `task-${item.id}`,
@@ -344,13 +414,25 @@ function buildGraph(items: WorkItem[]): { nodes: Node[]; edges: Edge[] } {
       data: { edgeType: item.status === "needs-you" ? "blocked_by" : "attached_to" },
     })
 
-    // Artifact nodes
+    // Edge: input → task (interpretation)
+    const matchingInput = MOCK_INPUTS[i]
+    if (matchingInput) {
+      edges.push({
+        id: `e-input-task-${item.id}`,
+        source: `input-${matchingInput.id}`,
+        target: `task-${item.id}`,
+        type: "typedEdge",
+        data: { edgeType: "delegates_to" },
+      })
+    }
+
+    // Artifact nodes (right lane, stacked vertically per execution)
     item.artifacts.slice(0, 3).forEach((art, ai) => {
       const artId = `art-${item.id}-${ai}`
       nodes.push({
         id: artId,
         type: "artifactNode",
-        position: { x: artifactX, y: y + ai * 30 },
+        position: { x: artifactX, y: y + ai * 40 },
         data: { path: art.path, action: art.action, lines: art.lines },
       })
       edges.push({
@@ -364,41 +446,36 @@ function buildGraph(items: WorkItem[]): { nodes: Node[]; edges: Edge[] } {
     })
   })
 
-  // Completed work: small task node only (collapsed)
+  // Completed: collapsed, lower right
   completed.forEach((item, i) => {
-    const y = startY + ([...active, ...needsYou].length) * rowHeight + i * 80
+    const y = startY + liveItems.length * rowHeight + i * 70
     nodes.push({
       id: `task-${item.id}`,
       type: "taskNode",
-      position: { x: taskX + 60, y },
+      position: { x: taskX + 200, y },
       data: { item },
     })
   })
 
-  // Inbox node for queued work
+  // Queued work as inbox
   if (queued.length > 0) {
     nodes.push({
       id: "inbox",
       type: "inboxNode",
-      position: { x: taskX, y: startY + ([...active, ...needsYou].length + completed.length) * rowHeight - (completed.length > 0 ? 120 : 0) },
+      position: { x: inputX, y: startY + MOCK_INPUTS.length * 80 + 10 },
       data: { items: queued },
     })
   }
 
-  // Delegation edges between related tasks
-  // W-42 has subtasks that could delegate — show one example edge
-  const w42Task = items.find(i => i.id === "W-42")
-  if (w42Task) {
-    const w42Completed = items.find(i => i.id === "W-40") // test-runner is downstream
-    if (w42Completed) {
-      edges.push({
-        id: "e-delegation-42-40",
-        source: `task-W-42`,
-        target: `task-W-40`,
-        type: "typedEdge",
-        data: { edgeType: "delegates_to" },
-      })
-    }
+  // Delegation edge: W-42 → W-40 (tests were delegated)
+  if (items.find(i => i.id === "W-42") && items.find(i => i.id === "W-40")) {
+    edges.push({
+      id: "e-delegation-42-40",
+      source: `task-W-42`,
+      target: `task-W-40`,
+      type: "typedEdge",
+      data: { edgeType: "delegates_to" },
+    })
   }
 
   return { nodes, edges }
@@ -413,6 +490,7 @@ const nodeTypes: NodeTypes = {
   taskNode: TaskNode as any,
   artifactNode: ArtifactNode as any,
   inboxNode: InboxNode as any,
+  inputNode: InputNode as any,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -431,91 +509,83 @@ export function GraphWorkspace() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ backgroundColor: C.surface }}>
-      {/* Graph canvas */}
-      <div className="flex-1 relative">
+      {/* ── TOP BAR: global command + status ──────────────── */}
+      <div className="font-mono border-b" style={{ borderColor: C.border, backgroundColor: "#0f1218" }}>
+        <div className="flex items-center gap-3 px-4" style={{ height: 40 }}>
+          <span className="text-[12px] font-bold tracking-wide" style={{ color: C.textDim }}>{PROJECT_SUMMARY.name}</span>
+          <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
+          <span className="text-[10px] tabular-nums" style={{ color: C.text }}>{PROJECT_SUMMARY.activeAgents} active</span>
+          <span className="text-[10px] tabular-nums" style={{ color: C.text }}>{PROJECT_SUMMARY.completedWork}/{PROJECT_SUMMARY.totalWork} done</span>
+          <span className="text-[10px] font-semibold tabular-nums" style={{ color: C.textBright }}>{formatCost(PROJECT_SUMMARY.totalCost)}</span>
+          {needsYou.length > 0 && (
+            <>
+              <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
+              <span className="text-[9px] font-bold uppercase" style={{ color: C.amber }}>
+                {needsYou.length} needs you
+              </span>
+            </>
+          )}
+          <div className="flex-1" />
+          {/* Command palette input */}
+          <div
+            className="flex items-center gap-2 rounded-lg border px-3 py-1.5 max-w-[480px] flex-1"
+            style={{ borderColor: C.border, backgroundColor: C.surface }}
+          >
+            <span className="text-[12px]" style={{ color: C.amber }}>/</span>
+            <span className="text-[11px]" style={{ color: C.textDim }}>jump, create, delegate, approve...</span>
+            <span className="inline-block h-[13px] w-[6px] animate-pulse" style={{ backgroundColor: C.amber, opacity: 0.5 }} />
+          </div>
+          <div className="flex-1" />
+          <span className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: C.border, color: C.text }}>V</span>
+        </div>
+
+        {/* Intervention row (conditional) */}
+        {needsYou.length > 0 && (
+          <div
+            className="flex items-center gap-3 px-4 border-t"
+            style={{ height: 34, borderColor: `${C.amber}30`, backgroundColor: `color-mix(in srgb, ${C.amber} 3%, #0f1218)` }}
+          >
+            {needsYou.map(item => {
+              const inv = item.intervention!
+              return (
+                <div key={item.id} className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: agentColor(item.agent) }} />
+                  <span className="text-[9px] font-semibold" style={{ color: agentColor(item.agent) }}>@{item.agent}</span>
+                  <span className="text-[9px]" style={{ color: C.text }}>{inv.type}:</span>
+                  <span className="text-[9px] truncate flex-1" style={{ color: C.textBright }}>{inv.summary}</span>
+                  {inv.options?.map(opt => (
+                    <button key={opt} type="button" className="rounded border px-2 py-0.5 text-[8px] font-semibold shrink-0"
+                      style={{
+                        borderColor: opt === "Allow" || opt === "Approve" ? C.green : C.border,
+                        color: opt === "Allow" || opt === "Approve" ? C.green : C.text,
+                        backgroundColor: "transparent",
+                      }}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── GRAPH CANVAS ─────────────────────────────────── */}
+      <div className="flex-1">
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.3 }}
+          fitViewOptions={{ padding: 0.15 }}
           minZoom={0.3}
           maxZoom={1.5}
-          defaultEdgeOptions={{ animated: false }}
           proOptions={{ hideAttribution: true }}
           style={{ backgroundColor: C.surface }}
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1e2230" />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#1e2230" />
         </ReactFlow>
-
-        {/* Edge legend */}
-        <div
-          className="absolute top-3 right-3 rounded-md border px-3 py-2 font-mono space-y-1"
-          style={{ backgroundColor: C.surfaceRaised, borderColor: C.border, zIndex: 10 }}
-        >
-          <span className="text-[8px] uppercase tracking-widest font-bold block mb-1" style={{ color: C.textDim }}>edges</span>
-          {[
-            { label: "delegates_to", color: C.blue, dash: "" },
-            { label: "attached_to", color: C.textDim, dash: "6 4" },
-            { label: "produced", color: C.green, dash: "3 3" },
-            { label: "blocked_by", color: C.red, dash: "8 4" },
-          ].map(e => (
-            <div key={e.label} className="flex items-center gap-2">
-              <svg width="24" height="6">
-                <line x1="0" y1="3" x2="24" y2="3" stroke={e.color} strokeWidth="1.5" strokeDasharray={e.dash || undefined} />
-              </svg>
-              <span className="text-[8px]" style={{ color: C.text }}>{e.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Intervention tray + command bar */}
-      {needsYou.length > 0 && (
-        <div
-          className="flex items-center gap-3 px-4 border-t font-mono"
-          style={{ height: 38, borderColor: C.amber, backgroundColor: `color-mix(in srgb, ${C.amber} 5%, ${C.surface})` }}
-        >
-          {(() => {
-            const item = needsYou[0]
-            const inv = item.intervention!
-            return (
-              <>
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: agentColor(item.agent) }} />
-                <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: C.amber }}>{item.id}</span>
-                <span className="text-[10px] font-semibold" style={{ color: agentColor(item.agent) }}>@{item.agent}</span>
-                <span className="text-[10px]" style={{ color: C.text }}>{inv.type}:</span>
-                <span className="text-[10px] flex-1 truncate" style={{ color: C.textBright }}>{inv.summary}</span>
-                {inv.options?.map(opt => (
-                  <button key={opt} type="button" className="rounded border px-2.5 py-0.5 text-[9px] font-semibold"
-                    style={{ borderColor: opt === "Allow" ? C.green : C.border, color: opt === "Allow" ? C.green : C.text, backgroundColor: "transparent" }}>
-                    {opt}
-                  </button>
-                ))}
-              </>
-            )
-          })()}
-        </div>
-      )}
-
-      {/* Command bar */}
-      <div
-        className="flex items-center gap-4 px-4 border-t font-mono"
-        style={{ height: 36, borderColor: C.border, backgroundColor: "#0f1218" }}
-      >
-        <span className="text-[12px] font-semibold tracking-wide" style={{ color: C.textDim }}>{PROJECT_SUMMARY.name}</span>
-        <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
-        <span className="text-[10px]" style={{ color: C.text }}>{PROJECT_SUMMARY.activeAgents} active</span>
-        <span className="text-[10px]" style={{ color: C.text }}>{PROJECT_SUMMARY.completedWork}/{PROJECT_SUMMARY.totalWork} done</span>
-        <span className="text-[10px]" style={{ color: C.textBright }}>{formatCost(PROJECT_SUMMARY.totalCost)}</span>
-        <div className="flex-1" />
-        <div className="flex items-center gap-2 rounded border px-2.5 py-1 max-w-[400px] flex-1" style={{ borderColor: C.border, backgroundColor: C.surface }}>
-          <span className="text-[12px]" style={{ color: C.amber }}>&rsaquo;</span>
-          <span className="text-[10px]" style={{ color: C.textDim }}>describe what you want done...</span>
-        </div>
-        <div className="flex-1" />
-        <span className="text-[8px] uppercase tracking-widest" style={{ color: C.textDim }}>graph workspace</span>
       </div>
     </div>
   )
