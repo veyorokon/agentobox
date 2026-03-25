@@ -111,19 +111,23 @@ function TypedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
 type InputNodeData = { source: string; title: string; origin: string; timestamp: string }
 
 function InputNode({ data }: { data: InputNodeData }) {
+  const sourceColor: Record<string, string> = { "github-issue": C.blue, "human-request": C.amber, observation: C.green, alert: C.red }
+  const sc = sourceColor[data.source] ?? C.textDim
   const iconMap: Record<string, string> = { "github-issue": "\u2693", "human-request": "\u270e", observation: "\u25c9", alert: "\u26a0" }
   const icon = iconMap[data.source] ?? "\u2192"
   return (
-    <div className="rounded-md border font-mono" style={{ width: 160, backgroundColor: C.surfaceRaised, borderColor: C.border }}>
+    <div className="rounded-md border font-mono overflow-hidden flex" style={{ width: 170, backgroundColor: C.surfaceRaised, borderColor: C.border }}>
+      {/* Colored source indicator bar */}
+      <div className="w-[3px] shrink-0" style={{ backgroundColor: sc }} />
       <Handle type="source" position={Position.Right} style={{ background: C.border, border: "none", width: 5, height: 5 }} />
-      <div className="px-2.5 py-2">
+      <div className="px-2.5 py-2 flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-1">
-          <span className="text-[10px]">{icon}</span>
-          <span className="text-[8px] uppercase tracking-widest font-bold" style={{ color: C.textDim }}>{data.source}</span>
+          <span className="text-[10px]" style={{ color: sc }}>{icon}</span>
+          <span className="text-[8px] uppercase tracking-widest font-bold" style={{ color: sc }}>{data.source.replace("-", " ")}</span>
         </div>
         <p className="text-[10px] font-medium leading-snug mb-1" style={{ color: C.textBright }}>{data.title}</p>
         <div className="flex items-center gap-2">
-          <span className="text-[8px] truncate" style={{ color: C.blue }}>{data.origin}</span>
+          <span className="text-[8px] truncate" style={{ color: `${sc}99` }}>{data.origin}</span>
           <span className="text-[8px]" style={{ color: C.textDim }}>{data.timestamp}</span>
         </div>
       </div>
@@ -228,6 +232,31 @@ function ExecutionNode({ data }: { data: ExecNodeData }) {
           <div className="h-[2px] w-full rounded-full overflow-hidden" style={{ backgroundColor: C.border }}>
             <div className="h-full rounded-full" style={{ width: `${(done / total) * 100}%`, backgroundColor: sc }} />
           </div>
+        </div>
+      )}
+
+      {/* Local intervention prompt (docked to node) */}
+      {item.intervention && (
+        <div
+          className="flex items-center gap-2 px-3 py-1.5 border-t"
+          style={{ borderColor: `${C.amber}40`, backgroundColor: `color-mix(in srgb, ${C.amber} 5%, ${C.surfaceNode})` }}
+        >
+          <span className="text-[8px] font-bold uppercase" style={{ color: C.amber }}>
+            {item.intervention.type}
+          </span>
+          <span className="text-[9px] truncate flex-1" style={{ color: C.textBright }}>
+            {item.intervention.summary}
+          </span>
+          {item.intervention.options?.map(opt => (
+            <button key={opt} type="button" className="rounded border px-2 py-0.5 text-[8px] font-semibold shrink-0"
+              style={{
+                borderColor: opt === "Allow" || opt === "Approve" ? C.green : C.border,
+                color: opt === "Allow" || opt === "Approve" ? C.green : C.text,
+                backgroundColor: "transparent",
+              }}>
+              {opt}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -509,65 +538,46 @@ export function GraphWorkspace() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ backgroundColor: C.surface }}>
-      {/* ── TOP BAR: global command + status ──────────────── */}
-      <div className="font-mono border-b" style={{ borderColor: C.border, backgroundColor: "#0f1218" }}>
-        <div className="flex items-center gap-3 px-4" style={{ height: 40 }}>
-          <span className="text-[12px] font-bold tracking-wide" style={{ color: C.textDim }}>{PROJECT_SUMMARY.name}</span>
-          <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
-          <span className="text-[10px] tabular-nums" style={{ color: C.text }}>{PROJECT_SUMMARY.activeAgents} active</span>
-          <span className="text-[10px] tabular-nums" style={{ color: C.text }}>{PROJECT_SUMMARY.completedWork}/{PROJECT_SUMMARY.totalWork} done</span>
-          <span className="text-[10px] font-semibold tabular-nums" style={{ color: C.textBright }}>{formatCost(PROJECT_SUMMARY.totalCost)}</span>
-          {needsYou.length > 0 && (
-            <>
-              <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
-              <span className="text-[9px] font-bold uppercase" style={{ color: C.amber }}>
-                {needsYou.length} needs you
-              </span>
-            </>
-          )}
-          <div className="flex-1" />
-          {/* Command palette input */}
-          <div
-            className="flex items-center gap-2 rounded-lg border px-3 py-1.5 max-w-[480px] flex-1"
-            style={{ borderColor: C.border, backgroundColor: C.surface }}
-          >
-            <span className="text-[12px]" style={{ color: C.amber }}>/</span>
-            <span className="text-[11px]" style={{ color: C.textDim }}>jump, create, delegate, approve...</span>
-            <span className="inline-block h-[13px] w-[6px] animate-pulse" style={{ backgroundColor: C.amber, opacity: 0.5 }} />
-          </div>
-          <div className="flex-1" />
-          <span className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: C.border, color: C.text }}>V</span>
-        </div>
-
-        {/* Intervention row (conditional) */}
+      {/* ── TOP BAR: intake + status + command ────────────── */}
+      <div
+        className="flex items-center gap-3 px-4 font-mono border-b"
+        style={{ height: 40, borderColor: C.border, backgroundColor: "#0f1218" }}
+      >
+        <span className="text-[12px] font-bold tracking-wide" style={{ color: C.textDim }}>{PROJECT_SUMMARY.name}</span>
+        <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
+        <span className="text-[10px] tabular-nums" style={{ color: C.text }}>{PROJECT_SUMMARY.activeAgents} active</span>
+        <span className="text-[10px] tabular-nums" style={{ color: C.text }}>{PROJECT_SUMMARY.completedWork}/{PROJECT_SUMMARY.totalWork} done</span>
+        <span className="text-[10px] font-semibold tabular-nums" style={{ color: C.textBright }}>{formatCost(PROJECT_SUMMARY.totalCost)}</span>
         {needsYou.length > 0 && (
-          <div
-            className="flex items-center gap-3 px-4 border-t"
-            style={{ height: 34, borderColor: `${C.amber}30`, backgroundColor: `color-mix(in srgb, ${C.amber} 3%, #0f1218)` }}
-          >
-            {needsYou.map(item => {
-              const inv = item.intervention!
-              return (
-                <div key={item.id} className="flex items-center gap-2 flex-1 min-w-0">
-                  <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: agentColor(item.agent) }} />
-                  <span className="text-[9px] font-semibold" style={{ color: agentColor(item.agent) }}>@{item.agent}</span>
-                  <span className="text-[9px]" style={{ color: C.text }}>{inv.type}:</span>
-                  <span className="text-[9px] truncate flex-1" style={{ color: C.textBright }}>{inv.summary}</span>
-                  {inv.options?.map(opt => (
-                    <button key={opt} type="button" className="rounded border px-2 py-0.5 text-[8px] font-semibold shrink-0"
-                      style={{
-                        borderColor: opt === "Allow" || opt === "Approve" ? C.green : C.border,
-                        color: opt === "Allow" || opt === "Approve" ? C.green : C.text,
-                        backgroundColor: "transparent",
-                      }}>
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              )
-            })}
-          </div>
+          <>
+            <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
+            <span
+              className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded"
+              style={{ color: C.amber, backgroundColor: `${C.amber}12` }}
+            >
+              {needsYou.length} needs you
+            </span>
+          </>
         )}
+        <div className="flex-1" />
+        {/* Concrete create affordances */}
+        <button type="button" className="rounded border px-2 py-0.5 text-[9px] font-semibold" style={{ borderColor: C.border, color: C.text, backgroundColor: "transparent" }}>
+          + Issue
+        </button>
+        <button type="button" className="rounded border px-2 py-0.5 text-[9px] font-semibold" style={{ borderColor: C.border, color: C.text, backgroundColor: "transparent" }}>
+          + Task
+        </button>
+        <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
+        {/* Command trigger */}
+        <div
+          className="flex items-center gap-1.5 rounded border px-2.5 py-1"
+          style={{ borderColor: C.border, backgroundColor: C.surface }}
+        >
+          <span className="text-[11px] font-bold" style={{ color: C.amber }}>/</span>
+          <span className="text-[9px]" style={{ color: C.textDim }}>command</span>
+        </div>
+        <div className="h-3 w-px" style={{ backgroundColor: C.border }} />
+        <span className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: C.border, color: C.text }}>V</span>
       </div>
 
       {/* ── GRAPH CANVAS ─────────────────────────────────── */}
