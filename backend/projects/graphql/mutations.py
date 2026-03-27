@@ -149,7 +149,9 @@ class ProjectMutation:
 
         from agents.models import Agent, AgentStatus
         from agents.services.lifecycle import kill_agent
+        from agents.services.utils import terminate_sandbox
         from projects.models import Project
+        from projects.services.state_volume import delete_project_state_volume
 
         user = info.context["request"].user
         if not user.is_authenticated:
@@ -166,6 +168,13 @@ class ProjectMutation:
         for agent in [a async for a in Agent.objects.filter(project=project)]:
             if agent.status in live_statuses:
                 await kill_agent(str(agent.id))
+            elif agent.sandbox_id:
+                await terminate_sandbox(
+                    agent,
+                    log.bind(project_id=str(project.id), agent_id=str(agent.id), operation="project_delete_cleanup"),
+                )
+
+        await delete_project_state_volume(str(project.id))
 
         project.deleted_at = timezone.now()
         if project.archived_at is None:

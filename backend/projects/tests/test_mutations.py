@@ -15,7 +15,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-async def test_delete_project_tombstones_project_and_stops_live_agents():
+async def test_delete_project_tombstones_project_stops_live_agents_and_deletes_state_volume():
     user = await sync_to_async(
         get_user_model().objects.create_user, thread_sensitive=True
     )(username="project_delete_user", password="test")
@@ -31,12 +31,25 @@ async def test_delete_project_tombstones_project_and_stops_live_agents():
     await sync_to_async(Agent.objects.create, thread_sensitive=True)(
         name="history", project=project, runtime="modal", status=AgentStatus.STOPPED
     )
+    stale = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
+        name="stale-runtime",
+        project=project,
+        runtime="modal",
+        status=AgentStatus.STOPPED,
+        sandbox_id="sb-stale",
+    )
 
     request = RequestFactory().post("/graphql")
     request.user = user
 
-    with patch("agents.services.lifecycle.kill_agent", new_callable=AsyncMock) as mock_kill:
+    with (
+        patch("agents.services.lifecycle.kill_agent", new_callable=AsyncMock) as mock_kill,
+        patch("agents.services.utils.terminate_sandbox", new_callable=AsyncMock) as mock_terminate,
+        patch("projects.services.state_volume.delete_project_state_volume", new_callable=AsyncMock) as mock_delete_volume,
+    ):
         mock_kill.return_value = True
+        mock_terminate.return_value = True
+        mock_delete_volume.return_value = None
         result = await schema.execute(
             """
             mutation ($id: ID!) {
@@ -53,6 +66,9 @@ async def test_delete_project_tombstones_project_and_stops_live_agents():
         str(agent_a.id),
         str(agent_b.id),
     }
+    mock_terminate.assert_awaited_once()
+    assert mock_terminate.await_args.args[0].id == stale.id
+    mock_delete_volume.assert_awaited_once_with(str(project.id))
 
     assert not await Project.objects.filter(id=project.id).aexists()
 
