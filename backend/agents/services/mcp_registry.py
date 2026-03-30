@@ -52,6 +52,36 @@ def _derive_stdio_launch_spec(server: dict) -> dict | None:
     return None
 
 
+def describe_public_registry_server_support(server: dict) -> tuple[bool, str | None]:
+    """Return whether a registry server can be attached by the current runtime.
+
+    This is the contract behind the dashboard's "Add MCP" affordance. Search
+    results may describe many kinds of MCPs, but the current claude-code runtime
+    can only attach the subset we can resolve into a concrete launch spec.
+    """
+    if _derive_stdio_launch_spec(server) is not None:
+        return True, None
+
+    remotes = server.get("remotes") or []
+    if remotes:
+        return False, "Remote MCPs are discoverable, but this runtime only supports direct stdio launch right now."
+
+    packages = server.get("packages", [])
+    if not packages:
+        return False, "This MCP does not advertise a runnable launch package for the current runtime."
+
+    for pkg in packages:
+        transport = (pkg.get("transport") or {}).get("type", "stdio")
+        if transport != "stdio":
+            continue
+        registry_type = pkg.get("registryType", "")
+        runtime_hint = pkg.get("runtimeHint", "")
+        if registry_type != "npm" or runtime_hint != "npx":
+            return False, "This MCP is not published as an npx-launchable stdio package, which is the only public registry path supported here today."
+
+    return False, "This MCP is not compatible with the current public-registry attach path."
+
+
 async def search_registry(
     query: str = "",
     limit: int = 30,

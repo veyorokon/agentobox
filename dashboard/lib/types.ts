@@ -76,6 +76,8 @@ export type McpServerConfig = {
   runtime_hint?: string
   transport_type?: string
   secrets?: string[]
+  attachable?: boolean
+  unsupportedReason?: string | null
 }
 
 export type RecipientEntry =
@@ -107,6 +109,8 @@ export type McpRegistryServer = {
   version: string
   websiteUrl: string | null
   hasRemote: boolean
+  attachable: boolean
+  unsupportedReason: string | null
   packages: { registryType: string; identifier: string; transportType: string }[]
 }
 

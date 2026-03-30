@@ -24,6 +24,8 @@ export const SEARCH_MCP_REGISTRY = gql`
         version
         websiteUrl
         hasRemote
+        attachable
+        unsupportedReason
         packages {
           registryType
           identifier

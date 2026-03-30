@@ -73,7 +73,7 @@ PY
 fi
 
 export DATABASE_URL='postgres://agentobox:agentobox@localhost:5432/agentobox'
-export REDIS_URL='redis://localhost:6379/0'
+export REDIS_URL="redis://localhost:${REDIS_HOST_PORT:-6380}/0"
 export DEBUG='true'
 export ALLOWED_HOSTS='*'
 export SECRET_KEY='dev-only-change-in-production'

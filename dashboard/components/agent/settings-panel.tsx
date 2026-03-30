@@ -62,6 +62,10 @@ function splitMcpConfig(
   return { registryNames, customServers }
 }
 
+export function isRegistryServerAttachable(server: McpServerConfig | { attachable?: boolean }): boolean {
+  return server.attachable !== false
+}
+
 /** Single extraction point for all three comparison surfaces. */
 export function extractConfigFields(source: {
   model: string
@@ -449,16 +453,20 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
                 )}
                 {mcpResults.map((server) => {
                   const alreadyAdded = allMcpNames.includes(server.name)
+                  const attachable = isRegistryServerAttachable(server)
                   const pkgBadge = server.packages[0]?.registryType
                   return (
                     <button
                       key={server.name}
                       type="button"
-                      disabled={alreadyAdded}
-                      onClick={() => addMcp(server.name)}
+                      disabled={alreadyAdded || !attachable}
+                      onClick={() => {
+                        if (alreadyAdded || !attachable) return
+                        addMcp(server.name)
+                      }}
                       className={cn(
                         "w-full text-left px-2.5 py-1.5 border-b border-border-subtle last:border-b-0 transition-colors",
-                        alreadyAdded
+                        alreadyAdded || !attachable
                           ? "opacity-40 cursor-not-allowed"
                           : "hover:bg-surface-raised/40",
                       )}
@@ -477,10 +485,20 @@ export const AgentSettingsPanel = forwardRef<SettingsPanelHandle, AgentSettingsP
                             remote
                           </span>
                         )}
+                        {!attachable && (
+                          <span className="px-1 py-px rounded text-[9px] font-mono text-warning/70 bg-warning/8 border border-warning/15 shrink-0">
+                            unsupported
+                          </span>
+                        )}
                       </div>
                       <p className="text-[10px] text-muted/60 truncate mt-0.5">
                         {server.description}
                       </p>
+                      {!attachable && server.unsupportedReason && (
+                        <p className="text-[10px] text-warning/70 mt-0.5 leading-snug">
+                          {server.unsupportedReason}
+                        </p>
+                      )}
                     </button>
                   )
                 })}

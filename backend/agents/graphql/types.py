@@ -195,6 +195,8 @@ class McpRegistryServerType:
     version: str
     website_url: str | None
     has_remote: bool
+    attachable: bool
+    unsupported_reason: str | None
     packages: list[McpPackageType]
 
 

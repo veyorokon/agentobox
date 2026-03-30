@@ -193,7 +193,10 @@ class AgentQuery:
         """
         import re
         from agents.adapters import get_adapter
-        from agents.services.mcp_registry import search_registry
+        from agents.services.mcp_registry import (
+            describe_public_registry_server_support,
+            search_registry,
+        )
 
         limit = min(limit, 100)
 
@@ -214,6 +217,8 @@ class AgentQuery:
                         version="",
                         website_url=None,
                         has_remote=False,
+                        attachable=True,
+                        unsupported_reason=None,
                         packages=[McpPackageType(registry_type="bundled", identifier=entry["name"], transport_type="stdio")],
                     ))
         bundled_names = {s.name for s in bundled}
@@ -234,12 +239,15 @@ class AgentQuery:
                 )
                 for pkg in srv.get("packages", [])
             ]
+            attachable, unsupported_reason = describe_public_registry_server_support(srv)
             remote.append(McpRegistryServerType(
                 name=name,
                 description=srv.get("description", ""),
                 version=srv.get("version", ""),
                 website_url=srv.get("websiteUrl"),
                 has_remote=bool(srv.get("remotes")),
+                attachable=attachable,
+                unsupported_reason=unsupported_reason,
                 packages=packages,
             ))
 
