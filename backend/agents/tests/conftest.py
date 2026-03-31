@@ -154,7 +154,7 @@ def _snapshot(last_text: str, tool_name: str = "", tool_input: dict | None = Non
 # Must stay in sync with seed_dev_data.py — if seed changes, update here.
 SEED_AGENTS = [
     {
-        "name": "team-lead",
+        "name": "meta-agent",
         "snapshot": _snapshot(
             "Delegated auth fix to backend, waiting on QA...",
             result={"type": "result", "duration_ms": 725000, "num_turns": 14, "total_cost_usd": 0.18},

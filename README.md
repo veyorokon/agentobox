@@ -4,7 +4,7 @@
 [![Deploy Dev](https://github.com/veyorokon/agentobox/actions/workflows/deploy-dev.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/deploy-dev.yml)
 [![Promote Prod](https://github.com/veyorokon/agentobox/actions/workflows/promote-prod.yml/badge.svg)](https://github.com/veyorokon/agentobox/actions/workflows/promote-prod.yml)
 
-A platform for managing AI agent teams. Provision agents with full Linux desktops, observe their work in real-time via VNC and activity feeds, and coordinate multi-agent workflows through a web dashboard.
+A runtime and user shell for governed delegated work. Provision bounded executors with full Linux desktops, observe their work in real time via VNC and activity feeds, and steer project-level autonomy through a web dashboard.
 
 ## Quick Start
 

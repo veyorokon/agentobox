@@ -21,7 +21,7 @@ interface AgentFilterToolbarProps {
 export function AgentFilterToolbar({
   searchQuery,
   onSearchChange,
-  searchPlaceholder = "Search agents...",
+  searchPlaceholder = "Search executors...",
   tags,
   selectedTag,
   onTagChange,

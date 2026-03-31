@@ -253,7 +253,7 @@ class TestMessageInterception:
                         "name": "SendMessage",
                         "input": {
                             "type": "message",
-                            "recipient": "team-lead",
+                            "recipient": "meta-agent",
                             "content": "Hello from sender",
                             "summary": "Greeting",
                         },

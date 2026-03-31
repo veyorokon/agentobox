@@ -43,7 +43,7 @@ const { VncThumbnail } = await import("@/components/agent/vnc-thumbnail")
 
 const baseAgent: Agent = {
   id: "agent-1",
-  name: "team-lead",
+  name: "meta-agent",
   lifecycleStatus: "idle",
   previewState: "ready",
   previewRuntimeId: "sandbox-1",

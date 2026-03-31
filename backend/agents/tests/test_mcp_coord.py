@@ -125,7 +125,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_dm_delivery(self):
         """type='message' delivers to named recipient."""
-        sender = _mock_agent(name="team-lead")
+        sender = _mock_agent(name="meta-agent")
         target = _mock_agent(name="backend")
 
         with (
@@ -146,7 +146,7 @@ class TestSendMessage:
         assert result["ok"] is True
         assert result["recipient"] == "backend"
         mock_deliver.assert_called_once_with(
-            "team-lead", target, "fix the auth bug"
+            "meta-agent", target, "fix the auth bug"
         )
 
     @pytest.mark.asyncio
@@ -180,7 +180,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_shutdown_request(self):
         """type='shutdown_request' calls kill_agent to terminate the container."""
-        sender = _mock_agent(name="team-lead")
+        sender = _mock_agent(name="meta-agent")
         target = _mock_agent(name="qa")
 
         with (

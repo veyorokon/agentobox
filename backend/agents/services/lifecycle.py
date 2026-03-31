@@ -1211,14 +1211,14 @@ def _build_agent_env(agent, project) -> dict[str, str]:
     }
 
 
-async def spawn_team_lead(project_id: str, *, model_override: str = "") -> None:
-    """Create and deploy a team-lead agent for a newly created project.
+async def spawn_meta_agent(project_id: str, *, model_override: str = "") -> None:
+    """Create and deploy the project meta agent for a newly created project.
 
     Uses the "solo" template from the claude-code adapter's team configs.
     Called explicitly from the createProject mutation — not from a signal.
     """
     op_log = log.bind(project_id=project_id)
-    op_log.info("lifecycle.spawning_team_lead")
+    op_log.info("lifecycle.spawning_meta_agent")
 
     adapter = get_adapter("claude-code")
     template = adapter.team_configs()["solo"]
@@ -1243,11 +1243,16 @@ async def spawn_team_lead(project_id: str, *, model_override: str = "") -> None:
     )
 
     op_log.info(
-        "lifecycle.team_lead_spawned",
+        "lifecycle.meta_agent_spawned",
         agent_id=str(agent.id),
         agent_name=agent.name,
         model=agent.model,
     )
+
+
+async def spawn_team_lead(project_id: str, *, model_override: str = "") -> None:
+    """Backward-compatible alias for the project meta-agent bootstrap path."""
+    await spawn_meta_agent(project_id, model_override=model_override)
 
 
 async def resolve_agent_secrets(agent, op_log) -> dict[str, str] | None:

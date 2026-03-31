@@ -20,7 +20,7 @@ describe("workbench agent selection", () => {
   it("opens only explicitly requested agents", () => {
     const windows = buildInitialWorkbenchWindows(
       [
-        { id: "a1", name: "team-lead" },
+        { id: "a1", name: "meta-agent" },
         { id: "a2", name: "builder" },
         { id: "a3", name: "qa" },
       ],
@@ -32,7 +32,7 @@ describe("workbench agent selection", () => {
 
   it("does not seed demo windows when no agent ids are requested", () => {
     const windows = buildInitialWorkbenchWindows(
-      [{ id: "a1", name: "team-lead" }],
+      [{ id: "a1", name: "meta-agent" }],
       [],
     )
 

@@ -16,7 +16,7 @@ export interface AgentSummaryCardProps {
 }
 
 /**
- * Agent summary card -- the primary content type in the team feed.
+ * Agent summary card -- the primary content type in the project activity feed.
  * SOURCE: TimelineEntry.summary field (populated when agent completes a turn)
  * Shows: colored @agent tag, summary text, cost/turns/duration badge
  */

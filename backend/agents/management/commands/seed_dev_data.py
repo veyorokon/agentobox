@@ -74,14 +74,14 @@ class Command(BaseCommand):
 
         agents_data = [
             {
-                "name": "team-lead",
+                "name": "meta-agent",
                 "status": AgentStatus.RUNNING,
                 "attention_level": "none",
                 "task": "Coordinating sprint tasks",
                 "session_cost_usd": 0.18,
                 "model": "claude-opus-4-6",
                 "phase": "",
-                "instructions": "Orchestrate the team. Break down tasks, delegate to specialists, track progress, resolve blockers.",
+                "instructions": "Act as the meta agent. Break down work, delegate to specialists, track progress, and resolve blockers.",
                 "runtime": "docker",
                 "workspace_path": "/workspace/agentobox",
                 "tags": ["core"],
@@ -353,7 +353,7 @@ class Command(BaseCommand):
 
         tasks_data = [
             {
-                "agent": agent_objects["team-lead"],
+                "agent": agent_objects["meta-agent"],
                 "task_id": "mcp_task_001",
                 "title": "Fix JWT validation bug in auth.ts",
                 "description": "The token expiry check is off by one hour. Fix the unit mismatch and add clock skew tolerance.",
@@ -365,7 +365,7 @@ class Command(BaseCommand):
                 "blocked_by": [],
             },
             {
-                "agent": agent_objects["team-lead"],
+                "agent": agent_objects["meta-agent"],
                 "task_id": "mcp_task_002",
                 "title": "Add refresh token rotation",
                 "description": "Implement token rotation on each refresh. Old tokens invalidated after 60s grace period.",
@@ -377,7 +377,7 @@ class Command(BaseCommand):
                 "blocked_by": ["mcp_task_001"],
             },
             {
-                "agent": agent_objects["team-lead"],
+                "agent": agent_objects["meta-agent"],
                 "task_id": "mcp_task_003",
                 "title": "Run full test suite after auth changes",
                 "description": "Verify all 47 tests pass with the new auth flow.",
@@ -389,7 +389,7 @@ class Command(BaseCommand):
                 "blocked_by": ["mcp_task_002"],
             },
             {
-                "agent": agent_objects["team-lead"],
+                "agent": agent_objects["meta-agent"],
                 "task_id": "mcp_task_004",
                 "title": "Deploy auth fix to staging",
                 "description": "Build Docker image, run integration tests, blue-green deploy.",
@@ -401,7 +401,7 @@ class Command(BaseCommand):
                 "blocked_by": ["mcp_task_003"],
             },
             {
-                "agent": agent_objects["team-lead"],
+                "agent": agent_objects["meta-agent"],
                 "task_id": "mcp_task_005",
                 "title": "Update API docs for auth changes",
                 "description": "Add refresh token rotation docs, update auth flow diagram.",

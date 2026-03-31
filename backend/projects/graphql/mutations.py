@@ -58,10 +58,10 @@ class ProjectMutation:
             owner=user,
         )
 
-        # Spawn team-lead agent explicitly (no hidden signal side effects).
+        # Spawn the project meta agent explicitly (no hidden signal side effects).
         # Runs in background via create_agent's spawn_logged_task so the
         # mutation returns immediately.
-        from agents.services.lifecycle import spawn_team_lead
+        from agents.services.lifecycle import spawn_meta_agent
         from config.app_config import app_config
 
         model_override = ""
@@ -69,15 +69,15 @@ class ProjectMutation:
             model_override = app_config.test_agent_model.strip() or DEFAULT_TEST_AGENT_MODEL
 
         try:
-            await spawn_team_lead(str(project.id), model_override=model_override)
+            await spawn_meta_agent(str(project.id), model_override=model_override)
         except Exception:
-            log.exception("create_project.team_lead_failed", project_id=str(project.id))
+            log.exception("create_project.meta_agent_failed", project_id=str(project.id))
             # Preserve the failed project as a tombstone for audit/debugging,
             # but hide it from normal project queries.
             project.deleted_at = timezone.now()
             project.archived_at = project.deleted_at
             await project.asave(update_fields=["deleted_at", "archived_at"])
-            raise Exception("Failed to initialize project — team lead could not be created")
+            raise Exception("Failed to initialize project — meta agent could not be created")
 
         return project
 

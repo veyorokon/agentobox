@@ -292,11 +292,11 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
         </button>
       </div>
 
-      {/* Panel tabs: Agents | Skills | Tasks */}
+      {/* Panel tabs: Execution | Skills | Tasks */}
       <div className="h-7 px-3 flex items-center gap-1 border-b border-border-default shrink-0 min-w-0">
         <div className="flex items-center gap-0.5 shrink-0">
           {([
-            { id: "agents" as const, icon: Users, label: "Agents" },
+            { id: "agents" as const, icon: Users, label: "Execution" },
             { id: "skills" as const, icon: BookOpen, label: "Skills" },
             { id: "tasks" as const, icon: CheckSquare, label: "Tasks" },
           ]).map(({ id, icon: Icon, label }) => (
@@ -377,10 +377,11 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
       {/* Tab content */}
       {panelTab === "agents" && (
         <>
-          {/* Agent filter bar */}
+          {/* Execution filter bar */}
           <AgentFilterToolbar
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
+            searchPlaceholder="Search executors..."
             tags={allTags}
             selectedTag={tagFilter}
             onTagChange={setTagFilter}
@@ -420,7 +421,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
             </div>
           )}
 
-          {/* Agent cards */}
+          {/* Executor cards */}
           <ScrollArea className="flex-1 min-h-0 overflow-y-auto">
             <div className="p-3 space-y-2">
               {loading && agents.length === 0 && (
@@ -450,7 +451,7 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
               {filteredAgents.length === 0 && !loading && (
                 <div className="py-6 text-center">
                   <Users className="h-5 w-5 text-muted/20 mx-auto mb-1" />
-                  <p className="text-[11px] text-muted/50">No agents match filters</p>
+                  <p className="text-[11px] text-muted/50">No executors match filters</p>
                 </div>
               )}
             </div>

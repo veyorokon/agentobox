@@ -48,7 +48,7 @@ type SecretRow = {
   value: string
 }
 
-type GlobalTab = "projects" | "secrets" | "personas"
+type GlobalTab = "projects" | "secrets"
 
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
@@ -271,7 +271,6 @@ export default function GlobalPage() {
   const TABS: { id: GlobalTab; label: string }[] = [
     { id: "projects", label: "Projects" },
     { id: "secrets", label: "Secrets" },
-    { id: "personas", label: "Personas" },
   ]
 
   return (
@@ -384,10 +383,10 @@ export default function GlobalPage() {
                 </div>
               </div>
 
-              {/* Section 2: Team lead model */}
+              {/* Section 2: Meta-agent model */}
               <div className="px-4 pb-3">
                 <label htmlFor="lead-model" className="block text-xs font-medium text-secondary mb-1.5">
-                  Team Lead Model
+                  Meta-Agent Model
                 </label>
                 <div className="relative">
                   <select
@@ -658,19 +657,6 @@ export default function GlobalPage() {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* ── Personas tab (placeholder) ── */}
-      {globalTab === "personas" && (
-        <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xs font-medium text-secondary uppercase tracking-wider">Personas</h2>
-          </div>
-          <div className="py-16 text-center rounded-lg border border-border-default bg-surface-raised/30">
-            <p className="text-sm text-muted/60 mb-1">Coming soon</p>
-            <p className="text-[11px] text-muted/40">Reusable identity templates with instructions and tags for agents</p>
-          </div>
         </div>
       )}
 

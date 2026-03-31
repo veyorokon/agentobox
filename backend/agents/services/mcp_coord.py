@@ -143,7 +143,7 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
             raise ToolError(f"Teammate '{recipient}' not found")
 
         # Actually kill the container — same path as the killAgent mutation.
-        # The team-lead's authority is sufficient; no approval needed.
+        # The meta agent's authority is sufficient; no approval needed.
         from agents.services.lifecycle import kill_agent
         await kill_agent(str(target.id))
 

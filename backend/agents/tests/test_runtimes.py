@@ -173,7 +173,7 @@ class TestModalRuntimeExec:
         monkeypatch.setattr("agents.runtimes.modal.app_config.environment", "dev")
 
         sandbox = await runtime.create(
-            "team-lead",
+            "meta-agent",
             {"AGENT_ID": "agent-123", "AGENT_TYPE": "claude-code"},
             volumes=[SimpleNamespace(name="agentobox_agent-volumes", mount_path="/vol")],
         )

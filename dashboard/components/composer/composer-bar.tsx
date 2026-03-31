@@ -62,17 +62,17 @@ export function ComposerBar() {
   }, [handleSend])
 
   const placeholderName = recipients.length === 0
-    ? "your team"
+    ? "this project"
     : recipients.length === 1
-      ? recipients[0].type === "all" ? "all agents" : recipients[0].type === "agent" ? recipients[0].value : `#${recipients[0].value}`
+      ? recipients[0].type === "all" ? "all executors" : recipients[0].type === "agent" ? recipients[0].value : `#${recipients[0].value}`
       : `${recipients.length} recipients`
   const placeholder = `Message ${placeholderName}...`
 
   const visiblePills = recipients.slice(0, MAX_VISIBLE_PILLS)
   const overflowCount = Math.max(0, recipients.length - MAX_VISIBLE_PILLS)
 
-  // Dont show committed pills when just the default @team-lead
-  const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
+  // Don't show committed pills when just the default @meta-agent
+  const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "meta-agent"
 
   return (
     <div className="px-3 @[640px]/main:px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">

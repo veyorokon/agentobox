@@ -573,7 +573,7 @@ class ClaudeCodeAdapter:
                 ## Communication
 
                 Messages from teammates arrive as regular user turns prefixed with the
-                sender's name, e.g. `[Team message from team-lead]: ...`. Messages are
+                sender's name, e.g. `[Team message from meta-agent]: ...`. Messages are
                 delivered to you automatically via stdin.
 
                 To send messages, use your native SendMessage tool or the **team** MCP

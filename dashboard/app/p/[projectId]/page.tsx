@@ -115,7 +115,7 @@ export default function ProjectPage() {
 
   const topTabs = [
     { id: "chat", label: "Chat", icon: <MessageSquare className="h-3.5 w-3.5" /> },
-    { id: "agents", label: "Agents", icon: <Users className="h-3.5 w-3.5" /> },
+    { id: "agents", label: "Execution", icon: <Users className="h-3.5 w-3.5" /> },
     { id: "skills", label: "Skills", icon: <BookOpen className="h-3.5 w-3.5" /> },
     { id: "tasks", label: "Tasks", icon: <CheckSquare className="h-3.5 w-3.5" /> },
   ]
@@ -124,7 +124,7 @@ export default function ProjectPage() {
 
   return (
     <div className="h-screen flex bg-surface overflow-hidden cursor-default">
-      <h1 className="sr-only">Agentobox Dashboard</h1>
+      <h1 className="sr-only">Agentobox Project Control</h1>
 
       <SecretsModal
         open={secretsOpen}
@@ -209,7 +209,7 @@ export default function ProjectPage() {
           />
         )}
 
-        {/* Center: team feed + attention bar + composer */}
+        {/* Center: project activity + attention bar + composer */}
         {(!showTopTabs || mainTab === "chat") && (
           <main className="flex-1 min-w-0 flex flex-col min-h-0 bg-surface-raised">
             <TeamFeed />
@@ -218,7 +218,7 @@ export default function ProjectPage() {
           </main>
         )}
 
-        {/* Top-tab content: agents (mobile) */}
+        {/* Top-tab content: execution (mobile) */}
         {showTopTabs && mainTab === "agents" && (
           <div className="flex-1 min-w-0 bg-surface flex flex-col overflow-hidden">
             <AgentCardsPanel />

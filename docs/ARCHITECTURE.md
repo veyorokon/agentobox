@@ -118,9 +118,17 @@ A workflow is a pre-configured template targeting a specific audience. It popula
 - Trigger conditions (cron schedule, webhook, state diff rules)
 - Effect set (notify channels, output format)
 
-Workflows are a UX concept — same infra underneath, different front door per audience. User picks a workflow, it generates the configs, agents execute.
+Workflows are a UX concept — same infra underneath, different front door per audience. User picks a workflow, it generates the configs, the meta agent decomposes and delegates, and executors run.
 
 The AI coding team use case is one workflow template among many. Dogfooding (using agentobox to build agentobox) is still the dev workflow.
+
+User-facing shape:
+
+- one `Project`
+- one `meta agent` as the control-facing primary actor
+- zero or more `subagents` as execution workers
+
+This repo still manages many runtime `Agent` rows because deployment, relay, and workspace ownership are real backend concerns. What is changing is product framing: the user should mostly steer one meta agent per project, not a roster of peer agents.
 
 ## Agent Lifecycle
 
@@ -138,7 +146,7 @@ On restart (`hard_restart_agent`), the old container is terminated, the agent is
 
 ## Communication Architecture
 
-Agents communicate via the **team** MCP server — a FastMCP HTTP app mounted at `/mcp` on the ASGI server (`config/asgi.py`). Auth is Bearer token per agent (`relay_token`). Tool schemas match Claude Code's native team tools; built-ins are disabled via `disallowedTools`.
+Agents communicate via the **team** MCP server — a FastMCP HTTP app mounted at `/mcp` on the ASGI server (`config/asgi.py`). Auth is Bearer token per agent (`relay_token`). Tool schemas match Claude Code's native team tools for transport compatibility; built-ins are disabled via `disallowedTools`.
 
 | MCP Tool | Purpose |
 |----------|---------|
@@ -147,11 +155,11 @@ Agents communicate via the **team** MCP server — a FastMCP HTTP app mounted at
 | `task_update(task_id, status, owner, ...)` | Update task fields, claim, set dependencies |
 | `task_get(task_id)` | Get full task details |
 | `task_list()` | List all project tasks |
-| `teammate_spawn(name, instructions, model)` | Create a new agent in the same project |
-| `task_add(subject, description)` | Create a team task |
+| `teammate_spawn(name, instructions, model)` | Create a new subagent in the same project |
+| `task_add(subject, description)` | Create a project task |
 | `task_claim(task_id)` | Claim and start a task |
 | `task_complete(task_id)` | Mark a task done |
-| `team_status()` | List all active agents with status/cost |
+| `team_status()` | List all active project executors with status/cost |
 
 **Message delivery flow:**
 
@@ -203,7 +211,7 @@ All backend logging uses `structlog` with a `domain.action` naming convention en
 | `comms` | Message delivery, mode changes, signals | `comms.py` |
 | `mcp` | MCP tool calls (send, task, spawn) | `mcp_coord.py` |
 | `broadcast` | Channels group_send to subscribers | `broadcast.py` |
-| `feed` | TeamFeedItem creation/broadcast | `feed.py` |
+| `feed` | Activity feed item creation/broadcast | `feed.py` |
 | `reconciler` | GDA reconciliation loop | `reconcile.py` |
 | `runtime` | Container/sandbox operations | `runtimes/docker.py`, `runtimes/modal.py` |
 | `callback` | Permission/hook callbacks from relay | `callbacks.py` |
@@ -225,8 +233,8 @@ All in `backend/agents/models.py`:
 | `Agent` | Container instance — status, config, latest_snapshot, materialized cost/phase/attention |
 | `StreamEvent` | Append-only event log. One row per stream-json event. Source of truth. Universal primitive for both agent output and mechanical loop audit trail. |
 | `SessionResult` | Cost/usage snapshot per turn (from `result` events). One row per turn, not upserted. |
-| `TeamFeedItem` | Curated dashboard feed entries. Flat union — every field on every row, null where N/A. |
-| `AgentTask` | Team tasks created via MCP `task_add`. Synced from MCP calls, visible in dashboard. |
+| `TeamFeedItem` | Curated dashboard activity feed entries. Flat union — every field on every row, null where N/A. |
+| `AgentTask` | Project tasks created via MCP `task_add`. Synced from MCP calls, visible in dashboard. |
 | `AccountSecret` | Fernet-encrypted secrets at account (user) level. Inherited by all projects. |
 | `ProjectSecret` | Fernet-encrypted secrets at project level. Overrides account secrets with same key. Optional agent scoping via M2M. |
 | `AgentFeedback` | User ratings/comments on agent sessions. |
@@ -241,7 +249,7 @@ All in `backend/agents/models.py`:
 
 **Zustand** (`dashboard/lib/stores/`):
 - `sidebar.ts`: UI state — panel visibility, tabs, expanded agents, search/filter, attention stepper
-- `team.ts`: Composer recipients only (not agent data). Falls back to `team-lead` default.
+- `team.ts`: Composer recipients only (not agent data). Falls back to the project `meta-agent` default.
 
 Zero prop drilling: all components subscribe directly to hooks/stores. The page component (`app/p/[projectId]/page.tsx`) is a pure layout shell.
 

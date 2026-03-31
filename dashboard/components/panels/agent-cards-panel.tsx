@@ -48,6 +48,7 @@ export function AgentCardsPanel() {
       <AgentFilterToolbar
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        searchPlaceholder="Search executors..."
         tags={allTags}
         selectedTag={tagFilter}
         onTagChange={setTagFilter}
@@ -100,7 +101,7 @@ export function AgentCardsPanel() {
           {filteredAgents.length === 0 && !loading && (
             <div className="py-6 text-center">
               <Users className="h-5 w-5 text-muted/20 mx-auto mb-1" />
-              <p className="text-[11px] text-muted/50">No agents match filters</p>
+              <p className="text-[11px] text-muted/50">No executors match filters</p>
             </div>
           )}
         </div>

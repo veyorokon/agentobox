@@ -44,7 +44,7 @@ async def test_provision_workspace_writes_files_under_agent_home(tmp_path, monke
         api_key="",
         mcp_servers=None,
         instructions="Return the smoke token exactly.",
-        agent_name="team-lead",
+        agent_name="meta-agent",
         agent_role="lead",
         team_members=[],
         team_name="manual-proof",

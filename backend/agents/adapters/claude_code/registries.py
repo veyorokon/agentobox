@@ -166,10 +166,10 @@ TEAM_CONFIGS = {
     "solo": {
         "agents": [
             {
-                "name": "team-lead",
+                "name": "meta-agent",
                 "role": "lead",
                 "model": "claude-opus-4-6",
-                "instructions": "You are the team lead and sole agent. Handle all aspects of the project.",
+                "instructions": "You are the meta agent and sole agent. Handle all aspects of the project, including metacognition, decomposition, delegation, and escalation.",
                 "mcp_servers": [],
             }
         ]
@@ -177,10 +177,10 @@ TEAM_CONFIGS = {
     "fullstack": {
         "agents": [
             {
-                "name": "team-lead",
+                "name": "meta-agent",
                 "role": "lead",
                 "model": "claude-opus-4-6",
-                "instructions": "Coordinate the team, delegate tasks, review work, and maintain overall project vision.",
+                "instructions": "Act as the meta agent. Coordinate the project, delegate tasks to subagents, review work, and maintain overall project direction.",
                 "mcp_servers": [],
             },
             {

@@ -29,7 +29,7 @@ export function TeamFeed() {
   const setMainTab = useSidebarStore(s => s.setMainTab)
 
   // ── Derived: effective agent filter from recipients ────────────────
-  const isDefaultRecipient = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "team-lead"
+  const isDefaultRecipient = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "meta-agent"
 
   const agentFilter = useMemo(() => {
     if (isDefaultRecipient) return new Set<string>()

@@ -24,7 +24,7 @@ interface TeamActions {
   reviewAgent: (agentName: string) => void
 }
 
-const DEFAULT_RECIPIENT: RecipientEntry = { type: "agent", value: "team-lead" }
+const DEFAULT_RECIPIENT: RecipientEntry = { type: "agent", value: "meta-agent" }
 
 export const useTeamStore = create<TeamState & TeamActions>()(zustandLog("team", (set) => ({
   recipients: [DEFAULT_RECIPIENT],

@@ -444,10 +444,10 @@ class TestBuildInstructions:
     def test_lead_role(self, adapter):
         md = adapter.build_instructions(
             project_name="TestProject",
-            agent_name="team-lead",
+            agent_name="meta-agent",
             agent_role="lead",
             team_members=[
-                {"name": "team-lead", "role": "lead", "instructions": "Lead"},
+                {"name": "meta-agent", "role": "lead", "instructions": "Lead"},
                 {"name": "worker", "role": "worker", "instructions": "Code"},
             ],
         )

@@ -23,7 +23,7 @@ async def test_delete_project_tombstones_project_stops_live_agents_and_deletes_s
         name="Delete Project", owner=user
     )
     agent_a = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
-        name="team-lead", project=project, runtime="modal", status=AgentStatus.IDLE
+        name="meta-agent", project=project, runtime="modal", status=AgentStatus.IDLE
     )
     agent_b = await sync_to_async(Agent.objects.create, thread_sensitive=True)(
         name="worker", project=project, runtime="modal", status=AgentStatus.RUNNING
@@ -118,7 +118,7 @@ async def test_deleted_project_is_hidden_from_project_queries():
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-async def test_create_project_uses_haiku_for_smoke_user_team_lead():
+async def test_create_project_uses_haiku_for_smoke_user_meta_agent():
     user = await sync_to_async(
         get_user_model().objects.create_user, thread_sensitive=True
     )(username="demo", password="test")
@@ -131,7 +131,7 @@ async def test_create_project_uses_haiku_for_smoke_user_team_lead():
     app_config.smoke_test_user = "demo"
     app_config.test_agent_model = ""
     try:
-        with patch("agents.services.lifecycle.spawn_team_lead", new_callable=AsyncMock) as mock_spawn:
+        with patch("agents.services.lifecycle.spawn_meta_agent", new_callable=AsyncMock) as mock_spawn:
             result = await schema.execute(
                 """
                 mutation ($input: CreateProjectInput!) {
@@ -156,7 +156,7 @@ async def test_create_project_uses_haiku_for_smoke_user_team_lead():
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-async def test_create_project_does_not_override_team_lead_model_for_normal_user():
+async def test_create_project_does_not_override_meta_agent_model_for_normal_user():
     user = await sync_to_async(
         get_user_model().objects.create_user, thread_sensitive=True
     )(username="alice", password="test")
@@ -169,7 +169,7 @@ async def test_create_project_does_not_override_team_lead_model_for_normal_user(
     app_config.smoke_test_user = "demo"
     app_config.test_agent_model = ""
     try:
-        with patch("agents.services.lifecycle.spawn_team_lead", new_callable=AsyncMock) as mock_spawn:
+        with patch("agents.services.lifecycle.spawn_meta_agent", new_callable=AsyncMock) as mock_spawn:
             result = await schema.execute(
                 """
                 mutation ($input: CreateProjectInput!) {
