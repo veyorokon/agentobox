@@ -8,6 +8,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 COPY backend/pyproject.toml backend/uv.lock ./
+COPY libs/gda_kernel /libs/gda_kernel
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/. .
