@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "channels",
     "strawberry_django",
     "accounts",
+    "gda",
     "projects",
     "agents",
     # django-allauth

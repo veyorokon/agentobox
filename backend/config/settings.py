@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "strawberry_django",
     "config",  # Telemetry and logging setup
     "accounts",
+    "gda",
     "projects",
     "agents",
     # django-allauth

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Goal-driven agent orchestration platform"
 requires-python = ">=3.12"
 dependencies = [
+    "agentobox-gda-kernel",
     "boto3>=1.38.0",
     "channels>=4.3.2",
     "django-allauth[socialaccount]>=65.4.0",
@@ -32,6 +33,9 @@ dependencies = [
     "websockets>=14.0",
 ]
 
+[tool.uv.sources]
+agentobox-gda-kernel = { path = "../libs/gda_kernel", editable = true }
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
@@ -48,6 +52,7 @@ pythonpath = ["."]
 testpaths = [
     "agents",
     "projects",
+    "gda",
     "accounts",
     "config",
 ]
