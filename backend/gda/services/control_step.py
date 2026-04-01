@@ -6,7 +6,7 @@ from datetime import datetime
 from gda_kernel import CommitmentProposal
 
 from gda.models import ProjectCommitment, ProjectObservation, ProjectState
-from gda.services.commitments import persist_commitment_proposal
+from gda.services.commitments import authorize_commitment, persist_commitment_proposal
 from projects.models import Project
 
 
@@ -26,7 +26,7 @@ def build_control_context(*, project: Project) -> dict[str, object]:
     )
     active_commitments = tuple(
         ProjectCommitment.objects.filter(project=project)
-        .exclude(status__in=("satisfied", "breached", "expired", "canceled", "superseded"))
+        .exclude(status__in=("satisfied", "failed", "canceled"))
         .order_by("-created_at")
         .values("commitment_id", "capability_id", "status")
     )
@@ -62,10 +62,15 @@ def run_control_step(
         if commitment_id_factory is not None
         else f"commitment:{project.id}:{context['state_version_id']}"
     )
-    return persist_commitment_proposal(
+    persist_commitment_proposal(
         project=project,
         proposal=proposal,
         commitment_id=commitment_id,
-        status="active",
+        status="proposed",
         opened_at=opened_at,
+    )
+    return authorize_commitment(
+        project=project,
+        commitment_id=commitment_id,
+        activated_at=opened_at,
     )

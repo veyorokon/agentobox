@@ -524,3 +524,8 @@ async def team_status() -> list[dict]:
     ]
 
     return agents
+
+
+from gda.services.mcp_surface import register_gda_tools
+
+register_gda_tools(mcp=mcp, authenticate=_authenticate)

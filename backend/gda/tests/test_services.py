@@ -12,8 +12,11 @@ from gda.services.admission import (
     project_observation_to_contract,
 )
 from gda.services.commitments import (
+    CommitmentAuthorizationError,
+    authorize_commitment,
     persist_commitment_proposal,
     project_commitment_to_contract,
+    update_commitment_status,
 )
 from gda.services.compile import compile_run_spec_for_project
 from gda.services.control_step import build_control_context, run_control_step
@@ -21,6 +24,7 @@ from gda.services.execution import (
     project_execution_to_contract,
     record_execution_outcome,
 )
+from gda.services.runtime_completion import process_runtime_completion
 from gda.services.state import persist_run_spec_state, project_state_to_contract
 from gda_kernel import (
     CommitmentProposal,
@@ -284,6 +288,47 @@ def test_persist_commitment_proposal_writes_canonical_commitment():
 
 
 @pytest.mark.django_db
+def test_authorize_commitment_rejects_capability_outside_project_boundary():
+    user = get_user_model().objects.create_user(username="gda-authorize", password="test")
+    project = Project.objects.create(name="OpenVending Ops", owner=user)
+    now = datetime(2026, 3, 31, 12, 0, tzinfo=timezone.utc)
+    run_spec = compile_run_spec_for_project(
+        project=project,
+        task_bundle={
+            "title": "Handle supplier delay",
+            "goals": (
+                {
+                    "goal_id": "goal-1",
+                    "name": "assess supplier impact",
+                    "desired_state": {"supplier_risk_assessed": True},
+                },
+            ),
+            "allowed_capabilities": ("ops.measure_supplier_risk",),
+        },
+        now=now,
+        world_ref=f"project://{project.id}",
+    )
+    persist_run_spec_state(project=project, run_spec=run_spec, status="running")
+    persist_commitment_proposal(
+        project=project,
+        proposal=CommitmentProposal(
+            capability_id="ops.reply_supplier",
+            arguments={"template": "delay-followup"},
+        ),
+        commitment_id="commitment-unauthorized",
+        status="proposed",
+        opened_at=now,
+    )
+
+    with pytest.raises(CommitmentAuthorizationError, match="not authorized"):
+        authorize_commitment(
+            project=project,
+            commitment_id="commitment-unauthorized",
+            activated_at=now,
+        )
+
+
+@pytest.mark.django_db
 def test_run_control_step_builds_context_from_canonical_state_and_records_commitment():
     user = get_user_model().objects.create_user(username="gda-loop", password="test")
     project = Project.objects.create(name="OpenVending Ops", owner=user)
@@ -348,3 +393,173 @@ def test_run_control_step_builds_context_from_canonical_state_and_records_commit
     assert created is not None
     assert created.commitment_id == f"commitment:{project.id}:1"
     assert created.status == "active"
+
+
+@pytest.mark.django_db
+def test_run_control_step_rejects_unauthorized_capability_during_activation():
+    user = get_user_model().objects.create_user(username="gda-loop-auth", password="test")
+    project = Project.objects.create(name="OpenVending Ops", owner=user)
+    now = datetime(2026, 3, 31, 12, 0, tzinfo=timezone.utc)
+    run_spec = compile_run_spec_for_project(
+        project=project,
+        task_bundle={
+            "title": "Handle supplier delay",
+            "goals": (
+                {
+                    "goal_id": "goal-1",
+                    "name": "assess supplier impact",
+                    "desired_state": {"supplier_risk_assessed": True},
+                },
+            ),
+            "allowed_capabilities": ("ops.measure_supplier_risk",),
+        },
+        now=now,
+        world_ref=f"project://{project.id}",
+    )
+    persist_run_spec_state(project=project, run_spec=run_spec, status="running")
+
+    with pytest.raises(CommitmentAuthorizationError, match="not authorized"):
+        run_control_step(
+            project=project,
+            proposer=lambda ctx: CommitmentProposal(
+                capability_id="ops.reply_supplier",
+                arguments={"template": "delay-followup"},
+                touched_scope=(ctx["world_ref"],),
+            ),
+            commitment_id_factory=lambda project: f"commitment:{project.id}:unauthorized",
+            opened_at=now,
+        )
+
+
+@pytest.mark.django_db
+def test_update_commitment_status_closes_terminal_commitment():
+    user = get_user_model().objects.create_user(username="gda-status", password="test")
+    project = Project.objects.create(name="OpenVending Ops", owner=user)
+    commitment = ProjectCommitment.objects.create(
+        project=project,
+        commitment_id="commitment-1",
+        objective_id="objective-1",
+        capability_id="ops.measure_supplier_risk",
+        status="active",
+    )
+    closed_at = datetime(2026, 3, 31, 12, 30, tzinfo=timezone.utc)
+
+    updated = update_commitment_status(
+        project=project,
+        commitment_id=commitment.commitment_id,
+        status="satisfied",
+        close_reason="completed",
+        closed_at=closed_at,
+    )
+
+    assert updated.status == "satisfied"
+    assert updated.close_reason == "completed"
+    assert updated.closed_at == closed_at
+
+
+@pytest.mark.django_db
+def test_process_runtime_completion_satisfies_commitment_when_expectations_are_met():
+    user = get_user_model().objects.create_user(username="gda-runtime-ok", password="test")
+    project = Project.objects.create(name="OpenVending Ops", owner=user)
+    ProjectCommitment.objects.create(
+        project=project,
+        commitment_id="commitment-1",
+        objective_id="objective-1",
+        capability_id="ops.measure_supplier_risk",
+        status="active",
+        expected_observation={"kind": "measurement.sampled", "required": True},
+        expected_outcome={"status": "ok", "required": True},
+    )
+    completed_at = datetime(2026, 3, 31, 12, 45, tzinfo=timezone.utc)
+
+    result = process_runtime_completion(
+        project=project,
+        outcome=ExecutionOutcome(
+            invocation_id="invoke-1",
+            commitment_id="commitment-1",
+            status="ok",
+            resource_usage={"tokens": 12.0},
+            artifact_refs=("artifact:risk-report",),
+        ),
+        observations=(
+            Observation(
+                observation_id="obs-measurement-1",
+                subject=f"project://{project.id}",
+                kind="measurement.sampled",
+                observed_at=completed_at,
+                valid_at=completed_at,
+                source=ObservationSource(kind="subagent", source_id="worker-1"),
+                payload={"metric": "supplier_risk", "value": 0.8},
+                provenance_refs=("artifact:risk-report",),
+            ),
+        ),
+        known_source_kinds=("subagent",),
+        completed_at=completed_at,
+    )
+
+    assert result.execution.status == "ok"
+    assert len(result.observations) == 1
+    assert result.commitment is not None
+    assert result.commitment.status == "satisfied"
+    assert result.commitment.close_reason == "completed"
+
+
+@pytest.mark.django_db
+def test_process_runtime_completion_breaches_commitment_when_observation_is_missing():
+    user = get_user_model().objects.create_user(username="gda-runtime-missing", password="test")
+    project = Project.objects.create(name="OpenVending Ops", owner=user)
+    ProjectCommitment.objects.create(
+        project=project,
+        commitment_id="commitment-1",
+        objective_id="objective-1",
+        capability_id="ops.measure_supplier_risk",
+        status="active",
+        expected_observation={"kind": "measurement.sampled", "required": True},
+        expected_outcome={"status": "ok", "required": True},
+    )
+    completed_at = datetime(2026, 3, 31, 12, 45, tzinfo=timezone.utc)
+
+    result = process_runtime_completion(
+        project=project,
+        outcome=ExecutionOutcome(
+            invocation_id="invoke-1",
+            commitment_id="commitment-1",
+            status="ok",
+        ),
+        observations=(),
+        completed_at=completed_at,
+    )
+
+    assert result.commitment is not None
+    assert result.commitment.status == "failed"
+    assert result.commitment.close_reason == "missing_observation:measurement.sampled"
+
+
+@pytest.mark.django_db
+def test_process_runtime_completion_breaches_commitment_when_outcome_status_mismatches():
+    user = get_user_model().objects.create_user(username="gda-runtime-fail", password="test")
+    project = Project.objects.create(name="OpenVending Ops", owner=user)
+    ProjectCommitment.objects.create(
+        project=project,
+        commitment_id="commitment-1",
+        objective_id="objective-1",
+        capability_id="ops.measure_supplier_risk",
+        status="active",
+        expected_outcome={"status": "ok", "required": True},
+    )
+    completed_at = datetime(2026, 3, 31, 12, 45, tzinfo=timezone.utc)
+
+    result = process_runtime_completion(
+        project=project,
+        outcome=ExecutionOutcome(
+            invocation_id="invoke-1",
+            commitment_id="commitment-1",
+            status="error",
+            metadata={"reason": "tool timeout"},
+        ),
+        completed_at=completed_at,
+    )
+
+    assert result.commitment is not None
+    assert result.commitment.status == "failed"
+    assert result.commitment.close_reason == "outcome_status_mismatch:ok"
