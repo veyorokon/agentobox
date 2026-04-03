@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "sync:themes": "node scripts/sync-theme-manifest.mjs",
-    "dev": "pnpm sync:themes && next dev --turbopack -p 5051",
+    "dev": "pnpm sync:themes && next dev --webpack -p 5051",
     "build": "pnpm sync:themes && next build",
     "typecheck": "pnpm sync:themes && tsc --noEmit",
     "test:unit": "pnpm sync:themes && vitest run",

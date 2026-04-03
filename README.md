@@ -15,6 +15,27 @@ open http://localhost:5051
 
 Login: `demo` / `demo`
 
+Default local host binds already avoid the most common collisions:
+- dashboard: `5051`
+- backend: `8001`
+- postgres: `5433`
+- redis: `6380`
+- localstack: `4599`
+
+If you run multiple local stacks, override them in one place:
+
+```bash
+POSTGRES_HOST_PORT=5433 \
+BACKEND_HOST_PORT=8001 \
+DASHBOARD_HOST_PORT=3001 \
+REDIS_HOST_PORT=6380 \
+LOCALSTACK_HOST_PORT=4598 \
+make up
+```
+
+The container-internal ports stay the same. Only the host bindings move.
+The same values can live in a repo-local `.env`.
+
 ## Architecture
 
 ```
@@ -211,7 +232,7 @@ Images are built and pushed to GHCR on pushes to `dev` (`:branch`, `:sha-xxx`). 
 
 | Command | Description |
 |---------|-------------|
-| `make up` / `make down` | Start / stop all services |
+| `make up` / `make down` | Start / stop all services. Default host binds are dashboard `5051`, backend `8001`, Postgres `5433`, Redis `6380`, LocalStack `4599`. Override with `POSTGRES_HOST_PORT`, `BACKEND_HOST_PORT`, `DASHBOARD_HOST_PORT`, `REDIS_HOST_PORT`, and `LOCALSTACK_HOST_PORT`. |
 | `make test` | Run backend tests in Docker |
 | `make test-local` | Run backend tests locally via uv |
 | `make lint` | Run ruff (backend) + next lint (dashboard) |
@@ -234,6 +255,9 @@ Images are built and pushed to GHCR on pushes to `dev` (`:branch`, `:sha-xxx`). 
 | [MACHINE CONTRACT](docs/contracts/machine.md) | Canonical state model for project volumes, agent machine surfaces, and Docker/Modal parity |
 | [CONTRIBUTING](CONTRIBUTING.md) | Issue taxonomy, labels, proof levels, and contributor workflow |
 | [RUNTIME-FAILURE-AUDIT](docs/RUNTIME-FAILURE-AUDIT.md) | Standard runtime debugging and failure classification procedure |
+| [GDA AXIOMS](docs/gda/GDA_AXIOMS.md) | First principles constraining fuzzy vs mechanical compute and GDA design |
+| [GDA OPEN QUESTIONS](docs/gda/GDA_OPEN_QUESTIONS.md) | Active unresolved design questions for state reduction, progress, authorization, and casebase |
+| [GDA STATE OPTIONS](docs/gda/GDA_STATE_REPRESENTATION_OPTIONS.md) | Candidate state representation patterns and the current favored direction |
 | [REFERENCE](docs/REFERENCE.md) | Auto-generated: backend modules, annotations (`make docs`) |
 | [DASHBOARD-REFERENCE](docs/DASHBOARD-REFERENCE.md) | Auto-generated: dashboard modules, annotations (`make docs`) |
 | [AGENT-REFERENCE](docs/AGENT-REFERENCE.md) | Auto-generated: agent modules, s6 services, annotations (`make docs`) |

@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: agentobox
       POSTGRES_PASSWORD: agentobox
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -24,7 +24,7 @@ services:
       SERVICES: s3,secretsmanager
       DEFAULT_REGION: us-east-1
     ports:
-      - "4599:4566"
+      - "${LOCALSTACK_HOST_PORT:-4599}:4566"
     volumes:
       - localstack-data:/var/lib/localstack
       - ./localstack-init:/etc/localstack/init/ready.d:ro
@@ -41,7 +41,7 @@ services:
       dockerfile: backend/Dockerfile
     mem_limit: 1g
     entrypoint: ["bash", "/app/entrypoint.sh"]
-    command: ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
+    command: ["uv", "run", "daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
     environment:
       DATABASE_URL: postgres://agentobox:agentobox@postgres:5432/agentobox
       REDIS_URL: redis://redis:6379/0
@@ -64,7 +64,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
       MEDIA_BUCKET: ${MEDIA_BUCKET:-agentobox-media}
-      MEDIA_CDN_URL: ${MEDIA_CDN_URL:-http://localhost:4566/agentobox-media}
+      MEDIA_CDN_URL: ${MEDIA_CDN_URL:-http://localhost:${LOCALSTACK_HOST_PORT:-4599}/agentobox-media}
       AGENT_ROOTFS_PATH: ${AGENT_ROOTFS_PATH:-}
       VOLUME_ROOT: /volumes
       AGENT_REAP_DELAY_S: ${AGENT_REAP_DELAY_S:-300}
@@ -76,7 +76,7 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8001}:8000"
     depends_on:
       postgres:
         condition: service_started
@@ -87,7 +87,6 @@ services:
     volumes:
       - ./backend:/app
       - ./shared:/shared:ro
-      - /app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
       - ./agent:/agent:ro
       - ./dashboard/schema.graphql:/dashboard/schema.graphql:ro
@@ -101,10 +100,13 @@ services:
     restart: unless-stopped
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
+      NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_HOST_PORT:-8001}/graphql
+      NEXT_PUBLIC_WS_BASE_URL: ws://localhost:${BACKEND_HOST_PORT:-8001}
+      NEXT_TELEMETRY_DISABLED: "1"
       # Let Node use up to 8 GB heap — turbopack dev server is memory-hungry
       NODE_OPTIONS: "--max-old-space-size=8192"
     ports:
-      - "5051:5051"
+      - "${DASHBOARD_HOST_PORT:-5051}:5051"
     depends_on:
       - backend
     volumes:

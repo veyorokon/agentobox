@@ -15,7 +15,7 @@ FROM base AS dev
 
 EXPOSE 5051
 
-CMD ["pnpm", "dev"]
+CMD ["sh", "-lc", "CI=true pnpm install --frozen-lockfile --prefer-offline && mkdir -p /app/.next && find /app/.next -mindepth 1 -maxdepth 1 -exec rm -rf {} + && pnpm dev"]
 
 # --- Production build ---
 FROM base AS builder
