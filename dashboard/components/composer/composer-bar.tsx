@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { ArrowUp, Paperclip, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { RecipientEntry } from "@/lib/types"
@@ -28,6 +28,13 @@ export function ComposerBar() {
 
   const sendMessage = useSendMessage()
 
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+  }, [])
+
   const handleSuggestionsChange = useCallback((s: RecipientEntry[]) => {
     setSuggestions(s)
   }, [])
@@ -41,9 +48,7 @@ export function ComposerBar() {
 
     const savedText = msg
     setText("")
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto"
-    }
+    if (textareaRef.current) textareaRef.current.style.height = "auto"
     setSending(true)
 
     const delivered = await sendMessage(msg, recipients)
@@ -74,6 +79,10 @@ export function ComposerBar() {
   // Don't show committed pills when just the default @meta-agent
   const isDefault = recipients.length === 1 && recipients[0].type === "agent" && recipients[0].value === "meta-agent"
 
+  useEffect(() => {
+    resizeTextarea()
+  }, [resizeTextarea, text])
+
   return (
     <div className="px-3 @[640px]/main:px-6 pb-4 pt-2 max-w-3xl mx-auto w-full shrink-0">
       {/* Composer box */}
@@ -86,12 +95,8 @@ export function ComposerBar() {
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
-          onInput={(e) => {
-            const el = e.currentTarget
-            el.style.height = "auto"
-            el.style.height = `${el.scrollHeight}px`
-          }}
-          className="w-full bg-transparent border-none outline-none resize-none px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted min-h-[52px] max-h-[200px] overflow-y-auto"
+          onInput={resizeTextarea}
+          className="w-full bg-transparent border-none outline-none resize-none px-4 pt-4 pb-2 text-sm text-default placeholder:text-muted min-h-[52px] max-h-[200px] overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
         />
 
         {/* Toolbar row */}

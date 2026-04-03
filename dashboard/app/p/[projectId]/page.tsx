@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useQuery } from "@apollo/client/react"
 import {
+  Activity,
   CheckSquare,
   ChevronRight,
   KeyRound,
@@ -35,7 +36,7 @@ import { UserMenu } from "@/components/layout/user-menu"
 import { ThemePicker } from "@/components/layout/theme-picker"
 import { useThemeStore } from "@/lib/stores/theme"
 import { BackendStatusBanner } from "@/components/ui/backend-status-banner"
-import { describeGraphqlError } from "@/lib/graphql/errors"
+import { classifyProjectPageError, getProjectPageErrorPresentation } from "@/lib/graphql/errors"
 
 /* ================================================================== */
 /*  PROJECT DASHBOARD PAGE                                             */
@@ -101,6 +102,12 @@ export default function ProjectPage() {
   const backendError = (!hasProjectData && projectError)
     || (!hasAgentData && agentsError)
     || null
+  const backendErrorPresentation = backendError
+    ? getProjectPageErrorPresentation(backendError)
+    : null
+  const backendErrorKind = backendError
+    ? classifyProjectPageError(backendError)
+    : null
 
   // ── Local state ─────────────────────────────────────────────────
   const [secretsOpen, setSecretsOpen] = useState(false)
@@ -146,8 +153,10 @@ export default function ProjectPage() {
       <div className="@container/main flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         {backendError && (
           <BackendStatusBanner
-            title="Project data is temporarily unavailable"
-            detail={describeGraphqlError(backendError)}
+            title={backendErrorPresentation?.title ?? "Project data could not be loaded"}
+            detail={backendErrorPresentation?.detail ?? "Backend unavailable. Retry in a moment."}
+            actionLabel={backendErrorKind === "forbidden" ? "Back to projects" : undefined}
+            onAction={backendErrorKind === "forbidden" ? () => router.push("/") : undefined}
             onRetry={() => {
               void refetchProject()
               void refetchAgents()
@@ -179,6 +188,14 @@ export default function ProjectPage() {
               </>
             )}
             <span className="flex-1" />
+            <button
+              type="button"
+              onClick={() => router.push(`/p/${projectId}/gda`)}
+              className="p-1.5 rounded-md text-muted hover:text-accent hover:bg-surface-raised/50 transition-colors"
+              title="Open GDA live view"
+            >
+              <Activity className="h-3.5 w-3.5" />
+            </button>
             <button
               type="button"
               onClick={() => setSecretsOpen(true)}

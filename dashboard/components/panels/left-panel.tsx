@@ -4,6 +4,7 @@ import { useMemo, useCallback, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useQuery } from "@apollo/client/react"
 import {
+  Activity,
   Users,
   ChevronRight,
   ChevronLeft,
@@ -180,6 +181,14 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           >
             <KeyRound className="h-3 w-3" />
           </button>
+          <button
+            type="button"
+            onClick={() => router.push(`/p/${projectId}/gda`)}
+            className="p-1 rounded-md text-muted/50 hover:text-accent hover:bg-surface-raised/50 transition-colors"
+            title="Open GDA live view"
+          >
+            <Activity className="h-3 w-3" />
+          </button>
           <span className="text-[8px] text-secondary/70 font-mono tabular-nums">
             {formatCost(totalCost)}
           </span>
@@ -265,6 +274,14 @@ export function AgentLeftPanel({ onOpenSecrets, onCreateAgent }: { onOpenSecrets
           <span className="inline-block w-8 h-2.5 rounded bg-surface-raised/40 animate-pulse ml-1 shrink-0" />
         )}
         <span className="flex-1" />
+        <button
+          type="button"
+          onClick={() => router.push(`/p/${projectId}/gda`)}
+          className="p-1.5 rounded-md text-muted hover:text-accent hover:bg-surface-raised/50 transition-colors shrink-0"
+          title="Open GDA live view"
+        >
+          <Activity className="h-3.5 w-3.5" />
+        </button>
         <button
           type="button"
           onClick={onOpenSecrets}

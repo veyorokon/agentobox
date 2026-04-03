@@ -567,7 +567,9 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
     1. Client connects to ws/dashboard/<project_id>/
     2. First message must be {"type": "auth", "token": "<jwt>"}
     3. On success: joins group, sends snapshot, then streams incremental updates
-    4. On failure: closes with code 4001
+    4. On failure:
+       - 4001 = bad or missing token
+       - 4005 = authenticated, but not authorized for this project
 
     Groups:
         dashboard_{project_id} — receives agent updates and feed items
@@ -604,7 +606,7 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
                 await Project.objects.aget(id=self.project_id, owner=user)
             except Project.DoesNotExist:
                 dashboard_log.warning("dashboard.auth_failed", project_id=self.project_id, reason="not_owner")
-                await self.close(code=4001)
+                await self.close(code=4005)
                 return
 
             self.authenticated = True

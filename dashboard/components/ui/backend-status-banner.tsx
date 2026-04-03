@@ -8,11 +8,15 @@ export function BackendStatusBanner({
   detail,
   className,
   onRetry,
+  actionLabel,
+  onAction,
 }: {
   title: string
   detail: string
   className?: string
   onRetry?: () => void
+  actionLabel?: string
+  onAction?: () => void
 }) {
   return (
     <div className={cn("border-b border-danger/20 bg-danger/6", className)}>
@@ -22,15 +26,26 @@ export function BackendStatusBanner({
           <p className="font-medium text-danger/85">{title}</p>
           <p className="mt-0.5 text-danger/70">{detail}</p>
         </div>
-        {onRetry && (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="shrink-0 rounded border border-danger/20 bg-danger/10 px-2 py-1 text-[10px] font-medium text-danger/80 transition-colors hover:bg-danger/15"
-          >
-            Retry
-          </button>
-        )}
+        <div className="shrink-0 flex items-center gap-2">
+          {actionLabel && onAction && (
+            <button
+              type="button"
+              onClick={onAction}
+              className="rounded border border-border-default bg-surface px-2 py-1 text-[10px] font-medium text-default transition-colors hover:bg-surface-raised"
+            >
+              {actionLabel}
+            </button>
+          )}
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded border border-danger/20 bg-danger/10 px-2 py-1 text-[10px] font-medium text-danger/80 transition-colors hover:bg-danger/15"
+            >
+              Retry
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

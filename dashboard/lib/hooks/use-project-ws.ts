@@ -22,14 +22,27 @@ const log = createLogger("ws")
 
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_CAP_MS = 30_000
+const DASHBOARD_WS_AUTH_REJECT_CODE = 4001
+const DASHBOARD_WS_FORBIDDEN_CODE = 4005
+
+export type ProjectWsCloseAction = "clear_auth" | "forbidden" | "reconnect"
+
+export function classifyProjectWsClose(code: number): ProjectWsCloseAction {
+  if (code === DASHBOARD_WS_AUTH_REJECT_CODE) return "clear_auth"
+  if (code === DASHBOARD_WS_FORBIDDEN_CODE) return "forbidden"
+  return "reconnect"
+}
 
 function getWsUrl(projectId: string): string {
   if (typeof window === "undefined") return ""
+  if (process.env.NEXT_PUBLIC_WS_BASE_URL) {
+    return `${process.env.NEXT_PUBLIC_WS_BASE_URL}/ws/dashboard/${projectId}/`
+  }
   const { protocol, hostname, port } = window.location
   const wsProto = protocol === "https:" ? "wss:" : "ws:"
   const host = !port || port === "80" || port === "443"
     ? hostname
-    : `${hostname}:8000`
+    : `${hostname}:8001`
   return `${wsProto}//${host}/ws/dashboard/${projectId}/`
 }
 
@@ -43,6 +56,7 @@ export function useProjectWebSocket(projectId: string | undefined) {
   const reconnectAttempt = useRef(0)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unmounted = useRef(false)
+  const intentionalClose = useRef(false)
 
   useEffect(() => {
     unmounted.current = false
@@ -60,11 +74,16 @@ export function useProjectWebSocket(projectId: string | undefined) {
 
       const url = getWsUrl(projectId!)
       log("ws.connecting", { projectId, attempt: reconnectAttempt.current })
+      intentionalClose.current = false
 
       const ws = new WebSocket(url)
       wsRef.current = ws
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) {
+          ws.close()
+          return
+        }
         log("ws.open", { projectId })
         reconnectAttempt.current = 0
         // Authenticate immediately
@@ -72,6 +91,7 @@ export function useProjectWebSocket(projectId: string | undefined) {
       }
 
       ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return
         let data: Record<string, unknown>
         try {
           data = JSON.parse(event.data)
@@ -96,13 +116,20 @@ export function useProjectWebSocket(projectId: string | undefined) {
       }
 
       ws.onclose = (event) => {
-        log("ws.closed", { projectId, code: event.code })
-        wsRef.current = null
+        if (wsRef.current === ws) {
+          wsRef.current = null
+        }
+        if (unmounted.current || intentionalClose.current) return
 
-        // 4001 = auth rejected (bad/expired token). Clear stale token
-        // and redirect to login instead of retrying forever.
-        if (event.code === 4001) {
+        log("ws.closed", { projectId, code: event.code })
+
+        const closeAction = classifyProjectWsClose(event.code)
+        if (closeAction === "clear_auth") {
           clearTokenAndRedirect("ws_4001")
+          return
+        }
+        if (closeAction === "forbidden") {
+          log("ws.forbidden", { projectId, code: event.code }, "warn")
           return
         }
 
@@ -110,6 +137,7 @@ export function useProjectWebSocket(projectId: string | undefined) {
       }
 
       ws.onerror = () => {
+        if (unmounted.current || intentionalClose.current || wsRef.current !== ws) return
         log("ws.error", { projectId }, "error")
         // onclose will fire after onerror — reconnect handled there
       }
@@ -154,6 +182,7 @@ export function useProjectWebSocket(projectId: string | undefined) {
         reconnectTimer.current = null
       }
       if (wsRef.current) {
+        intentionalClose.current = true
         wsRef.current.close()
         wsRef.current = null
       }

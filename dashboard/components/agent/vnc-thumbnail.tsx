@@ -33,11 +33,21 @@ const REFRESH_TOKEN_CODES: Set<number> = new Set([4001, 4003])
 
 type ConnectionState = "idle" | "fetching-token" | "connecting" | "connected" | "error"
 
-function buildVncWsUrl(agentId: string, token: string): string {
+function getVncWsBaseUrl(): string {
+  if (typeof window === "undefined") return ""
+  if (process.env.NEXT_PUBLIC_WS_BASE_URL) {
+    return process.env.NEXT_PUBLIC_WS_BASE_URL
+  }
   const { hostname, port, protocol } = window.location
-  const wsProto = protocol === "https:" ? "wss" : "ws"
-  const host = !port || port === "80" || port === "443" ? hostname : `${hostname}:8000`
-  return `${wsProto}://${host}/ws/vnc/${agentId}/?token=${token}`
+  const wsProto = protocol === "https:" ? "wss:" : "ws:"
+  const host = !port || port === "80" || port === "443"
+    ? hostname
+    : `${hostname}:8001`
+  return `${wsProto}//${host}`
+}
+
+function buildVncWsUrl(agentId: string, token: string): string {
+  return `${getVncWsBaseUrl()}/ws/vnc/${agentId}/?token=${token}`
 }
 
 export function VncThumbnail({ agent }: VncThumbnailProps) {

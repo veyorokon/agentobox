@@ -126,6 +126,18 @@ describe("VncThumbnail", () => {
     expect(screen.getByTestId("vnc-screen").getAttribute("data-url")).toBe(firstProps.url)
   })
 
+  it("uses the canonical websocket base url for VNC connections", async () => {
+    vi.stubEnv("NEXT_PUBLIC_WS_BASE_URL", "ws://localhost:8001")
+
+    render(React.createElement(VncThumbnail, { agent: baseAgent }))
+
+    await vi.advanceTimersByTimeAsync(50)
+    await waitFor(() => expect(screen.getByTestId("vnc-screen")).toBeTruthy())
+    expect(screen.getByTestId("vnc-screen").getAttribute("data-url")).toBe(
+      "ws://localhost:8001/ws/vnc/agent-1/?token=test-token",
+    )
+  })
+
   it("tears down and stops retrying when preview becomes unavailable", async () => {
     const { rerender } = render(React.createElement(VncThumbnail, { agent: baseAgent }))
 

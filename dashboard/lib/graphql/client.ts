@@ -9,6 +9,7 @@ import { onError } from "@apollo/client/link/error"
 import { ServerError } from "@apollo/client/errors"
 import { createLogger } from "@/lib/logger"
 import { getAuthHeader, clearTokenAndRedirect } from "@/lib/auth"
+import { isAuthGraphqlError } from "@/lib/graphql/errors"
 
 /* ================================================================== */
 /*  APOLLO CLIENT                                                      */
@@ -30,7 +31,7 @@ function getApiUrl(): string {
   if (typeof window === "undefined") return "http://localhost:8000/graphql"
   const { protocol, hostname, port } = window.location
   if (!port || port === "80" || port === "443") return `${protocol}//${hostname}/graphql`
-  return `${protocol}//${hostname}:8000/graphql`
+  return `${protocol}//${hostname}:8001/graphql`
 }
 
 /* ── Logging link ────────────────────────────────────────────────── */
@@ -67,13 +68,13 @@ const loggingLink = new ApolloLink((operation, forward) => {
 const authErrorLink = onError(({ error }) => {
   if (typeof window === "undefined") return
 
-  // Only redirect on HTTP-level auth failures (middleware rejects before GraphQL).
-  // GraphQL-level "Authentication required" errors are handled by the WebSocket
-  // close code 4001 in use-project-ws.ts — that's the reliable signal for stale
-  // sessions. Catching GraphQL errors here causes logout loops because stale
-  // cached queries can fire before the fresh token propagates.
   if (ServerError.is(error) && (error.statusCode === 401 || error.statusCode === 403)) {
     clearTokenAndRedirect("http_401_403")
+    return
+  }
+
+  if (isAuthGraphqlError(error)) {
+    clearTokenAndRedirect("graphql_auth_required")
   }
 })
 
