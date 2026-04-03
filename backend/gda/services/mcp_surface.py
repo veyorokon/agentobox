@@ -9,9 +9,17 @@ from fastmcp.exceptions import ToolError
 
 from gda.services.admission import admit_project_observation
 from gda.services.commitments import persist_commitment_proposal
-from gda.services.control_step import build_control_context
+from gda.services.context_envelope import build_gda_context_envelope, serialize_gda_context_envelope
 from gda.services.runtime_completion import process_runtime_completion
-from gda_kernel import CommitmentProposal, ExecutionOutcome, Observation, ObservationSource
+from gda_kernel import (
+    CommitmentProposal,
+    ExecutionOutcome,
+    Observation,
+    ObservationSource,
+    agent_ref,
+    commitment_ref,
+    project_ref,
+)
 from projects.models import Project
 
 
@@ -38,16 +46,12 @@ async def _get_project_for_agent(agent) -> Project:
 async def get_gda_context_for_agent(agent) -> dict[str, object]:
     project = await _get_project_for_agent(agent)
     try:
-        context = await sync_to_async(build_control_context, thread_sensitive=True)(
-            project=project,
+        envelope = await sync_to_async(build_gda_context_envelope, thread_sensitive=True)(
+            project=project
         )
+        return serialize_gda_context_envelope(envelope)
     except Project.DoesNotExist as exc:
         raise ToolError("Project has no canonical GDA state yet") from exc
-    return {
-        **context,
-        "recent_observations": list(context["recent_observations"]),
-        "active_commitments": list(context["active_commitments"]),
-    }
 
 
 async def list_gda_recent_observations_for_agent(agent) -> list[dict[str, object]]:
@@ -82,11 +86,11 @@ async def admit_gda_observation_for_agent(
         candidate=Observation(
             observation_id=observation_id,
             kind=kind,
-            subject=subject or f"project://{project.id}",
+            subject=subject or project_ref(project.id),
             observed_at=observed_dt,
             valid_at=valid_dt,
             expires_at=expires_dt,
-            source=ObservationSource(kind="agent", source_id=agent.name),
+            source=ObservationSource(kind="agent", source_id=agent_ref(agent.id)),
             payload=dict(payload or {}),
             provenance_refs=tuple(provenance_refs or ()),
             quality=quality,
@@ -120,16 +124,16 @@ def _build_agent_observation(
     if reported_source_kind or reported_source_id:
         payload["reported_source"] = {
             "kind": str(reported_source_kind or "agent"),
-            "source_id": str(reported_source_id or agent.name),
+            "source_id": str(reported_source_id or agent_ref(agent.id)),
         }
     return Observation(
         observation_id=str(observation["observation_id"]),
         kind=str(observation["kind"]),
-        subject=str(observation.get("subject") or f"project://{project.id}"),
+        subject=str(observation.get("subject") or project_ref(project.id)),
         observed_at=observed_dt,
         valid_at=valid_dt,
         expires_at=expires_dt,
-        source=ObservationSource(kind="agent", source_id=agent.name),
+        source=ObservationSource(kind="agent", source_id=agent_ref(agent.id)),
         payload=payload,
         provenance_refs=tuple(str(item) for item in observation.get("provenance_refs") or ()),
         quality=str(observation.get("quality") or "derived"),
@@ -152,11 +156,11 @@ async def propose_gda_commitment_for_agent(
         proposal=CommitmentProposal(
             capability_id=capability_id,
             arguments=dict(arguments or {}),
-            touched_scope=tuple(touched_scope or (f"project://{project.id}",)),
+            touched_scope=tuple(touched_scope or (project_ref(project.id),)),
             expected_observation=dict(expected_observation or {}),
             expected_outcome=dict(expected_outcome or {}),
         ),
-        commitment_id=commitment_id or uuid.uuid4().hex[:16],
+        commitment_id=commitment_id or commitment_ref(uuid.uuid4().hex),
         status="proposed",
     )
     return {

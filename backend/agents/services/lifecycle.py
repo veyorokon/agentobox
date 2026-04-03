@@ -174,8 +174,9 @@ async def create_agent(
     tags: list[str] | None = None,
     agent_type: str = "claude-code",
     triggers: list | None = None,
+    background: bool = True,
 ) -> Agent:
-    """Create agent record immediately, provision container in background."""
+    """Create agent record and provision it either inline or in background."""
     from projects.models import Project
 
     name = _sanitize_name(name)
@@ -265,21 +266,25 @@ async def create_agent(
 
     op_log.info("lifecycle.agent_created", agent_id=str(agent.id))
 
-    spawn_logged_task(
-        _provision_agent(
-            str(agent.id),
-            runtime_name,
-            op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
-            secret_envs,
-            attempt_id=str(attempt.id),
-        ),
-        op_log=op_log,
-        task_name=f"agent-provision:{agent.id}",
-        event="lifecycle.provision_task",
-        agent_id=str(agent.id),
+    provision_coro = _provision_agent(
+        str(agent.id),
+        runtime_name,
+        op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
+        secret_envs,
         attempt_id=str(attempt.id),
-        correlation_id=correlation_id,
     )
+    if background:
+        spawn_logged_task(
+            provision_coro,
+            op_log=op_log,
+            task_name=f"agent-provision:{agent.id}",
+            event="lifecycle.provision_task",
+            agent_id=str(agent.id),
+            attempt_id=str(attempt.id),
+            correlation_id=correlation_id,
+        )
+    else:
+        await provision_coro
 
     return agent
 
@@ -1025,7 +1030,7 @@ def _atomic_reset_for_restart(agent_id):
     return agent, old_sandbox_id, old_runtime, resume_session_id, config
 
 
-async def hard_restart_agent(agent_id: str) -> Agent:
+async def hard_restart_agent(agent_id: str, *, background: bool = True) -> Agent:
     """
     Hard restart: kill container + reprovision with best-effort context resume.
 
@@ -1103,24 +1108,28 @@ async def hard_restart_agent(agent_id: str) -> Agent:
 
     op_log.info("lifecycle.agent_restarted", agent_id=agent_id)
 
-    # Start provisioning in background — pass resume_session_id so the
-    # new container can --resume the prior conversation.
-    spawn_logged_task(
-        _provision_agent(
-            agent_id,
-            runtime_name,
-            op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
-            secret_envs,
-            resume_session_id=resume_session_id,
-            attempt_id=str(attempt.id),
-        ),
-        op_log=op_log,
-        task_name=f"agent-restart:{agent.id}",
-        event="lifecycle.provision_task",
-        agent_id=str(agent.id),
+    provision_coro = _provision_agent(
+        agent_id,
+        runtime_name,
+        op_log.bind(correlation_id=correlation_id, attempt_id=str(attempt.id)),
+        secret_envs,
+        resume_session_id=resume_session_id,
         attempt_id=str(attempt.id),
-        correlation_id=correlation_id,
     )
+    if background:
+        # Start provisioning in background — pass resume_session_id so the
+        # new container can --resume the prior conversation.
+        spawn_logged_task(
+            provision_coro,
+            op_log=op_log,
+            task_name=f"agent-restart:{agent.id}",
+            event="lifecycle.provision_task",
+            agent_id=str(agent.id),
+            attempt_id=str(attempt.id),
+            correlation_id=correlation_id,
+        )
+    else:
+        await provision_coro
 
     clear_agent_context()
     return agent

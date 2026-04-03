@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+import uuid
 
 import pytest
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 
-from gda.models import ProjectCommitment, ProjectObservation
+from gda.models import ProjectCommitment, ProjectObservation, ProjectStateEntry
 from gda.services.compile import compile_run_spec_for_project
 from gda.services.mcp_surface import (
     admit_gda_observation_for_agent,
@@ -18,7 +19,7 @@ from gda.services.mcp_surface import (
     report_gda_execution_for_agent,
 )
 from gda.services.state import persist_run_spec_state
-from gda_kernel import State, StateVersion
+from gda_kernel import State, StateVersion, agent_ref, project_ref, world_ref
 from projects.models import Project
 
 
@@ -26,7 +27,7 @@ pytestmark = pytest.mark.integration
 
 
 def _agent_for(project: Project, *, name: str = "meta-agent") -> SimpleNamespace:
-    return SimpleNamespace(name=name, project_id=project.id)
+    return SimpleNamespace(id=uuid.uuid4(), name=name, project_id=project.id)
 
 
 @pytest.mark.django_db
@@ -48,17 +49,27 @@ def test_get_gda_context_for_agent_reads_canonical_project_state():
             "allowed_capabilities": ("ops.measure_supplier_risk",),
         },
         now=now,
-        world_ref=f"project://{project.id}",
+        world_ref=world_ref(project.id),
     )
     persist_run_spec_state(
         project=project,
         run_spec=run_spec,
         state=State(
-            subject=f"project://{project.id}",
+            subject=project_ref(project.id),
             version=StateVersion(version_id="v1", observed_at=now, source_refs=("seed:1",)),
             facts={"supplier_delay_detected": True},
         ),
         status="running",
+    )
+    ProjectStateEntry.objects.create(
+        project=project,
+        dimension_id="runtime.health",
+        schema_ref="status.readiness.v1",
+        origin="observed",
+        value={"status": "ready"},
+        valid_from=now,
+        provenance_refs=["obs:runtime-1"],
+        state_version_id="v1",
     )
     ProjectCommitment.objects.create(
         project=project,
@@ -70,8 +81,25 @@ def test_get_gda_context_for_agent_reads_canonical_project_state():
 
     context = async_to_sync(get_gda_context_for_agent)(_agent_for(project))
 
-    assert context["project_name"] == "OpenVending Ops"
-    assert context["facts"]["supplier_delay_detected"] is True
+    assert context["envelope_type"] == "gda_context_envelope"
+    assert context["context_version_id"] == "v1"
+    assert context["subject_name"] == "OpenVending Ops"
+    assert "project_name" not in context
+    assert "project_id" not in context
+    assert "facts" not in context
+    assert "reduced_state_entries" not in context
+    assert "state_version_id" not in context
+    assert context["state_entries"] == [
+        {
+            "dimension_id": "runtime.health",
+            "value": {"status": "ready"},
+            "schema_ref": "status.readiness.v1",
+            "origin": "observed",
+            "valid_from": "2026-03-31T12:00:00+00:00",
+            "valid_until": None,
+            "provenance_refs": ["obs:runtime-1"],
+        },
+    ]
     assert context["active_commitments"][0]["capability_id"] == "ops.measure_supplier_risk"
 
 
@@ -93,14 +121,14 @@ def test_list_gda_recent_observations_for_agent_reads_recent_canonical_observati
             ),
         },
         now=now,
-        world_ref=f"project://{project.id}",
+        world_ref=world_ref(project.id),
     )
     persist_run_spec_state(project=project, run_spec=run_spec, status="running")
     ProjectObservation.objects.create(
         project=project,
         observation_id="obs-email-1",
         kind="communication.email.received",
-        subject=f"project://{project.id}",
+        subject=project_ref(project.id),
         observed_at=now,
         valid_at=now,
         source_kind="gmail",
@@ -116,7 +144,10 @@ def test_list_gda_recent_observations_for_agent_reads_recent_canonical_observati
         {
             "observation_id": "obs-email-1",
             "kind": "communication.email.received",
-            "subject": f"project://{project.id}",
+            "subject": project_ref(project.id),
+            "observed_at": "2026-03-31T12:00:00+00:00",
+            "valid_at": "2026-03-31T12:00:00+00:00",
+            "expires_at": None,
             "source_kind": "gmail",
             "source_id": "inbox",
             "quality": "exact",
@@ -142,7 +173,7 @@ def test_list_gda_active_commitments_for_agent_reads_active_canonical_commitment
             ),
         },
         now=now,
-        world_ref=f"project://{project.id}",
+        world_ref=world_ref(project.id),
     )
     persist_run_spec_state(project=project, run_spec=run_spec, status="running")
     ProjectCommitment.objects.create(
@@ -167,6 +198,7 @@ def test_list_gda_active_commitments_for_agent_reads_active_canonical_commitment
             "commitment_id": "commitment-1",
             "capability_id": "ops.measure_supplier_risk",
             "status": "active",
+            "objective_id": "objective-1",
         },
     ]
 
@@ -176,8 +208,9 @@ def test_admit_gda_observation_for_agent_persists_agent_sourced_observation():
     user = get_user_model().objects.create_user(username="gda-mcp-observation", password="test")
     project = Project.objects.create(name="OpenVending Ops", owner=user)
 
+    agent = _agent_for(project, name="meta-agent")
     result = async_to_sync(admit_gda_observation_for_agent)(
-        _agent_for(project, name="meta-agent"),
+        agent,
         observation_id="obs-risk-1",
         kind="analysis.risk_flagged",
         payload={"risk": "supplier_delay"},
@@ -187,7 +220,7 @@ def test_admit_gda_observation_for_agent_persists_agent_sourced_observation():
     record = ProjectObservation.objects.get(project=project, observation_id="obs-risk-1")
     assert result["ok"] is True
     assert record.source_kind == "agent"
-    assert record.source_id == "meta-agent"
+    assert record.source_id == agent_ref(agent.id)
     assert record.quality == "derived"
 
 
@@ -210,7 +243,7 @@ def test_propose_gda_commitment_for_agent_persists_proposed_commitment():
             "allowed_capabilities": ("ops.measure_supplier_risk",),
         },
         now=now,
-        world_ref=f"project://{project.id}",
+        world_ref=world_ref(project.id),
     )
     persist_run_spec_state(project=project, run_spec=run_spec, status="running")
 
@@ -248,7 +281,7 @@ def test_report_gda_execution_for_agent_records_execution_and_satisfies_commitme
             "allowed_capabilities": ("ops.measure_supplier_risk",),
         },
         now=now,
-        world_ref=f"project://{project.id}",
+        world_ref=world_ref(project.id),
     )
     persist_run_spec_state(project=project, run_spec=run_spec, status="running")
     ProjectCommitment.objects.create(
@@ -261,8 +294,9 @@ def test_report_gda_execution_for_agent_records_execution_and_satisfies_commitme
         expected_outcome={"status": "ok", "required": True},
     )
 
+    agent = _agent_for(project, name="worker-1")
     result = async_to_sync(report_gda_execution_for_agent)(
-        _agent_for(project, name="worker-1"),
+        agent,
         invocation_id="invoke-risk-1",
         commitment_id="commitment-risk-1",
         status="ok",
@@ -285,7 +319,7 @@ def test_report_gda_execution_for_agent_records_execution_and_satisfies_commitme
     assert result["commitment"]["status"] == "satisfied"
     assert commitment.status == "satisfied"
     assert observation.source_kind == "agent"
-    assert observation.source_id == "worker-1"
+    assert observation.source_id == agent_ref(agent.id)
 
 
 @pytest.mark.django_db
@@ -307,12 +341,13 @@ def test_report_gda_execution_for_agent_forces_canonical_agent_source_identity()
             "allowed_capabilities": ("ops.measure_supplier_risk",),
         },
         now=now,
-        world_ref=f"project://{project.id}",
+        world_ref=world_ref(project.id),
     )
     persist_run_spec_state(project=project, run_spec=run_spec, status="running")
 
+    agent = _agent_for(project, name="worker-1")
     async_to_sync(report_gda_execution_for_agent)(
-        _agent_for(project, name="worker-1"),
+        agent,
         invocation_id="invoke-spoof-1",
         status="ok",
         observations=[
@@ -329,7 +364,7 @@ def test_report_gda_execution_for_agent_forces_canonical_agent_source_identity()
 
     observation = ProjectObservation.objects.get(project=project, observation_id="obs-spoof-1")
     assert observation.source_kind == "agent"
-    assert observation.source_id == "worker-1"
+    assert observation.source_id == agent_ref(agent.id)
     assert observation.payload["reported_source"] == {
         "kind": "monitor",
         "source_id": "deploy-health",

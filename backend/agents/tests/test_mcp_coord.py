@@ -16,6 +16,7 @@ import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from gda_kernel import agent_ref
 
 pytestmark = pytest.mark.unit
 
@@ -145,8 +146,45 @@ class TestSendMessage:
 
         assert result["ok"] is True
         assert result["recipient"] == "backend"
+        assert result["recipient_ref"] == agent_ref(target.id)
         mock_deliver.assert_called_once_with(
-            "meta-agent", target, "fix the auth bug"
+            "meta-agent", target, "fix the auth bug", sender_ref=agent_ref(sender.id)
+        )
+        MockAgent.objects.aget.assert_awaited_once_with(
+            project_id=sender.project_id,
+            name="backend",
+        )
+
+    @pytest.mark.asyncio
+    async def test_dm_delivery_by_agent_ref(self):
+        """recipient may be an agent ref while routing remains canonical by id."""
+        sender = _mock_agent(name="meta-agent")
+        target = _mock_agent(id="agent-uuid-2", name="backend")
+
+        with (
+            _patch_auth(sender),
+            patch(_P_AGENT) as MockAgent,
+            patch(_P_DELIVER, new_callable=AsyncMock) as mock_deliver,
+            patch(_P_FEED_CREATE, new_callable=AsyncMock),
+        ):
+            MockAgent.objects.aget = AsyncMock(return_value=target)
+
+            result = await send_message(
+                type="message",
+                content="fix the auth bug",
+                recipient=agent_ref(target.id),
+                summary="auth bug fix request",
+            )
+
+        assert result["ok"] is True
+        assert result["recipient"] == "backend"
+        assert result["recipient_ref"] == agent_ref(target.id)
+        mock_deliver.assert_called_once_with(
+            "meta-agent", target, "fix the auth bug", sender_ref=agent_ref(sender.id)
+        )
+        MockAgent.objects.aget.assert_awaited_once_with(
+            project_id=sender.project_id,
+            id=target.id,
         )
 
     @pytest.mark.asyncio
@@ -197,7 +235,36 @@ class TestSendMessage:
             )
 
         assert result["ok"] is True
+        assert result["recipient_ref"] == agent_ref(target.id)
         mock_kill.assert_called_once_with(str(target.id))
+
+    @pytest.mark.asyncio
+    async def test_shutdown_request_by_agent_ref(self):
+        """shutdown_request accepts an agent ref and resolves target by id."""
+        sender = _mock_agent(name="meta-agent")
+        target = _mock_agent(id="agent-uuid-7", name="qa")
+
+        with (
+            _patch_auth(sender),
+            patch(_P_AGENT) as MockAgent,
+            patch(_P_KILL_AGENT, new_callable=AsyncMock) as mock_kill,
+        ):
+            MockAgent.objects.aget = AsyncMock(return_value=target)
+
+            result = await send_message(
+                type="shutdown_request",
+                recipient=agent_ref(target.id),
+                content="task complete",
+            )
+
+        assert result["ok"] is True
+        assert result["recipient"] == "qa"
+        assert result["recipient_ref"] == agent_ref(target.id)
+        mock_kill.assert_called_once_with(str(target.id))
+        MockAgent.objects.aget.assert_awaited_once_with(
+            project_id=sender.project_id,
+            id=target.id,
+        )
 
     @pytest.mark.asyncio
     async def test_invalid_type_errors(self):

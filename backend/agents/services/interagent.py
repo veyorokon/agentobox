@@ -16,6 +16,7 @@ Flow:
 import uuid
 
 import structlog
+from gda_kernel import agent_ref
 
 from agents.models import Agent, AgentStatus
 from agents.services.relay import deliver_input
@@ -41,7 +42,12 @@ async def deliver_broadcast(
 
     failed = []
     for agent in agents:
-        sent = await deliver_to_stdin(sender.name, agent, content)
+        sent = await deliver_to_stdin(
+            sender.name,
+            agent,
+            content,
+            sender_ref=agent_ref(sender.id),
+        )
         if not sent:
             failed.append(agent.name)
 
@@ -53,7 +59,13 @@ async def deliver_broadcast(
     )
 
 
-async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> bool:
+async def deliver_to_stdin(
+    sender_name: str,
+    target: Agent,
+    content: str,
+    *,
+    sender_ref: str | None = None,
+) -> bool:
     """Deliver an inter-agent message via the durable inbox path.
 
     Formats the message as a stream-json user input so the relay writes it
@@ -76,6 +88,7 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
             "message": {"role": "user", "content": parts},
             "session_id": target.session_id or "",
             "team_message_from": sender_name,
+            "team_message_from_ref": sender_ref or "",
         },
         message_id=f"team_{uuid.uuid4().hex[:16]}",
     )
@@ -84,5 +97,5 @@ async def deliver_to_stdin(sender_name: str, target: Agent, content: str) -> boo
     sent = await deliver_input(target, parts)
     if not sent:
         log.warning("comms.interagent_delivery_failed",
-                    sender=sender_name, target=target.name)
+                    sender=sender_name, sender_ref=sender_ref, target=target.name)
     return sent

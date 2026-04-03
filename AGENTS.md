@@ -34,6 +34,7 @@ Use the repo-facing docs for process and project context:
 - Optimize for explicit contracts over convenience.
 - Prefer one canonical source of truth per concern.
 - Treat projections and caches as disposable read models, not authority.
+- Keep fuzzy computation and mechanical computation separate.
 - Preserve boring operations over cleverness.
   Boring means fewer moving parts, explicit data flow, and no hidden inference from ambient state.
 - Minimize abstraction bleed.
@@ -79,6 +80,16 @@ An invariant is a specific rule within a contract that must never be violated re
 
 Contracts separate what must be true from how it is achieved. Implementations behind the contract can change freely. If the contract stays the same, downstream consumers do not need to change.
 
+Contracts belong to the mechanically computable side of the system.
+A real contract should be:
+- explicit
+- mechanically checkable
+- deterministically computable at the seam where it is enforced
+
+If a seam is authority-bearing, and whether the contract holds still depends on
+fuzzy model judgment at enforcement time, then the contract is not actually
+formalized yet.
+
 When a bug happens at a seam, the contract tells you which side broke its promise.
 
 Examples:
@@ -92,6 +103,34 @@ Questions:
 - What invariants must hold?
 - Is the current implementation honoring the contract, or working around it?
 - If the implementation changed, would the contract still be satisfied?
+
+### Information Hiding
+
+Information hiding is the discipline that keeps a seam opaque except for its contract.
+
+It means:
+
+- callers depend on the contract, not the implementation details behind it
+- each side should know only what it must know to honor the seam
+- internals can change freely as long as the contract still holds
+
+In this repo, this is usually the difference between:
+
+- knowing the canonical input/output at a seam
+- versus knowing how the other side happens to implement it today
+
+Good information hiding produces:
+
+- cleaner ownership
+- lower coupling
+- fewer accidental dependencies
+- easier replacement of adapters and implementations
+
+Questions:
+
+- What must cross this seam, and what should stay hidden behind it?
+- Is this layer depending on a contract, or on leaked implementation details?
+- If the implementation were replaced tomorrow, what would actually need to change?
 
 ### Goals
 
@@ -346,6 +385,55 @@ Confusion between these two causes a large share of state bugs.
 Rule:
 - if canonical and derived disagree, canonical wins
 
+### Fuzzy vs Mechanical Compute
+
+Not all computation in a system should be treated the same.
+
+This repo distinguishes between two broad kinds of compute:
+
+- `fuzzy`
+  - heuristic, probabilistic, interpretive, or judgment-heavy
+  - good at dealing with ambiguity, incomplete information, ranking, drafting, decomposition, and deciding what might matter
+- `mechanical`
+  - deterministic, contract-bound, and authority-bearing
+  - good at validation, admission, state transitions, reconciliation, accounting, and lifecycle closure
+
+Examples of fuzzy compute:
+- interpreting a messy user request
+- proposing an observation from noisy world input
+- deciding what to measure next
+- proposing a task or commitment
+- ranking plausible next actions
+
+Examples of mechanical compute:
+- validating a payload against a contract
+- admitting or rejecting a proposed observation
+- writing canonical state
+- recording an execution outcome
+- closing a lifecycle transition
+- deriving progress or attribution from canonical records
+
+Rule:
+- fuzzy compute may propose
+- mechanical compute must decide, admit, persist, and close
+
+This means:
+- agents and models are usually responsible for fuzzy compute
+- backend services, reducers, validators, and authoritative stores are responsible for mechanical compute
+- raw model output must not become canonical truth without passing through a deterministic seam
+
+Preferred pattern:
+1. let fuzzy components interpret or propose
+2. convert that output into an explicit typed object
+3. pass it through a mechanical contract boundary
+4. only then let it affect canonical state or lifecycle truth
+
+Questions:
+- Is this component doing fuzzy compute or mechanical compute?
+- Should this output be a proposal or an authoritative state transition?
+- Where is the deterministic seam that admits this into canonical truth?
+- Are we accidentally asking a fuzzy component to perform authority-bearing work?
+
 ### Evidence Hierarchy
 
 Not all evidence is equal.
@@ -556,6 +644,249 @@ Typical questions:
 
 Agents should move up and down this scale deliberately. Do not stay too low too early. Do not stay too high once the seam is clear.
 
+## Lenses / Frames of Reference
+
+`Lens` and `frame of reference` mean the same thing here.
+
+They are ways of making vague work more legible by routing it through a stronger structure.
+
+Use them when:
+- the problem is real but still fuzzy
+- several directions seem plausible
+- abstraction is outrunning concrete decision-making
+- the thread needs a stronger basis for formalization
+
+Programming is a particularly strong frame of reference because it already contains powerful formal tools:
+- specifications
+- interfaces
+- preconditions and effects
+- tests
+- regressions
+- definitions of done
+
+Good agents should consciously route a problem through the strongest available lens until it becomes:
+- computable
+- delegable
+- evaluable
+- or at least more explicit
+
+Useful lenses / frames of reference:
+
+- `specification`
+  - what is actually being asked?
+  - what are the acceptance criteria?
+- `goal`
+  - what state should become true?
+  - what would count as done?
+- `operator`
+  - what actions can change that state?
+- `preconditions / effects`
+  - when can an action run, and what should it change?
+- `evidence`
+  - what artifacts or observations would justify belief?
+- `evaluation`
+  - how will success, failure, risk, or incompleteness be scored?
+- `delegation`
+  - who or what is the right executor for each part?
+- `discrepancy`
+  - what differed from expectation, and what corrective work emerges?
+- `policy / authority`
+  - what is allowed, gated, preferred, or forbidden?
+- `cost`
+  - what did this consume, and is that acceptable?
+- `case`
+  - what similar prior thread or workflow is worth reusing?
+
+The goal is not to force every problem into one frame.
+The goal is to use the strongest frame available to collapse ambiguity.
+
+## Shape Refinement Through Critique
+
+Critique is a tool for collapsing design space.
+
+When a system shape is still fuzzy, criticism can help expose:
+- overloaded nouns
+- missing distinctions
+- hidden assumptions
+- competing primary objects
+- blurred boundaries between kernel and presentation
+- attempts to serve too many loops at once
+
+Preferred pattern:
+1. state the current shape
+2. list the strongest criticisms against it
+3. ask what each criticism implies
+4. refine the shape based on those implications
+5. repeat until the remaining shape is more constrained and more honest
+
+A good criticism is not:
+- vague dislike
+- aesthetic discomfort without explanation
+
+A good criticism is:
+- a challenge to a contract
+- a challenge to a primary object
+- a challenge to an ownership boundary
+- a challenge to what must be always visible vs contextual
+- a challenge to whether the current shape would actually be used
+
+Critique should tighten the edges of the system, not just generate more options.
+
+## First-Principles Design Loop
+
+When a design problem is real but the solution shape is still unclear, do not
+jump directly from discomfort to implementation ideas.
+
+Use a first-principles design loop:
+
+1. name the hard problems
+2. identify the axioms, invariants, and constraints that already govern them
+3. derive the implications of those constraints
+4. let the required seams, contracts, ownership boundaries, and programming
+   patterns fall out of those implications
+5. only then choose implementation structure
+
+The goal is not just a better argument.
+The goal is deterministic contracts at authority-bearing seams.
+
+This is useful because it prevents:
+- architecture by taste
+- premature abstraction
+- treating open questions as settled truth
+- inventing shapes that violate already-known constraints
+
+Distinguish these statement types:
+- `axiom` / `first principle`
+  - a grounding truth you want to preserve
+- `invariant`
+  - a rule the implementation must never violate
+- `constraint`
+  - a limit or implication that follows from the axioms or current environment
+- `open question`
+  - something not yet settled
+- `implementation choice`
+  - one possible way to satisfy the constraints
+
+Do not mix them.
+In particular:
+- do not treat implementation choices as axioms
+- do not treat open questions as if they were already settled truths
+
+Preferred pattern:
+- `hard problem`
+  - what exactly is difficult or unresolved?
+- `governing truths`
+  - what must already be true?
+- `derived constraints`
+  - what do those truths force?
+- `required shape`
+  - what seams, objects, and contracts follow from those constraints?
+- `open choices`
+  - what remains legitimately undecided after the constraints are applied?
+
+Questions:
+- are we solving from first principles, or from implementation taste?
+- have we separated settled truths from unresolved design space?
+- what parts of the solution are actually forced by the constraints?
+- what parts remain open and should not yet be overformalized?
+
+Expected outputs of this loop:
+- a list of hard problems
+- a list of governing truths
+- a mapping from hard problems to relevant axioms/constraints
+- the derived constraints for each problem
+- the seams, contracts, ownership boundaries, and data-shape requirements that
+  follow from those constraints
+- the deterministic contracts required at authority-bearing seams
+- the remaining open choices
+- the next smallest honest implementation slice
+
+Stopping condition:
+- stop the design pass once the next implementation seam is obvious
+- do not keep expanding theory once ownership, contract shape, and the next
+  practical slice are clear
+
+Minimal example:
+
+- `hard problem`
+  - how should admitted observations change canonical state?
+- `governing truths`
+  - canonical truth must be mechanically writable
+  - uncertainty must be representable
+  - provenance must survive reduction
+- `derived constraints`
+  - reduced state cannot just be raw history
+  - conflicting evidence must be representable
+  - reduced state must remain traceable back to observations
+- `required shape`
+  - observation journal
+  - reduced state model
+  - deterministic reducer seam
+  - provenance links from reduced state back to evidence
+- `open choices`
+  - flat fact bag vs typed state slices
+  - generic reducer vs world-specific reducers
+- `next slice`
+  - implement one deterministic reducer for a small subset of observation kinds
+
+## Analogue-Driven Refinement
+
+When a design problem is still underconstrained, it is often useful to study an
+analogous system that already solves a structurally similar problem well.
+
+The purpose is not to copy the analogue blindly.
+The purpose is to extract the invariants, distinctions, and contract shapes that
+make the analogue work.
+
+Useful ways to use an analogue:
+- `pattern mining`
+  - borrow invariants, lifecycle structure, or object distinctions
+- `thought experiment`
+  - ask how the current problem would look if it were shaped like the analogue
+- `negative comparison`
+  - ask what breaks if we force our problem into that shape
+- `contract mining`
+  - extract the deterministic seams the analogue already formalizes well
+- `operator model mining`
+  - study how users inspect, diff, reconcile, and recover state
+
+Good analogues often help uncover:
+- missing primary objects
+- missing distinctions
+- hidden invariants
+- candidate new axioms
+- better deterministic contract shapes
+
+Preferred pattern:
+1. choose one analogue with real structural similarity
+2. identify the analogue's canonical objects
+3. identify what is history vs current state vs derived view
+4. identify its key invariants and reconciliation operations
+5. ask which of those are structural rather than incidental
+6. turn the structural ones into candidate axioms or constraints
+7. use those constraints to refine the design
+
+Questions:
+- what does this analogue make explicit that our design still keeps blurry?
+- what invariants does the analogue preserve that we may also need?
+- what distinctions does the analogue force between history, state, projection,
+  and authority?
+- which parts of the analogue are essential, and which are domain-specific?
+- does the same candidate axiom appear across multiple analogues?
+
+Examples of often-useful analogues:
+- `git`
+  - append-only history, explicit lineage, conflict as first-class
+- `event sourcing / CQRS`
+  - canonical journal plus derived current state
+- `kubernetes controllers`
+  - explicit reconciliation between desired, observed, and status state
+- `ledger systems`
+  - immutable entries, derived balances, auditability
+
+If multiple strong analogues point to the same invariant, that is often a sign
+that the invariant is structural and worth formalizing.
+
 ## Execution Model
 
 ### Entering A Codebase
@@ -659,6 +990,29 @@ Do not confuse them.
 
 Discovery mode is how you learn the right answer.
 Codification mode is how you make the system keep the answer.
+
+### Frustration As Information-Gap Signal
+
+Frustration is often a signal, not just an emotion.
+
+In design and architecture work, frustration often means:
+- a decision is being forced too early
+- the option space has expanded
+- the current decision surface is under-instrumented
+- the missing thing is not more ideas, but more decision-relevant information
+
+When frustration appears, ask:
+- what fact, if known, would collapse the option space?
+- what primary object is still unclear?
+- what primary loop is still unclear?
+- what must be always visible vs contextual?
+- what would make this meaningfully better than the current alternative tomorrow?
+
+Do not respond to this state only by generating more concepts.
+Often the correct response is:
+- gather the missing information
+- restate the decision criteria
+- reduce the number of active possibilities
 
 ### Incidents vs Refactors
 

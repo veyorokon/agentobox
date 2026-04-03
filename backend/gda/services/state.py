@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-from gda_kernel import Boundary, Goal, Objective, RunSpec, State, StateVersion
+from gda_kernel import Boundary, Goal, Objective, RunSpec, State, StateVersion, TargetCondition, project_ref
 
 from gda.models import ProjectState
 from projects.models import Project
+
+
+def _serialize_target_condition(condition: TargetCondition) -> dict[str, object]:
+    return {
+        "condition_id": condition.condition_id,
+        "dimension_id": condition.dimension_id,
+        "subject_ref": condition.subject_ref,
+        "operator": condition.operator,
+        "expected_value": condition.expected_value,
+    }
 
 
 def _serialize_goal(goal: Goal) -> dict[str, object]:
@@ -13,6 +23,7 @@ def _serialize_goal(goal: Goal) -> dict[str, object]:
         "description": goal.description,
         "desired_state": dict(goal.desired_state),
         "satisfaction_criteria": dict(goal.satisfaction_criteria),
+        "target_conditions": [_serialize_target_condition(condition) for condition in goal.target_conditions],
     }
 
 
@@ -52,7 +63,7 @@ def project_state_to_contract(record: ProjectState) -> State:
     if observed_at is None:
         raise ValueError("ProjectState.observed_at must be set to build a State contract")
     return State(
-        subject=record.subject or record.world_ref,
+        subject=record.subject or project_ref(record.project_id),
         version=StateVersion(
             version_id=record.state_version_id,
             observed_at=observed_at,
@@ -70,7 +81,7 @@ def persist_run_spec_state(
     status: str = "ready",
 ) -> ProjectState:
     effective_state = state or State(
-        subject=run_spec.world_ref,
+        subject=project_ref(project.id),
         version=StateVersion(version_id="v1", observed_at=run_spec.as_of),
         facts={},
     )

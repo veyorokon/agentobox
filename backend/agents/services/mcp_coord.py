@@ -18,10 +18,29 @@ import structlog
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
+from gda_kernel import agent_ref, is_ref
 
 log = structlog.get_logger("abox.mcp")
 
 mcp = FastMCP("team")
+
+
+def _ref_opaque_id(value: str) -> str:
+    return value.split("://", 1)[1]
+
+
+async def _resolve_project_agent(*, project_id, recipient: str):
+    from agents.models import Agent
+
+    lookup: dict[str, object]
+    if is_ref(recipient, kind="agent"):
+        lookup = {"id": _ref_opaque_id(recipient)}
+    else:
+        lookup = {"name": recipient}
+    try:
+        return await Agent.objects.aget(project_id=project_id, **lookup)
+    except Agent.DoesNotExist as exc:
+        raise ToolError(f"Teammate '{recipient}' not found") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -56,20 +75,19 @@ async def _authenticate():
 
 async def deliver_message(agent, *, type: str, content: str = "", recipient: str = "", summary: str = "") -> dict:
     """Core send_message logic. Called by MCP tool and hook bridge."""
-    from agents.models import Agent
-
     if type == "message":
         if not recipient:
             raise ToolError("recipient is required for type='message'")
-        try:
-            target = await Agent.objects.aget(
-                project_id=agent.project_id, name=recipient,
-            )
-        except Agent.DoesNotExist:
-            raise ToolError(f"Teammate '{recipient}' not found")
+        target = await _resolve_project_agent(project_id=agent.project_id, recipient=recipient)
+        target_ref = agent_ref(target.id)
 
         from agents.services.interagent import deliver_to_stdin
-        sent = await deliver_to_stdin(agent.name, target, content)
+        sent = await deliver_to_stdin(
+            agent.name,
+            target,
+            content,
+            sender_ref=agent_ref(agent.id),
+        )
 
         # Create feed item so the team feed shows inter-agent messages
         try:
@@ -87,7 +105,8 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
             from agents.errors import ERR_MCP_FEED_ITEM_FAILED
             log.warning(
                 "mcp.message_feed_item_failed",
-                sender=agent.name, recipient=recipient,
+                sender=agent.name, sender_ref=agent_ref(agent.id),
+                recipient=target.name, recipient_ref=target_ref,
                 error_code=ERR_MCP_FEED_ITEM_FAILED,
                 error_class=type(exc).__name__,
                 operation="create_message_feed_item",
@@ -95,11 +114,23 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
                 exc_info=True,
             )
 
-        log.info("mcp.message_sent", sender=agent.name, recipient=recipient, delivered=sent)
+        log.info(
+            "mcp.message_sent",
+            sender=agent.name,
+            sender_ref=agent_ref(agent.id),
+            recipient=target.name,
+            recipient_ref=target_ref,
+            delivered=sent,
+        )
         if not sent:
-            return {"ok": True, "recipient": recipient, "queued": True,
-                    "note": f"'{recipient}' is disconnected. Message queued for delivery on reconnect."}
-        return {"ok": True, "recipient": recipient}
+            return {
+                "ok": True,
+                "recipient": target.name,
+                "recipient_ref": target_ref,
+                "queued": True,
+                "note": f"'{target.name}' is disconnected. Message queued for delivery on reconnect.",
+            }
+        return {"ok": True, "recipient": target.name, "recipient_ref": target_ref}
 
     elif type == "broadcast":
         from agents.services.interagent import deliver_broadcast
@@ -135,20 +166,22 @@ async def deliver_message(agent, *, type: str, content: str = "", recipient: str
     elif type == "shutdown_request":
         if not recipient:
             raise ToolError("recipient is required for type='shutdown_request'")
-        try:
-            target = await Agent.objects.aget(
-                project_id=agent.project_id, name=recipient,
-            )
-        except Agent.DoesNotExist:
-            raise ToolError(f"Teammate '{recipient}' not found")
+        target = await _resolve_project_agent(project_id=agent.project_id, recipient=recipient)
+        target_ref = agent_ref(target.id)
 
         # Actually kill the container — same path as the killAgent mutation.
         # The meta agent's authority is sufficient; no approval needed.
         from agents.services.lifecycle import kill_agent
         await kill_agent(str(target.id))
 
-        log.info("mcp.shutdown_requested", sender=agent.name, target=recipient)
-        return {"ok": True, "recipient": recipient}
+        log.info(
+            "mcp.shutdown_requested",
+            sender=agent.name,
+            sender_ref=agent_ref(agent.id),
+            target=target.name,
+            target_ref=target_ref,
+        )
+        return {"ok": True, "recipient": target.name, "recipient_ref": target_ref}
 
     else:
         raise ToolError(f"Invalid message type: {type}. Must be 'message', 'broadcast', or 'shutdown_request'.")
@@ -167,8 +200,8 @@ async def send_message(
         type: Message type — "message" for DMs, "broadcast" to all teammates,
               "shutdown_request" to request a teammate shut down.
         content: The message text.
-        recipient: Agent name of the recipient (required for "message" and
-                   "shutdown_request").
+        recipient: Agent name or `agent://<id>` ref of the recipient
+                   (required for "message" and "shutdown_request").
         summary: A 5-10 word summary shown as preview in the UI.
     """
     agent = await _authenticate()
@@ -205,8 +238,19 @@ async def teammate_spawn(name: str, instructions: str, model: str = "") -> dict:
     except ValueError as e:
         raise ToolError(str(e))
 
-    log.info("mcp.teammate_spawned", spawner=agent.name, new_agent=name)
-    return {"ok": True, "agent_id": str(new_agent.id), "name": new_agent.name}
+    log.info(
+        "mcp.teammate_spawned",
+        spawner=agent.name,
+        spawner_ref=agent_ref(agent.id),
+        new_agent=name,
+        new_agent_ref=agent_ref(new_agent.id),
+    )
+    return {
+        "ok": True,
+        "agent_id": str(new_agent.id),
+        "agent_ref": agent_ref(new_agent.id),
+        "name": new_agent.name,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +557,7 @@ async def team_status() -> list[dict]:
 
     agents = [
         {
+            "agent_ref": agent_ref(a.id),
             "name": a.name,
             "status": a.status,
             "role": a.role,

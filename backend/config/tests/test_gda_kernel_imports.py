@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from gda_kernel import Observation, ObservationSource, admit_observation, compile_project_to_run_spec
+from gda_kernel import (
+    Observation,
+    ObservationSource,
+    admit_observation,
+    compile_project_to_run_spec,
+    project_ref,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -26,12 +32,12 @@ def test_gda_kernel_compile_seam_is_importable_from_backend() -> None:
             "budget": {"steps": 3},
         },
         now=datetime(2026, 3, 31, 12, 0, tzinfo=timezone.utc),
-        world_ref="project://openvending",
+        world_ref="world://openvending",
     )
 
     assert run_spec.objective.name == "Handle supplier delay"
     assert run_spec.boundary.capability_ids == ("ops.measure_supplier_risk",)
-    assert run_spec.metadata["project_id"] == "project-1"
+    assert run_spec.metadata["project_ref"] == project_ref("project-1")
 
 
 def test_gda_kernel_observation_admission_accepts_typed_candidate() -> None:

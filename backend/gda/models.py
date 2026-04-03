@@ -32,6 +32,37 @@ class ProjectState(models.Model):
         return f"{self.project.name} state"
 
 
+class ProjectStateEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="gda_state_entries",
+    )
+    dimension_id = models.CharField(max_length=255)
+    schema_ref = models.CharField(max_length=255)
+    origin = models.CharField(max_length=32)
+    value = models.JSONField(default=dict, blank=True)
+    valid_from = models.DateTimeField()
+    valid_until = models.DateTimeField(null=True, blank=True)
+    provenance_refs = models.JSONField(default=list, blank=True)
+    state_version_id = models.CharField(max_length=64, default="v1")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["dimension_id", "-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "dimension_id"],
+                name="unique_project_state_entry_dimension",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project.name} state entry {self.dimension_id}"
+
+
 class ProjectObservation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     project = models.ForeignKey(
@@ -97,6 +128,41 @@ class ProjectCommitment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project.name} commitment {self.capability_id}"
+
+
+class ProjectCommitmentAssignment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="gda_commitment_assignments",
+    )
+    commitment = models.OneToOneField(
+        ProjectCommitment,
+        on_delete=models.CASCADE,
+        related_name="assignment",
+    )
+    agent = models.ForeignKey(
+        "agents.Agent",
+        on_delete=models.CASCADE,
+        related_name="gda_commitment_assignments",
+    )
+    dimension_ids = models.JSONField(default=list, blank=True)
+    observation_kinds = models.JSONField(default=list, blank=True)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-assigned_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "commitment", "agent"],
+                name="unique_project_commitment_assignment",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project.name} assignment {self.commitment.commitment_id} -> {self.agent.name}"
 
 
 class ProjectExecution(models.Model):

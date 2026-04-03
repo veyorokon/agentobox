@@ -541,12 +541,15 @@ async def test_interagent_delivery_passes_content_blocks():
     target.session_id = "session-123"
 
     with (
-        patch("agents.services.interagent.create_stream_event", new_callable=AsyncMock),
+        patch("agents.services.interagent.create_stream_event", new_callable=AsyncMock) as mock_stream,
         patch("agents.services.interagent.deliver_input", new_callable=AsyncMock, return_value=True) as mock_deliver,
     ):
-        result = await deliver_to_stdin("lead", target, "Please review this.")
+        result = await deliver_to_stdin("lead", target, "Please review this.", sender_ref="agent://lead-1")
 
     assert result is True
+    stream_payload = mock_stream.await_args.kwargs["data"]
+    assert stream_payload["team_message_from"] == "lead"
+    assert stream_payload["team_message_from_ref"] == "agent://lead-1"
     mock_deliver.assert_awaited_once()
     # deliver_input now receives content blocks directly, not a message wrapper
     content_blocks = mock_deliver.await_args.args[1]
